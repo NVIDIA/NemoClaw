@@ -743,9 +743,15 @@ else
   fail "Registry entry for '$SANDBOX_A' was removed by status (must be preserved, #4497)"
 fi
 
+# Bound every Phase 5 recovery probe so a reintroduced prompt or hang fails the
+# job fast instead of stalling to the phase timeout. Mirrors the probe-only
+# connect in Phase 4.
+RECOVERY_PROBE_TIMEOUT_SECONDS="${NEMOCLAW_E2E_RECOVERY_PROBE_TIMEOUT_SECONDS:-180}"
+
 # A routine `connect` against the same stale entry must also preserve it.
 CONNECT_LOG="$(mktemp)"
-NEMOCLAW_NON_INTERACTIVE=1 run_nemoclaw "$SANDBOX_A" connect >"$CONNECT_LOG" 2>&1
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" connect >"$CONNECT_LOG" 2>&1
 connect_exit=$?
 connect_output="$(cat "$CONNECT_LOG")"
 rm -f "$CONNECT_LOG"
@@ -772,7 +778,8 @@ fi
 # status hint recommends: rebuild must get past the dispatcher and into its
 # own flow rather than failing with "does not exist".
 REBUILD_LOG="$(mktemp)"
-NEMOCLAW_NON_INTERACTIVE=1 run_nemoclaw "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || true
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || true
 rebuild_output="$(cat "$REBUILD_LOG")"
 rm -f "$REBUILD_LOG"
 
@@ -786,7 +793,8 @@ fi
 # entry now that routine status/connect no longer delete it. Purge it here,
 # while the gateway is still healthy, so the preserved entry does not leak into
 # Phase 7 cleanup (which runs against a stopped gateway and cannot remove it).
-run_nemoclaw "$SANDBOX_A" destroy --yes 2>/dev/null || true
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 if registry_has "$SANDBOX_A"; then
   fail "destroy did not purge the stale '$SANDBOX_A' registry entry (#4497)"
