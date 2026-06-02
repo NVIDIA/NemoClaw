@@ -3,7 +3,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
@@ -40,10 +40,12 @@ function main(): void {
 export function renderHermesCommandsReference(source: string): string {
   const { frontmatter, body } = splitFrontmatter(source);
   const hermesFrontmatter = updateFrontmatter(frontmatter);
-  const hermesBody = stripAgentOnlyBlocks(body)
-    .replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, "")
-    .replaceAll("nemoclaw", "nemohermes")
-    .replaceAll("https://www.nvidia.com/nemohermes.sh", "https://www.nvidia.com/nemoclaw.sh")
+  const hermesBody = transformNemoclawCliInvocations(
+    stripAgentOnlyBlocks(body).replace(
+      /^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m,
+      "",
+    ),
+  )
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
@@ -98,6 +100,42 @@ function stripAgentOnlyBlocks(body: string): string {
   );
 }
 
+function transformNemoclawCliInvocations(body: string): string {
+  return restoreProtectedLiterals(
+    protectNonAliasableLiterals(body)
+      // Inline code and headings that start with the host CLI command.
+      .replace(/`nemoclaw(?=[\s`])/g, "`nemohermes")
+      // Copyable shell examples, including env-prefixed invocations and
+      // continuation lines indented under a previous shell command.
+      .replace(
+        /^(\s*(?:\$ )?(?:(?:[A-Z_][A-Z0-9_]*=[^\s\\]+|export)\s+)*)(nemoclaw)(?=\s|$)/gm,
+        "$1nemohermes",
+      )
+      // Shell command substitutions used in examples.
+      .replace(/\$\(nemoclaw(?=\s|\))/g, "$(nemohermes")
+      // Same-page anchors generated from command headings.
+      .replace(/#nemoclaw(?=[-)])/g, "#nemohermes"),
+  );
+}
+
+const PROTECTED_LITERALS = [
+  ["nemoclaw onboard --agent hermes", "__NEMOCLAW_ONBOARD_AGENT_HERMES__"],
+] as const;
+
+function protectNonAliasableLiterals(body: string): string {
+  return PROTECTED_LITERALS.reduce(
+    (next, [literal, token]) => next.replaceAll(literal, token),
+    body,
+  );
+}
+
+function restoreProtectedLiterals(body: string): string {
+  return PROTECTED_LITERALS.reduce(
+    (next, [literal, token]) => next.replaceAll(token, literal),
+    body,
+  );
+}
+
 function readOptionalTarget(): string | null {
   try {
     return readFileSync(targetPath, "utf8");
@@ -115,4 +153,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-main();
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  main();
+}
