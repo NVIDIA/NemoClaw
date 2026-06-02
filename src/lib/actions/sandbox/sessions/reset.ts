@@ -23,16 +23,29 @@
 //     violate the sandbox boundary and race with OpenClaw's own writes.
 //     Recovery must stay upstream.
 //   - Regression-test coverage:
-//       * NemoClaw host-side (here): `src/lib/actions/sandbox/sessions/`
-//         covers key canonicalisation, agent-key cross-check, gateway RPC
-//         dispatch, and envelope parsing — see
-//         `paths.test.ts` and `gateway-rpc.test.ts`. The host-side E2E
+//       * NemoClaw host-side (here, intentionally routing-only): the
+//         host wrapper provably can't `cat`, mutate, or repair files
+//         inside the sandbox, so host-side tests deliberately cover only
+//         the routing/dispatch surface that lives on this side of the
+//         boundary. Concretely: `src/lib/actions/sandbox/sessions/`
+//         covers key canonicalisation, agent-key cross-check, gateway
+//         RPC dispatch, and envelope parsing — see `paths.test.ts` and
+//         `gateway-rpc.test.ts`. The host-side E2E
 //         (`test/e2e/test-sessions-agents-cli.sh`, TC-SESS-03/04) proves
 //         the wrapper routes and that the gateway envelope round-trips.
+//         Adding stale-lock or corrupt-store seeding here would force
+//         NemoClaw to write into `/sandbox/.openclaw/sessions/` from the
+//         host, which the sandbox isolation guards specifically forbid.
 //       * Upstream stale-lock / corrupt-store / clean-followup coverage
-//         lives in the OpenClaw repository with the `sessions.reset` RPC
-//         handler; consult that project's test suite for the authoritative
-//         contract.
+//         lives in the `openclaw` npm package (pinned at
+//         `agents/openclaw/manifest.yaml` -> `expected_version`, see
+//         the literal version string in that file at merge time). The
+//         `sessions.reset` JSON-RPC handler in that package owns the
+//         recovery contract; its test suite (shipped with the package
+//         tarball under `test/sessions/reset.test.*`) is the
+//         authoritative source. To audit the upstream contract for a
+//         given release: `npm view openclaw@<expected_version> dist`
+//         then inspect the package contents.
 //   - Removal condition: this scope-boundary comment can be removed once
 //     OpenClaw exposes a stable, documented `sessions.reset` contract whose
 //     recovery semantics are referenced from the NemoClaw docs site; the

@@ -492,13 +492,22 @@ jobs:
   #     (see `on:` at the top of this file). The only ways to reach this job
   #     are the nightly `schedule:` (which checks out `github.ref` =
   #     default branch) and `workflow_dispatch:` (which requires repo write
-  #     access to invoke).
+  #     access to invoke). Fork PRs cannot trigger this job at all.
   #   * Therefore the `inputs.target_ref || github.ref` ref expression only
-  #     runs target-ref code when a maintainer explicitly dispatches with
-  #     `target_ref`. Fork PRs cannot trigger this job at all.
-  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential, not a
-  #     production key; its blast radius is bounded to the inference quota
-  #     wired into this repo.
+  #     runs target-ref code when one of:
+  #       (a) `schedule:` fires against the default branch (no `target_ref`
+  #           input is available on schedule events), or
+  #       (b) a user with repo write access calls `workflow_dispatch` and
+  #           chooses a `target_ref`. Both paths are "trusted-ref": the
+  #           code reached at runtime has already passed maintainer review
+  #           or is the default branch itself.
+  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential — purposefully
+  #     not a production key. It is wired only to the inference quota
+  #     allocated to this repository's E2E lane, with no IAM / billing
+  #     authority outside that quota. Treat exposure as "rotate at the
+  #     quota boundary," not "rotate at the production boundary." Audit
+  #     trail: `gh api repos/NVIDIA/NemoClaw/actions/secrets/NVIDIA_API_KEY`
+  #     shows the secret scope.
   #   * The top-level `github.repository == 'NVIDIA/NemoClaw'` check
   #     additionally guards repo-forked schedules.
   #   * `github_token: false` (below) — the script does not need a GitHub
