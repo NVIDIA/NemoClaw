@@ -691,6 +691,7 @@ extract_targets() {
 
     while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
     while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    while ($visible =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
     END {
       die "malformed HTML comment\n" if $in_comment;
     }
@@ -718,14 +719,26 @@ check_local_ref() {
 
   if [[ "$stripped" == /* ]]; then
     local site_path="${stripped#/}"
-    local candidate
-    for candidate in \
-      "$REPO_ROOT/docs/$site_path" \
-      "$REPO_ROOT/docs/$site_path.mdx" \
-      "$REPO_ROOT/docs/$site_path.md" \
-      "$REPO_ROOT/docs/$site_path/index.mdx" \
-      "$REPO_ROOT/docs/$site_path/index.md"; do
-      [[ -e "$candidate" ]] && return 0
+    local -a site_paths=("$site_path")
+    case "$site_path" in
+      user-guide/openclaw/*)
+        site_paths+=("${site_path#user-guide/openclaw/}")
+        ;;
+      user-guide/hermes/*)
+        site_paths+=("${site_path#user-guide/hermes/}")
+        ;;
+    esac
+
+    local route_path candidate
+    for route_path in "${site_paths[@]}"; do
+      for candidate in \
+        "$REPO_ROOT/docs/$route_path" \
+        "$REPO_ROOT/docs/$route_path.mdx" \
+        "$REPO_ROOT/docs/$route_path.md" \
+        "$REPO_ROOT/docs/$route_path/index.mdx" \
+        "$REPO_ROOT/docs/$route_path/index.md"; do
+        [[ -e "$candidate" ]] && return 0
+      done
     done
     echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
     return 1
