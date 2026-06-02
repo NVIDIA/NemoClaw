@@ -5152,6 +5152,7 @@ describe("CLI dispatch", () => {
         }),
         { mode: 0o600 },
       );
+      writeHealthyDockerStub(localBin);
       fs.writeFileSync(
         path.join(localBin, "openshell"),
         [
