@@ -6517,6 +6517,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
+          try { await onboardRuntimeBoundary.recordResumeConflict(conflict); } catch { /* diagnostic-only */ }
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
@@ -6545,9 +6546,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             );
           }
         }
-        console.error(
-          `  Run: ${cliName()} onboard              # start a fresh onboarding session`,
-        );
+        console.error(`  Run: ${cliName()} onboard              # start a fresh onboarding session`);
         console.error("  Or rerun with the original settings to continue that session.");
         process.exit(1);
       }
