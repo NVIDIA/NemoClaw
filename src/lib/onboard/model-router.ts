@@ -19,6 +19,10 @@ import * as onboardSession from "../state/onboard-session";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
 import {
+  formatHostServiceUnreachableMessage,
+  probeHostServiceSandboxReachability,
+} from "./host-service-reachability";
+import {
   doesModelRouterProcessOwnPort,
   isRouterHealthy,
   stopModelRouterProcess,
@@ -419,6 +423,35 @@ export function isRoutedInferenceProvider(provider: string | null | undefined): 
   return Boolean(bp?.provider_name && provider === bp.provider_name);
 }
 
+const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
+
+/**
+ * Verify the host Model Router is reachable from the OpenShell Docker network.
+ *
+ * `isRouterHealthy()` only proves the router answers on the host loopback. On
+ * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
+ * still fail to reach `host.openshell.internal:<routerPort>` even though the
+ * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
+ * `tcp_failed` result print the concrete `ufw allow` remediation and fail so
+ * onboarding does not declare an unreachable router healthy. A
+ * `probe_unavailable` result (Docker Desktop, missing network during fresh
+ * setup before the sandbox network exists, DNS) is non-fatal.
+ */
+async function verifyModelRouterSandboxReachability(routerPort: number): Promise<void> {
+  const reachability = await probeHostServiceSandboxReachability({ port: routerPort });
+  if (!reachability.ok && reachability.reason === "tcp_failed") {
+    console.error(
+      formatHostServiceUnreachableMessage(reachability, {
+        serviceLabel: MODEL_ROUTER_SERVICE_LABEL,
+        port: routerPort,
+      }),
+    );
+    throw new Error(
+      `Sandbox containers cannot reach the Model Router at host.openshell.internal:${routerPort}.`,
+    );
+  }
+}
+
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = bp.router.port || 4000;
@@ -444,6 +477,7 @@ export async function reconcileModelRouter(): Promise<void> {
       recordedProcessOwnsRouter
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
+      await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
     if (recordedProcessOwnsRouter) {
@@ -464,4 +498,5 @@ export async function reconcileModelRouter(): Promise<void> {
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });
+  await verifyModelRouterSandboxReachability(routerPort);
 }

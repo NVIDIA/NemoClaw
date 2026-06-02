@@ -19,6 +19,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   ensureOllamaAuthProxy,
   probeOllamaAuthProxyHealth,
@@ -27,6 +28,11 @@ import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
+import {
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -35,6 +41,10 @@ import {
 } from "../../state/sandbox-session";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
@@ -207,6 +217,15 @@ function outputShowsGatewayUnavailable(output = ""): boolean {
   return GATEWAY_UNAVAILABLE_RE.test(output);
 }
 
+// Fail fast with Docker-outage guidance instead of polling to the readiness
+// timeout. Only fires for Docker-driver sandboxes whose `docker info` is
+// failing (#4428).
+function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
+  console.error("");
+  printDockerRuntimeDownGuidance(sandboxName, { writer: console.error, retryCommand: "connect" });
+  process.exit(1);
+}
+
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   const lifecycle = getNamedGatewayLifecycleState();
   if (isBlockingGatewayLifecycle(lifecycle)) {
@@ -263,7 +282,15 @@ function probeSandboxInferenceRoute(
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
-  return sb?.openshellDriver !== "vm";
+  // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
+  // container, which only the k3s/kubernetes gateway runs. The docker driver
+  // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
+  // the vm driver has no cluster container either, so both recover the route via
+  // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
+  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
+  // snapshot DNS-proxy step. (#3403)
+  const driver = sb?.openshellDriver;
+  return driver !== "vm" && driver !== "docker";
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {
@@ -611,16 +638,24 @@ function ensureSandboxInferenceRouteOrExit(
 // pass covers the case where the watcher has exited or is otherwise stuck
 // when the user runs `nemoclaw <sandbox> connect`. The script sources
 // `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
-// in-sandbox `openclaw devices list/approve` invocations target the
-// running gateway with its token, and applies the same allowlist as the
-// startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
+// in-sandbox `openclaw devices list` invocation targets the running gateway
+// with its token. Approvals then use OpenClaw's local fallback by removing
+// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
+// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
 // modes. Unknown clients are ignored, not approved.
+//
+// Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
+// semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
+// scope-upgrade can request the upgraded scopes for its own connection and
+// return the pending-scope failure it is trying to resolve. Remove this local
+// fallback path when OpenClaw approve can complete scope upgrades through the
+// gateway using only operator.pairing.
 //
 // Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
 // unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s × MAX_APPROVALS)
-// fit within the outer spawnSync cap, so a partial-completion mid-loop
-// kill cannot strand allowlisted requests within a normal batch.
+// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
+// attempts) fit within the outer spawnSync cap, so a partial-completion
+// mid-loop kill cannot strand allowlisted requests within a normal batch.
 const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
 const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
 
@@ -660,9 +695,10 @@ pending = data.get('pending')
 if not isinstance(pending, list):
     sys.exit(0)
 approved_count = 0
+attempted_count = 0
 seen_request_ids = set()
 for device in pending:
-    if approved_count >= MAX_APPROVALS:
+    if attempted_count >= MAX_APPROVALS:
         break
     if not isinstance(device, dict):
         continue
@@ -674,12 +710,16 @@ for device in pending:
     if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
         continue
     seen_request_ids.add(request_id)
+    approve_env = os.environ.copy()
+    approve_env.pop('OPENCLAW_GATEWAY_URL', None)
+    attempted_count += 1
     try:
-        subprocess.run(
+        approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1,
+            capture_output=True, text=True, timeout=1, env=approve_env,
         )
-        approved_count += 1
+        if approve_proc.returncode == 0:
+            approved_count += 1
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         continue
 PYAPPROVE
@@ -738,8 +778,27 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
+  preflightVllmModelEnvOrExit();
   const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+
+  // Fast-fail on a Docker daemon outage before the probe-only health check and
+  // the session/recovery probes below (each can spawn 15s `openshell sandbox
+  // exec`/`ssh-config` calls) and before the readiness wait loop. When Docker
+  // is down and the sandbox is not yet ready, connect cannot make progress;
+  // surface the outage immediately so the user is not left waiting tens of
+  // seconds (or killed by an external `timeout`). Terminal phases keep their
+  // normal handling below (#4428).
+  const livePhase = parseSandboxPhase(live.output || "");
+  if (
+    livePhase &&
+    livePhase !== "Ready" &&
+    livePhase !== "Running" &&
+    !isTerminalSandboxPhase(livePhase) &&
+    isDockerRuntimeDown(sandboxName)
+  ) {
+    failConnectReadinessDockerRuntimeDown(sandboxName);
+  }
 
   if (probeOnly) {
     return runSandboxConnectProbe(sandboxName);
@@ -817,20 +876,20 @@ export async function connectSandbox(
     if (!listCommandFailed && status && /^unknown$/i.test(status)) {
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
-    const TERMINAL = new Set([
-      "Failed",
-      "Error",
-      "CrashLoopBackOff",
-      "ImagePullBackOff",
-      "Unknown",
-      "Evicted",
-    ]);
-    if (status && TERMINAL.has(status)) {
+    if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
       console.error("");
       console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
       process.exit(1);
+    }
+
+    // Probe-disagreement safety net: `sandbox get` may have reported Ready/no
+    // phase (so the early guard was skipped) while `sandbox list` shows a
+    // non-terminal status. Status is non-terminal here, so re-check Docker and
+    // fail fast rather than entering the readiness loop (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      failConnectReadinessDockerRuntimeDown(sandboxName);
     }
 
     console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
@@ -859,12 +918,17 @@ export async function connectSandbox(
         failIfGatewayBlocksConnectReadiness(sandboxName);
       }
       if (cur !== "unknown") everSeen = true;
-      if (TERMINAL.has(cur)) {
+      if (TERMINAL_SANDBOX_PHASES.has(cur)) {
         console.error("");
         console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
         process.exit(1);
+      }
+      // Catch a Docker daemon that dies mid-wait so we stop polling instead of
+      // running out the full readiness timeout (#4428).
+      if (isDockerRuntimeDown(sandboxName)) {
+        failConnectReadinessDockerRuntimeDown(sandboxName);
       }
       if (!everSeen && elapsed >= 30) {
         console.error("");

@@ -16,6 +16,12 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    /**
+     * Mark this sandbox as the default. Called here (not at sandbox creation) so
+     * a cancel at the policy-preset step never leaves an unconfigured sandbox
+     * registered as default (#4614).
+     */
+    setDefaultSandbox(sandboxName: string): void;
     recordPostVerifyStarted(): Promise<Session>;
     recordSessionComplete(updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -64,6 +70,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   webSearchEnabled,
   deps,
 }: FinalizationStateOptions<Agent, VerifyChain, VerificationResult>): Promise<FinalizationStateResult> {
+  // Reaching finalization means the policy-preset step was confirmed, so it is
+  // now safe to register this sandbox as the default (#4614).
+  deps.setDefaultSandbox(sandboxName);
+
   if (agent) deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
 
   const allStagedMigrated =

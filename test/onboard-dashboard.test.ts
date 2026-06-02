@@ -66,6 +66,60 @@ describe("onboard dashboard helpers", () => {
     ).toBe(false);
   });
 
+  it("starts a fixed extra agent forward without stopping other sandboxes", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const runCaptureOpenshell = vi.fn(() => "hermes-sandbox 127.0.0.1 9119 123 running");
+    const openshellArgv = vi.fn((args: string[]) => [process.execPath, "-e", "", ...args]);
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell,
+      openshellArgv,
+      cliName: () => "nemohermes",
+      agentProductName: () => "NemoHermes",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+    });
+
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    try {
+      expect(helpers.ensureAgentFixedForward("hermes-sandbox", 9119, "Hermes dashboard")).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
+    expect(stopArgs).toContainEqual(["forward", "stop", "9119", "hermes-sandbox"]);
+    expect(openshellArgv).toHaveBeenCalledWith([
+      "forward",
+      "start",
+      "--background",
+      "9119",
+      "hermes-sandbox",
+    ]);
+    for (const args of stopArgs) {
+      if (args[0] === "forward" && args[1] === "stop") {
+        expect(args.at(-1)).toBe("hermes-sandbox");
+      }
+    }
+    expect(
+      stopArgs.some(
+        (args) =>
+          Array.isArray(args) &&
+          args[0] === "forward" &&
+          args[1] === "stop" &&
+          args.length === 3,
+      ),
+    ).toBe(false);
+  });
+
   it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
