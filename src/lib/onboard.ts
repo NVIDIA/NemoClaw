@@ -555,8 +555,8 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
-import { filterSlackSelectionByValidation } from "./onboard/slack-validation";
 import type { SelectionDrift } from "./onboard/selection-drift";
+import { filterSlackSelectionByValidation } from "./onboard/slack-validation";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
@@ -3682,26 +3682,25 @@ async function createSandbox(
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
-  const ready = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+  const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
     sandboxName,
     timeoutSecs: sandboxReadyTimeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
+    getSandboxFailurePhase: gatewayState.getSandboxFailurePhase,
     sleep: sleepSeconds,
   });
 
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
 
-  if (!ready) {
+  if (!readiness.ready) {
     const diagnostics = sandboxCreateFailureDiagnostics.collectSandboxCreateFailureDiagnostics(
       sandboxName,
       { backupPath: restoreBackupPath },
     );
     console.error("");
-    console.error(
-      `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`,
-    );
+    sandboxReadinessTracing.printReadinessFailure(readiness, sandboxName, sandboxReadyTimeoutSecs);
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);
       if (diagnostics.summaryLines.length > 0) {
@@ -3715,11 +3714,7 @@ async function createSandbox(
       }
     }
     if (useDockerGpuPatch) {
-      dockerGpuPatch.printDockerGpuReadinessFailure(
-        sandboxName,
-        dockerGpuCreatePatch.selectedMode(),
-        { runCaptureOpenshell },
-      );
+      dockerGpuCreatePatch.printReadinessFailureIfEnabled();
     } else {
       // Clean up non-GPU failures after preserving local diagnostics so the
       // next onboard retry with the same name does not fail on "sandbox already exists".
@@ -3749,13 +3744,14 @@ async function createSandbox(
   });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    // Runs the GPU proof, then (when the Docker GPU patch recreated the
-    // container) gates on host-network local inference reachability (#4509).
+    // Runs the GPU proof, preserving Docker-GPU patch Error-phase diagnostics
+    // when applicable, then gates host-network local inference reachability (#4509).
     dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
       sandboxName,
       dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
       useDockerGpuPatch,
       verifyDirectSandboxGpu,
+      verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
       selectedMode: dockerGpuCreatePatch.selectedMode,
       runCaptureOpenshell,
       log: console.log,

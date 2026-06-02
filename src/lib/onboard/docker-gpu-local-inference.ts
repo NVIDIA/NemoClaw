@@ -370,6 +370,7 @@ export type GpuSandboxAfterReadyOptions = {
   dockerDriverGateway: boolean;
   useDockerGpuPatch: boolean;
   verifyDirectSandboxGpu: (sandboxName: string) => void;
+  verifyGpuOrExit?: (verifyDirectSandboxGpu: (sandboxName: string) => void) => void;
   selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
@@ -392,11 +393,20 @@ export function verifyGpuSandboxAfterReady(
   options: GpuSandboxAfterReadyOptions,
 ): void {
   try {
-    options.verifyDirectSandboxGpu(options.sandboxName);
+    if (options.verifyGpuOrExit) {
+      options.verifyGpuOrExit(options.verifyDirectSandboxGpu);
+    } else {
+      options.verifyDirectSandboxGpu(options.sandboxName);
+    }
   } catch (error) {
-    printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
-      runCaptureOpenshell: options.runCaptureOpenshell,
-    });
+    // `verifyGpuOrExit` is supplied by the Docker GPU create patch and already
+    // prints the richer Error-phase / patched-container diagnostics before
+    // rethrowing. Avoid a second generic proof-failure block in that path.
+    if (!options.verifyGpuOrExit) {
+      printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
+        runCaptureOpenshell: options.runCaptureOpenshell,
+      });
+    }
     throw error;
   }
 

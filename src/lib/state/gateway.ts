@@ -58,6 +58,30 @@ export function isSandboxReady(output: string, sandboxName: string): boolean {
 }
 
 /**
+ * Terminal failure phases reported by `openshell sandbox list`/`get` for a
+ * sandbox whose underlying container is dead or unrecoverable. We treat these
+ * as short-circuit signals during readiness waits so onboarding fails fast
+ * with a clear phase rather than waiting out the full timeout window
+ * (NemoClaw issue #4316 — Docker GPU patch leaves the sandbox in Error).
+ */
+const TERMINAL_SANDBOX_FAILURE_PHASES = new Set([
+  "Error",
+  "Failed",
+  "CrashLoopBackOff",
+]);
+
+/**
+ * Return the failure phase token from `openshell sandbox list` if the row
+ * is in a terminal failure phase, otherwise null. Useful for distinguishing
+ * "Error" from "Failed"/"CrashLoopBackOff" in user-facing diagnostics.
+ */
+export function getSandboxFailurePhase(output: string, sandboxName: string): string | null {
+  const cols = parseSandboxRow(output, sandboxName);
+  if (!cols) return null;
+  return cols.find((col) => TERMINAL_SANDBOX_FAILURE_PHASES.has(col)) ?? null;
+}
+
+/**
  * Determine whether stale NemoClaw gateway output indicates a previous
  * session that should be cleaned up before the port preflight check.
  */
