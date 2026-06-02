@@ -20,6 +20,7 @@ import {
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
   getDockerGpuPatchNetworkMode,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
@@ -837,7 +838,10 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     // Without the short-circuit, a patched container that crashes on startup
     // leaves users waiting the full 900s+ supervisor-reconnect timeout before
-    // any Error-phase diagnostics run (#4316).
+    // any Error-phase diagnostics run (#4316). With the #4664 debounce now in
+    // place, this test asserts the K=1 (no-debounce) behaviour explicitly so
+    // the original fast-fail intent is preserved when the operator opts out
+    // of the debounce.
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
     const listOutputs = [
       "alpha   Provisioning   1s ago",
@@ -853,10 +857,11 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       runOpenshell,
       runCaptureOpenshell,
       sleep,
+      errorPhaseDebouncePolls: 1,
     });
 
     expect(ok).toBe(false);
-    // Without short-circuit we'd loop ~300 iterations. With it, the second
+    // Without short-circuit we'd loop ~300 iterations. With K=1 the second
     // iteration's list output shows Error and the wait bails out.
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
@@ -1199,5 +1204,112 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+// Regression coverage for NemoClaw issue #4664: the Docker GPU patch
+// supervisor-reconnect wait must absorb a transient Error phase reported
+// while OpenShell's sandbox-list cache catches up to the newly-recreated
+// GPU container (old-container teardown briefly marks the row Error before
+// the host re-registers the new container). Without debouncing, the
+// #4316 fast-fail short-circuits within ~12s on a healthy GPU sandbox
+// whose container is running and whose supervisor has already logged
+// `LIFECYCLE:INSTALL OpenShell Sandbox Supervisor success`.
+describe("docker-gpu-patch supervisor-reconnect Error-phase debounce (#4664)", () => {
+  it("absorbs a transient Error phase shorter than the debounce window", () => {
+    const execOutputs = [
+      { status: 1, stderr: "sandbox not ready" },
+      { status: 1, stderr: "sandbox not ready" },
+      { status: 1, stderr: "sandbox not ready" },
+      { status: 0, stdout: "" },
+    ];
+    let execIdx = 0;
+    const runOpenshell = vi.fn(
+      () => execOutputs[Math.min(execIdx++, execOutputs.length - 1)],
+    );
+    const listOutputs = [
+      "alpha   Error         1s ago",
+      "alpha   Error         3s ago",
+      "alpha   Provisioning  5s ago",
+      "alpha   Ready         7s ago",
+    ];
+    let listIdx = 0;
+    const runCaptureOpenshell = vi.fn(
+      () => listOutputs[Math.min(listIdx++, listOutputs.length - 1)],
+    );
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 5,
+    });
+
+    expect(ok).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledTimes(4);
+  });
+
+  it("still fast-fails when Error phase persists for the full debounce window", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+    const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 3,
+    });
+
+    expect(ok).toBe(false);
+    // Three consecutive Error polls trigger the short-circuit on poll #3.
+    // Sleeps happen only between polls 1->2 and 2->3, so two sleeps total.
+    expect(runOpenshell).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets the consecutive-Error counter when the phase recovers", () => {
+    // Error, Error, Provisioning (counter resets), Error, Error, Error
+    // -> bails out on the 3rd post-recovery Error, not on the 2nd overall.
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+    const listOutputs = [
+      "alpha   Error         1s ago",
+      "alpha   Error         3s ago",
+      "alpha   Provisioning  5s ago",
+      "alpha   Error         7s ago",
+      "alpha   Error         9s ago",
+      "alpha   Error         11s ago",
+    ];
+    let listIdx = 0;
+    const runCaptureOpenshell = vi.fn(
+      () => listOutputs[Math.min(listIdx++, listOutputs.length - 1)],
+    );
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 3,
+    });
+
+    expect(ok).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(6);
+  });
+
+  it("defaults the debounce to 5 polls and honors the env override", () => {
+    expect(getDockerGpuSupervisorReconnectErrorDebouncePolls({})).toBe(5);
+    expect(
+      getDockerGpuSupervisorReconnectErrorDebouncePolls({
+        NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE: "2",
+      }),
+    ).toBe(2);
+    // Non-positive values are clamped to a minimum of 1.
+    expect(
+      getDockerGpuSupervisorReconnectErrorDebouncePolls({
+        NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE: "0",
+      }),
+    ).toBe(1);
   });
 });
