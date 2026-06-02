@@ -112,4 +112,24 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       }),
     ).toBe(1);
   });
+
+  it("clamps an injected debounce override to the same minimum as the env path", () => {
+    // 0 / negative / fractional overrides must not bypass the ≥1 contract that
+    // the env-backed helper enforces.
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+    const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 0,
+    });
+
+    expect(ok).toBe(false);
+    // Clamped to K=1: first Error poll short-circuits with no preceding sleep.
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
 });
