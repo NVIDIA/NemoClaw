@@ -527,6 +527,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 # =============================================================================
 test_net_08_jira_per_binary_enforcement() {
   log "=== TC-NET-08: Jira Per-Binary Policy Enforcement ==="
+  local curl_probe_url="https://api.atlassian.com/oauth/token/accessible-resources"
 
   log "  Step 1: Applying jira preset..."
   if ! apply_preset "jira"; then
@@ -563,13 +564,14 @@ req.on('error', (error) => console.log('NODE_ERROR_' + (error.code || error.mess
   log "  Step 3: Verify curl remains blocked by the Jira preset..."
   local curl_before
   curl_before=$(sandbox_exec "set +e
-OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 https://auth.atlassian.com 2>&1)
+OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 ${curl_probe_url} 2>&1)
 RC=\$?
 echo \"\$OUT CURL_RC_\$RC\"
 " 2>&1) || true
   log "  Curl before explicit approval: $curl_before"
 
-  if echo "$curl_before" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+  if echo "$curl_before" | grep -qE "CURL_STATUS_[1-9][0-9][0-9]" \
+    && ! echo "$curl_before" | grep -qE "CURL_STATUS_403.*CURL_APPCONNECT_0(\.0+)?( |$)"; then
     fail "TC-NET-08: Curl pre-approval" "curl reached Atlassian without explicit approval ($curl_before)"
     return
   elif echo "$curl_before" | grep -qE "CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden"; then
@@ -584,9 +586,9 @@ echo \"\$OUT CURL_RC_\$RC\"
     return
   fi
 
-  log "  Step 4: Explicitly allow curl to auth.atlassian.com via OpenShell policy update..."
+  log "  Step 4: Explicitly allow curl to api.atlassian.com via OpenShell policy update..."
   if ! openshell policy update "$SANDBOX_NAME" \
-    --add-endpoint auth.atlassian.com:443:read-only:rest:enforce \
+    --add-endpoint api.atlassian.com:443:read-only:rest:enforce \
     --binary /usr/bin/curl \
     --binary /usr/local/bin/curl \
     --wait 2>&1 | tee -a "$LOG_FILE"; then
@@ -598,13 +600,17 @@ echo \"\$OUT CURL_RC_\$RC\"
   log "  Step 5: Verify curl reaches Atlassian after explicit approval..."
   local curl_after
   curl_after=$(sandbox_exec "set +e
-OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code}' --max-time 10 https://auth.atlassian.com 2>&1)
+rm -f /tmp/nemoclaw-jira-curl-body
+OUT=\$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 ${curl_probe_url} 2>&1)
 RC=\$?
-echo \"\$OUT CURL_RC_\$RC\"
+printf '%s CURL_RC_%s CURL_BODY_' \"\$OUT\" \"\$RC\"
+head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
+printf '\n'
 " 2>&1) || true
   log "  Curl after explicit approval: $curl_after"
 
-  if echo "$curl_after" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+  if echo "$curl_after" | grep -qE "CURL_STATUS_401" \
+    && echo "$curl_after" | grep -qE "Unauthorized|unauthorized"; then
     pass "TC-NET-08: curl reaches Atlassian after explicit approval ($curl_after)"
   else
     fail "TC-NET-08: Curl post-approval" "curl did not reach Atlassian after explicit approval ($curl_after)"

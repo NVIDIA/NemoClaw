@@ -11,12 +11,16 @@ content:
 skill:
   priority: 10
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 This page explains which parts of a running NemoClaw sandbox can change immediately and which changes require a rebuild or re-onboard.
 
 ## What you can change at runtime
 
 NemoClaw applies its security posture in three layers — what is baked into the sandbox image at onboard, what is hot-reloadable on the running sandbox, and what requires a rebuild or re-onboard.
 The table below maps each commonly changed item to the layer that owns it and the command that changes it.
+
+<AgentOnly variant="openclaw">
 
 | Item | When the change takes effect | How to change it |
 |---|---|---|
@@ -38,13 +42,51 @@ The table below maps each commonly changed item to the layer that owns it and th
 
 If a row above conflicts with what you observe, the runtime source of truth inside the sandbox is `/opt/nemoclaw/openclaw.json`; the host registry caches metadata but the image and OpenClaw read from the in-sandbox file.
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+| Item | When the change takes effect | How to change it |
+|---|---|---|
+| Inference provider (cloud, NVIDIA Endpoints, local Ollama / vLLM, compatible-endpoint, …) | Runtime route changes apply immediately; rebuild if you need to rebake model metadata into the image | `nemohermes inference set` for route changes, or `nemohermes <name> rebuild` after changing build-time settings |
+| Inference model on the current provider | Hot-reloadable through the Hermes config sync path | `nemohermes inference set` |
+| Agent runtime (Hermes vs OpenClaw) | Re-onboard required (the agent and its state layout are baked at onboard) | `nemohermes onboard --recreate-sandbox` or `nemoclaw onboard --agent openclaw --recreate-sandbox` |
+| Network policy preset (slack, discord, telegram, brave, …) | Runtime — applies on the next request; rebuild only required if the preset adds bind-mounted secrets | `nemohermes <name> policy-add <preset>` / `policy-remove <preset>` |
+| Network allow-list (custom hosts) | Runtime — picks up at next request | `openshell policy set` or interactive approval prompt at the gateway |
+| Channel tokens (Slack / Discord / Telegram bot credentials) | Rebuild required (tokens are baked into the sandbox image at onboard so they never leave the host clear-text) | `nemohermes <name> channels add <channel>` then accept the rebuild prompt |
+| Channel enable/disable (turn a configured channel off without removing the token) | Rebuild required (`/sandbox/.hermes/.env` and Hermes config are baked at image build time) | `nemohermes <name> channels stop <channel>` then rebuild |
+| API/dashboard forward port | Runtime — port is re-resolved on next `connect` | `nemohermes <name> connect` or `openshell forward start` |
+| Filesystem layout (Landlock zones, read-only mounts, container caps) | **Locked at creation** — no runtime change | Re-onboard with `nemohermes onboard --recreate-sandbox` |
+| Sandbox name | **Locked at creation** | Re-onboard with a different `--name` |
+| GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
+| Hermes `config.yaml` keys | Mixed. Inference keys can be patched by `nemohermes inference set`; image, policy, and channel changes still require rebuild. | Prefer NemoClaw host commands so the host registry and rebuilt image stay aligned |
+
+If a row above conflicts with what you observe, the runtime source of truth for
+Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host
+registry caches metadata but the image and Hermes runtime read from the
+in-sandbox files.
+
+</AgentOnly>
+
 ## See also
 
 The mutability table above is a consolidated index of information that lives in more detail on per-topic pages:
 
-- [Manage Sandbox Lifecycle](/manage-sandboxes/lifecycle) — full rebuild / re-onboard / upgrade workflow.
-- [Switch Inference Providers](/inference/switch-inference-providers) — the rebuild path for provider and model changes.
-- [Customize Network Policy](/network-policy/customize-network-policy) and [Approve Network Requests](/network-policy/approve-network-requests) — runtime policy editing and operator approval flow.
-- [Security Best Practices](/security/best-practices) — the per-attack-surface posture table that this page complements.
-- [OpenClaw Security Controls](/security/openclaw-controls) — application-layer controls that operate independently of NemoClaw.
-- [CLI Commands Reference](/reference/commands) — full flag surface for every `nemoclaw` command, including the env vars that affect runtime behavior.
+<AgentOnly variant="openclaw">
+
+- [Manage Sandbox Lifecycle](lifecycle) — full rebuild / re-onboard / upgrade workflow.
+- [Switch Inference Providers](../inference/switch-inference-providers) — the rebuild path for provider and model changes.
+- [Customize Network Policy](../network-policy/customize-network-policy) and [Approve Network Requests](../network-policy/approve-network-requests) — runtime policy editing and operator approval flow.
+- [Security Best Practices](../security/best-practices) — the per-attack-surface posture table that this page complements.
+- [OpenClaw Security Controls](../security/openclaw-controls) — application-layer controls that operate independently of NemoClaw.
+- [CLI Commands Reference](../reference/commands) — full flag surface for every `nemoclaw` command, including the env vars that affect runtime behavior.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- [Manage Sandbox Lifecycle](lifecycle) — full rebuild / re-onboard / upgrade workflow.
+- [Switch Inference Providers](../inference/switch-inference-providers) — the runtime route and rebuild paths for provider and model changes.
+- [Customize Network Policy](../network-policy/customize-network-policy) and [Approve Network Requests](../network-policy/approve-network-requests) — runtime policy editing and operator approval flow.
+- [Security Best Practices](../security/best-practices) — the per-attack-surface posture table that this page complements.
+- [CLI Commands Reference](../reference/commands) — full flag surface for every `nemohermes` and `nemoclaw` command, including the env vars that affect runtime behavior.
+
+</AgentOnly>
