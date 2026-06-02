@@ -1645,7 +1645,8 @@ Field rules:
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
 - `subagents.maxSpawnDepth` must be a non-negative integer; set to `0` to forbid further spawning.
 - `default: true` is rejected because the primary agent is the only default.
-- Allowed fields per entry: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
+- Allowed entry fields: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`. Any other key fails the image build (no implicit credential or env pass-through).
+- Allowed `tools` fields: `profile`, `allow`, `deny`. Allowed `subagents` fields: `maxSpawnDepth`. Any other nested key fails the image build.
 
 Example:
 

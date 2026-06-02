@@ -476,7 +476,6 @@ const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 // chowns them sandbox:sandbox on first boot. The legacy /sandbox/.openclaw-data
 // path is migrated away on start, so it cannot host live agent state.
 const AGENT_DATA_ROOT = "/sandbox/.openclaw";
-const AGENT_DATA_ROOT_RESOLVED = resolve(AGENT_DATA_ROOT);
 
 // Per-agent paths must land in the canonical sandbox layout the runtime
 // startup script provisions and the sandbox isolation policy expects:
@@ -492,13 +491,51 @@ function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
   return resolve(AGENT_DATA_ROOT, segment);
 }
 
-function validateExtraAgentTools(entry: JsonObject, label: string): void {
+// Allowlisted operator-supplied keys for a secondary-agent entry. The
+// validator copies only these keys into the baked openclaw.json so an
+// unknown or credential-like field added by mistake cannot be carried into
+// the image (e.g. a stray `apiKey`, `token`, or `env`). Each nested object
+// has its own allowlist below — the top-level filter alone is not enough,
+// because operators could still smuggle `tools.apiKey` or
+// `subagents.token` into the baked config.
+const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
+  "id",
+  "workspace",
+  "agentDir",
+  "tools",
+  "subagents",
+  "description",
+]);
+const ALLOWED_TOOLS_KEYS = new Set<string>(["profile", "allow", "deny"]);
+const ALLOWED_SUBAGENTS_KEYS = new Set<string>(["maxSpawnDepth"]);
+
+function rejectUnknownKeys(obj: JsonObject, allowed: Set<string>, label: string): void {
+  const unknown = Object.keys(obj).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${label} contains unsupported field(s): ${unknown.sort().join(", ")}. Allowed: ${[...allowed].sort().join(", ")}.`,
+    );
+  }
+}
+
+function pickAllowed(obj: JsonObject, allowed: Set<string>): JsonObject {
+  const out: JsonObject = {};
+  for (const key of allowed) {
+    if (key in obj) {
+      out[key] = obj[key];
+    }
+  }
+  return out;
+}
+
+function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
   const tools = entry.tools;
   if (!isObject(tools)) {
     throw new Error(
       `${label}.tools must be an object describing the per-agent tool policy (profile/allow/deny). Nothing is granted implicitly.`,
     );
   }
+  rejectUnknownKeys(tools, ALLOWED_TOOLS_KEYS, `${label}.tools`);
   const allow = tools.allow;
   const deny = tools.deny;
   const hasAllow = Array.isArray(allow) && allow.length > 0;
@@ -517,52 +554,27 @@ function validateExtraAgentTools(entry: JsonObject, label: string): void {
       );
     }
   }
+  if (tools.profile !== undefined && typeof tools.profile !== "string") {
+    throw new Error(`${label}.tools.profile must be a string when present.`);
+  }
+  return pickAllowed(tools, ALLOWED_TOOLS_KEYS);
 }
 
-function validateExtraAgentSubagents(entry: JsonObject, label: string): void {
+function validateExtraAgentSubagents(entry: JsonObject, label: string): JsonObject {
   const subagents = entry.subagents;
   if (!isObject(subagents)) {
     throw new Error(
       `${label}.subagents must be an object containing maxSpawnDepth. Set maxSpawnDepth: 0 to forbid further spawning.`,
     );
   }
+  rejectUnknownKeys(subagents, ALLOWED_SUBAGENTS_KEYS, `${label}.subagents`);
   const depth = subagents.maxSpawnDepth;
   if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
     throw new Error(
       `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
     );
   }
-}
-
-// Allowlisted operator-supplied keys for a secondary-agent entry. The
-// validator copies only these keys into the baked openclaw.json so an
-// unknown or credential-like field added by mistake cannot be carried into
-// the image (e.g. a stray `apiKey`, `token`, or `env`). Extending the schema
-// must be a deliberate edit of this list, never an implicit pass-through.
-const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
-  "id",
-  "workspace",
-  "agentDir",
-  "tools",
-  "subagents",
-  "description",
-  "model",
-]);
-
-function pickAllowedExtraAgentFields(entry: JsonObject, label: string): JsonObject {
-  const unknown = Object.keys(entry).filter((key) => !ALLOWED_EXTRA_AGENT_KEYS.has(key));
-  if (unknown.length > 0) {
-    throw new Error(
-      `${label} contains unsupported field(s): ${unknown.sort().join(", ")}. Allowed: ${[...ALLOWED_EXTRA_AGENT_KEYS].sort().join(", ")}.`,
-    );
-  }
-  const out: JsonObject = {};
-  for (const key of ALLOWED_EXTRA_AGENT_KEYS) {
-    if (key in entry) {
-      out[key] = entry[key];
-    }
-  }
-  return out;
+  return pickAllowed(subagents, ALLOWED_SUBAGENTS_KEYS);
 }
 
 function validateExtraAgents(value: unknown): JsonObject[] {
@@ -595,6 +607,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
       throw new Error(`${label}.id "${id}" is duplicated; agent ids must be unique`);
     }
     seenIds.add(id);
+    const canonicalPaths: Record<string, string> = {};
     for (const pathKey of ["workspace", "agentDir"] as const) {
       const pathValue = entry[pathKey];
       if (typeof pathValue !== "string" || pathValue.length === 0) {
@@ -611,15 +624,33 @@ function validateExtraAgents(value: unknown): JsonObject[] {
           `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,
         );
       }
+      canonicalPaths[pathKey] = expected;
     }
     if (entry.default === true) {
       throw new Error(
         `${label}.default cannot be true; the primary "${MAIN_AGENT_ID}" agent is always the default`,
       );
     }
-    validateExtraAgentTools(entry, label);
-    validateExtraAgentSubagents(entry, label);
-    return pickAllowedExtraAgentFields(entry, label);
+    rejectUnknownKeys(entry, ALLOWED_EXTRA_AGENT_KEYS, label);
+    const tools = validateExtraAgentTools(entry, label);
+    const subagents = validateExtraAgentSubagents(entry, label);
+    // Build the canonical entry from a fresh object, never from the raw
+    // operator input. This guarantees:
+    //   - workspace/agentDir are the canonical strings (a dot-segment-laden
+    //     path that resolves to the canonical target is normalised before
+    //     bake, matching what provision_agent_workspaces parses);
+    //   - only allowlisted keys reach the image, at every nesting level.
+    const canonical: JsonObject = {
+      id,
+      workspace: canonicalPaths.workspace,
+      agentDir: canonicalPaths.agentDir,
+      tools,
+      subagents,
+    };
+    if (typeof entry.description === "string") {
+      canonical.description = entry.description;
+    }
+    return canonical;
   });
 }
 

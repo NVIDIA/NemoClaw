@@ -1136,7 +1136,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
   });
 
-  it("rejects extras that include unsupported fields (no implicit pass-through)", () => {
+  it("rejects extras that include unsupported top-level fields (no implicit pass-through)", () => {
     expectBuildConfigError(
       {
         NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
@@ -1145,6 +1145,57 @@ describe("generate-openclaw-config.mts: config generation", () => {
       },
       /contains unsupported field\(s\): apiKey/,
     );
+  });
+
+  it("rejects extras that smuggle credential-like keys inside tools", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: { ...TOOLS_OK, apiKey: "x" } }),
+        ]),
+      },
+      /\.tools contains unsupported field\(s\): apiKey/,
+    );
+  });
+
+  it("rejects extras that smuggle credential-like keys inside subagents", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: { ...SUBAGENTS_OK, token: "x" } }),
+        ]),
+      },
+      /\.subagents contains unsupported field\(s\): token/,
+    );
+  });
+
+  it("rejects extras with an operator-supplied model override (currently unsupported)", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ model: { primary: "evil/model" } }),
+        ]),
+      },
+      /contains unsupported field\(s\): model/,
+    );
+  });
+
+  it("emits canonical paths for workspace/agentDir even when operator input contains dot segments", () => {
+    // Resolves to the canonical /sandbox/.openclaw/workspace-research path,
+    // but the operator-supplied string is the dot-segment form. The bake
+    // must write the canonical string so the runtime
+    // `provision_agent_workspaces` parser (which only matches direct
+    // `/sandbox/.openclaw/workspace-*`) still recognises it.
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        makeExtra({
+          workspace: "/sandbox/.openclaw/foo/../workspace-research",
+          agentDir: "/sandbox/.openclaw/bar/../agents/research",
+        }),
+      ]),
+    });
+    expect(config.agents.list[1].workspace).toBe("/sandbox/.openclaw/workspace-research");
+    expect(config.agents.list[1].agentDir).toBe("/sandbox/.openclaw/agents/research");
   });
 
   it("strips operator entries to the allowlist when writing agents.list", () => {
