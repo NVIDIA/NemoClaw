@@ -16,7 +16,7 @@ import { AgentCli, AgentOnly } from "../_components/AgentGuide";
 NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside OpenShell containers.
 NemoClaw provides onboarding, lifecycle management, and agent operations for supported runtimes in OpenShell sandboxes.
 It incorporates policy-based privacy and security guardrails, giving you control over your agents' behavior and data handling.
-This enables self-evolving agents to run more safely in clouds, on-prem, RTX PCs, and DGX Spark.
+These controls help self-evolving agents run more safely in clouds, on-premises environments, RTX PCs, and DGX Spark.
 
 NemoClaw pairs hosted models on inference providers or local endpoints with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
@@ -50,15 +50,15 @@ NemoClaw provides the following benefits to mitigate these risks.
 
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
-| Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. No access is granted by default. |
-| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](../inference/inference-options).          |
-| Declarative network policy | Egress rules are defined in YAML. Unknown hosts are blocked and surfaced to the operator for approval.                 |
+| Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. The sandbox grants no access by default. |
+| Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](../inference/inference-options).          |
+| Declarative network policy | YAML defines egress rules. OpenShell blocks unknown hosts and surfaces them to the operator for approval.                 |
 | Single CLI                 | The <AgentCli /> command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
 
 ## Use Cases
 
-You can use NemoClaw for various use cases including the following.
+You can use NemoClaw for use cases such as the following.
 
 | Use Case                  | Description                                                                                  |
 |---------------------------|----------------------------------------------------------------------------------------------|
