@@ -47,4 +47,29 @@ describe("parseGatewayCallEnvelope", () => {
     );
     expect(env?.result).toEqual({ ok: true });
   });
+
+  it("prefers the gateway envelope even when an unrelated JSON line trails it", () => {
+    // Regression for PR #4615 advisor finding: previously the parser picked
+    // the last JSON-shaped line on stdout. If a debug log line emits a JSON
+    // object after the envelope, that unrelated object should not be returned
+    // in place of the real envelope.
+    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+      [
+        '{"result":{"ok":true,"key":"agent:main:main"}}',
+        '{"level":"debug","msg":"gateway call complete"}',
+      ].join("\n"),
+    );
+    expect(env?.result).toEqual({ ok: true, key: "agent:main:main" });
+  });
+
+  it("returns null when no line carries the envelope contract", () => {
+    // Plain JSON without `result`/`error` keys is not a gateway envelope and
+    // must be rejected rather than coerced into one.
+    expect(parseGatewayCallEnvelope('{"foo":"bar"}')).toBeNull();
+    expect(
+      parseGatewayCallEnvelope(
+        ['{"level":"info","msg":"starting"}', '{"foo":"bar"}'].join("\n"),
+      ),
+    ).toBeNull();
+  });
 });

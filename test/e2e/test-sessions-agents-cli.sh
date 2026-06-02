@@ -6,7 +6,8 @@
 # test-sessions-agents-cli.sh
 # NemoClaw `sessions` and `agents` subcommand E2E tests
 #
-# Covers the host-side CLI surface added for issue #834:
+# Covers the host-side CLI surface for the sandbox `sessions` and `agents`
+# subcommand groups:
 #   TC-SESS-01: `nemoclaw <name> sessions --json`
 #               (parent default = `openclaw sessions` list)
 #   TC-SESS-02: `nemoclaw <name> sessions list --json`
@@ -191,17 +192,35 @@ test_sessions_list_after_reset() {
 
 test_agents_add_passthrough() {
   section "TC-AGENT-01: agents add ${TEST_AGENT_ID} (passthrough wizard)"
-  if ! nemoclaw "$SANDBOX_NAME" agents add "$TEST_AGENT_ID" --non-interactive 2>&1; then
-    skip "TC-AGENT-01: agents add reported a non-zero exit; OpenClaw add wizard may require interactive prompts in this environment"
-    return 0
+  local add_out
+  if ! add_out="$(nemoclaw "$SANDBOX_NAME" agents add "$TEST_AGENT_ID" --non-interactive 2>&1)"; then
+    fail "TC-AGENT-01: agents add ${TEST_AGENT_ID} exited non-zero"
+    info "$add_out"
+    return 1
   fi
-  pass "TC-AGENT-01: agents add ${TEST_AGENT_ID} passthrough succeeded"
+  # Assert the agent landed in the in-sandbox OpenClaw agents store. We use
+  # the host-side `sessions list --agent <id>` gateway call because it is the
+  # exact path real users hit and it fails if OpenClaw does not know the
+  # agent. A passthrough exit status alone is not sufficient evidence that
+  # `agents add` actually created the agent.
+  local list_out
+  if ! list_out="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>&1)"; then
+    fail "TC-AGENT-01: agent '${TEST_AGENT_ID}' not visible via sessions list after add"
+    info "$list_out"
+    return 1
+  fi
+  if ! is_valid_json "$list_out"; then
+    fail "TC-AGENT-01: sessions list --agent '${TEST_AGENT_ID}' did not return parseable JSON after add"
+    info "$list_out"
+    return 1
+  fi
+  pass "TC-AGENT-01: agents add ${TEST_AGENT_ID} passthrough created the agent"
 }
 
 seed_agent_session() {
   section "Seed session for agent '${TEST_AGENT_ID}'"
   if ! nemoclaw "$SANDBOX_NAME" exec -- openclaw agent --agent "$TEST_AGENT_ID" -m "ping" 2>&1; then
-    skip "seed: agent '${TEST_AGENT_ID}' invocation failed; sessions delete coverage will be skipped"
+    fail "seed: agent '${TEST_AGENT_ID}' invocation failed after agents add succeeded"
     return 1
   fi
   pass "seed: sent one prompt to agent '${TEST_AGENT_ID}'"
@@ -214,25 +233,44 @@ test_sessions_delete_non_main() {
     | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key') and not s['key'].endswith(':main')), ''))" \
       2>/dev/null || true)"
   if [ -z "$key" ]; then
-    skip "TC-SESS-05: no non-main session found for agent '${TEST_AGENT_ID}'; gateway refuses deleting main"
-    return 0
+    fail "TC-SESS-05: no non-main session key found for agent '${TEST_AGENT_ID}'; expected the seeded prompt to create one"
+    return 1
   fi
   if ! nemoclaw "$SANDBOX_NAME" sessions delete "$key" --json 2>&1; then
     fail "TC-SESS-05: sessions delete ${key} exited non-zero"
     return 1
   fi
-  pass "TC-SESS-05: sessions delete ${key} succeeded"
+  # Assert the deleted key really is gone, not just that delete returned 0.
+  local after_keys
+  after_keys="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null \
+    | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print('\n'.join([s.get('key', '') for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', []))]))" \
+      2>/dev/null || true)"
+  if printf '%s\n' "$after_keys" | grep -Fxq "$key"; then
+    fail "TC-SESS-05: session key '${key}' still present after delete"
+    return 1
+  fi
+  pass "TC-SESS-05: sessions delete ${key} succeeded and the key is gone"
 }
 
 test_agents_delete_passthrough() {
   section "TC-AGENT-02: agents delete ${TEST_AGENT_ID} --force --json"
   local out
-  out="$(nemoclaw "$SANDBOX_NAME" agents delete "$TEST_AGENT_ID" --force --json 2>&1)" || {
-    skip "TC-AGENT-02: agents delete reported non-zero; will tolerate when the agent was never created"
+  if ! out="$(nemoclaw "$SANDBOX_NAME" agents delete "$TEST_AGENT_ID" --force --json 2>&1)"; then
+    fail "TC-AGENT-02: agents delete ${TEST_AGENT_ID} exited non-zero"
     info "$out"
-    return 0
-  }
-  pass "TC-AGENT-02: agents delete ${TEST_AGENT_ID} passthrough succeeded"
+    return 1
+  fi
+  # Assert the agent is actually gone: a follow-up `sessions list --agent <id>`
+  # should no longer return a valid JSON listing for it. A successful exit on
+  # the delete call alone does not prove the agent was removed.
+  local follow_out
+  if follow_out="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>&1)" \
+      && is_valid_json "$follow_out"; then
+    fail "TC-AGENT-02: agent '${TEST_AGENT_ID}' still visible via sessions list after delete"
+    info "$follow_out"
+    return 1
+  fi
+  pass "TC-AGENT-02: agents delete ${TEST_AGENT_ID} passthrough removed the agent"
 }
 
 preflight
@@ -249,11 +287,11 @@ else
   skip "TC-SESS-04: skipped (seed_main_session failed)"
 fi
 
-if test_agents_add_passthrough; then
-  if seed_agent_session; then
-    test_sessions_delete_non_main
-  fi
-  test_agents_delete_passthrough
-fi
+# Agents add/delete and non-main session delete are feature-critical for this
+# CLI surface — any failure must fail the whole job rather than be skipped.
+test_agents_add_passthrough
+seed_agent_session
+test_sessions_delete_non_main
+test_agents_delete_passthrough
 
 print_summary

@@ -4,9 +4,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
-  type PublicTranslationResult,
 } from "./public-argv-translation";
 import { SANDBOX_ROUTE_OVERRIDES, sandboxRouteTokens } from "./public-route-metadata";
 
@@ -304,21 +304,47 @@ describe("translatePublicSandboxArgv", () => {
     );
   });
 
-  it("routes agents to parent help for empty or flag-only args without a runnable parent", () => {
-    // sandbox:agents has no top-level runnable; empty and flag-leading args
-    // must land on the parent help screen rather than a synthesised
-    // `sandbox:agents:--<flag>` subcommand.
+  it("routes agents to the non-strict parent command for empty or flag-only args", () => {
+    // sandbox:agents is a non-strict parent that owns the help screen itself;
+    // the translator must dispatch to the registered parent command id rather
+    // than synthesising a `sandbox:agents:--<flag>` subcommand that oclif
+    // cannot resolve.
     expectNative(
       translatePublicSandboxArgv("alpha", "agents", []),
       "sandbox:agents",
-      ["--help"],
-      ["sandbox", "agents", "--help"],
+      ["alpha"],
     );
     expectNative(
       translatePublicSandboxArgv("alpha", "agents", ["--json"]),
       "sandbox:agents",
+      ["alpha", "--json"],
+    );
+  });
+
+  it("routes agents help tokens to parent help", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["--help"]),
+      "sandbox:agents",
       ["--help"],
       ["sandbox", "agents", "--help"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["help"]),
+      "sandbox:agents",
+      ["--help"],
+      ["sandbox", "agents", "--help"],
+    );
+  });
+
+  it("requires sandbox:agents to be a registered non-strict oclif parent", async () => {
+    // Dispatch guard: translator returns `sandbox:agents` for parent
+    // invocations; oclif must be able to resolve that id and run the parent
+    // command. A regression that deletes `src/commands/sandbox/agents.ts`
+    // would make every `nemoclaw <name> agents`/`agents --help` invocation
+    // fail with an unknown-command error.
+    const metadataModule = await import("./oclif-metadata");
+    const metadata = metadataModule.getRegisteredOclifCommandMetadata("sandbox:agents");
+    expect(metadata, "sandbox:agents must be a registered oclif command").not.toBeNull();
+    expect(metadata?.strict).toBe(false);
   });
 });

@@ -494,7 +494,7 @@ jobs:
         /tmp/nemoclaw-e2e-install.log
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-sessions-agents-cli"}'
       nvidia_api_key: true
-      github_token: true
+      github_token: false
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}

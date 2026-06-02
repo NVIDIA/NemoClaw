@@ -32,6 +32,23 @@ export function printAgentsPassthroughHelp(verb: AgentsPassthroughVerb): void {
   console.log("");
 }
 
+export function printAgentsParentHelp(): void {
+  console.log("");
+  console.log(`  Usage: ${CLI_NAME} <name> agents <subcommand> [openclaw-agents-flags...]`);
+  console.log("");
+  console.log(
+    "  Manage OpenClaw agents inside the sandbox. The parent command itself has no",
+  );
+  console.log(
+    "  runnable default; pick one of the subcommands below or pass `--help` for details.",
+  );
+  console.log("");
+  console.log("  Subcommands:");
+  console.log("    add       Add an OpenClaw agent in the sandbox.");
+  console.log("    delete    Delete an OpenClaw agent in the sandbox.");
+  console.log("");
+}
+
 export async function runAgentsPassthrough(
   sandboxName: string,
   { verb, extraArgs = [] }: AgentsPassthroughOptions,
