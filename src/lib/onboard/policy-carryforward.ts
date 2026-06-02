@@ -64,3 +64,34 @@ export function decidePolicyCarryForward(
   }
   return { newPresets: null, overrideNote: null };
 }
+
+// True when a non-interactive run sets an env override that should replace the
+// sandbox's recorded policy selection (NEMOCLAW_POLICY_PRESETS, or an explicit
+// NEMOCLAW_POLICY_MODE). In interactive mode the recorded selection always wins.
+function envOverridesRecordedPolicies(env: PolicyEnv, nonInteractive: boolean): boolean {
+  if (!nonInteractive) return false;
+  if ((env.NEMOCLAW_POLICY_PRESETS ?? "").trim().length > 0) return true;
+  const mode = (env.NEMOCLAW_POLICY_MODE ?? "").trim().toLowerCase();
+  return EXPLICIT_POLICY_MODES.includes(mode);
+}
+
+// Decide the policy presets to seed into a *reused* sandbox's fresh onboard
+// session (`nemoclaw onboard --name <existing>` without --recreate-sandbox).
+//
+// Unlike decidePolicyCarryForward (the recreate path), this preserves an
+// intentionally-empty recorded selection (e.g. the Restricted tier, or all tier
+// presets deselected): an empty array is carried forward as `[]` so the policy
+// step reapplies "no presets" instead of falling back to the default Balanced
+// tier and re-adding presets the operator removed. `null`/absent recorded state
+// still yields `null` (let the policy step prompt). A non-interactive env
+// override (NEMOCLAW_POLICY_PRESETS / NEMOCLAW_POLICY_MODE) still wins and
+// returns `null` so the override drives the selection. See #4621.
+export function decideReusePolicyPresets(
+  recordedAppliedPresets: string[] | null | undefined,
+  env: PolicyEnv,
+  nonInteractive: boolean,
+): string[] | null {
+  if (!Array.isArray(recordedAppliedPresets)) return null;
+  if (envOverridesRecordedPolicies(env, nonInteractive)) return null;
+  return recordedAppliedPresets;
+}

@@ -223,6 +223,18 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
+  it("enables streaming usage for ollama-local behind the managed inference route", () => {
+    expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen3.6:35b`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsUsageInStreaming: true,
+      },
+    });
+  });
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     expect(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
