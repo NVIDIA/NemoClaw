@@ -2,24 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import {
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../../adapters/openshell/gateway-drift";
+import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
-import { parseGatewayInference } from "../../inference/config";
-import {
-  type ProviderHealthProbeOptions,
-  type ProviderHealthStatus,
-  probeProviderHealth,
-} from "../../inference/health";
+import { type ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
@@ -31,27 +19,44 @@ import {
 } from "../../state/sandbox-session";
 import { getSandboxDockerRuntime } from "./docker-health";
 import {
-  classifyGatewayFailure,
-  getLayerHeader,
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
-  getReconciledSandboxGatewayState,
-  getSandboxGatewayStateForStatus,
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
+import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import { collectSandboxStatusSnapshot } from "./status-snapshot";
 import {
-  isSandboxGatewayRunningForStatus,
-  probeSandboxInferenceGatewayHealth,
-} from "./process-recovery";
+  getSandboxStatusPreflight,
+  printGatewayFailureLayerHeader,
+  printSandboxStatusPreflightHeader,
+  withoutTerminalPhasePreflight,
+} from "./status-preflight";
 
-type ProbeProviderHealth = (
-  provider: string,
-  options?: ProviderHealthProbeOptions,
-) => ProviderHealthStatus | null;
+export {
+  classifySandboxContainerFailureForStatus,
+  classifySandboxStatusPreflightFailure,
+  isDockerDaemonUnreachableForStatus,
+  getSandboxStatusPreflight,
+  printGatewayFailureLayerHeader,
+  printSandboxStatusPreflightHeader,
+  withoutTerminalPhasePreflight,
+  type ClassifySandboxStatusPreflightFailureDeps,
+  type SandboxStatusFailureLayer,
+  type SandboxStatusPreflightFailure,
+  type SandboxStatusPreflightResult,
+} from "./status-preflight";
+export {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusInferenceHealth,
+  getSandboxStatusReport,
+  maybeGetSandboxStatusInferenceHealth,
+  type SandboxStatusReport,
+  type SandboxStatusSnapshot,
+} from "./status-snapshot";
 
 /**
  * Returns true when status can validate a cached agent version against the running sandbox.
@@ -61,156 +66,6 @@ function shouldProbeSandboxRuntimeVersion(
   sandbox: registry.SandboxEntry,
 ): boolean {
   return lookup.state === "present" && Boolean(sandbox.agentVersion);
-}
-
-export function getSandboxStatusInferenceHealth(
-  gatewayPresent: boolean,
-  currentProvider: unknown,
-  currentModel: unknown,
-  probeProviderHealthImpl: ProbeProviderHealth = probeProviderHealth,
-): ProviderHealthStatus | null {
-  if (!gatewayPresent || typeof currentProvider !== "string") return null;
-  return probeProviderHealthImpl(currentProvider, {
-    model: typeof currentModel === "string" ? currentModel : undefined,
-  });
-}
-
-export interface SandboxStatusReport {
-  schemaVersion: 1;
-  name: string;
-  found: boolean;
-  model: string;
-  provider: string;
-  phase: string | null;
-  gatewayState: string;
-  inferenceHealth: ProviderHealthStatus | null;
-  rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
-  hostGpuDetected: boolean;
-  sandboxGpuEnabled: boolean;
-  sandboxGpuMode: string | null;
-  sandboxGpuDevice: string | null;
-  openshellDriver: string;
-  openshellVersion: string;
-  policies: string[];
-  /**
-   * Whether the resolved docker-driver sandbox container is paused
-   * (`docker pause`). `false` for non-docker-driver sandboxes or when no
-   * container is found. A paused container can report `Phase: Error`
-   * upstream while the sandbox is intact — see #4495.
-   */
-  dockerPaused: boolean;
-}
-
-interface SandboxStatusSnapshot {
-  sb: registry.SandboxEntry | null;
-  lookup: SandboxGatewayState;
-  rpcIssue: ReturnType<typeof detectOpenShellStateRpcResultIssue>;
-  currentModel: string;
-  currentProvider: string;
-  inferenceHealth: ProviderHealthStatus | null;
-}
-
-async function collectSandboxStatusSnapshot(
-  sandboxName: string,
-): Promise<SandboxStatusSnapshot> {
-  const sb = registry.getSandbox(sandboxName);
-  let lookup: SandboxGatewayState;
-  try {
-    lookup = await getReconciledSandboxGatewayState(sandboxName, {
-      getState: getSandboxGatewayStateForStatus,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    lookup = {
-      state: "gateway_error",
-      output: `  Could not probe live gateway state: ${message}`,
-    };
-  }
-  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
-  if (lookup.state === "present") {
-    try {
-      liveResult = await captureOpenshellForStatus(["inference", "get"]);
-    } catch {
-      liveResult = null;
-    }
-  }
-  const rpcIssue = liveResult ? detectOpenShellStateRpcResultIssue(liveResult) : null;
-  if (rpcIssue) {
-    return {
-      sb,
-      lookup,
-      rpcIssue,
-      currentModel: "unknown",
-      currentProvider: "unknown",
-      inferenceHealth: null,
-    };
-  }
-  const live =
-    liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
-  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
-  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth = getSandboxStatusInferenceHealth(
-    lookup.state === "present",
-    currentProvider,
-    currentModel,
-  );
-  if (
-    inferenceHealth &&
-    lookup.state === "present" &&
-    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
-  ) {
-    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
-    if (gatewayChain) {
-      const gatewaySubprobe: ProviderHealthStatus = {
-        ok: gatewayChain.ok,
-        probed: true,
-        providerLabel: "Inference gateway chain",
-        endpoint: gatewayChain.endpoint,
-        detail: gatewayChain.detail,
-        probeLabel: "gateway",
-        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
-      };
-      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
-    }
-  }
-  return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
-}
-
-export async function getSandboxStatusReport(
-  sandboxName: string,
-): Promise<SandboxStatusReport> {
-  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
-  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase =
-    lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
-  const sandboxGpuEnabled = sb
-    ? (sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true))
-    : false;
-  const policies =
-    sb && Array.isArray(sb.policies)
-      ? sb.policies.filter((policy): policy is string => typeof policy === "string")
-      : [];
-  return {
-    schemaVersion: 1,
-    name: sandboxName,
-    found: !!sb,
-    model: currentModel,
-    provider: currentProvider,
-    phase,
-    gatewayState: lookup.state,
-    inferenceHealth,
-    rpcIssue: rpcIssue ? { kind: rpcIssue.kind } : null,
-    hostGpuDetected: !!(sb && sb.hostGpuDetected),
-    sandboxGpuEnabled,
-    sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
-    sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
-    openshellDriver: (sb && sb.openshellDriver) || "unknown",
-    openshellVersion: (sb && sb.openshellVersion) || "unknown",
-    policies,
-    dockerPaused: !!dockerRuntime?.paused,
-  };
 }
 
 /**
@@ -256,11 +111,6 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   }
 }
 
-async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void> {
-  const failure = await classifyGatewayFailure(sandboxName);
-  console.log(`  ${getLayerHeader(failure.layer)}`);
-}
-
 function printMissingLiveSandboxStatusGuidance(
   sandboxName: string,
   lookup: SandboxGatewayState,
@@ -286,17 +136,26 @@ function printMissingLiveSandboxStatusGuidance(
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
+  const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
   // handles `gateway_error` by printing an actionable block + exit(1), so a
   // synthesized fallback keeps the user-visible contract intact.
-  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
+  const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
+    suppressInferenceProbe: preflight.suppressInferenceProbe,
+  });
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime =
     lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
+  printSandboxStatusPreflightHeader(effectivePreflight);
+  if (effectivePreflight.exitCode !== 0) {
+    process.exitCode = effectivePreflight.exitCode;
+  }
   maybeEnsureHermesToolGatewayBroker(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {
@@ -400,7 +259,6 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log("");
     }
     console.log(lookup.output);
-    const phase = parseSandboxPhase(lookup.output || "");
     if (phase && phase !== "Ready") {
       // A non-ready, non-terminal phase can mean two very different things. If
       // the Docker daemon is down, OpenShell can still return a present-but-
@@ -476,7 +334,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, effectivePreflight.failureLayer);
     console.log(
       `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
     );
@@ -492,7 +350,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, effectivePreflight.failureLayer);
     console.log(
       `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
     );
@@ -512,7 +370,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, effectivePreflight.failureLayer);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }
