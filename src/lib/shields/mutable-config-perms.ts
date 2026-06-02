@@ -46,8 +46,16 @@ export type MutableConfigPermsInspection =
       issues: string[];
     };
 
+// Why a repair was not applied:
+//   "agent"      — not an OpenClaw sandbox (contract does not apply)
+//   "locked"     — shields up; config is intentionally root-owned/locked (benign)
+//   "unreadable" — shields state is corrupt; posture unknown, so we refused to
+//                  touch permissions. The contract may still be broken — callers
+//                  must NOT treat this as benign.
+export type MutableConfigSkipReason = "agent" | "locked" | "unreadable";
+
 export type MutableConfigRepairResult =
-  | { applied: false; reason: string }
+  | { applied: false; skipReason: MutableConfigSkipReason; reason: string }
   | { applied: true; verified: boolean; errors: string[] };
 
 export function parseStatModeOwner(raw: string): { mode: string; owner: string } {
@@ -164,12 +172,23 @@ export function repairMutableConfigPerms(
   if (target.agentName !== "openclaw") {
     return {
       applied: false,
+      skipReason: "agent",
       reason: `agent ${target.agentName} does not use the mutable OpenClaw config contract`,
     };
   }
-  const blocked = postureBlocksMutableRepair(postureMode);
-  if (blocked) {
-    return { applied: false, reason: blocked };
+  if (postureMode === "locked") {
+    return {
+      applied: false,
+      skipReason: "locked",
+      reason: "shields are up (config is locked); refusing to weaken permissions",
+    };
+  }
+  if (postureMode === "error") {
+    return {
+      applied: false,
+      skipReason: "unreadable",
+      reason: "shields state unreadable; refusing to modify permissions",
+    };
   }
   try {
     applyMutableContract();

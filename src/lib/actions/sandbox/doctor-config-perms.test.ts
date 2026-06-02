@@ -107,6 +107,7 @@ describe("buildConfigPermsCheck (#4538)", () => {
     inspect.mockReturnValue(tightened);
     repair.mockReturnValue({
       applied: false,
+      skipReason: "locked",
       reason: "shields are up (config is locked)",
     });
     const check = buildConfigPermsCheck("alpha", true, deps());

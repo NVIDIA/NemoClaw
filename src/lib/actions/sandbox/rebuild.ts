@@ -884,11 +884,34 @@ export async function rebuildSandbox(
     // restored contract is not immediately undone. No-op for shields-up
     // sandboxes (config is intentionally root-owned/locked).
     log("Restoring mutable OpenClaw config permissions after post-restore config writes");
-    const permRepair = shields.repairMutableConfigPerms(sandboxName);
-    if (!permRepair.applied) {
-      // Deliberate no-op (shields up, or unreadable shields state): the config
-      // is intentionally root-owned/locked, not broken — do not downgrade.
-      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+    // The shields wrapper can throw before it returns a structured result
+    // (validateName, or getShieldsPosture triggering inline auto-restore). A
+    // thrown error here must not abort the rest of the rebuild — treat it as an
+    // unverified repair and continue.
+    let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
+    try {
+      permRepair = shields.repairMutableConfigPerms(sandboxName);
+    } catch (err) {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}⚠${R} Mutable config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (permRepair === null) {
+      // already handled above
+    } else if (!permRepair.applied) {
+      if (permRepair.skipReason === "unreadable") {
+        // Posture could not be determined, so the contract may still be broken.
+        // This is NOT a benign skip — surface it as incomplete.
+        mutablePermsRepairUnverified = true;
+        console.error(
+          `  ${YW}⚠${R} Mutable config permissions not restored: ${permRepair.reason}`,
+        );
+      } else {
+        // "locked" (shields up — config is intentionally root-owned/locked) or
+        // "agent": a deliberate no-op, not a broken contract. Do not downgrade.
+        log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+      }
     } else if (permRepair.verified) {
       console.log(`  ${G}✓${R} Mutable config permissions restored`);
     } else {

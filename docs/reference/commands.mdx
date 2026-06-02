@@ -481,14 +481,14 @@ If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/
 `doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding.
 Restarting the sandbox repairs the same drift automatically.
 
-```console
-$ nemoclaw my-assistant doctor [--json] [--fix]
+```bash
+nemoclaw my-assistant doctor [--json | --fix]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--json` | Emit the report as JSON |
-| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened |
+| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
 
 ### `nemoclaw <name> exec`
 

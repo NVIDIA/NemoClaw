@@ -193,20 +193,26 @@ describe("repairMutableConfigPerms (#4538)", () => {
     }
   });
 
-  it("refuses to weaken a shields-up lock and never applies", () => {
+  it("refuses to weaken a shields-up lock (benign skip) and never applies", () => {
     const apply = vi.fn();
     const result = repairMutableConfigPerms(OPENCLAW_TARGET, "locked", apply);
     expect(apply).not.toHaveBeenCalled();
     expect(result.applied).toBe(false);
-    if (!result.applied) expect(result.reason).toContain("locked");
+    if (!result.applied) {
+      expect(result.skipReason).toBe("locked");
+      expect(result.reason).toContain("locked");
+    }
   });
 
-  it("skips corrupt shields state and never applies", () => {
+  it("flags corrupt shields state as an unreadable (non-benign) skip", () => {
     const apply = vi.fn();
     const result = repairMutableConfigPerms(OPENCLAW_TARGET, "error", apply);
     expect(apply).not.toHaveBeenCalled();
     expect(result.applied).toBe(false);
-    if (!result.applied) expect(result.reason).toContain("unreadable");
+    if (!result.applied) {
+      expect(result.skipReason).toBe("unreadable");
+      expect(result.reason).toContain("unreadable");
+    }
   });
 
   it("does not apply to non-OpenClaw agents", () => {
@@ -218,5 +224,6 @@ describe("repairMutableConfigPerms (#4538)", () => {
     );
     expect(apply).not.toHaveBeenCalled();
     expect(result.applied).toBe(false);
+    if (!result.applied) expect(result.skipReason).toBe("agent");
   });
 });
