@@ -1038,7 +1038,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
           makeExtra({ workspace: "/etc/openclaw/workspace-research" }),
         ]),
       },
-      /must resolve under \/sandbox\/\.openclaw\//,
+      /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
     );
   });
 
@@ -1052,8 +1052,40 @@ describe("generate-openclaw-config.mts: config generation", () => {
           makeExtra({ workspace: "/sandbox/.openclaw/../../tmp/research" }),
         ]),
       },
-      /must resolve under \/sandbox\/\.openclaw\//,
+      /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
     );
+  });
+
+  it("rejects extras whose workspace points anywhere but the canonical workspace-<id> slot", () => {
+    // The runtime startup script provisions /sandbox/.openclaw/workspace-<id>
+    // as the per-agent workspace. Pointing at sibling paths (gateway state,
+    // openclaw.json, credentials/) blurs that isolation boundary.
+    for (const workspace of [
+      "/sandbox/.openclaw",
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw/credentials",
+      "/sandbox/.openclaw/workspace",
+      "/sandbox/.openclaw/workspace-other",
+    ]) {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace })]) },
+        /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
+      );
+    }
+  });
+
+  it("rejects extras whose agentDir points anywhere but the canonical agents/<id> slot", () => {
+    for (const agentDir of [
+      "/sandbox/.openclaw",
+      "/sandbox/.openclaw/agents",
+      "/sandbox/.openclaw/agents/other",
+      "/sandbox/.openclaw/openclaw.json",
+    ]) {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ agentDir })]) },
+        /agentDir must equal "\/sandbox\/\.openclaw\/agents\/research"/,
+      );
+    }
   });
 
   it("rejects extras that lack a tools policy", () => {
@@ -1102,6 +1134,66 @@ describe("generate-openclaw-config.mts: config generation", () => {
       { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
       /must decode to a JSON array/,
     );
+  });
+
+  it("rejects extras that include unsupported fields (no implicit pass-through)", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ apiKey: "leaking-secret-disguised-as-config" }),
+        ]),
+      },
+      /contains unsupported field\(s\): apiKey/,
+    );
+  });
+
+  it("strips operator entries to the allowlist when writing agents.list", () => {
+    // Even if the operator includes an unrecognised but harmless-looking
+    // field, the validator must drop it before it reaches the baked image.
+    // (The previous test confirms unknown fields fail; this test guards
+    // against an allowlist drift where an unknown field is accepted but a
+    // known one is dropped.)
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        {
+          id: "research",
+          workspace: "/sandbox/.openclaw/workspace-research",
+          agentDir: "/sandbox/.openclaw/agents/research",
+          tools: TOOLS_OK,
+          subagents: SUBAGENTS_OK,
+          description: "Researches things",
+        },
+      ]),
+    });
+    expect(config.agents.list[1]).toEqual({
+      id: "research",
+      workspace: "/sandbox/.openclaw/workspace-research",
+      agentDir: "/sandbox/.openclaw/agents/research",
+      tools: TOOLS_OK,
+      subagents: SUBAGENTS_OK,
+      description: "Researches things",
+    });
+  });
+
+  it("matches OpenClaw's resolveDefaultAgentId fallback shape for the baked list", () => {
+    // OpenClaw's resolver: pick the first entry with default === true; if
+    // none, fall back to agents[0]. Simulate that locally over the baked
+    // list to prove the bake satisfies the upstream contract today. The
+    // authoritative resolver still lives in the openclaw npm package; see
+    // agents/openclaw/manifest.yaml -> expected_version for the pinned tag.
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        makeExtra({ id: "research" }),
+        makeExtra({
+          id: "writing",
+          workspace: "/sandbox/.openclaw/workspace-writing",
+          agentDir: "/sandbox/.openclaw/agents/writing",
+        }),
+      ]),
+    });
+    const list: Array<{ id: string; default?: boolean }> = config.agents.list;
+    const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
+    expect(resolved).toBe("main");
   });
 
   it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {

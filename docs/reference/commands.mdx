@@ -1613,7 +1613,7 @@ OpenClaw-specific build-time agent configuration:
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
-| `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list` in the built OpenClaw config. See [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
+| `NEMOCLAW_EXTRA_AGENTS_JSON` | JSON array of OpenClaw secondary-agent entries | Adds secondary agents to `agents.list`; see [Extra OpenClaw agents](#extra-openclaw-agents) for the entry schema, path constraints, and validation rules. |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1640,10 +1640,12 @@ Malformed JSON or invalid entries fail the image build with a structured error.
 Field rules:
 
 - `id` must match `^[a-z][a-z0-9_-]{0,31}$` and must not be `main`.
-- `workspace` and `agentDir` must be absolute paths that resolve under `/sandbox/.openclaw/`.
+- `workspace` must equal `/sandbox/.openclaw/workspace-<id>` exactly.
+- `agentDir` must equal `/sandbox/.openclaw/agents/<id>` exactly.
 - `tools` must declare a non-empty `allow[]` or `deny[]`; nothing is implicitly granted.
 - `subagents.maxSpawnDepth` must be a non-negative integer; set to `0` to forbid further spawning.
 - `default: true` is rejected because the primary agent is the only default.
+- Allowed fields per entry: `id`, `workspace`, `agentDir`, `tools`, `subagents`, `description`, `model`. Any other key fails the image build (no implicit credential or env pass-through).
 
 Example:
 

@@ -31,7 +31,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -478,16 +478,18 @@ const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 const AGENT_DATA_ROOT = "/sandbox/.openclaw";
 const AGENT_DATA_ROOT_RESOLVED = resolve(AGENT_DATA_ROOT);
 
-function isInsideAgentDataRoot(pathValue: string): boolean {
-  const resolved = resolve(pathValue);
-  if (resolved === AGENT_DATA_ROOT_RESOLVED) {
-    return true;
-  }
-  const rel = relative(AGENT_DATA_ROOT_RESOLVED, resolved);
-  if (rel === "" || rel === ".") {
-    return true;
-  }
-  return !rel.startsWith("..") && !isAbsolute(rel);
+// Per-agent paths must land in the canonical sandbox layout the runtime
+// startup script provisions and the sandbox isolation policy expects:
+//   workspace -> /sandbox/.openclaw/workspace-<agent-id>
+//   agentDir  -> /sandbox/.openclaw/agents/<agent-id>
+// Allowing arbitrary descendants of /sandbox/.openclaw/ would let an
+// operator point an agent at the gateway state, the openclaw.json config,
+// or a credentials directory, bypassing per-agent isolation and the
+// `provision_agent_workspaces` helper that chowns `workspace-*` dirs to
+// the sandbox user on first boot.
+function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
+  const segment = kind === "workspace" ? `workspace-${id}` : `agents/${id}`;
+  return resolve(AGENT_DATA_ROOT, segment);
 }
 
 function validateExtraAgentTools(entry: JsonObject, label: string): void {
@@ -532,6 +534,37 @@ function validateExtraAgentSubagents(entry: JsonObject, label: string): void {
   }
 }
 
+// Allowlisted operator-supplied keys for a secondary-agent entry. The
+// validator copies only these keys into the baked openclaw.json so an
+// unknown or credential-like field added by mistake cannot be carried into
+// the image (e.g. a stray `apiKey`, `token`, or `env`). Extending the schema
+// must be a deliberate edit of this list, never an implicit pass-through.
+const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
+  "id",
+  "workspace",
+  "agentDir",
+  "tools",
+  "subagents",
+  "description",
+  "model",
+]);
+
+function pickAllowedExtraAgentFields(entry: JsonObject, label: string): JsonObject {
+  const unknown = Object.keys(entry).filter((key) => !ALLOWED_EXTRA_AGENT_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${label} contains unsupported field(s): ${unknown.sort().join(", ")}. Allowed: ${[...ALLOWED_EXTRA_AGENT_KEYS].sort().join(", ")}.`,
+    );
+  }
+  const out: JsonObject = {};
+  for (const key of ALLOWED_EXTRA_AGENT_KEYS) {
+    if (key in entry) {
+      out[key] = entry[key];
+    }
+  }
+  return out;
+}
+
 function validateExtraAgents(value: unknown): JsonObject[] {
   if (value === null || value === undefined) {
     return [];
@@ -572,9 +605,10 @@ function validateExtraAgents(value: unknown): JsonObject[] {
           `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
         );
       }
-      if (!isInsideAgentDataRoot(pathValue)) {
+      const expected = expectedAgentPath(pathKey, id);
+      if (resolve(pathValue) !== expected) {
         throw new Error(
-          `${label}.${pathKey} must resolve under ${AGENT_DATA_ROOT}/, got "${pathValue}"`,
+          `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,
         );
       }
     }
@@ -585,7 +619,7 @@ function validateExtraAgents(value: unknown): JsonObject[] {
     }
     validateExtraAgentTools(entry, label);
     validateExtraAgentSubagents(entry, label);
-    return entry;
+    return pickAllowedExtraAgentFields(entry, label);
   });
 }
 
