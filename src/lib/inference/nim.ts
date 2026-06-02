@@ -316,8 +316,7 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
-// First model id from a NIM/vLLM `GET /v1/models` body, or null if absent/
-// unparseable. NIM may serve a different id than NemoClaw's catalog name.
+// First model id from a NIM `/v1/models` body, or null if absent/unparseable.
 export function parseServedModelId(modelsJson: string): string | null {
   try {
     const doc = JSON.parse(modelsJson);
@@ -346,6 +345,17 @@ export function getServedModelId(port = VLLM_PORT): string | null {
     { ignoreError: true },
   );
   return out ? parseServedModelId(out) : null;
+}
+
+// Route to the id NIM serves (from its image config), which can differ from the
+// catalog name; the catalog id 404s on validation/routing. See #3885.
+export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT): string | null {
+  const served = getServedModelId(port);
+  if (served && served !== catalogModel) {
+    console.log(`  NIM serves "${served}" (catalog "${catalogModel}"); using served id.`);
+    return served;
+  }
+  return catalogModel;
 }
 
 export function detectGpu(): GpuDetection | null {
@@ -654,8 +664,7 @@ interface ManifestIndexDoc {
 }
 
 // Linux image-manifest digest for `ociArch` from `docker manifest inspect` JSON,
-// or null if not a multi-arch index / no match / unparseable. The arch+os match
-// also skips buildkit attestation manifests (platform unknown/unknown). See #3885.
+// or null if not a multi-arch index / no match. Arch+os match skips attestations.
 export function selectPlatformManifestDigest(
   manifestJson: string,
   ociArch: string,
@@ -680,8 +689,7 @@ export function selectPlatformManifestDigest(
   return null;
 }
 
-// Repository portion of an image ref, dropping `:tag`/`@digest`. Only a colon
-// in the final path segment counts as a tag, so `host:port/repo:tag` is safe.
+// Repository portion of an image ref, dropping `:tag`/`@digest` (port-safe).
 export function imageRepository(imageRef: string): string {
   const lastSlash = imageRef.lastIndexOf("/");
   const prefix = lastSlash === -1 ? "" : imageRef.slice(0, lastSlash + 1);
@@ -693,13 +701,10 @@ export function imageRepository(imageRef: string): string {
   return imageRef;
 }
 
-// Pull `image`, avoiding a NIM-on-NGC break: NIM `:latest` is a multi-arch index
-// bundling buildkit attestation manifests (unknown/unknown). Docker's containerd
-// image store (default on 29.x) pulls the arch layers, then fetches the
-// attestation manifest, which nvcr.io rejects ("Incorrect Repository Format") —
-// aborting after all layers, leaving no image. So resolve the index to the
-// host-arch digest and pull that single manifest (no index → no attestation
-// fetch). Fall back to a plain pull when the ref is not a resolvable index. #3885.
+// Pull `image` avoiding the NIM-on-NGC break: docker's containerd store fetches
+// the index's buildkit attestation manifest, which nvcr.io rejects ("Incorrect
+// Repository Format") after pulling all layers. Pull the host-arch manifest by
+// digest instead (no index walk); plain pull when not a resolvable index. #3885.
 function pullImageResolvingPlatform(image: string): void {
   let manifestJson = "";
   try {
@@ -793,18 +798,10 @@ export interface WaitForNimHealthOptions {
   container?: string;
 }
 
-// NIM first-load (in-container weight download + engine warmup) takes minutes,
-// longer for big models on unified-memory hosts; the 300s default times out
-// mid-load. Override with NEMOCLAW_NIM_HEALTH_TIMEOUT_SECONDS.
-export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
-export function resolveNimHealthTimeoutSeconds(raw?: string): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS;
-}
-
 export function waitForNimHealth(
   port = VLLM_PORT,
-  timeout = 300,
+  // First load (weight download + warmup) takes minutes, longer for big models.
+  timeout = 1200,
   opts: WaitForNimHealthOptions = {},
 ): boolean {
   const start = Date.now();
@@ -835,8 +832,8 @@ export function waitForNimHealth(
       /* ignored */
     }
     // Short-circuit if the container has already exited — typically NGC auth
-    // failure or OOM during model load. Without this, the wizard polls the
-    // full timeout (default 300s) against a dead container. See #3333.
+    // failure or OOM during model load — instead of polling the full timeout
+    // against a dead container. See #3333.
     if (container) {
       const state = dockerContainerInspectFormat("{{.State.Status}}", container, {
         ignoreError: true,

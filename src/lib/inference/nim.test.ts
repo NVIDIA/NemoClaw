@@ -309,18 +309,38 @@ describe("nim", () => {
     });
   });
 
-  describe("resolveNimHealthTimeoutSeconds", () => {
-    it("honors a positive integer override", () => {
-      expect(nim.resolveNimHealthTimeoutSeconds("900")).toBe(900);
+  describe("adoptServedModelId", () => {
+    it("returns the served id when it differs from the catalog name (#3885)", () => {
+      const runCapture = vi.fn(() => JSON.stringify({ data: [{ id: "nvidia/nemotron-3-nano" }] }));
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      try {
+        expect(nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano",
+        );
+      } finally {
+        restore();
+      }
     });
 
-    it("falls back to the default for unset, empty, non-numeric, or non-positive values", () => {
-      const def = nim.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS;
-      expect(nim.resolveNimHealthTimeoutSeconds(undefined)).toBe(def);
-      expect(nim.resolveNimHealthTimeoutSeconds("")).toBe(def);
-      expect(nim.resolveNimHealthTimeoutSeconds("abc")).toBe(def);
-      expect(nim.resolveNimHealthTimeoutSeconds("0")).toBe(def);
-      expect(nim.resolveNimHealthTimeoutSeconds("-5")).toBe(def);
+    it("keeps the catalog value when the served id matches or is unavailable", () => {
+      const match = loadNimWithMockedRunner(
+        vi.fn(() => JSON.stringify({ data: [{ id: "meta/llama-3.1-8b-instruct" }] })),
+      );
+      try {
+        expect(match.nimModule.adoptServedModelId("meta/llama-3.1-8b-instruct", 8000)).toBe(
+          "meta/llama-3.1-8b-instruct",
+        );
+      } finally {
+        match.restore();
+      }
+      const down = loadNimWithMockedRunner(vi.fn(() => ""));
+      try {
+        expect(down.nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano-30b-a3b",
+        );
+      } finally {
+        down.restore();
+      }
     });
   });
 
