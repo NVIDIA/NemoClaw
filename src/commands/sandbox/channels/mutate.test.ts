@@ -30,6 +30,40 @@ describe("channels mutation oclif commands", () => {
     expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: true,
+      force: false,
+    });
+  });
+
+  // Scenario 12 (#4305): --force is threaded through to addSandboxChannel.
+  it("threads --force through add to typed action options", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram", "--force"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: true,
+    });
+  });
+
+  // Scenario 12 (#4305): omitting --force yields force:false (no implicit override).
+  it("defaults force to false when --force is omitted on add", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: false,
+    });
+  });
+
+  // Scenario 12 (#4305): --force combines with --dry-run independently.
+  it("threads both --force and --dry-run on add", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram", "--force", "--dry-run"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: true,
+      force: true,
     });
   });
 
@@ -41,14 +75,41 @@ describe("channels mutation oclif commands", () => {
     expect(mocks.removeSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: false,
+      force: false,
     });
     expect(mocks.startSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: true,
+      force: false,
     });
     expect(mocks.stopSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "slack",
       dryRun: false,
+      force: false,
+    });
+  });
+
+  // Scenario 12 (#4305): the shared flag exposes a (no-op) --force on
+  // remove/start/stop too; confirm it is threaded so the no-op is faithful.
+  it("threads --force through remove/start/stop (shared flag, no-op downstream)", async () => {
+    await ChannelsRemoveCommand.run(["alpha", "telegram", "--force"], rootDir);
+    await ChannelsStartCommand.run(["alpha", "telegram", "--force"], rootDir);
+    await ChannelsStopCommand.run(["alpha", "slack", "--force"], rootDir);
+
+    expect(mocks.removeSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: true,
+    });
+    expect(mocks.startSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: true,
+    });
+    expect(mocks.stopSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "slack",
+      dryRun: false,
+      force: true,
     });
   });
 

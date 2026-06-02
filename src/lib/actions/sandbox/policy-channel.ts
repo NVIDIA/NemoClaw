@@ -5,27 +5,41 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { loadAgent, type AgentDefinition } from "../../agent/defs";
+import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { hashCredential } from "../../security/credential-hash";
-import { getCredential, prompt as askPrompt } from "../../credentials/store";
+import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { hashCredential } from "../../security/credential-hash";
+
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
+
 import * as policies from "../../policy";
+
 // Lazy-required: keeps qrcode-terminal + the iLink HTTP client out of the
 // import graph for non-host-qr channels-add calls.
 const { HOST_QR_LOGIN_HANDLERS } = require("../../host-qr-handlers") as typeof import("../../host-qr-handlers");
 const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
-  parsePolicyAddOptions,
   type PolicyAddOptions,
   type PolicyRemoveOptions,
+  parsePolicyAddOptions,
 } from "../../domain/policy-channel";
-import * as registry from "../../state/registry";
-import { runOpenshell } from "../../adapters/openshell/runtime";
+import type { HostQrLoginResult } from "../../host-qr-handlers";
 import { shellQuote } from "../../runner";
+import {
+  type ChannelDef,
+  channelUsesInSandboxQrPairing,
+  clearChannelTokens,
+  getChannelDef,
+  getChannelTokenKeys,
+  KNOWN_CHANNELS,
+  knownChannelNames,
+  persistChannelTokens,
+} from "../../sandbox/channels";
+import * as registry from "../../state/registry";
 import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
@@ -34,21 +48,11 @@ import { executeSandboxCommand, executeSandboxExecCommand } from "./process-reco
 import { rebuildSandbox } from "./rebuild";
 import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
-import {
-  type ChannelDef,
-  KNOWN_CHANNELS,
-  channelUsesInSandboxQrPairing,
-  clearChannelTokens,
-  getChannelDef,
-  getChannelTokenKeys,
-  knownChannelNames,
-  persistChannelTokens,
-} from "../../sandbox/channels";
-import type { HostQrLoginResult } from "../../host-qr-handlers";
 
 type ChannelMutationOptions = {
   channel?: string;
   dryRun?: boolean;
+  force?: boolean;
 };
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -321,6 +325,98 @@ function bridgeProviderName(sandboxName: string, channelName: string, envKey: st
     return `${sandboxName}-slack-app`;
   }
   return `${sandboxName}-${channelName}-bridge`;
+}
+
+// Tri-state gateway probe for cross-sandbox messaging-conflict backfill,
+// mirroring onboard.ts makeConflictProbe(). An upfront liveness check keeps a
+// transient gateway failure ("error") from being mis-recorded as "no
+// providers" ("absent"), which would permanently suppress backfill retries.
+function makeChannelsConflictProbe() {
+  let gatewayAlive: boolean | null = null;
+  const isGatewayAlive = (): boolean => {
+    if (gatewayAlive === null) {
+      const result = runOpenshell(["sandbox", "list"], {
+        ignoreError: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      gatewayAlive = result.status === 0;
+    }
+    return gatewayAlive;
+  };
+  return {
+    providerExists: (name: string): "present" | "absent" | "error" => {
+      if (!isGatewayAlive()) return "error";
+      return onboardProviders.providerExistsInGateway(name, runOpenshell) ? "present" : "absent";
+    },
+  };
+}
+
+// Detect whether another sandbox already uses one of this channel's
+// credentials. Mirrors the onboard.ts conflict check. Returns true if the
+// caller should PROCEED with the add, false if it should abort. Never logs
+// credential values — only the non-secret hashes computed inline are passed
+// to findChannelConflicts. Probe/backfill failures are swallowed
+// (non-fatal): backfillMessagingChannels already skips sandboxes whose probe
+// errors, so a flaky gateway degrades to "no conflict found" rather than
+// blocking the add.
+async function checkChannelAddConflict(
+  sandboxName: string,
+  channelName: string,
+  acquired: Record<string, string>,
+  force: boolean,
+): Promise<boolean> {
+  // QR-paired / tokenless adds have empty `acquired` and no host-side
+  // credential to hash. Skip — there is no credential to collide on, and
+  // findChannelConflicts with empty credentialHashes would only ever report
+  // "unknown-token" noise against every other sandbox holding the channel.
+  const credentialHashes: Record<string, string> = {};
+  for (const [envKey, token] of Object.entries(acquired)) {
+    const hash = hashCredential(token);
+    if (hash) credentialHashes[envKey] = hash;
+  }
+  if (Object.keys(credentialHashes).length === 0) return true;
+
+  const { backfillMessagingChannels, findChannelConflicts } =
+    require("../../messaging-conflict") as typeof import("../../messaging-conflict");
+
+  try {
+    backfillMessagingChannels(registry, makeChannelsConflictProbe());
+  } catch {
+    // Non-fatal: a backfill blow-up must not block adding a channel.
+  }
+
+  let conflicts: ReturnType<typeof findChannelConflicts>;
+  try {
+    conflicts = findChannelConflicts(sandboxName, [{ channel: channelName, credentialHashes }], registry);
+  } catch {
+    return true;
+  }
+  if (conflicts.length === 0) return true;
+
+  for (const { channel, sandbox, reason } of conflicts) {
+    const detail =
+      reason === "matching-token"
+        ? `uses the same ${channel} credential`
+        : `already has ${channel} enabled, but its credential hash is unavailable`;
+    console.log(
+      `  ${YW}⚠${R} Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges (e.g. Telegram getUpdates 409).`,
+    );
+  }
+
+  if (force) {
+    console.log(`  --force: proceeding despite the messaging channel conflict above.`);
+    return true;
+  }
+  if (isNonInteractive()) {
+    console.error(
+      `  Aborting: resolve the messaging channel conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+    );
+    process.exit(1);
+  }
+  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
+  if (answer === "y" || answer === "yes") return true;
+  console.log("  Aborting channel add.");
+  return false;
 }
 
 // Push channel tokens to the OpenShell gateway and add the channel to the
@@ -799,6 +895,7 @@ export async function addSandboxChannel(
   options: ChannelMutationOptions = {},
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
+  const force = Boolean(options.force);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
@@ -901,6 +998,9 @@ export async function addSandboxChannel(
   }
 
   persistChannelTokens(acquired);
+  if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
+    return; // user aborted; nothing registered or widened
+  }
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
   // discard the change. Pre-fix this was safe because saveCredential()
