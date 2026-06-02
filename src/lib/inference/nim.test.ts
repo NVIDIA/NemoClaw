@@ -309,6 +309,21 @@ describe("nim", () => {
     });
   });
 
+  describe("resolveNimHealthTimeoutSeconds", () => {
+    it("honors a positive integer override", () => {
+      expect(nim.resolveNimHealthTimeoutSeconds("900")).toBe(900);
+    });
+
+    it("falls back to the default for unset, empty, non-numeric, or non-positive values", () => {
+      const def = nim.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS;
+      expect(nim.resolveNimHealthTimeoutSeconds(undefined)).toBe(def);
+      expect(nim.resolveNimHealthTimeoutSeconds("")).toBe(def);
+      expect(nim.resolveNimHealthTimeoutSeconds("abc")).toBe(def);
+      expect(nim.resolveNimHealthTimeoutSeconds("0")).toBe(def);
+      expect(nim.resolveNimHealthTimeoutSeconds("-5")).toBe(def);
+    });
+  });
+
   describe("containerName", () => {
     it("prefixes with nemoclaw-nim-", () => {
       expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");

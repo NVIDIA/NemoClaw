@@ -793,6 +793,15 @@ export interface WaitForNimHealthOptions {
   container?: string;
 }
 
+// NIM first-load (in-container weight download + engine warmup) takes minutes,
+// longer for big models on unified-memory hosts; the 300s default times out
+// mid-load. Override with NEMOCLAW_NIM_HEALTH_TIMEOUT_SECONDS.
+export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
+export function resolveNimHealthTimeoutSeconds(raw?: string): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS;
+}
+
 export function waitForNimHealth(
   port = VLLM_PORT,
   timeout = 300,

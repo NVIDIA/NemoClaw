@@ -4810,7 +4810,14 @@ async function setupNim(
           });
 
           console.log("  Waiting for NIM to become healthy...");
-          if (!nim.waitForNimHealth(undefined, undefined, { container: nimContainerNameLocal })) {
+          const nimHealthTimeoutSec = nim.resolveNimHealthTimeoutSeconds(
+            process.env.NEMOCLAW_NIM_HEALTH_TIMEOUT_SECONDS,
+          );
+          if (
+            !nim.waitForNimHealth(undefined, nimHealthTimeoutSec, {
+              container: nimContainerNameLocal,
+            })
+          ) {
             console.error("  NIM failed to start. Falling back to cloud API.");
             model = null;
             nimContainer = null;
