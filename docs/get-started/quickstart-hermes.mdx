@@ -14,7 +14,7 @@ skill:
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
-Review the [Prerequisites](/get-started/prerequisites) before starting.
+Review the [Prerequisites](prerequisites) before starting.
 Docker must be installed, running, and reachable from the current shell before Hermes onboarding can build the sandbox image.
 On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
 If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
@@ -67,7 +67,7 @@ Sandbox name [hermes]: my-hermes
 
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
-For provider-specific prompts, refer to the [Respond to the Onboard Wizard](/get-started/quickstart#respond-to-the-onboard-wizard) section and the [Inference Options](/inference/inference-options) page.
+For provider-specific prompts, refer to the [Inference Options](../inference/inference-options) page.
 The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 After provider and model selection, review the summary and confirm the build.
@@ -93,7 +93,7 @@ $ export NVIDIA_API_KEY=<your-key>
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-Use the provider variables from [Inference Options](/inference/inference-options) when you choose a different provider.
+Use the provider variables from [Inference Options](../inference/inference-options) when you choose a different provider.
 
 ## Connect to Hermes
 
@@ -217,7 +217,7 @@ $ nemohermes my-hermes destroy
 
 ## Next Steps
 
-- [Inference Options](/inference/inference-options) to choose a provider and model.
-- [Commands](/reference/commands) to see the full `nemohermes` alias behavior.
-- [Backup and Restore](/manage-sandboxes/backup-restore) to preserve sandbox state before destructive operations.
-- [Monitor Sandbox Activity](/monitoring/monitor-sandbox-activity) to inspect OpenShell events and sandbox logs.
+- [Inference Options](../inference/inference-options) to choose a provider and model.
+- [Commands](../reference/commands) to see the full `nemohermes` alias behavior.
+- [Backup and Restore](../manage-sandboxes/backup-restore) to preserve sandbox state before destructive operations.
+- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) to inspect OpenShell events and sandbox logs.

@@ -223,7 +223,7 @@ $ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onbo
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
 network should be able to reach the gateway.
 
-See [Environment Variables](/reference/commands#environment-variables) for the full list of port overrides.
+See [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -571,7 +571,7 @@ Follow these steps to reconnect.
 
 If the sandbox remains missing after restarting the gateway, run `nemoclaw onboard` to recreate it.
 The wizard prompts for confirmation before destroying an existing sandbox. If you confirm, it **destroys and recreates** the sandbox. Workspace files (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first by following the instructions at [Back Up and Restore](/manage-sandboxes/backup-restore).
+Back up your workspace first by following the instructions at [Back Up and Restore](../manage-sandboxes/backup-restore).
 </Warning>
 
 ### Sandbox is running an outdated agent version
@@ -748,7 +748,7 @@ This is expected behavior.
 Changing or exporting it later does not rewrite the baked `openclaw.json` inside an existing sandbox.
 
 If you need a different device-auth setting, rerun onboarding so NemoClaw rebuilds the sandbox image with the desired configuration.
-For the security trade-offs, refer to [Security Best Practices](/security/best-practices).
+For the security trade-offs, refer to [Security Best Practices](../security/best-practices).
 
 ### `openclaw.json` is empty after changing inference
 
@@ -782,7 +782,7 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
-Review [Messaging Channels](/manage-sandboxes/messaging-channels) before enabling them.
+Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
 
 WeChat captures its bot token through a host-side QR scan during `nemoclaw onboard` or `channels add wechat`.
 You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
@@ -1057,7 +1057,7 @@ $ openshell term
 ```
 
 To permanently allow an endpoint, add it to the network policy.
-Refer to [Customize the Network Policy](/network-policy/customize-network-policy) for details.
+Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for details.
 
 ### Dashboard not reachable after setting a custom port
 
@@ -1278,7 +1278,7 @@ If you run other services on Spark that expect port 3000, bind them to a differe
 <a id="windows-wsl-2"></a>
 ## Windows Subsystem for Linux
 
-For environment setup steps, see [Windows Prerequisites](/get-started/windows-preparation).
+For environment setup steps, see [Windows Prerequisites](../get-started/windows-preparation).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -1352,7 +1352,7 @@ $ sudo systemctl stop ollama
 $ OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the [Quickstart](/get-started/quickstart) and [Windows Setup](/get-started/windows-preparation) pages.
+For additional troubleshooting, see the [Quickstart](../get-started/quickstart) and [Windows Setup](../get-started/windows-preparation) pages.
 
 ## Podman
 
@@ -1362,7 +1362,7 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 ## Brev
 
-For Brev setup instructions, refer to [Brev Web UI](/deployment/brev-web-ui).
+For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui).
 
 ### Most OpenClaw skills show as blocked
 
@@ -1404,7 +1404,7 @@ If you see this error, use the host-side config command instead:
 $ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Refer to [Commands](/reference/commands) for the full list of supported configuration keys.
+Refer to [Commands](commands) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
 

@@ -97,7 +97,7 @@ $ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cho
 If the sub-agent calls a provider directly, update the OpenShell network policy for the binary that makes the request.
 In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`, so the NVIDIA endpoint policy must allow that binary.
 
-Refer to [Customize the Network Policy](/network-policy/customize-network-policy) for policy update workflows.
+Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for policy update workflows.
 
 ## Add Delegation Instructions
 
@@ -125,5 +125,5 @@ Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-dem
 Use the following resources for more information:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for `sessions_spawn`, `agents.list`, nesting, tool policy, and auth behavior.
-- Refer to [Switch Inference Providers](/inference/switch-inference-providers) to change the primary orchestration model instead of adding a sub-agent model.
-- Refer to [Workspace Files](/manage-sandboxes/workspace-files) to understand per-agent workspace directories.
+- Refer to [Switch Inference Providers](switch-inference-providers) to change the primary orchestration model instead of adding a sub-agent model.
+- Refer to [Workspace Files](../manage-sandboxes/workspace-files) to understand per-agent workspace directories.

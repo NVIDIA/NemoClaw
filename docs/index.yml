@@ -213,14 +213,9 @@ navigation:
               - page: "Use Local Inference"
                 path: inference/use-local-inference.mdx
                 slug: use-local-inference
-              - page: "Tool-Calling Reliability"
-                path: inference/tool-calling-reliability.mdx
-                slug: tool-calling-reliability
               - page: "Switch Inference Providers"
                 path: inference/switch-inference-providers.mdx
                 slug: switch-inference-providers
-              - page: "Set Up Task-Specific Sub-Agents"
-                path: inference/set-up-sub-agent.mdx
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default
@@ -240,6 +235,9 @@ navigation:
               - page: "Backup and Restore"
                 path: manage-sandboxes/backup-restore.mdx
                 slug: backup-restore
+              - page: "Install Hermes Plugins"
+                path: manage-sandboxes/install-plugins-hermes.mdx
+                slug: install-plugins-hermes
           - section: "Network Policy"
             slug: network-policy
             collapsed: open-by-default
@@ -253,22 +251,6 @@ navigation:
               - page: "Integration Policy Examples"
                 path: network-policy/integration-policy-examples.mdx
                 slug: integration-policy-examples
-          - section: "Deployment"
-            slug: deployment
-            collapsed: open-by-default
-            contents:
-              - page: "Deploy to Remote GPU Instances"
-                path: deployment/deploy-to-remote-gpu.mdx
-                slug: deploy-to-remote-gpu
-              - page: "Brev Web UI"
-                path: deployment/brev-web-ui.mdx
-                slug: brev-web-ui
-              - page: "Install OpenClaw Plugins"
-                path: deployment/install-openclaw-plugins.mdx
-                slug: install-openclaw-plugins
-              - page: "Sandbox Hardening"
-                path: deployment/sandbox-hardening.mdx
-                slug: sandbox-hardening
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -286,9 +268,9 @@ navigation:
               - page: "Credential Storage"
                 path: security/credential-storage.mdx
                 slug: credential-storage
-              - page: "OpenClaw Controls"
-                path: security/openclaw-controls.mdx
-                slug: openclaw-controls
+              - page: "Hermes Controls"
+                path: security/hermes-controls.mdx
+                slug: hermes-controls
           - section: "Reference"
             slug: reference
             collapsed: open-by-default

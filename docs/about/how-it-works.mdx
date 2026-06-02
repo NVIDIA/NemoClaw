@@ -9,7 +9,7 @@ keywords: ["how nemoclaw works", "nemoclaw sandbox lifecycle blueprint"]
 content:
   type: "concept"
 ---
-import { AgentCli, AgentOnly, GuideLink } from "../_components/AgentGuide";
+import { AgentCli, AgentOnly } from "../_components/AgentGuide";
 
 This page explains how NemoClaw runs supported agents inside an OpenShell sandbox and how the gateway connects the agent to inference, integrations, and policy.
 
@@ -43,7 +43,7 @@ The diagram has the following components:
 | Integrations | Reach messaging services, MCP servers, GitHub, package indexes, or model hubs through gateway-managed egress. |
 | State and artifacts | Store configuration, credentials, logs, workspace files, policies, and transcripts outside the running agent process. |
 
-For repository layout, file paths, and deeper diagrams, see [Architecture](/reference/architecture).
+For repository layout, file paths, and deeper diagrams, see [Architecture](../reference/architecture).
 
 ## Design Principles
 
@@ -122,20 +122,23 @@ The sandbox starts with a default policy that controls network egress, filesyste
 
 When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval. Approved endpoints persist for the current session but are not saved to the baseline policy file.
 
-For details on the baseline rules, refer to [Network Policies](/reference/network-policies). For container-level hardening, refer to [Sandbox Hardening](/deployment/sandbox-hardening).
+For details on the baseline rules, refer to [Network Policies](../reference/network-policies). For container-level hardening, refer to [Sandbox Hardening](../deployment/sandbox-hardening).
 
 ## Next Steps
 
-- Read <GuideLink href="/about/ecosystem">Ecosystem</GuideLink> for stack-level relationships and NemoClaw versus OpenShell-only paths.
 <AgentOnly variant="openclaw">
 
-- Follow the <GuideLink href="/get-started/quickstart">Quickstart with OpenClaw</GuideLink> to launch your first sandbox.
+- Read [Ecosystem](ecosystem) for stack-level relationships and NemoClaw versus OpenShell-only paths.
+- Follow [Quickstart with OpenClaw](../get-started/quickstart) to launch your first sandbox.
+- Refer to the [Architecture](../reference/architecture) for the full technical structure, including file layouts and the blueprint lifecycle.
+- Refer to [Inference Options](../inference/inference-options) for detailed provider configuration.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- Follow the <GuideLink href="/get-started/quickstart-hermes">Quickstart with Hermes</GuideLink> to launch your first sandbox.
+- Read [Ecosystem](ecosystem-hermes) for stack-level relationships and NemoClaw versus OpenShell-only paths.
+- Follow [Quickstart with Hermes](../get-started/quickstart-hermes) to launch your first sandbox.
+- Refer to the [Architecture](../reference/architecture) for the full technical structure, including file layouts and the blueprint lifecycle.
+- Refer to [Inference Options](../inference/inference-options) for detailed provider configuration.
 
 </AgentOnly>
-- Refer to the [Architecture](/reference/architecture) for the full technical structure, including file layouts and the blueprint lifecycle.
-- Refer to [Inference Options](/inference/inference-options) for detailed provider configuration.

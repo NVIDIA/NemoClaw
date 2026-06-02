@@ -11,7 +11,8 @@ declare const React: unknown;
 
 export type GuideVariant = "openclaw" | "hermes";
 
-const HERMES_PATH = "/user-guide/hermes/";
+const GUIDE_PATH = "/user-guide/";
+const HERMES_PATH = `${GUIDE_PATH}hermes`;
 
 export function getGuideVariant(): GuideVariant {
   if (typeof window !== "undefined" && window.location.pathname.includes(HERMES_PATH)) {
@@ -20,10 +21,18 @@ export function getGuideVariant(): GuideVariant {
   return "openclaw";
 }
 
+function guideBasePath(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const guideIndex = window.location.pathname.indexOf(GUIDE_PATH);
+  return guideIndex === -1 ? "" : window.location.pathname.slice(0, guideIndex);
+}
+
 /** Full site path for the active guide variant (includes /user-guide/{variant}). */
 export function guidePath(suffix: string): string {
   const normalized = suffix.startsWith("/") ? suffix : `/${suffix}`;
-  return `/user-guide/${getGuideVariant()}${normalized}`;
+  return `${guideBasePath()}${GUIDE_PATH}${getGuideVariant()}${normalized}`;
 }
 
 export function AgentCli() {

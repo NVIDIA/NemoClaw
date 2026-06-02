@@ -11,7 +11,7 @@ content:
 skill:
   priority: 10
 ---
-import { AgentCli, AgentOnly, GuideLink } from "../_components/AgentGuide";
+import { AgentCli, AgentOnly } from "../_components/AgentGuide";
 
 NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside OpenShell containers.
 NemoClaw provides onboarding, lifecycle management, and agent operations for supported runtimes in OpenShell sandboxes.
@@ -51,7 +51,7 @@ NemoClaw provides the following benefits to mitigate these risks.
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. No access is granted by default. |
-| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](/inference/inference-options).          |
+| Routed inference           | Model traffic is routed through the OpenShell gateway to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](../inference/inference-options).          |
 | Declarative network policy | Egress rules are defined in YAML. Unknown hosts are blocked and surfaced to the operator for approval.                 |
 | Single CLI                 | The <AgentCli /> command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
@@ -70,17 +70,21 @@ You can use NemoClaw for various use cases including the following.
 
 Navigate to the following topics to learn more about NemoClaw and how to install and use it.
 
-- <GuideLink href="/about/how-it-works">Architecture Overview</GuideLink> to understand how NemoClaw works.
-- <GuideLink href="/about/ecosystem">Ecosystem</GuideLink> to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
 <AgentOnly variant="openclaw">
 
-- <GuideLink href="/get-started/quickstart">Quickstart with OpenClaw</GuideLink> to install NemoClaw and run your first OpenClaw sandbox.
+- [Architecture Overview](how-it-works) to understand how NemoClaw works.
+- [Ecosystem](ecosystem) to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- [Quickstart with OpenClaw](../get-started/quickstart) to install NemoClaw and run your first OpenClaw sandbox.
+- [Agent Skills](../resources/agent-skills) to load NemoClaw guidance into an AI coding assistant.
+- [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- <GuideLink href="/get-started/quickstart-hermes">Quickstart with Hermes</GuideLink> to install NemoClaw and run your first Hermes sandbox with `nemohermes`.
+- [Architecture Overview](how-it-works) to understand how NemoClaw works.
+- [Ecosystem](ecosystem-hermes) to understand how Hermes, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- [Quickstart with Hermes](../get-started/quickstart-hermes) to install NemoClaw and run your first Hermes sandbox with `nemohermes`.
+- [Agent Skills](../resources/agent-skills) to load NemoClaw guidance into an AI coding assistant.
+- [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
-- <GuideLink href="/resources/agent-skills">Agent Skills</GuideLink> to load NemoClaw guidance into an AI coding assistant.
-- <GuideLink href="/inference/inference-options">Inference Options</GuideLink> to check the inference providers that NemoClaw supports and how inference routing works.

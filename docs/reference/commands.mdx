@@ -11,7 +11,7 @@ content:
 ---
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
 It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
-For guidance on when to use `nemoclaw` versus the underlying `openshell` CLI, see [CLI Selection Guide](/reference/cli-selection-guide).
+For guidance on when to use `nemoclaw` versus the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide).
 
 ## `/nemoclaw` Slash Command
 
@@ -98,7 +98,7 @@ To perform those steps manually, run `nemoclaw backup-all`, retire the old gatew
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are registered with the OpenShell gateway and never persisted to host disk. See [Credential Storage](/security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
+Credentials are registered with the OpenShell gateway and never persisted to host disk. See [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
@@ -112,7 +112,7 @@ Three tiers are available:
 | Open | Broad access across third-party services including messaging and productivity. Agent-specific unsupported presets are filtered out. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
-For details on tiers and the presets each includes, see [Network Policies](/reference/network-policies#policy-tiers).
+For details on tiers and the presets each includes, see [Network Policies](network-policies#policy-tiers).
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
@@ -561,8 +561,8 @@ For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently load
 
 <Warning>
 This command permanently deletes the sandbox **and its persistent volume**.
-All [workspace files](/manage-sandboxes/workspace-files) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first with `nemoclaw <name> snapshot create` or see [Backup and Restore](/manage-sandboxes/backup-restore).
+All [workspace files](../manage-sandboxes/workspace-files) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first with `nemoclaw <name> snapshot create` or see [Backup and Restore](../manage-sandboxes/backup-restore).
 If you want to upgrade the sandbox while preserving state, use `nemoclaw <name> rebuild` instead.
 </Warning>
 
@@ -821,7 +821,7 @@ $ nemoclaw my-assistant skill install ./my-skill/
 
 The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores.
-OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see [Install OpenClaw Plugins](/deployment/install-openclaw-plugins).
+OpenClaw plugins are a different kind of extension. To install an OpenClaw plugin, see [Install OpenClaw Plugins](../deployment/install-openclaw-plugins).
 Run `nemoclaw <name> skill install --help` to print usage for this subcommand.
 If you pass a plugin-shaped directory to `skill install`, the CLI prints a plugin-specific hint instead of treating it as a missing skill file.
 
@@ -1278,7 +1278,7 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | Entry | What it holds |
 |---|---|
 | `rebuild-backups/` | Host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write. `nemoclaw <name> snapshot restore` reads them back after you reinstall. |
-| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see [Backup and Restore](/manage-sandboxes/backup-restore)). |
+| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see [Backup and Restore](../manage-sandboxes/backup-restore)). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
