@@ -1,112 +1,62 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Source-of-truth contract for the OpenClaw gateway RPC response:
+// Source-of-truth contract for OpenClaw `gateway call --json` responses:
 //
-//   - The OpenClaw `gateway call --json` command emits the handler's raw
-//     return value, not a JSON-RPC envelope. For `sessions.reset` and
-//     `sessions.delete`, the success shape is `{ "ok": true, "key": ..., ... }`
-//     and the failure shape is `{ "ok": false, "error": { ... } }` (or a
-//     bare `{ "error": { ... } }` for transport-level failures). The CLI may
-//     also pretty-print the payload across multiple lines.
-//   - For symmetry with the JSON-RPC envelope shape that earlier versions of
-//     the gateway emitted, and to keep adapter code single-shaped, the
-//     parser also accepts an explicit `{ "result": ... }` / `{ "error": ... }`
-//     envelope and normalises raw payloads into that shape.
-//   - The tolerant parser exists because the sandboxed OpenClaw runtime can
-//     prepend warnings or interleave logs ahead of the payload when
-//     verbose/diagnostic flags are active (e.g. UNDICI/Node warnings on
-//     stderr-merged streams, gateway debug logs in non-quiet modes), so we
-//     try single-line candidates in reverse order before falling back to a
-//     whole-output parse for multi-line pretty-printed JSON.
+//   - The CLI emits the handler's raw return value, not a JSON-RPC envelope.
+//     `sessions.reset` and `sessions.delete` success payloads have the shape
+//     `{ "ok": true, "key": ..., "entry"?: ... }`; failure payloads have the
+//     shape `{ "ok": false, "error": { "code"?, "message"? } }` or a bare
+//     `{ "error": { ... } }` for transport-level failures.
+//   - The parser is tolerant about leading log noise (UNDICI/Node warnings,
+//     gateway debug lines on stderr-merged streams, pretty-printed debug
+//     objects emitted before the payload) and is otherwise format-preserving:
+//     it returns the parsed object directly so callers can match on `ok` and
+//     `error` without an intermediate normalisation step.
 
-export interface GatewayCallSuccess<T = unknown> {
-  result: T;
+export interface GatewayCallPayload {
+  ok?: boolean;
+  error?: { code?: string | number; message?: string };
 }
 
-export interface GatewayCallFailure {
-  error: { code?: string | number; message?: string };
+function looksLikeGatewayPayload(value: unknown): value is GatewayCallPayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return "ok" in (value as Record<string, unknown>) || "error" in (value as Record<string, unknown>);
 }
 
-export type GatewayCallEnvelope<T = unknown> = Partial<GatewayCallSuccess<T> & GatewayCallFailure>;
-
-function normalisePayload(value: unknown): GatewayCallEnvelope<unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const obj = value as Record<string, unknown>;
-  // JSON-RPC envelope passes through unchanged.
-  if ("result" in obj || "error" in obj) {
-    if ("result" in obj) return { result: obj.result };
-    const err = obj.error;
-    if (err && typeof err === "object" && !Array.isArray(err)) {
-      return { error: err as GatewayCallFailure["error"] };
-    }
-    return null;
-  }
-  // Raw payload: `{ok: true, ...}` success or `{ok: false, error: ...}` failure.
-  if (typeof obj.ok === "boolean") {
-    if (obj.ok === true) return { result: obj };
-    const err = obj.error;
-    if (err && typeof err === "object" && !Array.isArray(err)) {
-      return { error: err as GatewayCallFailure["error"] };
-    }
-    return { error: { code: "unknown", message: "gateway returned ok=false" } };
-  }
-  return null;
-}
-
-export function parseGatewayCallEnvelope<T = unknown>(
+export function parseGatewayCallPayload<T extends GatewayCallPayload = GatewayCallPayload>(
   output: string,
-): GatewayCallEnvelope<T> | null {
+): T | null {
   const trimmed = output.trim();
   if (!trimmed) return null;
-  // First try single-line JSON candidates in reverse order. This is robust to
-  // leading log noise (Node warnings, gateway debug lines) that precede a
-  // compact one-line payload.
+  const candidates: string[] = [];
+  // 1. Single-line JSON candidates in reverse order — robust to log noise
+  //    that precedes a one-line payload.
   for (const line of trimmed.split(/\r?\n/).reverse()) {
     const candidate = line.trim();
-    if (!candidate.startsWith("{") || !candidate.endsWith("}")) continue;
-    try {
-      const parsed = JSON.parse(candidate);
-      const normalised = normalisePayload(parsed);
-      if (normalised) return normalised as GatewayCallEnvelope<T>;
-    } catch {
-      continue;
+    if (candidate.startsWith("{") && candidate.endsWith("}")) {
+      candidates.push(candidate);
     }
   }
-  // Fall back to parsing the entire output, which catches multi-line
-  // pretty-printed JSON the per-line scan necessarily skips.
-  try {
-    const parsed = JSON.parse(trimmed);
-    const normalised = normalisePayload(parsed);
-    if (normalised) return normalised as GatewayCallEnvelope<T>;
-  } catch {
-    // Continue to the multi-line scan below.
-  }
-  // Last resort: scan for a multi-line JSON block embedded in surrounding
-  // noise — take from the first line that is exactly `{` to the last line
-  // that is exactly `}`.
+  // 2. Whole-output parse for pretty-printed multi-line JSON with no prefix.
+  candidates.push(trimmed);
+  // 3. Multi-line `{...}` blocks embedded in surrounding noise. Enumerate
+  //    every (`{` start, `}` end) pairing so an unrelated pretty-printed
+  //    debug block before or after the real payload cannot fool the scan.
   const lines = trimmed.split(/\r?\n/);
-  let blockStart = -1;
-  let blockEnd = -1;
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i]?.trim() === "{") {
-      blockStart = i;
-      break;
+  for (let start = 0; start < lines.length; start += 1) {
+    if (lines[start]?.trim() !== "{") continue;
+    for (let end = lines.length - 1; end > start; end -= 1) {
+      if (lines[end]?.trim() !== "}") continue;
+      candidates.push(lines.slice(start, end + 1).join("\n"));
     }
   }
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (lines[i]?.trim() === "}") {
-      blockEnd = i;
-      break;
-    }
-  }
-  if (blockStart >= 0 && blockEnd > blockStart) {
+  for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(lines.slice(blockStart, blockEnd + 1).join("\n"));
-      const normalised = normalisePayload(parsed);
-      if (normalised) return normalised as GatewayCallEnvelope<T>;
+      const parsed: unknown = JSON.parse(candidate);
+      if (looksLikeGatewayPayload(parsed)) return parsed as T;
     } catch {
-      // ignore and fall through
+      // try next candidate
     }
   }
   return null;

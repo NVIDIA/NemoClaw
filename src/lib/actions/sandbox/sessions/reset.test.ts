@@ -18,18 +18,14 @@ import { resetSandboxSession } from "./reset";
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;
 
-function successEnvelope(key: string, entry: unknown = null) {
-  return {
-    envelope: { result: { ok: true, key, entry } },
-    rawOutput: JSON.stringify({ result: { ok: true, key, entry } }),
-  };
+function successResult(key: string, entry: unknown = null) {
+  const payload = { ok: true as const, key, entry };
+  return { payload, rawOutput: JSON.stringify(payload) };
 }
 
-function errorEnvelope(code: string, message: string) {
-  return {
-    envelope: { error: { code, message } },
-    rawOutput: JSON.stringify({ error: { code, message } }),
-  };
+function errorResult(code: string, message: string) {
+  const payload = { ok: false as const, error: { code, message } };
+  return { payload, rawOutput: JSON.stringify(payload) };
 }
 
 let processExitSpy: ReturnType<typeof vi.spyOn>;
@@ -54,7 +50,7 @@ afterEach(() => {
 
 describe("resetSandboxSession", () => {
   it("dispatches sessions.reset with the canonical key and default reason 'reset'", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:main:main"));
+    gatewayMock.mockReturnValue(successResult("agent:main:main"));
 
     const result = await resetSandboxSession("sb-1", {
       key: "agent:main:main",
@@ -62,8 +58,7 @@ describe("resetSandboxSession", () => {
 
     expect(ensureMock).toHaveBeenCalledWith("sb-1", { allowNonReadyPhase: true });
     expect(gatewayMock).toHaveBeenCalledTimes(1);
-    const call = gatewayMock.mock.calls[0]?.[0];
-    expect(call).toMatchObject({
+    expect(gatewayMock.mock.calls[0]?.[0]).toMatchObject({
       sandboxName: "sb-1",
       method: "sessions.reset",
       params: { key: "agent:main:main", reason: "reset" },
@@ -72,7 +67,7 @@ describe("resetSandboxSession", () => {
   });
 
   it("forwards reason='new' when requested", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:main:main"));
+    gatewayMock.mockReturnValue(successResult("agent:main:main"));
 
     await resetSandboxSession("sb-1", {
       key: "agent:main:main",
@@ -96,8 +91,8 @@ describe("resetSandboxSession", () => {
     );
   });
 
-  it("surfaces gateway error envelopes and exits non-zero", async () => {
-    gatewayMock.mockReturnValue(errorEnvelope("E_NOT_FOUND", "no such session"));
+  it("surfaces a gateway failure payload and exits non-zero", async () => {
+    gatewayMock.mockReturnValue(errorResult("E_NOT_FOUND", "no such session"));
 
     await expect(
       resetSandboxSession("sb-1", { key: "agent:main:main" }),
@@ -110,8 +105,8 @@ describe("resetSandboxSession", () => {
 
   it("rejects an unexpected payload (missing ok=true) and exits non-zero", async () => {
     gatewayMock.mockReturnValue({
-      envelope: { result: { ok: false } },
-      rawOutput: '{"result":{"ok":false}}',
+      payload: { ok: true, /* key missing */ entry: null },
+      rawOutput: '{"ok":true,"entry":null}',
     });
 
     await expect(
@@ -124,7 +119,7 @@ describe("resetSandboxSession", () => {
   });
 
   it("emits one JSON line when --json is set", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:main:main", { id: "abc" }));
+    gatewayMock.mockReturnValue(successResult("agent:main:main", { id: "abc" }));
 
     await resetSandboxSession("sb-1", {
       key: "agent:main:main",
@@ -141,7 +136,7 @@ describe("resetSandboxSession", () => {
   });
 
   it("canonicalises a key under the requested agent when only --agent is provided", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:research:slot"));
+    gatewayMock.mockReturnValue(successResult("agent:research:slot"));
 
     await resetSandboxSession("sb-1", {
       key: "slot",

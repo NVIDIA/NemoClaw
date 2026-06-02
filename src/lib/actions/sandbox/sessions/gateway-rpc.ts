@@ -4,16 +4,11 @@
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import {
-  type GatewayCallEnvelope,
-  parseGatewayCallEnvelope,
+  type GatewayCallPayload,
+  parseGatewayCallPayload,
 } from "./gateway-rpc-envelope";
 
-export {
-  type GatewayCallEnvelope,
-  type GatewayCallFailure,
-  type GatewayCallSuccess,
-  parseGatewayCallEnvelope,
-} from "./gateway-rpc-envelope";
+export { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
 export interface GatewayCallOptions {
   sandboxName: string;
@@ -21,12 +16,12 @@ export interface GatewayCallOptions {
   params: unknown;
 }
 
-export interface GatewayCallResult<T = unknown> {
-  envelope: GatewayCallEnvelope<T>;
+export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPayload> {
+  payload: T;
   rawOutput: string;
 }
 
-export function callOpenclawGateway<T = unknown>(
+export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPayload>(
   opts: GatewayCallOptions,
 ): GatewayCallResult<T> {
   const params = JSON.stringify(opts.params);
@@ -59,11 +54,11 @@ export function callOpenclawGateway<T = unknown>(
     process.exit(1);
   }
 
-  const envelope = parseGatewayCallEnvelope<T>(result.output);
-  if (!envelope || (!envelope.result && !envelope.error)) {
+  const payload = parseGatewayCallPayload<T>(result.output);
+  if (!payload) {
     console.error(`  Could not parse gateway call response for '${opts.method}'.`);
     if (result.output.trim()) console.error(`  ${result.output.trim()}`);
     process.exit(1);
   }
-  return { envelope, rawOutput: result.output };
+  return { payload, rawOutput: result.output };
 }

@@ -18,19 +18,17 @@ import { deleteSandboxSession } from "./delete";
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;
 
-function successEnvelope(
+function successResult(
   key: string,
   extra: { removedTranscript?: boolean; entry?: unknown } = {},
 ) {
-  const result = { ok: true, key, ...extra };
-  return { envelope: { result }, rawOutput: JSON.stringify({ result }) };
+  const payload = { ok: true as const, key, ...extra };
+  return { payload, rawOutput: JSON.stringify(payload) };
 }
 
-function errorEnvelope(code: string, message: string) {
-  return {
-    envelope: { error: { code, message } },
-    rawOutput: JSON.stringify({ error: { code, message } }),
-  };
+function errorResult(code: string, message: string) {
+  const payload = { ok: false as const, error: { code, message } };
+  return { payload, rawOutput: JSON.stringify(payload) };
 }
 
 let processExitSpy: ReturnType<typeof vi.spyOn>;
@@ -55,7 +53,7 @@ afterEach(() => {
 
 describe("deleteSandboxSession", () => {
   it("dispatches sessions.delete with deleteTranscript=true by default", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:main:slot-1"));
+    gatewayMock.mockReturnValue(successResult("agent:main:slot-1"));
 
     const result = await deleteSandboxSession("sb-1", {
       key: "agent:main:slot-1",
@@ -73,9 +71,7 @@ describe("deleteSandboxSession", () => {
   });
 
   it("translates --keep-transcript into deleteTranscript=false", async () => {
-    gatewayMock.mockReturnValue(
-      successEnvelope("agent:main:slot-1", { removedTranscript: false }),
-    );
+    gatewayMock.mockReturnValue(successResult("agent:main:slot-1", { removedTranscript: false }));
 
     const result = await deleteSandboxSession("sb-1", {
       key: "agent:main:slot-1",
@@ -102,8 +98,8 @@ describe("deleteSandboxSession", () => {
     );
   });
 
-  it("surfaces gateway error envelopes and exits non-zero", async () => {
-    gatewayMock.mockReturnValue(errorEnvelope("E_LOCKED", "session locked"));
+  it("surfaces a gateway failure payload and exits non-zero", async () => {
+    gatewayMock.mockReturnValue(errorResult("E_LOCKED", "session locked"));
 
     await expect(
       deleteSandboxSession("sb-1", { key: "agent:main:slot-1" }),
@@ -116,8 +112,8 @@ describe("deleteSandboxSession", () => {
 
   it("rejects an unexpected payload (missing ok=true) and exits non-zero", async () => {
     gatewayMock.mockReturnValue({
-      envelope: { result: { ok: false } },
-      rawOutput: '{"result":{"ok":false}}',
+      payload: { ok: true, /* key missing */ removedTranscript: true },
+      rawOutput: '{"ok":true,"removedTranscript":true}',
     });
 
     await expect(
@@ -130,9 +126,7 @@ describe("deleteSandboxSession", () => {
   });
 
   it("emits one JSON line when --json is set", async () => {
-    gatewayMock.mockReturnValue(
-      successEnvelope("agent:main:slot-1", { entry: { id: "abc" } }),
-    );
+    gatewayMock.mockReturnValue(successResult("agent:main:slot-1", { entry: { id: "abc" } }));
 
     await deleteSandboxSession("sb-1", {
       key: "agent:main:slot-1",
@@ -149,7 +143,7 @@ describe("deleteSandboxSession", () => {
   });
 
   it("canonicalises a key under the requested agent when only --agent is provided", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:research:slot"));
+    gatewayMock.mockReturnValue(successResult("agent:research:slot"));
 
     await deleteSandboxSession("sb-1", {
       key: "slot",
@@ -162,7 +156,7 @@ describe("deleteSandboxSession", () => {
   });
 
   it("falls back to deleteTranscript flag when gateway omits removedTranscript", async () => {
-    gatewayMock.mockReturnValue(successEnvelope("agent:main:slot-1"));
+    gatewayMock.mockReturnValue(successResult("agent:main:slot-1"));
 
     const result = await deleteSandboxSession("sb-1", {
       key: "agent:main:slot-1",

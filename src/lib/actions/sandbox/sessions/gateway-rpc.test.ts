@@ -3,104 +3,71 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseGatewayCallEnvelope } from "./gateway-rpc-envelope";
+import { parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
-describe("parseGatewayCallEnvelope", () => {
-  it("parses a single-line success envelope", () => {
-    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
-      '{"result":{"ok":true,"key":"agent:main:main"}}',
+describe("parseGatewayCallPayload", () => {
+  it("returns a single-line success payload directly", () => {
+    const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
+      '{"ok":true,"key":"agent:main:main","entry":null}',
     );
-    expect(env?.result).toEqual({ ok: true, key: "agent:main:main" });
+    expect(payload).toMatchObject({ ok: true, key: "agent:main:main", entry: null });
   });
 
-  it("parses an error envelope", () => {
-    const env = parseGatewayCallEnvelope(
+  it("returns an `ok: false` failure payload", () => {
+    const payload = parseGatewayCallPayload(
+      '{"ok":false,"error":{"code":"E_LOCKED","message":"session locked"}}',
+    );
+    expect(payload).toEqual({ ok: false, error: { code: "E_LOCKED", message: "session locked" } });
+  });
+
+  it("returns a bare `error` payload (transport-level failure)", () => {
+    const payload = parseGatewayCallPayload(
       '{"error":{"code":"E_NOT_FOUND","message":"no such session"}}',
     );
-    expect(env?.error?.code).toBe("E_NOT_FOUND");
-    expect(env?.error?.message).toBe("no such session");
-  });
-
-  it("returns the last JSON-shaped line when output has noise", () => {
-    const env = parseGatewayCallEnvelope<{ ok: true }>(
-      [
-        "warning: discovered stale session lock",
-        "info: reaping...",
-        '{"result":{"ok":true}}',
-      ].join("\n"),
-    );
-    expect(env?.result).toEqual({ ok: true });
+    expect(payload?.error).toEqual({ code: "E_NOT_FOUND", message: "no such session" });
   });
 
   it("returns null for blank output", () => {
-    expect(parseGatewayCallEnvelope("")).toBeNull();
-    expect(parseGatewayCallEnvelope("   \n  ")).toBeNull();
+    expect(parseGatewayCallPayload("")).toBeNull();
+    expect(parseGatewayCallPayload("   \n  ")).toBeNull();
   });
 
   it("returns null for non-JSON output", () => {
-    expect(parseGatewayCallEnvelope("OpenClaw is down")).toBeNull();
+    expect(parseGatewayCallPayload("OpenClaw is down")).toBeNull();
   });
 
-  it("tolerates leading noise on the JSON line", () => {
-    const env = parseGatewayCallEnvelope<{ ok: true }>(
-      `verbose junk\n{"result":{"ok":true}}\n`,
-    );
-    expect(env?.result).toEqual({ ok: true });
-  });
-
-  it("prefers the gateway envelope even when an unrelated JSON line trails it", () => {
-    // Regression: the parser must ignore trailing non-envelope JSON. An
-    // earlier version picked the last JSON-shaped line on stdout, which
-    // would let a debug log object emitted after the envelope masquerade as
-    // the gateway response.
-    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
-      [
-        '{"result":{"ok":true,"key":"agent:main:main"}}',
-        '{"level":"debug","msg":"gateway call complete"}',
-      ].join("\n"),
-    );
-    expect(env?.result).toEqual({ ok: true, key: "agent:main:main" });
-  });
-
-  it("returns null when no line carries the envelope contract", () => {
-    // Plain JSON without `result`/`error`/`ok` keys is not a gateway response
-    // shape and must be rejected rather than coerced into one.
-    expect(parseGatewayCallEnvelope('{"foo":"bar"}')).toBeNull();
+  it("returns null when no candidate carries `ok` or `error`", () => {
+    // Plain JSON without `ok`/`error` keys is not a gateway response shape
+    // and must be rejected rather than passed through to downstream code.
+    expect(parseGatewayCallPayload('{"foo":"bar"}')).toBeNull();
     expect(
-      parseGatewayCallEnvelope(
+      parseGatewayCallPayload(
         ['{"level":"info","msg":"starting"}', '{"foo":"bar"}'].join("\n"),
       ),
     ).toBeNull();
   });
 
-  it("normalises a raw `{ok: true, ...}` payload to a success envelope", () => {
-    // OpenClaw `gateway call --json` emits the handler return value
-    // directly rather than a JSON-RPC envelope. Sessions.reset/delete
-    // success carries `{ok: true, key, entry?}`.
-    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
-      '{"ok":true,"key":"agent:main:main","entry":null}',
+  it("tolerates leading log noise on a single-line payload", () => {
+    const payload = parseGatewayCallPayload<{ ok: true }>(
+      `verbose junk\n{"ok":true,"key":"agent:main:main"}\n`,
     );
-    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
+    expect(payload).toMatchObject({ ok: true });
   });
 
-  it("normalises a raw `{ok: false, error: ...}` payload to a failure envelope", () => {
-    const env = parseGatewayCallEnvelope(
-      '{"ok":false,"error":{"code":"E_LOCKED","message":"session locked"}}',
+  it("prefers the gateway response over a trailing non-response JSON line", () => {
+    // Regression: a debug log object emitted after the payload must not
+    // masquerade as the response.
+    const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
+      [
+        '{"ok":true,"key":"agent:main:main"}',
+        '{"level":"debug","msg":"gateway call complete"}',
+      ].join("\n"),
     );
-    expect(env?.error).toEqual({ code: "E_LOCKED", message: "session locked" });
+    expect(payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
-  it("synthesises a failure envelope when `ok: false` carries no `error` object", () => {
-    const env = parseGatewayCallEnvelope('{"ok":false}');
-    expect(env?.error?.code).toBe("unknown");
-    expect(env?.error?.message).toMatch(/ok=false/);
-  });
-
-  it("parses a multi-line pretty-printed raw payload", () => {
-    // The live `openclaw gateway call --json` pretty-prints across multiple
-    // lines on some runtimes. The per-line scan necessarily skips this; the
-    // whole-output JSON.parse fallback must catch it.
-    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+  it("parses a multi-line pretty-printed payload", () => {
+    const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
       [
         "{",
         '  "ok": true,',
@@ -109,11 +76,11 @@ describe("parseGatewayCallEnvelope", () => {
         "}",
       ].join("\n"),
     );
-    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
+    expect(payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
-  it("recovers a multi-line raw payload embedded after log noise", () => {
-    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+  it("recovers a multi-line payload embedded after log noise", () => {
+    const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
       [
         "  Loading config /sandbox/.openclaw/openclaw.json",
         "  Connecting to gateway ws://127.0.0.1:18789",
@@ -123,6 +90,27 @@ describe("parseGatewayCallEnvelope", () => {
         "}",
       ].join("\n"),
     );
-    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
+    expect(payload).toMatchObject({ ok: true, key: "agent:main:main" });
+  });
+
+  it("picks the correct payload when multiple multi-line JSON blocks are present", () => {
+    // A debug-log object printed before the real response would otherwise be
+    // concatenated with the response if we only sliced first-`{` to last-`}`.
+    // The scan must try every (`{` start, `}` end) pairing and accept the
+    // first slice that parses into a recognised response shape.
+    const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
+      [
+        "{",
+        '  "level": "debug",',
+        '  "msg": "starting gateway client"',
+        "}",
+        "now calling gateway",
+        "{",
+        '  "ok": true,',
+        '  "key": "agent:main:main"',
+        "}",
+      ].join("\n"),
+    );
+    expect(payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 });

@@ -19,11 +19,12 @@ export interface SessionsDeleteOptions {
   verbose?: boolean;
 }
 
-export interface SessionsDeleteSuccess {
-  ok: true;
-  key: string;
+export interface SessionsDeletePayload {
+  ok?: boolean;
+  key?: string;
   removedTranscript?: boolean;
   entry?: unknown;
+  error?: { code?: string | number; message?: string };
 }
 
 export interface SessionsDeleteResult {
@@ -56,35 +57,34 @@ export async function deleteSandboxSession(
 
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
-  const { envelope, rawOutput } = callOpenclawGateway<SessionsDeleteSuccess>({
+  const { payload, rawOutput } = callOpenclawGateway<SessionsDeletePayload>({
     sandboxName,
     method: "sessions.delete",
     params: { key: canonicalKey, deleteTranscript },
   });
 
-  if (envelope.error) {
-    const code = envelope.error.code ?? "unknown";
-    const message = envelope.error.message ?? "no message";
+  if (payload.ok === false || payload.error) {
+    const code = payload.error?.code ?? "unknown";
+    const message = payload.error?.message ?? "no message";
     console.error(
       `  Gateway refused sessions.delete for '${canonicalKey}': [${code}] ${message}`,
     );
     process.exit(1);
   }
-  const success = envelope.result;
-  if (!success || success.ok !== true || typeof success.key !== "string") {
+  if (payload.ok !== true || typeof payload.key !== "string") {
     console.error("  Gateway returned an unexpected sessions.delete payload.");
     console.error(`  ${rawOutput.trim()}`);
     process.exit(1);
   }
 
-  const removedTranscript = success.removedTranscript ?? deleteTranscript;
+  const removedTranscript = payload.removedTranscript ?? deleteTranscript;
 
   if (opts.json) {
     console.log(
       JSON.stringify({
-        key: success.key,
+        key: payload.key,
         removedTranscript,
-        entry: success.entry ?? null,
+        entry: payload.entry ?? null,
       }),
     );
   } else {
@@ -92,12 +92,12 @@ export async function deleteSandboxSession(
       ? "(transcript removed)"
       : "(transcript preserved)";
     console.error(
-      `  Deleted session '${success.key}' on agent '${resolvedAgent}' via the OpenClaw gateway ${transcriptNote}.`,
+      `  Deleted session '${payload.key}' on agent '${resolvedAgent}' via the OpenClaw gateway ${transcriptNote}.`,
     );
-    if (opts.verbose && success.entry !== undefined) {
-      console.error(`  entry: ${JSON.stringify(success.entry)}`);
+    if (opts.verbose && payload.entry !== undefined) {
+      console.error(`  entry: ${JSON.stringify(payload.entry)}`);
     }
   }
 
-  return { key: success.key, removedTranscript, entry: success.entry };
+  return { key: payload.key, removedTranscript, entry: payload.entry };
 }

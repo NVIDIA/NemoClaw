@@ -80,10 +80,11 @@ export interface SessionsResetOptions {
   verbose?: boolean;
 }
 
-export interface SessionsResetSuccess {
-  ok: true;
-  key: string;
+export interface SessionsResetPayload {
+  ok?: boolean;
+  key?: string;
   entry?: unknown;
+  error?: { code?: string | number; message?: string };
 }
 
 export interface SessionsResetResult {
@@ -116,38 +117,37 @@ export async function resetSandboxSession(
 
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
-  const { envelope, rawOutput } = callOpenclawGateway<SessionsResetSuccess>({
+  const { payload, rawOutput } = callOpenclawGateway<SessionsResetPayload>({
     sandboxName,
     method: "sessions.reset",
     params: { key: canonicalKey, reason },
   });
 
-  if (envelope.error) {
-    const code = envelope.error.code ?? "unknown";
-    const message = envelope.error.message ?? "no message";
+  if (payload.ok === false || payload.error) {
+    const code = payload.error?.code ?? "unknown";
+    const message = payload.error?.message ?? "no message";
     console.error(
       `  Gateway refused sessions.reset for '${canonicalKey}': [${code}] ${message}`,
     );
     process.exit(1);
   }
-  const success = envelope.result;
-  if (!success || success.ok !== true || typeof success.key !== "string") {
+  if (payload.ok !== true || typeof payload.key !== "string") {
     console.error("  Gateway returned an unexpected sessions.reset payload.");
     console.error(`  ${rawOutput.trim()}`);
     process.exit(1);
   }
 
   if (opts.json) {
-    console.log(JSON.stringify({ key: success.key, reason, entry: success.entry ?? null }));
+    console.log(JSON.stringify({ key: payload.key, reason, entry: payload.entry ?? null }));
   } else {
     const verb = reason === "new" ? "Replaced" : "Reset";
     console.error(
-      `  ${verb} session '${success.key}' on agent '${resolvedAgent}' via the OpenClaw gateway.`,
+      `  ${verb} session '${payload.key}' on agent '${resolvedAgent}' via the OpenClaw gateway.`,
     );
-    if (opts.verbose && success.entry !== undefined) {
-      console.error(`  entry: ${JSON.stringify(success.entry)}`);
+    if (opts.verbose && payload.entry !== undefined) {
+      console.error(`  entry: ${JSON.stringify(payload.entry)}`);
     }
   }
 
-  return { key: success.key, reason, entry: success.entry };
+  return { key: payload.key, reason, entry: payload.entry };
 }
