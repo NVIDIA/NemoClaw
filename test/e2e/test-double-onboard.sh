@@ -778,12 +778,18 @@ fi
 # status hint recommends: rebuild must get past the dispatcher and into its
 # own flow rather than failing with "does not exist".
 REBUILD_LOG="$(mktemp)"
+rebuild_exit=0
 run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
-  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || true
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
 rebuild_output="$(cat "$REBUILD_LOG")"
 rm -f "$REBUILD_LOG"
 
-if grep -q "does not exist" <<<"$rebuild_output"; then
+# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass: a
+# killed process produces output without "does not exist", so guard the exit
+# code before the content assertion.
+if [ "$rebuild_exit" -eq 124 ]; then
+  fail "rebuild probe timed out after ${RECOVERY_PROBE_TIMEOUT_SECONDS}s (possible prompt regression, #4497)"
+elif grep -q "does not exist" <<<"$rebuild_output"; then
   fail "rebuild could not locate the preserved sandbox '$SANDBOX_A' (#4497)"
 else
   pass "rebuild located the preserved sandbox '$SANDBOX_A' (#4497)"
