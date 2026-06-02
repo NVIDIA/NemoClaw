@@ -2174,6 +2174,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
+        "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
