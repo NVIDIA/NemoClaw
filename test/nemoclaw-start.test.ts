@@ -381,6 +381,7 @@ describe("nemoclaw-start non-root fallback", () => {
       'write_runtime_shell_env() { :; }',
       'ensure_runtime_shell_env_shim() { :; }',
       'lock_rc_files() { :; }',
+      'normalize_slack_runtime_env() { :; }',
       'configure_messaging_channels() { echo "SHOULD_NOT_CONFIGURE"; exit 70; }',
       'install_telegram_diagnostics() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
       'install_slack_channel_guard() { echo "SHOULD_NOT_INSTALL"; exit 73; }',
@@ -2887,6 +2888,267 @@ describe("provider placeholder refresh (#4251)", () => {
       "telegram.default.botToken is an OpenShell placeholder but TELEGRAM_BOT_TOKEN is missing",
     );
   });
+
+  it("warns when the Slack config alias is present but SLACK_BOT_TOKEN is missing", () => {
+    const run = runRefresh({
+      channels: {
+        slack: {
+          accounts: {
+            default: {
+              botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+            },
+          },
+        },
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken expects the SLACK_BOT_TOKEN provider placeholder but it is missing",
+    );
+    expect(run.result.stderr).toContain(
+      "slack.default.appToken expects the SLACK_APP_TOKEN provider placeholder but it is missing",
+    );
+  });
+
+  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain("slack.default");
+    // The Bolt-compatible alias is never rewritten on disk; it does not match
+    // the canonical "openshell:resolve:env:SLACK_BOT_TOKEN" placeholder key.
+    expect(run.config.channels.slack.accounts.default.botToken).toBe(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+    expect(run.config.channels.slack.accounts.default.appToken).toBe(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+  });
+
+  it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        SLACK_BOT_TOKEN: "xoxb-1-real-bot-token",
+        SLACK_APP_TOKEN: "xapp-1-real-app-token",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain("slack.default");
+    expect(JSON.stringify(run.config)).not.toContain("xoxb-1-real-bot-token");
+  });
+
+  it("warns when the Slack runtime env holds neither a placeholder nor a Slack token", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      { SLACK_BOT_TOKEN: "garbage-not-a-token" },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+    );
+  });
+
+  it("warns when the Slack runtime env resolves a different key than expected", () => {
+    // A placeholder for the wrong key must not look healthy — Bolt would still
+    // inherit a non-Slack placeholder and fail at startup.
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      { SLACK_BOT_TOKEN: "openshell:resolve:env:v51_OTHER_KEY" },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+    );
+  });
+});
+
+describe("Slack runtime env normalization (#4274)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  // Exercises normalize_slack_runtime_env() through the real shell function so
+  // we prove the *exported* process-env values the OpenClaw child inherits are
+  // Bolt-compatible, not the canonical "openshell:resolve:env:*" placeholder.
+  function runNormalize(env: Record<string, string | undefined> = {}): {
+    bot: string;
+    app: string;
+    result: ReturnType<typeof spawnSync>;
+  } {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-env-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const fn = extractShellFunctionFromSource(src, "normalize_slack_runtime_env");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        fn,
+        "normalize_slack_runtime_env",
+        'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
+        'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    // A clean env so an inherited SLACK_* from the host can't mask an "unset" case.
+    const childEnv: Record<string, string> = { PATH: process.env.PATH || "" };
+    for (const [key, value] of Object.entries(env)) {
+      if (value !== undefined) childEnv[key] = value;
+    }
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      env: childEnv,
+      timeout: 5000,
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    const bot = (result.stdout.match(/^BOT=(.*)$/m)?.[1] ?? "").trimEnd();
+    const app = (result.stdout.match(/^APP=(.*)$/m)?.[1] ?? "").trimEnd();
+    return { bot, app, result };
+  }
+
+  it("normalizes revision-scoped Slack placeholders to Bolt-compatible aliases", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("does not leak the revision suffix into the normalized env or logs", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).not.toContain("v51_");
+    expect(run.app).not.toContain("v51_");
+    expect(run.result.stderr).not.toContain("v51_");
+    expect(run.bot).not.toContain("openshell:resolve:env:");
+    expect(run.app).not.toContain("openshell:resolve:env:");
+  });
+
+  it("normalizes the canonical (non-revision) placeholder too", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("leaves already-aliased Slack tokens unchanged (idempotent)", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("leaves real Slack tokens untouched", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "xoxb-123-real-bot-token",
+      SLACK_APP_TOKEN: "xapp-1-real-app-token",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-123-real-bot-token");
+    expect(run.app).toBe("xapp-1-real-app-token");
+  });
+
+  it("does not create Slack env vars that were never set", () => {
+    const run = runNormalize();
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("__UNSET__");
+    expect(run.app).toBe("__UNSET__");
+  });
+
+  it("leaves a placeholder that resolves a different key untouched", () => {
+    // OpenShell injects self-referential placeholders. A placeholder resolving
+    // some other secret must not be silently rebound to the Slack alias.
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
+    expect(run.app).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
+  });
+
+  it("leaves a suffix-collision key (…_NOT_SLACK_BOT_TOKEN) untouched", () => {
+    // The match is anchored: only the canonical key or its v<rev>_ form is
+    // rebound, never a key that merely ends with the same suffix.
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:MY_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN");
+    expect(run.app).toBe("openshell:resolve:env:MY_SLACK_APP_TOKEN");
+  });
 });
 
 describe("Telegram diagnostics (#2766)", () => {
@@ -2970,6 +3232,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'write_runtime_shell_env() { :; }',
         'ensure_runtime_shell_env_shim() { :; }',
         'lock_rc_files() { :; }',
+        'normalize_slack_runtime_env() { :; }',
         'configure_messaging_channels() { echo "ORDER:configure"; }',
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
