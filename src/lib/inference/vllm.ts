@@ -522,7 +522,7 @@ export async function installVllm(
   }
 
   emit("Launching vLLM");
-  emit("Launch can take 5-20 minutes; this is normal");
+  emit(`Launch can take 5 minutes to ${String(Math.ceil(profile.loadTimeoutSec / 60))} minutes`);
 
   const ready = await waitForVllmReady(profile);
   if (!ready.ok) {

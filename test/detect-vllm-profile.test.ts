@@ -72,7 +72,7 @@ describe("detectVllmProfile", () => {
   });
 
   it("shares Spark timeout budgets with the generic profile", () => {
-    const spark = detectVllmProfile({ spark: true });
+    const spark = detectVllmProfile({ spark: true, type: "nvidia" });
     const generic = detectVllmProfile({ type: "nvidia" });
     expect(generic!.pullTimeoutSec).toBe(spark!.pullTimeoutSec);
     expect(generic!.loadTimeoutSec).toBe(spark!.loadTimeoutSec);
