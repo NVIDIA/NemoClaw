@@ -5,9 +5,17 @@ import { isIP } from "node:net";
 
 import { dockerExecFileSync } from "../../adapters/docker";
 import { CLI_NAME } from "../../cli/branding";
+import * as registry from "../../state/registry";
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 const HOST_ALIAS_KUBECTL_TIMEOUT_MS = 10_000;
+
+// Drivers that run a per-sandbox direct container (openshell-<sandbox>...)
+// instead of the legacy k3s gateway. They have no openshell-cluster-nemoclaw
+// container and no Kubernetes `Sandbox` custom resource, so the kubectl-based
+// host-alias backend below cannot target them. See src/lib/sandbox/privileged-exec.ts
+// for the direct-container resolution these drivers use elsewhere.
+const DIRECT_CONTAINER_DRIVERS = new Set(["docker", "vm"]);
 
 type HostAlias = {
   ip: string;
@@ -55,6 +63,33 @@ export class HostAliasesCommandError extends Error {
 
 function hostAliasesFail(lines: string | readonly string[], exitCode = 1): never {
   throw new HostAliasesCommandError(lines, exitCode);
+}
+
+function normalizeDriver(driver: unknown): string | null {
+  return typeof driver === "string" && driver.trim()
+    ? driver.trim().toLowerCase()
+    : null;
+}
+
+// Host aliases are persisted on the legacy Kubernetes gateway `Sandbox`
+// custom resource and applied by `docker exec openshell-cluster-nemoclaw
+// kubectl ...`. The docker and vm drivers run per-sandbox direct containers
+// with no gateway cluster container and no `Sandbox` CR, so this k3s
+// control-plane path cannot work for them. Fail fast with an actionable
+// message instead of targeting a container that does not exist (#4516) — and
+// without pretending a one-time /etc/hosts edit inside the direct container
+// would survive a sandbox restart or rebuild.
+function assertLegacyGatewayHostAliasSupport(sandboxName: string): void {
+  const driver = normalizeDriver(registry.getSandbox(sandboxName)?.openshellDriver);
+  if (driver && DIRECT_CONTAINER_DRIVERS.has(driver)) {
+    hostAliasesFail([
+      `  Host aliases are not supported on the '${driver}' driver sandbox '${sandboxName}'.`,
+      "  This command edits aliases on the legacy Kubernetes gateway sandbox resource,",
+      `  which the ${driver} driver does not run (there is no openshell-cluster-nemoclaw container).`,
+      "  OpenShell does not yet expose a persistent host-alias API for this driver, and a",
+      "  one-time /etc/hosts edit would not survive a sandbox restart or rebuild.",
+    ]);
+  }
 }
 
 function validateHostAliasHostname(hostname: string): boolean {
@@ -186,6 +221,7 @@ function patchHostAliasesWithRetry(
 }
 
 export function listSandboxHostAliases(sandboxName: string): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
   const aliases = getHostAliases(getSandboxResource(sandboxName));
   if (aliases.length === 0) {
     console.log(`  No host aliases configured for '${sandboxName}'.`);
@@ -207,6 +243,7 @@ export function addSandboxHostAlias(
   sandboxName: string,
   options: AddSandboxHostAliasOptions = {},
 ): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
   const dryRun = Boolean(options.dryRun);
   const { hostname: rawHostname, ip } = options;
   if (!rawHostname || !ip) {
@@ -249,6 +286,7 @@ export function removeSandboxHostAlias(
   sandboxName: string,
   options: RemoveSandboxHostAliasOptions = {},
 ): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
   const dryRun = Boolean(options.dryRun);
   const { hostname: rawHostname } = options;
   if (!rawHostname) {

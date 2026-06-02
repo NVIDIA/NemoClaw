@@ -26,8 +26,13 @@ import {
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
@@ -267,7 +272,18 @@ export function listSandboxPolicies(sandboxName: string) {
 
   if (gatewayPresets === null) {
     console.log("");
-    console.log("  ⚠ Could not query gateway — showing local state only.");
+    // A null gateway result can be a transient Docker daemon outage rather
+    // than a gateway-only problem. Name the runtime outage so the user
+    // restarts Docker instead of assuming their local policy state drifted
+    // (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      printDockerRuntimeDownGuidance(sandboxName, {
+        writer: console.log,
+        retryCommand: "policy-list",
+      });
+    } else {
+      console.log("  ⚠ Could not query gateway — showing local state only.");
+    }
   }
   console.log("");
 }
@@ -366,7 +382,12 @@ async function applyChannelRemoveToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   channelTokenKeys: string[],
-): Promise<void> {
+  options: { bestEffort?: boolean } = {},
+): Promise<{ ok: boolean; residual: string[] }> {
+  const bestEffort = Boolean(options.bestEffort);
+  const residual: string[] = [];
+  let gatewayReachable = true;
+
   if (channelTokenKeys.length > 0) {
     const recovery = await recoverNamedGatewayRuntime();
     if (!recovery.recovered) {
@@ -376,7 +397,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       console.error(
         "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
       );
-      process.exit(1);
+      if (!bestEffort) process.exit(1);
+      gatewayReachable = false;
+      residual.push("gateway-providers");
     }
   }
 
@@ -389,28 +412,33 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // previous run may have already detached, or the channel may have been
   // configured for a sandbox that is no longer alive.
   const detachFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-        detachFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found|not attached/i.test(output)) {
+          detachFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (detachFailures.length > 0) {
-    console.error(
-      `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of detachFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (detachFailures.length > 0) {
+      console.error(
+        `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of detachFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   // Capture each delete's outcome. If any non-NotFound failure surfaces
@@ -420,30 +448,35 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // can't easily recover. Surface the underlying openshell output so the
   // operator can see exactly why the delete was rejected.
   const deleteFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      // Treat "not found" as success-equivalent — a previous run may
-      // have already deleted the provider.
-      if (!/\bNotFound\b|not found/i.test(output)) {
-        deleteFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    const detachFailedSet = new Set(detachFailures.map((f) => f.name));
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      if (!bestEffort && detachFailedSet.has(name)) continue;
+      const result = runOpenshell(["provider", "delete", name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found/i.test(output)) {
+          deleteFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (deleteFailures.length > 0) {
-    console.error(
-      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of deleteFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (deleteFailures.length > 0) {
+      console.error(
+        `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of deleteFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   const entry = registry.getSandbox(sandboxName);
@@ -459,6 +492,8 @@ async function applyChannelRemoveToGatewayAndRegistry(
         Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     });
   }
+
+  return { ok: residual.length === 0, residual };
 }
 
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
@@ -788,6 +823,21 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
+  const presetContent = policies.loadPreset(canonical);
+  const presetPolicyKeys =
+    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+  if (presetContent === null || presetPolicyKeys.length === 0) {
+    if (presetContent !== null && presetPolicyKeys.length === 0) {
+      console.error(
+        `  Preset YAML for channel '${canonical}' has no parseable entries under 'network_policies:'.`,
+      );
+    }
+    console.error(
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
+    );
+    process.exit(1);
+  }
+
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
@@ -817,11 +867,37 @@ export async function addSandboxChannel(
     return;
   }
 
+  const priorEntry = registry.getSandbox(sandboxName);
+  const priorMessagingChannels: string[] = priorEntry?.messagingChannels
+    ? [...priorEntry.messagingChannels]
+    : [];
+  const wasAlreadyEnabled = priorMessagingChannels.includes(canonical);
+  const priorHashes: Record<string, string> = {
+    ...((priorEntry?.providerCredentialHashes as Record<string, string>) || {}),
+  };
+  const channelTokenKeys = getChannelTokenKeys(channel);
+  const priorCreds: Record<string, string> = {};
+  for (const key of channelTokenKeys) {
+    const existing = getCredential(key);
+    if (existing != null) priorCreds[key] = existing;
+  }
+
   const acquired: Record<string, string> = {};
   if (channel.loginMethod === "host-qr") {
     await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
   } else {
     await acquirePasteTokens(canonical, channel, acquired);
+  }
+
+  if (canonical === "slack") {
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
   }
 
   persistChannelTokens(acquired);
@@ -833,28 +909,96 @@ export async function addSandboxChannel(
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
-  applyChannelPresetIfAvailable(sandboxName, canonical);
+  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    await rollbackChannelAdd(sandboxName, channel, canonical, {
+      wasAlreadyEnabled,
+      priorMessagingChannels,
+      priorHashes,
+      priorCreds,
+    });
+    process.exit(1);
+  }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
 }
 
-// Must run before promptAndRebuild — the rebuild's backup manifest only
-// captures presets already applied (#3437). Without this, channel bridges
-// boot without egress to their upstream API after rebuild.
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
-  const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
-  if (!builtinPresets.has(channelName)) {
-    return true;
+async function rollbackChannelAdd(
+  sandboxName: string,
+  channel: ChannelDef,
+  canonical: string,
+  snapshot: {
+    wasAlreadyEnabled: boolean;
+    priorMessagingChannels: string[];
+    priorHashes: Record<string, string>;
+    priorCreds: Record<string, string>;
+  },
+): Promise<{ ok: boolean; residual: string[] }> {
+  if (snapshot.wasAlreadyEnabled) {
+    console.error(
+      `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
+    );
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: snapshot.priorMessagingChannels,
+      providerCredentialHashes:
+        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
+    });
+    clearChannelTokens(channel);
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      persistChannelTokens(snapshot.priorCreds);
+    }
+    const residual: string[] = ["gateway-providers"];
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      try {
+        const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
+          name: bridgeProviderName(sandboxName, canonical, envKey),
+          envKey,
+          token,
+        }));
+        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell, {
+          bestEffort: true,
+        });
+      } catch (err) {
+        console.error(
+          `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { ok: false, residual };
   }
+
+  console.error(
+    `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
+  );
+  clearChannelTokens(channel);
+  const result = await applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    canonical,
+    getChannelTokenKeys(channel),
+    { bestEffort: true },
+  );
+  if (!result.ok) {
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${result.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
+  }
+  return result;
+}
+
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
       console.error(
-        `  ${YW}⚠${R} Channel '${channelName}' bridge registered but its policy preset failed to apply.`,
+        `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
       );
       return false;
     }
@@ -864,7 +1008,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
     );
     return false;
   }

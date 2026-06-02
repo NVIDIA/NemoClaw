@@ -7,6 +7,7 @@ user_invocable: true
 # Cut Release Tag
 
 Bump all version strings, open a release PR, and after merge create annotated semver + `latest` tags on `origin/main`.
+Do not update `lkg` in this automated release flow; release admins promote `lkg` manually after validation.
 
 This skill delegates the version-bump work to `scripts/bump-version.ts` (invoked via `npm run bump:version`). That script updates package.json (root + plugin), blueprint.yaml, installer defaults, docs config, and versioned doc links — then runs the build and tests before opening a PR.
 
@@ -119,6 +120,9 @@ git push origin <new-version>
 git push origin latest --force
 ```
 
+Do not move or push `lkg` in this step.
+The public installer defaults to `lkg`, but that tag is the admin-promoted known-good pointer and may intentionally lag `latest`.
+
 ## Step 6: Verify
 
 ```bash
@@ -223,4 +227,5 @@ The verification record itself stays in each issue's comment history — only th
 - NEVER tag a branch other than `origin/main`.
 - Always use annotated tags (`-a`), not lightweight tags.
 - The `latest` tag is a floating tag that always points to the most recent release — it requires `--force` to push.
+- The `lkg` tag is a manually promoted known-good tag for public installer defaults. Do not update it from the automated release flow.
 - The version string passed to `npm run bump:version` should NOT have a `v` prefix (e.g., `0.0.3`, not `v0.0.3`). The script adds the `v` prefix for tags internally.
