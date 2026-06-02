@@ -296,23 +296,34 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       curlExit,
       pgrepExit,
       gatewayLog = "gateway log line\n",
+      // The /tmp/nemoclaw-gateway-local marker is dropped by nemoclaw-start
+      // only when this container runs the in-container OpenClaw gateway. Most
+      // probes here exercise that path, so default it to present.
+      gatewayLocalMarker = true,
     }: {
       curlExit: number;
       pgrepExit: number;
       gatewayLog?: string;
+      gatewayLocalMarker?: boolean;
     }) {
       const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-fallback-"));
       const logPath = path.join(tmp, "gateway.log");
+      const markerPath = path.join(tmp, "nemoclaw-gateway-local");
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
         "# Entrypoint runs as root",
       );
-      const command = rawCommand.replaceAll("/tmp/gateway.log", logPath);
+      const command = rawCommand
+        .replaceAll("/tmp/gateway.log", logPath)
+        .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
 
       if (gatewayLog !== "") {
         fs.writeFileSync(logPath, gatewayLog);
+      }
+      if (gatewayLocalMarker) {
+        fs.writeFileSync(markerPath, "");
       }
 
       try {
@@ -371,6 +382,49 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // a 4xx/5xx means the gateway is reachable and unhappy, not a
       // namespace mismatch — so pgrep should not run.
       expect(probe.calls).not.toContain("pgrep");
+    });
+
+    // #4503: OpenShell docker-driver sandboxes deliver the OpenClaw gateway
+    // outside this container's network namespace (it runs on the host), so
+    // nemoclaw-start never drops the /tmp/nemoclaw-gateway-local marker. The
+    // in-container curl gets connection-refused and the in-container pgrep
+    // finds no gateway process, yet `nemoclaw status`/OpenShell report Ready.
+    // Without the marker the healthcheck must NOT mark the container unhealthy
+    // off a signal it cannot observe.
+    describe("does not falsely fail when the gateway runs outside this container's namespace (#4503)", () => {
+      it("reports healthy on curl exit 7 with no in-container gateway process when the marker is absent", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 7,
+          pgrepExit: 1,
+          gatewayLog: "gateway log line\n",
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(0);
+        // The process-name fallback is meaningless out-of-namespace, so the
+        // healthcheck must short-circuit before consulting pgrep.
+        expect(probe.calls).not.toContain("pgrep");
+      });
+
+      it("reports healthy on curl exit 7 even when no gateway log exists and the marker is absent", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 7,
+          pgrepExit: 1,
+          gatewayLog: "",
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(0);
+        expect(probe.calls).not.toContain("pgrep");
+      });
+
+      it("still reports unhealthy on a wedged listener (curl exit 28) regardless of the marker", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 28,
+          pgrepExit: 0,
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(1);
+        expect(probe.calls).not.toContain("pgrep");
+      });
     });
   });
 

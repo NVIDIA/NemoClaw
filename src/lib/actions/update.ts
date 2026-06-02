@@ -11,6 +11,7 @@ import { versionGte } from "../domain/installer/version";
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
+export const NEMOCLAW_MAINTAINED_INSTALL_TAG = "lkg";
 
 type LogFn = (message?: string) => void;
 type PromptFn = (question: string) => Promise<string>;
@@ -105,7 +106,7 @@ export function isSourceCheckout(rootDir: string, env: NodeJS.ProcessEnv = proce
   return detectInstallType(rootDir, env) === "source";
 }
 
-export function getLatestNemoClawVersionFromGitLatestTag(
+export function getMaintainedNemoClawVersionFromGitTag(
   deps: {
     env?: NodeJS.ProcessEnv;
     gitCommand?: string;
@@ -119,8 +120,8 @@ export function getLatestNemoClawVersionFromGitLatestTag(
       "ls-remote",
       "--tags",
       deps.repoUrl ?? NEMOCLAW_REPO_URL,
-      "refs/tags/latest",
-      "refs/tags/latest^{}",
+      `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}`,
+      `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}^{}`,
       "refs/tags/v*",
     ],
     {
@@ -132,18 +133,21 @@ export function getLatestNemoClawVersionFromGitLatestTag(
   if (result.error || (result.status ?? 1) !== 0) return null;
 
   const versionsBySha = new Map<string, string>();
-  let latestSha: string | null = null;
+  let maintainedSha: string | null = null;
   for (const line of trimOutput(result.stdout).split(/\r?\n/)) {
     const [sha, ref] = line.trim().split(/\s+/, 2);
     if (!sha || !ref) continue;
-    if (ref === "refs/tags/latest^{}" || (ref === "refs/tags/latest" && !latestSha)) {
-      latestSha = sha;
+    if (
+      ref === `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}^{}` ||
+      (ref === `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}` && !maintainedSha)
+    ) {
+      maintainedSha = sha;
       continue;
     }
     const match = /^refs\/tags\/v(.+?)(\^\{\})?$/.exec(ref);
     if (match?.[1]) versionsBySha.set(sha, match[1]);
   }
-  return latestSha ? versionsBySha.get(latestSha) ?? null : null;
+  return maintainedSha ? versionsBySha.get(maintainedSha) ?? null : null;
 }
 
 function updateAvailable(currentVersion: string, latestVersion: string | null): boolean | null {
@@ -195,7 +199,7 @@ export async function runUpdateAction(
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
   const branding = updateBranding(env);
-  const latestVersion = (deps.getLatestVersion ?? (() => getLatestNemoClawVersionFromGitLatestTag({ env })))();
+  const latestVersion = (deps.getLatestVersion ?? (() => getMaintainedNemoClawVersionFromGitTag({ env })))();
   const installType = deps.isSourceCheckout
     ? deps.isSourceCheckout()
       ? "source"

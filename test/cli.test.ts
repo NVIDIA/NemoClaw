@@ -140,6 +140,7 @@ type SandboxEntry = {
   gpuEnabled: boolean;
   policies: string[];
   agent?: string;
+  openshellDriver?: string | null;
   agentVersion?: string | null;
 };
 
@@ -190,6 +191,21 @@ function writeSandboxRegistry(
   );
 }
 
+// Several sandbox commands (status, connect, logs, policy-list) now preflight
+// `docker info` to classify a Docker daemon outage (#4428). Tests that should
+// exercise the normal (Docker-up) path must stub a healthy `docker info` so
+// they stay hermetic regardless of whether the host/CI runner has a running
+// Docker daemon.
+function writeHealthyDockerStub(localBin: string): void {
+  fs.writeFileSync(
+    path.join(localBin, "docker"),
+    ["#!/usr/bin/env bash", 'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi', "exit 0"].join(
+      "\n",
+    ),
+    { mode: 0o755 },
+  );
+}
+
 const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
 const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
 
@@ -221,6 +237,8 @@ function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
     ].join("\n"),
     { mode: 0o755 },
   );
+  // `logs` now preflights the Docker daemon (#4428); stub a healthy daemon.
+  writeHealthyDockerStub(localBin);
 
   return {
     home,
@@ -1166,6 +1184,101 @@ describe("CLI dispatch", () => {
     expect(parsed).toHaveProperty("phase");
     expect(parsed).toHaveProperty("inferenceHealth");
     expect(parsed).toHaveProperty("gatewayState");
+  });
+
+  // #4495: a paused Docker-driver container can surface upstream as
+  // `Phase: Error` even though the sandbox is intact. NemoClaw must keep the
+  // raw OpenShell phase but add an actionable paused-container recovery hint.
+  it("status surfaces a paused Docker-driver container hint without rewriting Phase: Error", testTimeoutOptions(30_000), () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-status-paused-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      openshellDriver: "docker",
+      openshellVersion: "0.0.44",
+    } as unknown as Partial<SandboxEntry>);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Error'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // Docker reports the resolved sandbox container as paused.
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "ps" ]; then echo "openshell-alpha-abc123"; exit 0; fi',
+        'if [ "$1" = "inspect" ]; then',
+        '  for a in "$@"; do',
+        "    case \"$a\" in",
+        '      *Paused*) echo "true"; exit 0 ;;',
+        '      *Health*) echo "none"; exit 0 ;;',
+        "    esac",
+        "  done",
+        '  echo ""; exit 0',
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "alpha status",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      30000,
+    );
+
+    // Raw OpenShell phase is preserved verbatim — not rewritten to Ready.
+    expect(r.out).toContain("Phase: Error");
+    // Actionable paused-container recovery hint is added.
+    expect(r.out).toContain("paused: openshell-alpha-abc123");
+    expect(r.out).toContain("docker unpause openshell-alpha-abc123");
+    // The misleading rebuild suggestion must not fire for a paused container.
+    expect(r.out).not.toContain("rebuild --yes");
+
+    // The structured report exposes the paused flag for automation consumers.
+    const j = runWithEnv(
+      "alpha status --json",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      30000,
+    );
+    const parsed = JSON.parse(j.out);
+    expect(parsed.phase).toBe("Error");
+    expect(parsed.dockerPaused).toBe(true);
   });
 
   it("sandbox status --json defaults openshell driver/version to 'unknown' strings", () => {
@@ -2582,6 +2695,47 @@ describe("CLI dispatch", () => {
     });
   });
 
+  for (const driver of ["docker", "vm"] as const) {
+    it(`gates host alias commands on the ${driver} driver without targeting the legacy gateway container`, testTimeoutOptions(30_000), () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-cli-hosts-${driver}-`),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      // Record any docker invocation so we can prove the gate fires before
+      // the legacy `docker exec openshell-cluster-nemoclaw kubectl` path.
+      writeHostAliasDockerStub(localBin, dockerLog, [
+        { ip: "10.0.0.5", hostnames: ["old.local"] },
+      ]);
+      writeSandboxRegistry(home, "alpha", { openshellDriver: driver });
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env);
+      const add = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
+      const remove = runWithEnv("alpha hosts-remove searxng.local", env);
+
+      for (const result of [list, add, remove]) {
+        expect(result.code).toBe(1);
+        expect(result.out).toContain(
+          `Host aliases are not supported on the '${driver}' driver sandbox 'alpha'.`,
+        );
+      }
+
+      // Even the dry-run preview must not reach the legacy resource read.
+      const dryRun = runWithEnv(
+        "alpha hosts-add searxng.local 192.168.1.105 --dry-run",
+        env,
+      );
+      expect(dryRun.code).toBe(1);
+      expect(dryRun.out).not.toContain("/spec/podTemplate/spec/hostAliases");
+
+      // The gate runs before any docker exec, so the legacy gateway container
+      // is never targeted.
+      expect(fs.existsSync(dockerLog)).toBe(false);
+    });
+  }
+
   it("supports oclif-native sandbox command forms", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-native-sandbox-"));
     writeSandboxRegistry(home);
@@ -2933,6 +3087,7 @@ describe("CLI dispatch", () => {
     const markerFile = path.join(home, "logs-follow-source-exit-args");
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(registryDir, { recursive: true });
+    writeHealthyDockerStub(localBin);
     fs.writeFileSync(
       path.join(registryDir, "sandboxes.json"),
       JSON.stringify({
@@ -3012,6 +3167,7 @@ describe("CLI dispatch", () => {
     const releaseFile = path.join(home, "release-log-children");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
+    writeHealthyDockerStub(localBin);
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -3727,6 +3883,7 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    writeHealthyDockerStub(localBin);
 
     const r = runWithEnv("alpha logs", {
       HOME: home,
@@ -4401,6 +4558,9 @@ describe("CLI dispatch", () => {
     fs.writeFileSync(path.join(localBin, "sleep"), ["#!/usr/bin/env bash", "exit 0"].join("\n"), {
       mode: 0o755,
     });
+    // Healthy Docker so the connect readiness wait is not short-circuited by
+    // the #4428 docker-down fast-fail.
+    writeHealthyDockerStub(localBin);
 
     const r = runWithEnv(
       "alpha connect",
@@ -5224,6 +5384,9 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    // Healthy Docker so the #4428 logs preflight does not short-circuit before
+    // the SIGINT path under test.
+    writeHealthyDockerStub(localBin);
 
     const result = spawnSync(process.execPath, [CLI, "alpha", "logs", "--follow"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -6146,7 +6309,7 @@ describe("CLI dispatch", () => {
     testTimeout(10_000),
   );
 
-  it("auto-cleans an orphan registry entry on status when the named gateway is healthy", () => {
+  it("preserves an orphan registry entry on passive status when the named gateway is healthy", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-orphan-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -6200,12 +6363,221 @@ describe("CLI dispatch", () => {
 
     expect(statusResult.code).toBe(1);
     expect(statusResult.out).not.toContain("Inference: healthy");
-    expect(statusResult.out).toContain("is not present in the live OpenShell gateway");
-    expect(statusResult.out).toContain("Removed stale local registry entry");
+    expect(statusResult.out).toContain(
+      "registered locally, but is not present in the live OpenShell gateway",
+    );
+    expect(statusResult.out).toContain("No local registry entry was removed");
+    expect(statusResult.out).not.toContain("Removed stale local registry entry");
 
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeUndefined();
-    expect(saved.defaultSandbox).toBeNull();
+    expect(saved.sandboxes.alpha).toBeDefined();
+    expect(saved.defaultSandbox).toBe("alpha");
+  });
+});
+
+describe("Docker daemon outage classification (#4428)", () => {
+  // Build a fake runtime where OpenShell still reports a present sandbox in a
+  // non-ready phase (the reporter's case: cached/transitional state) while the
+  // Docker daemon is down. `dockerInfoOk` flips between the outage repro and
+  // the genuine-startup-failure control case.
+  function setupDockerOutageEnv(
+    prefix: string,
+    {
+      dockerInfoOk,
+      phase = "Provisioning",
+      driver = "docker",
+    }: { dockerInfoOk: boolean; phase?: string; driver?: string },
+  ): { home: string; localBin: string; env: Record<string, string> } {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    // The Docker-outage reclassification only applies to Docker-driver
+    // sandboxes (#4428); record the driver so the gate matches.
+    writeSandboxRegistry(home, "v053-baseline", {
+      policies: ["npm"],
+      openshellDriver: driver,
+    } as unknown as Partial<SandboxEntry>);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+        `  printf "Name: v053-baseline\\nPhase: ${phase}\\nPolicy:\\n"`,
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        `  printf "NAME             STATUS\\nv053-baseline    ${phase}\\n"`,
+        "  exit 0",
+        "fi",
+        // policy get fails so getGatewayPresets() returns null (gateway not
+        // queryable), exercising the policy-list reclassification branch.
+        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then exit 1; fi',
+        'if [ "$1" = "status" ]; then printf "Gateway: nemoclaw\\nStatus: Connected\\n"; exit 0; fi',
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then echo "Gateway: nemoclaw"; exit 0; fi',
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const dockerInfoBody = dockerInfoOk
+      ? 'echo "24.0.0"; exit 0'
+      : 'echo "Cannot connect to the Docker daemon" >&2; exit 1';
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        `if [ "$1" = "info" ]; then ${dockerInfoBody}; fi`,
+        // ps lists nothing so the classifier never claims a running container.
+        'if [ "$1" = "ps" ]; then exit 0; fi',
+        dockerInfoOk ? "exit 0" : "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(localBin, "sleep"), ["#!/usr/bin/env bash", "exit 0"].join("\n"), {
+      mode: 0o755,
+    });
+    return {
+      home,
+      localBin,
+      env: { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+    };
+  }
+
+  const DOCKER_DOWN_HEADER = "docker_unreachable";
+  const DOCKER_DOWN_HINT = "Start the Docker daemon";
+
+  it("status names the Docker outage instead of stuck-phase rebuild guidance", () => {
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-down-", {
+      dockerInfoOk: false,
+    });
+    try {
+      const r = runWithEnv("v053-baseline status", env);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain("Docker daemon is not reachable");
+      expect(r.out).toContain(DOCKER_DOWN_HINT);
+      // Must NOT steer the user toward rebuild for a transient daemon outage.
+      expect(r.out).not.toContain("is stuck in 'Provisioning' phase");
+      expect(r.out).not.toMatch(/rebuild --yes/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("status keeps stuck-phase rebuild guidance when Docker is reachable", () => {
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-up-", {
+      dockerInfoOk: true,
+    });
+    try {
+      const r = runWithEnv("v053-baseline status", env);
+      // Genuine startup failure: Docker is fine, sandbox is wedged Provisioning.
+      expect(r.out).toContain("is stuck in 'Provisioning' phase");
+      expect(r.out).toContain("rebuild --yes");
+      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("status keeps a terminal phase failure visible even when Docker is down", () => {
+    // A settled Failed phase is a real sandbox failure; the Docker-outage
+    // reclassification must not mask it (#4428 review).
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-failed-down-", {
+      dockerInfoOk: false,
+      phase: "Failed",
+    });
+    try {
+      const r = runWithEnv("v053-baseline status", env);
+      expect(r.out).toContain("is stuck in 'Failed' phase");
+      expect(r.out).toContain("rebuild --yes");
+      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "connect fails fast with Docker outage guidance instead of waiting out the readiness timeout",
+    () => {
+      const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-connect-down-", {
+        dockerInfoOk: false,
+      });
+      try {
+        const startedAt = Date.now();
+        // A large connect timeout would be burned entirely pre-fix; the fast
+        // path must return well before it.
+        const r = runWithEnv("v053-baseline connect", { ...env, NEMOCLAW_CONNECT_TIMEOUT: "120" });
+        const elapsedMs = Date.now() - startedAt;
+        expect(r.code).toBe(1);
+        expect(r.out).toContain(DOCKER_DOWN_HEADER);
+        expect(r.out).toContain(DOCKER_DOWN_HINT);
+        expect(r.out).not.toContain("Waiting for sandbox");
+        expect(r.out).not.toContain("Timed out after");
+        expect(elapsedMs).toBeLessThan(30_000);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+      }
+    },
+    testTimeout(40_000),
+  );
+
+  it("connect --probe-only also surfaces the Docker outage instead of an opaque probe failure", () => {
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-probe-down-", {
+      dockerInfoOk: false,
+    });
+    try {
+      const r = runWithEnv("v053-baseline connect --probe-only", env);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain(DOCKER_DOWN_HINT);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("logs names the Docker outage as the unavailable runtime layer", () => {
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-logs-down-", {
+      dockerInfoOk: false,
+    });
+    try {
+      const r = runWithEnv("v053-baseline logs", env);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain(DOCKER_DOWN_HINT);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("policy-list reports the Docker outage instead of a local-state-only warning", () => {
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-policy-down-", {
+      dockerInfoOk: false,
+    });
+    try {
+      const r = runWithEnv("v053-baseline policy-list", env);
+      expect(r.out).toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain(DOCKER_DOWN_HINT);
+      expect(r.out).not.toContain("Could not query gateway — showing local state only");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not misclassify a non-Docker (vm) driver sandbox as a Docker outage", () => {
+    // A failing local `docker info` is normal for vm/kubernetes drivers; status
+    // must fall through to the existing stuck-phase guidance, not the
+    // Docker-outage block (#4428 review).
+    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-vm-down-", {
+      dockerInfoOk: false,
+      driver: "vm",
+    });
+    try {
+      const r = runWithEnv("v053-baseline status", env);
+      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
+      expect(r.out).toContain("is stuck in 'Provisioning' phase");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

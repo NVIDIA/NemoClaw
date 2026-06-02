@@ -300,7 +300,7 @@ Managed vLLM uses these profiles:
 
 | Host profile | Default model |
 |---|---|
-| DGX Spark | `Qwen/Qwen3.6-27B-FP8` |
+| DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
 | DGX Station | `Qwen/Qwen3.6-27B-FP8` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
@@ -338,7 +338,8 @@ Recognised slugs:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on DGX Spark and DGX Station profiles |
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on the DGX Station profile |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | Default on the DGX Spark profile |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
 
