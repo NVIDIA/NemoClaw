@@ -3,15 +3,41 @@
 
 // Scope boundary for `nemoclaw <name> sessions reset`:
 //
-//   - NemoClaw side (this file): validate the requested key/agent, canonicalise
-//     the session key, dispatch the `sessions.reset` JSON-RPC to the in-sandbox
-//     OpenClaw gateway, and surface the envelope to the user.
-//   - OpenClaw side (upstream openclaw.ai): owns the actual reset semantics,
-//     including clearing the session entry, releasing stale `.jsonl.lock`
-//     files, recovering from a corrupt `sessions.json`, and guaranteeing that
-//     the next message lands on a clean session. NemoClaw does not touch the
-//     in-sandbox session store directly; the upstream recovery contract and
-//     its test coverage live with the gateway server, not here.
+//   - Invalid state addressed by this code path: a user wants to drop the
+//     current conversation for a given session key (canonicalised as
+//     `agent:<agent>:<slot>`) so the next message starts on a clean entry.
+//   - Source boundary:
+//       * NemoClaw side (this file): validate the requested key/agent,
+//         canonicalise the session key, dispatch the `sessions.reset`
+//         JSON-RPC to the in-sandbox OpenClaw gateway, and surface the
+//         envelope to the user.
+//       * OpenClaw side (upstream `openclaw` npm package, pinned at
+//         `agents/openclaw/manifest.yaml` -> `expected_version`): owns the
+//         actual reset semantics — clearing the session entry, releasing
+//         stale `.jsonl.lock` files, recovering from a corrupt
+//         `sessions.json`, and guaranteeing the next message lands on a
+//         clean entry. The on-disk session store under
+//         `/sandbox/.openclaw/sessions/` is never touched by NemoClaw.
+//   - Source-fix constraint: NemoClaw cannot patch lock-file or session-store
+//     recovery without reaching into the sandbox file system, which would
+//     violate the sandbox boundary and race with OpenClaw's own writes.
+//     Recovery must stay upstream.
+//   - Regression-test coverage:
+//       * NemoClaw host-side (here): `src/lib/actions/sandbox/sessions/`
+//         covers key canonicalisation, agent-key cross-check, gateway RPC
+//         dispatch, and envelope parsing — see
+//         `paths.test.ts` and `gateway-rpc.test.ts`. The host-side E2E
+//         (`test/e2e/test-sessions-agents-cli.sh`, TC-SESS-03/04) proves
+//         the wrapper routes and that the gateway envelope round-trips.
+//       * Upstream stale-lock / corrupt-store / clean-followup coverage
+//         lives in the OpenClaw repository with the `sessions.reset` RPC
+//         handler; consult that project's test suite for the authoritative
+//         contract.
+//   - Removal condition: this scope-boundary comment can be removed once
+//     OpenClaw exposes a stable, documented `sessions.reset` contract whose
+//     recovery semantics are referenced from the NemoClaw docs site; the
+//     comment exists to keep the NemoClaw/OpenClaw responsibility split
+//     explicit while the contract is still informal.
 
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";

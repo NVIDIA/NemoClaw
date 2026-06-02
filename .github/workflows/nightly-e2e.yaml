@@ -480,12 +480,25 @@ jobs:
   # translator. The OpenShell sandbox is provisioned end-to-end so the
   # groups are exercised against a live OpenClaw runtime.
   #
-  # Secret-bearing target-ref execution: this job follows the same shape as
-  # the other `e2e-script.yaml` callers in this workflow. `NVIDIA_API_KEY`
-  # is the repo-scoped E2E credential (not a production key); the top-level
-  # `github.repository == 'NVIDIA/NemoClaw'` gate keeps fork events out, and
-  # `workflow_dispatch` is maintainer-only. `github_token` is intentionally
-  # disabled because the script does not consume a GitHub token.
+  # Secret-bearing target-ref execution — gating contract:
+  #   * This workflow has no `pull_request` or `pull_request_target` trigger
+  #     (see `on:` at the top of this file). The only ways to reach this job
+  #     are the nightly `schedule:` (which checks out `github.ref` =
+  #     default branch) and `workflow_dispatch:` (which requires repo write
+  #     access to invoke).
+  #   * Therefore the `inputs.target_ref || github.ref` ref expression only
+  #     runs target-ref code when a maintainer explicitly dispatches with
+  #     `target_ref`. Fork PRs cannot trigger this job at all.
+  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential, not a
+  #     production key; its blast radius is bounded to the inference quota
+  #     wired into this repo.
+  #   * The top-level `github.repository == 'NVIDIA/NemoClaw'` check
+  #     additionally guards repo-forked schedules.
+  #   * `github_token: false` (below) — the script does not need a GitHub
+  #     token; keep it disabled unless a documented need appears.
+  # This shape matches every other `e2e-script.yaml` caller in this file;
+  # changing it for one job would diverge from the repo-wide pattern and
+  # should be done across the workflow, not in this PR.
   sessions-agents-cli-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||

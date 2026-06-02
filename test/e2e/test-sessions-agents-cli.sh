@@ -234,8 +234,8 @@ seed_agent_session() {
 test_sessions_delete_non_main() {
   section "TC-SESS-05: sessions delete on a non-main session"
   local key
-  key="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null |
-    python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key') and not s['key'].endswith(':main')), ''))" \
+  key="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null \
+    | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key') and not s['key'].endswith(':main')), ''))" \
       2>/dev/null || true)"
   if [ -z "$key" ]; then
     fail "TC-SESS-05: no non-main session key found for agent '${TEST_AGENT_ID}'; expected the seeded prompt to create one"
@@ -247,8 +247,8 @@ test_sessions_delete_non_main() {
   fi
   # Assert the deleted key really is gone, not just that delete returned 0.
   local after_keys
-  after_keys="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null |
-    python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print('\n'.join([s.get('key', '') for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', []))]))" \
+  after_keys="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null \
+    | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print('\n'.join([s.get('key', '') for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', []))]))" \
       2>/dev/null || true)"
   if printf '%s\n' "$after_keys" | grep -Fxq "$key"; then
     fail "TC-SESS-05: session key '${key}' still present after delete"
@@ -269,8 +269,8 @@ test_agents_delete_passthrough() {
   # should no longer return a valid JSON listing for it. A successful exit on
   # the delete call alone does not prove the agent was removed.
   local follow_out
-  if follow_out="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>&1)" &&
-    is_valid_json "$follow_out"; then
+  if follow_out="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>&1)" \
+    && is_valid_json "$follow_out"; then
     fail "TC-AGENT-02: agent '${TEST_AGENT_ID}' still visible via sessions list after delete"
     info "$follow_out"
     return 1
