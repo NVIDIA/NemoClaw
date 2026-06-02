@@ -29,6 +29,24 @@ export function isAffirmativeAnswer(value: string | null | undefined): boolean {
   );
 }
 
+// Resolves a `Choose [N]:`-style menu reply for a one-based default index.
+// The exit / quit navigation tokens cancel onboarding here; other tokens
+// (including `back`) are not interpreted as navigation and fall back to the
+// bracketed default when the parsed index is out of range. Per-site `back`
+// semantics belong with the caller, not the helper.
+export function selectFromNumberedMenuOrExit<T>(
+  rawChoice: string,
+  defaultIdx: number,
+  options: T[],
+): T {
+  if (getNavigationChoice(rawChoice) === "exit") {
+    exitOnboardFromPrompt();
+  }
+  const idx = Number.parseInt(rawChoice || String(defaultIdx), 10) - 1;
+  const fallback = options[defaultIdx - 1];
+  return idx >= 0 && idx < options.length ? options[idx] : fallback;
+}
+
 export interface PromptHelperDeps {
   isNonInteractive(): boolean;
   note(message: string): void;

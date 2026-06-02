@@ -23,6 +23,15 @@ const driftIssue: OpenShellStateRpcIssue = {
   },
 };
 
+const hostProcessDriftIssue: OpenShellStateRpcIssue = {
+  kind: "host_process_drift",
+  drift: {
+    gatewayBin: "/home/u/.local/bin/openshell-gateway",
+    currentVersion: "0.0.43",
+    expectedVersion: "0.0.44",
+  },
+};
+
 function mockExit() {
   return vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
     throw new Error(`process.exit(${code ?? 0})`);
@@ -125,6 +134,34 @@ describe("gateway drift preflight for maintenance actions", () => {
     );
     expect(captureOpenshellSpy).not.toHaveBeenCalled();
     expect(backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("backup-all fails before sandbox list on host-process gateway binary drift", async () => {
+    detectPreflightIssueSpy.mockReturnValue(hostProcessDriftIssue);
+
+    await expect(backupAll()).rejects.toThrow("process.exit(1)");
+
+    expect(printIssueSpy).toHaveBeenCalledWith(
+      hostProcessDriftIssue,
+      expect.objectContaining({ command: "nemoclaw backup-all" }),
+    );
+    expect(captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("upgrade-sandboxes fails before sandbox list on host-process gateway binary drift", async () => {
+    detectPreflightIssueSpy.mockReturnValue(hostProcessDriftIssue);
+
+    await expect(upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
+
+    expect(printIssueSpy).toHaveBeenCalledWith(
+      hostProcessDriftIssue,
+      expect.objectContaining({ command: "nemoclaw upgrade-sandboxes" }),
+    );
+    expect(captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(classifyUpgradeableSandboxesSpy).not.toHaveBeenCalled();
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 

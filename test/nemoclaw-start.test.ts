@@ -317,6 +317,48 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
+  // #4503: the Docker HEALTHCHECK reports healthy on curl-exit-7 only when the
+  // /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered out of this
+  // container's namespace). To avoid masking a slow in-container startup, the
+  // entrypoint must drop that marker early on the gateway-serving path — and
+  // must NOT drop it when only running a one-shot command.
+  it("drops the in-container gateway healthcheck marker only on the gateway-serving path (#4503)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const start = src.indexOf('NEMOCLAW_CMD=("$@")');
+    const end = src.indexOf("_chat_ui_url_port()", start);
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error("Expected NEMOCLAW_CMD assignment and the gateway marker block");
+    }
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const snippet = src
+      .slice(start, end)
+      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+
+    function runScenario(setArgs: string) {
+      const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
+      return spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    }
+
+    try {
+      // Gateway-serving path: no trailing command, so the marker is dropped.
+      fs.rmSync(markerPath, { force: true });
+      const serving = runScenario("set --");
+      expect(serving.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(true);
+
+      // One-shot command path: the marker must stay absent so the out-of-
+      // namespace healthcheck branch never strict-checks a non-gateway
+      // container.
+      fs.rmSync(markerPath, { force: true });
+      const oneShot = runScenario("set -- openclaw agent --agent main");
+      expect(oneShot.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("executes explicit non-root commands before gateway startup setup", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
@@ -790,7 +832,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("TOKEN=unset");
     expect(result.stderr).not.toContain("#token=");
-    expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+    expect(envFile).not.toMatch(/^export OPENCLAW_GATEWAY_TOKEN=/m);
   });
 });
 
@@ -805,7 +847,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
+      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
     const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
@@ -827,6 +869,8 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
+      'export OPENCLAW_GATEWAY_PORT="18789"',
+      'export OPENCLAW_GATEWAY_TOKEN="test-gateway-token"',
       "_TOOL_REDIRECTS=()",
       "set +u",
       runtimeBlock,
@@ -904,7 +948,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     }
   });
 
-  it("#4462: unsets OPENCLAW_GATEWAY_URL only for devices approve", () => {
+  it("#4462: unsets OPENCLAW_GATEWAY_URL, PORT, and TOKEN for devices approve", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const result = runGuardedShell(setup, [
@@ -916,10 +960,10 @@ describe("nemoclaw-start configure guard behavior", () => {
 
       expect(result.status).toBe(0);
       expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
-        "ARGS=devices list --json URL=ws://127.0.0.1:18789",
-        "ARGS=devices approve request-1 --json URL=unset",
+        "ARGS=devices list --json URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
+        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         "SHELL_URL=ws://127.0.0.1:18789",
-        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789",
+        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
       ]);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
@@ -1467,7 +1511,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
-  printf 'list:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
+  printf 'list:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1479,7 +1523,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
-  printf 'approve:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
+  printf 'approve:%s:%s:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
   echo "$3" >> ${JSON.stringify(approveLog)}
   printf '{}\n'
   exit 0
@@ -1502,6 +1546,8 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+          OPENCLAW_GATEWAY_PORT: "18789",
+          OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
           // Cap the slow-mode keepalive (NemoClaw#4263) so the test
           // terminates without waiting out the default 8h deadline.
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
@@ -1523,9 +1569,9 @@ exit 2
         "ok-webchat",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
-      expect(envLogLines).toContain("list:ws://127.0.0.1:18789");
-      expect(envLogLines).toContain("approve:ok-browser:unset");
-      expect(envLogLines).toContain("approve:ok-webchat:unset");
+      expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
+      expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
+      expect(envLogLines).toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
