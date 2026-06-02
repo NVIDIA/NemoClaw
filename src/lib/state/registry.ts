@@ -44,6 +44,12 @@ export interface SandboxEntry {
   hermesDashboardTui?: boolean;
   disabledChannels?: string[];
   dashboardPort?: number | null;
+  // OpenShell gateway registration name and host port bound to this sandbox.
+  // Persisted so later lifecycle commands operate on the sandbox's own gateway
+  // instead of the process-global `nemoclaw` singleton — a second sandbox on a
+  // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
 }
 
 export interface SandboxRegistry {
@@ -232,6 +238,8 @@ export function registerSandbox(entry: SandboxEntry): void {
           ? [...entry.disabledChannels]
           : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      gatewayName: entry.gatewayName ?? undefined,
+      gatewayPort: entry.gatewayPort ?? undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
