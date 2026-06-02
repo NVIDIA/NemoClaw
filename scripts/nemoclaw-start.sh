@@ -1081,6 +1081,40 @@ if isinstance(channels, dict):
                     f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
                 )
 
+# Slack stores Bolt-compatible aliases (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) on
+# disk rather than the canonical "openshell:resolve:env:*" placeholder, so the
+# loop above (which keys on the canonical prefix) never inspects it. Diagnose
+# the alias-vs-runtime-env consistency separately. The aliases themselves are
+# never rewritten on disk — the L7 egress proxy resolves them at request time —
+# so we only warn, never mutate. Ref: NVIDIA/NemoClaw#4274.
+slack_aliases = {
+    "botToken": ("SLACK_BOT_TOKEN", "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN", "xoxb-"),
+    "appToken": ("SLACK_APP_TOKEN", "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", "xapp-"),
+    }
+if isinstance(channels, dict):
+    slack_cfg = channels.get("slack", {})
+    slack_accounts = slack_cfg.get("accounts", {}) if isinstance(slack_cfg, dict) else {}
+    if isinstance(slack_accounts, dict):
+        for account_id, account in slack_accounts.items():
+            if not isinstance(account, dict):
+                continue
+            for field, (env_key, alias, token_scheme) in slack_aliases.items():
+                if account.get(field) != alias:
+                    continue
+                label = f"slack.{account_id}.{field}"
+                env_value = os.environ.get(env_key, "")
+                if not env_value:
+                    warnings.append(
+                        f"[channels] {label} expects the {env_key} provider placeholder but it is missing from the runtime environment"
+                    )
+                elif not env_value.startswith(prefix) and not env_value.startswith(token_scheme):
+                    # A genuine xoxb-/xapp- token (token_scheme) is accepted by
+                    # Bolt, so only warn when the runtime value is neither an
+                    # OpenShell placeholder nor a plausibly-real Slack token.
+                    warnings.append(
+                        f"[channels] {label} runtime {env_key} is neither an OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
+                    )
+
 if updated != config:
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(updated, f, indent=2)
@@ -1110,6 +1144,48 @@ PYPLACEHOLDERS
 
   restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
+# ── Slack runtime env normalization (Bolt-compatible placeholder) ──
+# OpenShell injects messaging-provider credentials into the sandbox process
+# environment as canonical resolve placeholders, e.g.
+#   SLACK_BOT_TOKEN=openshell:resolve:env:v51_SLACK_BOT_TOKEN
+# Unlike the canonical OpenClaw config values (handled by
+# refresh_openclaw_provider_placeholders), Slack Bolt validates token *shape*
+# at startup and rejects anything that does not begin with xoxb-/xapp-. After a
+# messaging-provider rebuild the gateway therefore inherits a placeholder it
+# cannot parse and Slack auth fails even though the provider attached
+# successfully (NVIDIA/NemoClaw#4274). The L7 egress proxy rewrites the
+# Bolt-aliased form (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) at request time — the
+# same alias the config generator bakes into openclaw.json — so normalize the
+# runtime env to that alias before launching OpenClaw.
+#
+# This runs in the *main* shell (never a subshell / command substitution) so
+# the exported values are inherited by the gateway and any one-shot
+# "${NEMOCLAW_CMD[@]}" child. Real xoxb-/xapp- tokens and already-aliased values
+# are left untouched, so it is safe to call unconditionally and is idempotent.
+#
+# OpenShell injects self-referential placeholders (the SLACK_BOT_TOKEN env var
+# resolves to "openshell:resolve:env:<rev>_SLACK_BOT_TOKEN"), so the match
+# requires the trailing key name as well as the prefix — a placeholder that
+# resolves some *other* key is left alone rather than silently rebound to the
+# Slack secret.
+normalize_slack_runtime_env() {
+  local prefix="openshell:resolve:env:"
+
+  case "${SLACK_BOT_TOKEN-}" in
+    "$prefix"*SLACK_BOT_TOKEN)
+      export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
+      printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+      ;;
+  esac
+
+  case "${SLACK_APP_TOKEN-}" in
+    "$prefix"*SLACK_APP_TOKEN)
+      export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
+      printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+      ;;
+  esac
 }
 
 # ── Slack secrets-on-disk tripwire ────────────────────────────────
@@ -2664,6 +2740,9 @@ if [ "$(id -u)" -ne 0 ]; then
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
+  # Normalize Slack provider placeholders before any child inherits the env —
+  # covers both the one-shot "${NEMOCLAW_CMD[@]}" exec and the gateway launch.
+  normalize_slack_runtime_env
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -2806,6 +2885,10 @@ export_gateway_token
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
+# Normalize Slack provider placeholders before any child (the one-shot
+# "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
+# gosu/setpriv preserve the environment, so the export reaches the gateway user.
+normalize_slack_runtime_env
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.
