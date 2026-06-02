@@ -9,9 +9,21 @@ keywords: ["nemoclaw inference options", "nemoclaw onboarding providers", "nemoc
 content:
   type: "concept"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 NemoClaw supports multiple inference providers.
-During onboarding, the `nemoclaw onboard` wizard presents a numbered list of providers to choose from.
+During onboarding, the NemoClaw onboarding wizard presents a numbered list of providers to choose from.
 Your selection determines where the agent's inference traffic is routed.
+
+<AgentOnly variant="openclaw">
+For OpenClaw onboarding, use `nemoclaw onboard`.
+The provider flow is the same, with the NVIDIA Endpoints route available for OpenClaw Agent.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+For Hermes onboarding, use `nemohermes onboard`.
+The provider flow is the same, with the Hermes Provider route available for Hermes Agent.
+</AgentOnly>
 
 ## How Inference Routing Works
 
@@ -59,7 +71,7 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible chat-completions endpoint. NemoClaw skips the Responses-API probe because Gemini does not support `/v1/responses`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | Hermes Provider | Routes Hermes Agent through the host OpenShell provider registered by NemoClaw when onboarding Hermes Agent. | Curated Hermes Provider models such as `moonshotai/kimi-k2.6`, `openai/gpt-5.4-mini`, and `z-ai/glm-5.1`. |
-| Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](/inference/use-local-inference). |
+| Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
 ## Choosing the Right Option for Nemotron
@@ -125,11 +137,19 @@ The sandbox never sees raw API keys.
 
 To use the router in scripted setup, set:
 
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+<AgentOnly variant="openclaw">
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
+</AgentOnly>
 
-### Host Python requirement
+<AgentOnly variant="hermes">
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemohermes onboard --non-interactive
+```
+</AgentOnly>
+
+### Host Python Requirement
 
 The Model Router runs in a host-side virtual environment that NemoClaw creates during onboarding.
 NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, and adopts the first interpreter that satisfies both of:
@@ -140,11 +160,24 @@ NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare
 If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
 This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
 
+<AgentOnly variant="openclaw">
 To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
+</AgentOnly>
+<AgentOnly variant="hermes">
+To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemohermes onboard`:
+</AgentOnly>
 
-```console
-$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+<AgentOnly variant="openclaw">
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
 ```
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemohermes onboard
+```
+</AgentOnly>
 
 The pin is strict.
 NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
@@ -162,7 +195,7 @@ An already-running vLLM server appears directly in the onboarding selection list
 | Local NVIDIA NIM | NIM-capable GPU detected | Pulls and manages a NIM container. |
 | Local vLLM | vLLM running on `localhost:8000`, or a supported DGX Spark, DGX Station, or Linux NVIDIA GPU profile | Auto-detects the loaded model when vLLM is already running. Can install or start a managed vLLM container by default on DGX Spark/Station and after opt-in on generic Linux NVIDIA GPU hosts. |
 
-For setup instructions, refer to [Use a Local Inference Server](/inference/use-local-inference).
+For setup instructions, refer to [Use a Local Inference Server](use-local-inference).
 
 ## Validation
 
@@ -185,6 +218,6 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 
 ## Next Steps
 
-- [Use a Local Inference Server](/inference/use-local-inference) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
-- [Tool-Calling Reliability](/inference/tool-calling-reliability) for deciding when Ollama is enough and when vLLM with a parser is safer.
-- [Switch Inference Models](/inference/switch-inference-providers) for changing the model at runtime without re-onboarding.
+- [Use a Local Inference Server](use-local-inference) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
+- [Tool-Calling Reliability](tool-calling-reliability) for deciding when Ollama is enough and when vLLM with a parser is safer.
+- [Switch Inference Models](switch-inference-providers) for changing the model at runtime without re-onboarding.

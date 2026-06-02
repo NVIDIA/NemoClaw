@@ -669,14 +669,24 @@ ensure_mutable_openclaw_config_hash() {
     return 0
   fi
 
-  if ! (cd "$config_dir" && sha256sum openclaw.json >"$hash_file"); then
+  # Mutable-default mode: $config_dir is 2770 sandbox:sandbox and
+  # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
+  # cannot bypass the sandbox-only write bit and the redirection
+  # aborts with EACCES, so step down to the file's owner for the write.
+  local run_prefix=()
+  if [ "$(id -u)" -eq 0 ]; then
+    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+
+  # shellcheck disable=SC2016  # positional params are expanded by the inner sh
+  if ! "${run_prefix[@]}" sh -c '
+    cd "$1" || exit 1
+    sha256sum openclaw.json >".config-hash" || exit 1
+    chmod 660 ".config-hash" 2>/dev/null || true
+  ' _ "$config_dir"; then
     printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
     return 1
   fi
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
-  fi
-  chmod 660 "$hash_file" 2>/dev/null || true
 }
 
 # ── Runtime model/provider override ──────────────────────────────
@@ -2616,8 +2626,71 @@ NODE
   fi
 }
 
+# Run one or more locally-defined bash functions as the sandbox user
+# without round-tripping through `bash -c "$(declare -f ...) ..."`.
+#
+# The interpolated form is fragile under restricted runtimes: the
+# step-down shell cannot always re-parse a heredoc-bearing function
+# body carried through `bash -c`'s argv. Writing the declarations plus
+# the trailing invocation to a temp script and invoking `bash <file>`
+# instead lets the step-down shell read the literal source bytes from
+# disk so the argv/quoting round-trip is gone.
+#
+# The temp script lives directly under /tmp (sticky-bit, world-writable
+# but unlink-protected) with an unguessable mktemp suffix, so an
+# attacker cannot swap the file between mktemp and the step-down bash
+# invocation. The directory is intentionally not configurable.
+#
+# Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
+#
+# SECURITY CONTRACT: <invocation-snippet> is appended verbatim to the
+# generated bash script and parsed by the step-down shell. It MUST be
+# a trusted literal authored alongside this script — never derived
+# from environment, file contents, sandbox-uid input, or any
+# non-static source. Pass arguments through positional parameters of
+# the dispatched functions, not through string interpolation into the
+# snippet, and keep the snippet to the minimum set of function calls
+# (plus the explicit `export HOME=...` the auth-profile path needs).
+run_step_down_as_sandbox() {
+  local invocation="$1"
+  shift
+  local script
+  script="$(mktemp /tmp/nemoclaw-step-down-XXXXXX.sh)" || return 1
+  if ! chmod 0644 "$script" 2>/dev/null; then
+    rm -f "$script" 2>/dev/null || true
+    return 1
+  fi
+  {
+    printf 'set -euo pipefail\n'
+    declare -f "$@"
+    printf '%s\n' "$invocation"
+  } >"$script" || {
+    rm -f "$script" 2>/dev/null || true
+    return 1
+  }
+  local rc=0
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash "$script" || rc=$?
+  rm -f "$script" 2>/dev/null || true
+  return "$rc"
+}
+
 seed_default_workspace_templates_as_sandbox() {
-  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+  run_step_down_as_sandbox \
+    "seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json" \
+    seed_default_workspace_templates
+}
+
+# Root-mode entry point for the post-gateway auth-profile setup. The
+# step-down shell needs HOME=/sandbox explicitly because setpriv keeps
+# the parent entrypoint's HOME=/root, which would push
+# write_auth_profile's `~/.openclaw/...` expansion outside the sandbox.
+# The non-root path exports HOME=/sandbox up front, so the equivalent
+# call there does not need the wrapper.
+setup_auth_profile_as_sandbox() {
+  run_step_down_as_sandbox \
+    "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
+    write_auth_profile \
+    harden_auth_profiles
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -2816,8 +2889,9 @@ install_whatsapp_qr_compact
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw.
-"${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
+# auth-profiles.json files under ~/.openclaw. See
+# setup_auth_profile_as_sandbox for the HOME-handling rationale.
+setup_auth_profile_as_sandbox
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
