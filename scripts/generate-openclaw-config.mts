@@ -31,7 +31,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -456,11 +456,10 @@ function coerceCompatDict(value: unknown): JsonObject {
 }
 
 // Canonical primary-agent entry. Always written first into agents.list, always
-// flagged default: true. Pinning the slot here prevents NEMOCLAW_EXTRA_AGENTS_JSON
-// from displacing the primary agent (issue #4562): OpenClaw's
-// resolveDefaultAgentId falls back to agents[0] when no entry carries
-// default: true, so a wholesale list replacement would silently re-elect the
-// first extra agent.
+// flagged default: true. Pinning the slot here prevents the extra-agents env
+// from displacing the primary agent: OpenClaw's resolveDefaultAgentId falls
+// back to agents[0] when no entry carries default: true, so a wholesale list
+// replacement would silently re-elect the first extra agent.
 //
 // The entry intentionally omits workspace/agentDir so OpenClaw applies its
 // built-in defaults (and so the host-side migration-state collector does not
@@ -476,7 +475,62 @@ const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 // :: provision_agent_workspaces) discovers /sandbox/.openclaw/workspace-* and
 // chowns them sandbox:sandbox on first boot. The legacy /sandbox/.openclaw-data
 // path is migrated away on start, so it cannot host live agent state.
-const AGENT_DATA_ROOT = "/sandbox/.openclaw/";
+const AGENT_DATA_ROOT = "/sandbox/.openclaw";
+const AGENT_DATA_ROOT_RESOLVED = resolve(AGENT_DATA_ROOT);
+
+function isInsideAgentDataRoot(pathValue: string): boolean {
+  const resolved = resolve(pathValue);
+  if (resolved === AGENT_DATA_ROOT_RESOLVED) {
+    return true;
+  }
+  const rel = relative(AGENT_DATA_ROOT_RESOLVED, resolved);
+  if (rel === "" || rel === ".") {
+    return true;
+  }
+  return !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function validateExtraAgentTools(entry: JsonObject, label: string): void {
+  const tools = entry.tools;
+  if (!isObject(tools)) {
+    throw new Error(
+      `${label}.tools must be an object describing the per-agent tool policy (profile/allow/deny). Nothing is granted implicitly.`,
+    );
+  }
+  const allow = tools.allow;
+  const deny = tools.deny;
+  const hasAllow = Array.isArray(allow) && allow.length > 0;
+  const hasDeny = Array.isArray(deny) && deny.length > 0;
+  if (!hasAllow && !hasDeny) {
+    throw new Error(
+      `${label}.tools must declare a non-empty allow[] or deny[] (or both); secondary agents inherit no tools by default.`,
+    );
+  }
+  for (const key of ["allow", "deny"] as const) {
+    const value = tools[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value) || value.some((token) => typeof token !== "string" || !token)) {
+      throw new Error(
+        `${label}.tools.${key} must be an array of non-empty strings when present.`,
+      );
+    }
+  }
+}
+
+function validateExtraAgentSubagents(entry: JsonObject, label: string): void {
+  const subagents = entry.subagents;
+  if (!isObject(subagents)) {
+    throw new Error(
+      `${label}.subagents must be an object containing maxSpawnDepth. Set maxSpawnDepth: 0 to forbid further spawning.`,
+    );
+  }
+  const depth = subagents.maxSpawnDepth;
+  if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
+    throw new Error(
+      `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
+    );
+  }
+}
 
 function validateExtraAgents(value: unknown): JsonObject[] {
   if (value === null || value === undefined) {
@@ -489,51 +543,48 @@ function validateExtraAgents(value: unknown): JsonObject[] {
   }
   const seenIds = new Set<string>([MAIN_AGENT_ID]);
   return value.map((entry, index) => {
+    const label = `NEMOCLAW_EXTRA_AGENTS_JSON[${index}]`;
     if (!isObject(entry)) {
-      throw new Error(
-        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}] must be a JSON object`,
-      );
+      throw new Error(`${label} must be a JSON object`);
     }
     const id = entry.id;
     if (typeof id !== "string" || !AGENT_ID_RE.test(id)) {
       throw new Error(
-        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id must match ${AGENT_ID_RE} (1-32 chars, lowercase alphanumeric, dash, underscore; must start with a letter)`,
+        `${label}.id must match ${AGENT_ID_RE} (1-32 chars, lowercase alphanumeric, dash, underscore; must start with a letter)`,
       );
     }
     if (id === MAIN_AGENT_ID) {
       throw new Error(
-        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id "${MAIN_AGENT_ID}" is reserved for the primary agent; use a different id`,
+        `${label}.id "${MAIN_AGENT_ID}" is reserved for the primary agent; use a different id`,
       );
     }
     if (seenIds.has(id)) {
-      throw new Error(
-        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id "${id}" is duplicated; agent ids must be unique`,
-      );
+      throw new Error(`${label}.id "${id}" is duplicated; agent ids must be unique`);
     }
     seenIds.add(id);
     for (const pathKey of ["workspace", "agentDir"] as const) {
       const pathValue = entry[pathKey];
       if (typeof pathValue !== "string" || pathValue.length === 0) {
-        throw new Error(
-          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be a non-empty string`,
-        );
+        throw new Error(`${label}.${pathKey} must be a non-empty string`);
       }
       if (!isAbsolute(pathValue)) {
         throw new Error(
-          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be an absolute path, got "${pathValue}"`,
+          `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
         );
       }
-      if (!pathValue.startsWith(AGENT_DATA_ROOT)) {
+      if (!isInsideAgentDataRoot(pathValue)) {
         throw new Error(
-          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be under ${AGENT_DATA_ROOT}, got "${pathValue}"`,
+          `${label}.${pathKey} must resolve under ${AGENT_DATA_ROOT}/, got "${pathValue}"`,
         );
       }
     }
     if (entry.default === true) {
       throw new Error(
-        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].default cannot be true; the primary "${MAIN_AGENT_ID}" agent is always the default`,
+        `${label}.default cannot be true; the primary "${MAIN_AGENT_ID}" agent is always the default`,
       );
     }
+    validateExtraAgentTools(entry, label);
+    validateExtraAgentSubagents(entry, label);
     return entry;
   });
 }

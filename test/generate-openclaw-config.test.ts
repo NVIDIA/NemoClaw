@@ -927,34 +927,48 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
-  // ─── agents.list bake (#4560 / #4562) ────────────────────────────────────
+  // ─── agents.list bake ─────────────────────────────────────────────────────
   // Even with no NEMOCLAW_EXTRA_AGENTS_JSON_B64 set, agents.list must exist
-  // with the canonical main entry pinned as default. Otherwise a future
-  // wholesale list overwrite (the #4562 failure mode) could leave OpenClaw
-  // resolving default to agents[0] without "main" present.
+  // with the canonical main entry pinned as default. Otherwise a wholesale
+  // list overwrite could leave OpenClaw resolving default to agents[0]
+  // without "main" present.
 
-  it("always writes agents.list with a default 'main' entry first (#4560)", () => {
+  const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
+  const SUBAGENTS_OK = { maxSpawnDepth: 0 };
+
+  function makeExtra(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "research",
+      workspace: "/sandbox/.openclaw/workspace-research",
+      agentDir: "/sandbox/.openclaw/agents/research",
+      tools: TOOLS_OK,
+      subagents: SUBAGENTS_OK,
+      ...overrides,
+    };
+  }
+
+  function extraAgentsB64(extras: unknown): string {
+    return Buffer.from(JSON.stringify(extras)).toString("base64");
+  }
+
+  it("always writes agents.list with a default 'main' entry first", () => {
     const config = runConfigScript();
     expect(Array.isArray(config.agents.list)).toBe(true);
     expect(config.agents.list).toHaveLength(1);
     expect(config.agents.list[0]).toEqual({ id: "main", default: true });
   });
 
-  it("appends NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main (#4560)", () => {
+  it("appends NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
     const extras = [
-      {
-        id: "research",
-        workspace: "/sandbox/.openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-      {
+      makeExtra({ id: "research" }),
+      makeExtra({
         id: "writing",
         workspace: "/sandbox/.openclaw/workspace-writing",
         agentDir: "/sandbox/.openclaw/agents/writing",
-      },
+      }),
     ];
     const config = runConfigScript({
-      NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64"),
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras),
     });
     expect(config.agents.list).toHaveLength(3);
     expect(config.agents.list[0]).toEqual({ id: "main", default: true });
@@ -962,19 +976,12 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.list[2]).toMatchObject({ id: "writing" });
   });
 
-  it("keeps 'main' as the default even when extras are present (regression #4562)", () => {
-    // #4562: wholesale list replacement left agents[0] = first extra, so
-    // resolveDefaultAgentId silently re-elected the first extra as default.
-    // The bake must always emit { id: "main", default: true } first.
-    const extras = [
-      {
-        id: "research",
-        workspace: "/sandbox/.openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-    ];
+  it("keeps 'main' as the default even when extras are present", () => {
+    // Wholesale list replacement would leave agents[0] = first extra, so
+    // resolveDefaultAgentId would silently re-elect the first extra as
+    // default. The bake must always emit { id: "main", default: true } first.
     const config = runConfigScript({
-      NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64"),
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
     const defaultEntries = config.agents.list.filter((entry: { default?: boolean }) => entry.default === true);
     expect(defaultEntries).toHaveLength(1);
@@ -982,99 +989,117 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.list[0].id).toBe("main");
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries that claim id 'main' (#4562)", () => {
-    const extras = [
-      {
-        id: "main",
-        workspace: "/sandbox/.openclaw/workspace",
-        agentDir: "/sandbox/.openclaw/agents/main",
-      },
-    ];
+  it("rejects extras that claim id 'main'", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ id: "main" })]) },
       /reserved for the primary agent/,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries that try default: true (#4562)", () => {
-    const extras = [
-      {
-        id: "research",
-        default: true,
-        workspace: "/sandbox/.openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-    ];
+  it("rejects extras that set default: true", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ default: true })]) },
       /default cannot be true/,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries with duplicate ids", () => {
+  it("rejects extras with duplicate ids", () => {
     const extras = [
-      {
-        id: "research",
-        workspace: "/sandbox/.openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-      {
-        id: "research",
+      makeExtra(),
+      makeExtra({
         workspace: "/sandbox/.openclaw/workspace-research-2",
         agentDir: "/sandbox/.openclaw/agents/research-2",
-      },
+      }),
     ];
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras) },
       /is duplicated/,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 ids that violate the regex", () => {
-    const extras = [
-      {
-        id: "Research",
-        workspace: "/sandbox/.openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-    ];
+  it("rejects extras whose ids violate the regex", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ id: "Research" })]) },
       /\.id must match/,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries with relative paths", () => {
-    const extras = [
-      {
-        id: "research",
-        workspace: "workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-    ];
+  it("rejects extras with relative paths", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace: "workspace-research" })]) },
       /must be an absolute path/,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 paths that escape the sandbox state root", () => {
-    const extras = [
-      {
-        id: "research",
-        workspace: "/etc/openclaw/workspace-research",
-        agentDir: "/sandbox/.openclaw/agents/research",
-      },
-    ];
+  it("rejects extras whose paths escape the sandbox state root", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify(extras)).toString("base64") },
-      /must be under \/sandbox\/\.openclaw\//,
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ workspace: "/etc/openclaw/workspace-research" }),
+        ]),
+      },
+      /must resolve under \/sandbox\/\.openclaw\//,
     );
   });
 
-  it("rejects NEMOCLAW_EXTRA_AGENTS_JSON_B64 when the payload is not an array", () => {
+  it("rejects extras that smuggle dot-segments past the sandbox state root prefix", () => {
+    // /sandbox/.openclaw/../../tmp/research resolves to /tmp/research; a raw
+    // startsWith() check on the prefix would accept it. The validator must
+    // normalise before containment.
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: Buffer.from(JSON.stringify({ id: "research" })).toString("base64") },
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ workspace: "/sandbox/.openclaw/../../tmp/research" }),
+        ]),
+      },
+      /must resolve under \/sandbox\/\.openclaw\//,
+    );
+  });
+
+  it("rejects extras that lack a tools policy", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: undefined }),
+        ]),
+      },
+      /\.tools must be an object/,
+    );
+  });
+
+  it("rejects extras whose tools policy lacks allow[] and deny[]", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: { profile: "minimal" } }),
+        ]),
+      },
+      /must declare a non-empty allow\[\] or deny\[\]/,
+    );
+  });
+
+  it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: undefined }),
+        ]),
+      },
+      /\.subagents must be an object/,
+    );
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: { maxSpawnDepth: -1 } }),
+        ]),
+      },
+      /maxSpawnDepth must be a non-negative integer/,
+    );
+  });
+
+  it("rejects extras when the payload is not an array", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
       /must decode to a JSON array/,
     );
   });

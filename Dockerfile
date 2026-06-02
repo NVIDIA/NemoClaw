@@ -478,7 +478,7 @@ ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
 # Each entry is appended to agents.list[] after the canonical "main" entry, so
 # the primary agent always remains the default. See generate-openclaw-config.mts
-# for the validator. Default: empty array (W10= == base64("[]")). Refs #4560, #4562.
+# for the validator. Default: empty array (W10= == base64("[]")).
 ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
