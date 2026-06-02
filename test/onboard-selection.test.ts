@@ -531,7 +531,11 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+    });
+  }
   if (cmd.includes("docker images")) return "";
   return "";
 };
@@ -542,7 +546,14 @@ const { setupNim } = require(${onboardPath});
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim({ type: "nvidia" }, null);
-    originalLog(JSON.stringify({ result, messages, lines }));
+    originalLog(
+      JSON.stringify({
+        result,
+        messages,
+        lines,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      }),
+    );
   } finally {
     console.log = originalLog;
   }
@@ -562,6 +573,7 @@ const { setupNim } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_EXPERIMENTAL: "",
         NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_CONTEXT_WINDOW: "",
       },
     });
 
@@ -571,11 +583,15 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "vllm-local");
     assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.contextWindow, "65536");
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Detected local inference option: vLLM"),
       ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
     );
     assert.ok(
       payload.lines.some((line: string) =>

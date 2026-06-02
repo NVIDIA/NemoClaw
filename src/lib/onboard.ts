@@ -5079,6 +5079,7 @@ async function setupNim(
               process.exit(1);
             }
             console.log(`  Detected model: ${model}`);
+            localInference.applyVllmRuntimeContextWindow(vllmModels, detectedModel);
           } else {
             console.error("  Could not detect model from vLLM. Please specify manually.");
             process.exit(1);
@@ -5108,8 +5109,7 @@ async function setupNim(
         }
         preferredInferenceApi = validation.api;
         // Force chat completions — vLLM's /v1/responses endpoint does not
-        // run the --tool-call-parser, so tool calls arrive as raw text.
-        // See: https://github.com/NVIDIA/NemoClaw/issues/976
+        // run the --tool-call-parser, so tool calls arrive as raw text (#976).
         if (preferredInferenceApi !== "openai-completions") {
           console.log(
             "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
