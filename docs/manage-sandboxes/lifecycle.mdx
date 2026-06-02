@@ -351,6 +351,17 @@ When a maintained NemoClaw release becomes available, update the `nemoclaw` CLI 
 When a maintained NemoClaw release becomes available, update the `nemohermes` CLI on your host and check existing sandboxes for stale agent/runtime versions.
 </AgentOnly>
 The standard installer follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
+To pin a specific release in a `curl | bash` install, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the pipe, or export it before the pipeline:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash
+# or
+export NEMOCLAW_INSTALL_TAG=v0.0.56
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Do not place `NEMOCLAW_INSTALL_TAG=...` only before `curl`; shell assignment in that position applies to `curl`, not to the installer running under `bash`.
+If the requested ref cannot be fetched, the installer exits with a clear error instead of falling back to `lkg`.
 
 ### Update the NemoClaw CLI
 
