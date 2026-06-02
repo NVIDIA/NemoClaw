@@ -132,4 +132,28 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("falls back to the env-backed default when an injected override is non-finite", () => {
+    // NaN / +Infinity / -Infinity overrides must not silently neutralise the
+    // fast-fail loop. A NaN comparison would always be false and `Infinity`
+    // would never satisfy `>= debouncePolls`, leaving the wait to burn the
+    // full timeout window.
+    for (const bogus of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+      const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+      const sleep = vi.fn();
+
+      const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+        runOpenshell,
+        runCaptureOpenshell,
+        sleep,
+        errorPhaseDebouncePolls: bogus,
+      });
+
+      expect(ok).toBe(false);
+      // Default K=5 from the env-backed helper: 5 polls + 4 sleeps before fast-fail.
+      expect(runOpenshell).toHaveBeenCalledTimes(5);
+      expect(sleep).toHaveBeenCalledTimes(4);
+    }
+  });
 });
