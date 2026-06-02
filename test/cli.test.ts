@@ -2739,6 +2739,81 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("doctor does not inspect the legacy k3s gateway container in Docker-driver mode", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
+    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
+    // Make `docker inspect` fail like an absent legacy container would; the
+    // doctor must not even attempt it, so this should never produce a failure.
+    fs.writeFileSync(
+      path.join(setup.localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // Healthy curl so the unrelated provider-health probe does not fail the
+    // report and mask the gateway-only assertions below.
+    fs.writeFileSync(
+      path.join(setup.localBin, "curl"),
+      ["#!/usr/bin/env bash", 'echo "{}"', "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    expect(r.out).not.toContain("openshell-cluster");
+    const report = JSON.parse(r.out) as {
+      status: string;
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+    const openshellStatus = report.checks.find((check) => check.label === "OpenShell status");
+    expect(openshellStatus).toEqual(
+      expect.objectContaining({ group: "Gateway", status: "ok", detail: "connected to nemoclaw" }),
+    );
+    // The Docker-driver gateway is healthy, so no Gateway check should fail.
+    expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
+    expect(report.status).toBe("ok");
+    expect(r.code).toBe(0);
+  });
+
+  it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    const report = JSON.parse(r.out) as {
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    const dockerContainer = report.checks.find((check) => check.label === "Docker container");
+    expect(dockerContainer).toEqual(
+      expect.objectContaining({
+        group: "Gateway",
+        status: "ok",
+        detail: expect.stringContaining("openshell-cluster-nemoclaw"),
+      }),
+    );
+  });
+
   it(
     "doctor reports fresh shields state as not configured instead of down",
     testTimeoutOptions(30_000),
