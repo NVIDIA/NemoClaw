@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DiscordGuilds, MessagingAllowedIds, WechatConfig } from "./build-env.ts";
+import type { DiscordGuilds, MessagingAllowedIds, SlackConfig, WechatConfig } from "./build-env.ts";
 import { loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 
 // Maps each Hermes-supported channel to the in-sandbox env-var name(s) the
@@ -24,6 +24,7 @@ export function buildMessagingEnvLines(
   allowedIds: MessagingAllowedIds,
   discordGuilds: DiscordGuilds,
   wechatConfig: WechatConfig,
+  slackConfig: SlackConfig,
   managedToolGatewayPresets: string[] = [],
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
@@ -73,6 +74,10 @@ export function buildMessagingEnvLines(
   }
   if (allowedIds.slack?.length) {
     envLines.push(`SLACK_ALLOWED_USERS=${allowedIds.slack.map(String).join(",")}`);
+  }
+  const slackAllowedChannels = collectSlackAllowedChannels(slackConfig);
+  if (enabledChannels.has("slack") && slackAllowedChannels.length > 0) {
+    envLines.push(`SLACK_ALLOWED_CHANNELS=${slackAllowedChannels.join(",")}`);
   }
 
   return envLines;
@@ -178,4 +183,13 @@ function collectDiscordAllowedUsers(
     }
   }
   return [...users];
+}
+
+function collectSlackAllowedChannels(slackConfig: SlackConfig): string[] {
+  const channels = Array.isArray(slackConfig.allowedChannels) ? slackConfig.allowedChannels : [];
+  return [
+    ...new Set(
+      channels.map((channel) => String(channel).replace(/[\r\n]/g, "").trim()).filter(Boolean),
+    ),
+  ];
 }

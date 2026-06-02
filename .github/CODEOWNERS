@@ -30,6 +30,14 @@
 /docs/                              @NVIDIA/nemoclaw-engineer
 /spark-install.md                   @NVIDIA/nemoclaw-engineer
 
+# ── Agent skills catalog ──
+/.agents/skills/                    @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+/skills/                            @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+
+# ── NVSkills CI request listener (must stay CODEOWNERS-protected per
+#    NVIDIA/nvskills-ci team-onboarding step 4) ──
+/.github/workflows/request-nvskills-ci.yml  @NVIDIA/nemoclaw-maintainer
+
 # ── Tests ──
 /test/                              @NVIDIA/nemoclaw-engineer
 

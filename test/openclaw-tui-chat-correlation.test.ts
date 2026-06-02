@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import type { ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,8 +15,9 @@ const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 
 const ISSUE_2603_FIX_EXPECTATIONS = [
   "no empty final event for a submitted chat.send run",
+  "each submitted prompt receives exactly one visible reply",
   "each visible reply remains correlated to the chat.send run that accepted the prompt",
-  "chat.history contains one user turn per submitted prompt",
+  "chat.history contains exactly one user turn per submitted prompt",
 ];
 
 type ChatMessage = {
@@ -72,11 +74,19 @@ type DuplicateUserTurn = {
 type Issue2603Analysis = {
   chatEvents: CompactChatEvent[];
   emptyFinalsForSubmittedRuns: CompactChatEvent[];
+  missingReplies: string[];
+  duplicateReplies: { replyToken: string; count: number }[];
   uncorrelatedReplies: UncorrelatedReply[];
+  missingUserTurns: DuplicateUserTurn[];
   duplicateUserTurns: DuplicateUserTurn[];
 };
 
 type LiveIssue2603Trace = Issue2603Trace & { error?: string };
+
+type LiveIssue2603Run = {
+  repro: LiveIssue2603Trace;
+  attempts: LiveIssue2603Trace[];
+};
 
 type ExecStringOptions = Omit<ExecFileSyncOptionsWithStringEncoding, "encoding" | "stdio">;
 
@@ -132,9 +142,15 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
   );
 
   const uncorrelatedReplies: UncorrelatedReply[] = [];
+  const visibleReplyCounts = new Map<string, number>();
+  const finalReplyCounts = new Map<string, number>();
   for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
     for (const event of chatEvents) {
       if (!event.text.includes(replyToken)) continue;
+      visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
+      if (event.state === "final") {
+        finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
+      }
       if (event.runId !== expectedRunId) {
         uncorrelatedReplies.push({
           replyToken,
@@ -145,6 +161,15 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
       }
     }
   }
+  const missingReplies = sentRuns
+    .map((entry) => entry.replyToken)
+    .filter((replyToken) => !visibleReplyCounts.has(replyToken));
+  const duplicateReplies = sentRuns
+    .map((entry) => ({
+      replyToken: entry.replyToken,
+      count: finalReplyCounts.get(entry.replyToken) ?? 0,
+    }))
+    .filter((entry) => entry.count > 1);
 
   const userPromptCounts = countBy(
     historyMessages
@@ -152,27 +177,71 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
       .map((message) => textFromMessage(message).trim())
       .filter(Boolean),
   );
-  const duplicateUserTurns = sentRuns
+  const userTurnCounts = sentRuns
     .map((entry) => ({
       promptToken: entry.promptToken,
       count: userPromptCounts.get(entry.message) ?? 0,
-    }))
-    .filter((entry) => entry.count > 1);
+    }));
+  const missingUserTurns = userTurnCounts.filter((entry) => entry.count < 1);
+  const duplicateUserTurns = userTurnCounts.filter((entry) => entry.count > 1);
 
   return {
     chatEvents,
     emptyFinalsForSubmittedRuns,
+    missingReplies,
+    duplicateReplies,
     uncorrelatedReplies,
+    missingUserTurns,
     duplicateUserTurns,
   };
 }
 
-function buildFailureSummary(analysis: Issue2603Analysis): string {
+function compactHistoryMessages(messages: ChatMessage[]): { role?: string; text: string }[] {
+  return messages.map((message) => ({
+    role: message.role,
+    text: textFromMessage(message),
+  }));
+}
+
+function summarizeLiveAttempt(attempt: LiveIssue2603Trace, index: number) {
+  if (attempt.error) {
+    return {
+      attempt: index + 1,
+      error: attempt.error,
+      eventCount: attempt.events?.length ?? 0,
+    };
+  }
+
+  const analysis = analyzeIssue2603Trace(attempt);
+  return {
+    attempt: index + 1,
+    sentRunCount: attempt.sentRuns.length,
+    eventCount: attempt.events.length,
+    chatEventCount: analysis.chatEvents.length,
+    missingReplies: analysis.missingReplies,
+    emptyFinalsForSubmittedRuns: analysis.emptyFinalsForSubmittedRuns,
+    missingUserTurns: analysis.missingUserTurns,
+    duplicateUserTurns: analysis.duplicateUserTurns,
+  };
+}
+
+function buildFailureSummary(
+  analysis: Issue2603Analysis,
+  trace?: Issue2603Trace,
+  attempts?: LiveIssue2603Trace[],
+): string {
   return JSON.stringify(
     {
       expectations: ISSUE_2603_FIX_EXPECTATIONS,
+      sentRuns: trace?.sentRuns,
+      eventCount: trace?.events.length,
+      historyMessages: trace ? compactHistoryMessages(trace.historyMessages) : undefined,
+      attempts: attempts?.map(summarizeLiveAttempt),
       emptyFinalsForSubmittedRuns: analysis.emptyFinalsForSubmittedRuns,
+      missingReplies: analysis.missingReplies,
+      duplicateReplies: analysis.duplicateReplies,
       uncorrelatedReplies: analysis.uncorrelatedReplies,
+      missingUserTurns: analysis.missingUserTurns,
       duplicateUserTurns: analysis.duplicateUserTurns,
       chatEvents: analysis.chatEvents,
     },
@@ -375,8 +444,8 @@ ws.on("error", (error) => {
 ws.on("open", async () => {
   try {
     await request("connect", {
-      minProtocol: 3,
-      maxProtocol: 3,
+      minProtocol: 4,
+      maxProtocol: 4,
       client: {
         id: "openclaw-control-ui",
         displayName: "issue2603-live-repro",
@@ -444,7 +513,7 @@ function runLiveIssue2603Repro(sandboxName: string): LiveIssue2603Trace {
 
   execOpenShell(["sandbox", "upload", sandboxName, localScript, remoteScript], { timeout: 30_000 });
 
-  const sessionKey = `issue2603-${Date.now()}`;
+  const sessionKey = `issue2603-${Date.now()}-${randomUUID()}`;
   const tokenExpression =
     "JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json','utf8')).gateway?.auth?.token||''";
   const output = execInSandbox(
@@ -455,6 +524,45 @@ function runLiveIssue2603Repro(sandboxName: string): LiveIssue2603Trace {
   const resultLine = output.split(/\r?\n/).find((line) => line.startsWith("ISSUE2603_RESULT "));
   if (!resultLine) throw new Error(`live repro did not emit ISSUE2603_RESULT. Output:\n${output}`);
   return JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as LiveIssue2603Trace;
+}
+
+function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
+  if (repro.error || !Array.isArray(repro.sentRuns) || !Array.isArray(repro.events)) return false;
+
+  const analysis = analyzeIssue2603Trace(repro);
+  return (
+    repro.sentRuns.length === 3 &&
+    analysis.chatEvents.length === 0 &&
+    analysis.emptyFinalsForSubmittedRuns.length === 0 &&
+    analysis.duplicateReplies.length === 0 &&
+    analysis.uncorrelatedReplies.length === 0 &&
+    analysis.missingReplies.length === repro.sentRuns.length
+  );
+}
+
+// The zero-chat-events failure is an observability race at the live repro boundary:
+// OpenClaw accepts the chat.send requests, but this websocket client captures no
+// chat stream events before assertions. The source boundary is the pinned
+// OpenClaw 2026.5.x gateway/websocket runtime inside the sandbox, so this
+// NemoClaw-side E2E can only keep the #2603/#3145 correlation assertions stable
+// while preserving signal for real empty-final, duplicate-turn, and
+// uncorrelated-reply regressions. Remove this retry when OpenClaw exposes a
+// deterministic chat subscription/readiness acknowledgement or the 10x nightly
+// sweep no longer shows the zero-event capture signature without this guard.
+function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIssue2603Run {
+  const attempts: LiveIssue2603Trace[] = [];
+  let repro = runLiveIssue2603Repro(sandboxName);
+  attempts.push(repro);
+
+  if (looksLikeEventCaptureFailure(repro)) {
+    console.warn(
+      "ISSUE2603_RETRY captured zero chat events after accepted sends; retrying with a fresh session",
+    );
+    repro = runLiveIssue2603Repro(sandboxName);
+    attempts.push(repro);
+  }
+
+  return { repro, attempts };
 }
 
 describe("OpenClaw TUI chat correlation regression (#2603)", () => {
@@ -496,19 +604,91 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     ]);
   });
 
+  it("does not classify a streamed delta plus final for the same run as a duplicate reply", () => {
+    const analysis = analyzeIssue2603Trace({
+      sentRuns: [
+        {
+          promptToken: "B2603",
+          replyToken: "B2603-REPLY",
+          runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+          message: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+            state: "delta",
+            message: { role: "assistant", content: [{ type: "text", text: "B2603-REPLY" }] },
+          },
+        },
+        {
+          event: "chat",
+          payload: {
+            runId: "a32dc5a4-9b45-4109-9b17-2fcd35787d0c",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "B2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "B2603: Second task. Reply exactly B2603-REPLY and nothing else." },
+          ],
+        },
+      ],
+    });
+
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.duplicateReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
+  });
+
+  it("only retries the live repro when no chat events were captured", () => {
+    expect(
+      looksLikeEventCaptureFailure({
+        sentRuns: capturedIssue2603Trace.sentRuns,
+        events: [],
+        historyMessages: [],
+      }),
+    ).toBe(true);
+
+    expect(
+      looksLikeEventCaptureFailure({
+        sentRuns: capturedIssue2603Trace.sentRuns,
+        events: [
+          {
+            event: "chat",
+            payload: {
+              runId: "18f73be1-3410-46cb-8098-e881bf92c510",
+              state: "final",
+            },
+          },
+        ],
+        historyMessages: [],
+      }),
+    ).toBe(false);
+  });
+
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
     "keeps rapid live TUI/webchat sends correlated on a real OpenClaw sandbox",
     () => {
       const sandboxName = process.env[LIVE_SANDBOX_ENV] || "hclaw";
-      const repro = runLiveIssue2603Repro(sandboxName);
+      const { repro, attempts } = runLiveIssue2603ReproWithEventCaptureRetry(sandboxName);
       if (repro.error) throw new Error(`live repro failed before assertions: ${repro.error}`);
 
       const analysis = analyzeIssue2603Trace(repro);
-      const failureSummary = buildFailureSummary(analysis);
+      const failureSummary = buildFailureSummary(analysis, repro, attempts);
       expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
+      expect(analysis.missingReplies, failureSummary).toEqual([]);
+      expect(analysis.duplicateReplies, failureSummary).toEqual([]);
       expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
+      expect(analysis.missingUserTurns, failureSummary).toEqual([]);
       expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
     },
-    190_000,
+    370_000,
   );
 });

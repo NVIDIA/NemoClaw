@@ -13,8 +13,10 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   hermesToolGateways: string[];
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
+  webSearchEnabled: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    recordPostVerifyStarted(): Promise<Session>;
     recordSessionComplete(updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     removeLegacyCredentialsFile(): void;
@@ -24,6 +26,13 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
+    /**
+     * Best-effort probe that confirms the agent runtime actually accepted the
+     * web-search config and (for Brave) that the L7 proxy rewrites the
+     * `X-Subscription-Token` header at egress. Called after the post-policy
+     * sandbox-process recovery so the final policy/gateway state is live.
+     */
+    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): void;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -52,13 +61,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   hermesToolGateways,
   stagedLegacyKeys,
   migratedLegacyKeys,
+  webSearchEnabled,
   deps,
 }: FinalizationStateOptions<Agent, VerifyChain, VerificationResult>): Promise<FinalizationStateResult> {
   if (agent) deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
-
-  const session = await deps.recordSessionComplete(
-    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-  );
 
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
@@ -79,6 +85,15 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
 
+  // Probe Brave Search egress through the L7 proxy now that the final
+  // policy and provider state are live — earlier probes would race the
+  // not-yet-applied `brave` preset (#3626). Best-effort; never blocks.
+  if (webSearchEnabled) {
+    deps.verifyWebSearchInsideSandbox(sandboxName, agent);
+  }
+
+  await deps.recordPostVerifyStarted();
+
   // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
   const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
   const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
@@ -86,6 +101,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   for (const line of verificationDiagnostics) deps.log(line);
 
   deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
+
+  const session = await deps.recordSessionComplete(
+    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
+  );
 
   return { session, unmigratedLegacyKeys, verificationDiagnostics };
 }

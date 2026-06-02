@@ -26,8 +26,14 @@ import {
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
+import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
@@ -145,10 +151,10 @@ export async function addSandboxPolicy(
     console.log(`  Endpoints that would be opened: ${endpoints.join(", ")}`);
   }
 
-  const messagingWarning = policies.getMessagingPresetWarning(answer);
-  if (messagingWarning) {
+  const presetWarning = policies.getPresetValidationWarning(answer);
+  if (presetWarning) {
     console.log("");
-    console.log(`  ${messagingWarning}`);
+    console.log(`  ${presetWarning}`);
     console.log("");
   }
 
@@ -266,7 +272,18 @@ export function listSandboxPolicies(sandboxName: string) {
 
   if (gatewayPresets === null) {
     console.log("");
-    console.log("  ⚠ Could not query gateway — showing local state only.");
+    // A null gateway result can be a transient Docker daemon outage rather
+    // than a gateway-only problem. Name the runtime outage so the user
+    // restarts Docker instead of assuming their local policy state drifted
+    // (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      printDockerRuntimeDownGuidance(sandboxName, {
+        writer: console.log,
+        retryCommand: "policy-list",
+      });
+    } else {
+      console.log("  ⚠ Could not query gateway — showing local state only.");
+    }
   }
   console.log("");
 }
@@ -365,7 +382,12 @@ async function applyChannelRemoveToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   channelTokenKeys: string[],
-): Promise<void> {
+  options: { bestEffort?: boolean } = {},
+): Promise<{ ok: boolean; residual: string[] }> {
+  const bestEffort = Boolean(options.bestEffort);
+  const residual: string[] = [];
+  let gatewayReachable = true;
+
   if (channelTokenKeys.length > 0) {
     const recovery = await recoverNamedGatewayRuntime();
     if (!recovery.recovered) {
@@ -375,7 +397,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       console.error(
         "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
       );
-      process.exit(1);
+      if (!bestEffort) process.exit(1);
+      gatewayReachable = false;
+      residual.push("gateway-providers");
     }
   }
 
@@ -388,28 +412,33 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // previous run may have already detached, or the channel may have been
   // configured for a sandbox that is no longer alive.
   const detachFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-        detachFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found|not attached/i.test(output)) {
+          detachFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (detachFailures.length > 0) {
-    console.error(
-      `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of detachFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (detachFailures.length > 0) {
+      console.error(
+        `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of detachFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   // Capture each delete's outcome. If any non-NotFound failure surfaces
@@ -419,30 +448,35 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // can't easily recover. Surface the underlying openshell output so the
   // operator can see exactly why the delete was rejected.
   const deleteFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      // Treat "not found" as success-equivalent — a previous run may
-      // have already deleted the provider.
-      if (!/\bNotFound\b|not found/i.test(output)) {
-        deleteFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    const detachFailedSet = new Set(detachFailures.map((f) => f.name));
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      if (!bestEffort && detachFailedSet.has(name)) continue;
+      const result = runOpenshell(["provider", "delete", name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found/i.test(output)) {
+          deleteFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (deleteFailures.length > 0) {
-    console.error(
-      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of deleteFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (deleteFailures.length > 0) {
+      console.error(
+        `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of deleteFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   const entry = registry.getSandbox(sandboxName);
@@ -458,15 +492,17 @@ async function applyChannelRemoveToGatewayAndRegistry(
         Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     });
   }
+
+  return { ok: residual.length === 0, residual };
 }
 
-async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<void> {
+async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
   if (isNonInteractive()) {
     console.log("");
     console.log(
       `  Change queued. Run '${CLI_NAME} ${sandboxName} rebuild' to apply (${actionDesc}).`,
     );
-    return;
+    return false;
   }
   const answer = (await askPrompt(`  Rebuild '${sandboxName}' now to apply? [Y/n]: `))
     .trim()
@@ -475,9 +511,127 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     console.log(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' when you are ready to apply (${actionDesc}).`,
     );
-    return;
+    return false;
   }
   await rebuildSandbox(sandboxName, ["--yes"]);
+  return true;
+}
+
+// Channels that share the canonical OpenClaw `channels.<name>.enabled` shape
+// and emit `[<name>] [default]` startup breadcrumbs in /tmp/gateway.log.
+// WhatsApp is QR-only (no host-side bridge process at this point), and WeChat
+// is recorded under the `openclaw-weixin` channel id with its own per-account
+// metadata flow seeded by seed-wechat-accounts.py — neither match the probe
+// shape and would produce false-negative warnings here.
+const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
+
+// Probe OpenClaw runtime state for a freshly added messaging channel. Runs
+// after `channels add <channel>` triggers a successful rebuild. Reads the
+// baked openclaw.json and tails the gateway log to confirm the bridge module
+// is enabled and emitted a startup breadcrumb. Failures here are best-effort
+// warnings — the rebuild has already succeeded; the goal is to surface
+// "bridge did not spawn" so the user does not discover it from radio silence
+// hours later (#4314, #4390). Restricted to the OpenClaw agent because Hermes
+// sandboxes use /sandbox/.hermes with a different config layout.
+function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: string): void {
+  if (!OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS.has(channelName)) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  if (agent.name !== "openclaw") return;
+  const configProbe = executeSandboxExecCommand(
+    sandboxName,
+    "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
+    10000,
+  );
+  if (!configProbe || configProbe.status !== 0 || !configProbe.stdout) {
+    console.log(
+      `  ${YW}⚠${R} Could not read /sandbox/.openclaw/openclaw.json to verify '${channelName}' bridge startup.`,
+    );
+    console.log(
+      `    Run '${CLI_NAME} ${sandboxName} status' to inspect the sandbox once it is fully running.`,
+    );
+    return;
+  }
+  let channelEnabled = false;
+  let channelBlock: any = null;
+  try {
+    const cfg = JSON.parse(configProbe.stdout);
+    channelBlock = cfg?.channels?.[channelName];
+    channelEnabled = Boolean(channelBlock?.enabled);
+  } catch {
+    // Malformed config — fall through to the log probe to capture context.
+  }
+  if (!channelEnabled) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked openclaw.json after rebuild.`,
+    );
+    console.log(
+      `    The bridge will not start. Re-run '${CLI_NAME} ${sandboxName} rebuild' or 'channels remove ${channelName}' and add again.`,
+    );
+    return;
+  }
+  // Match both the channel module's own breadcrumbs (`[<channel>] [default]`)
+  // and the channel-guard preloads' aggregated form (`[channels] [<channel>]`).
+  // The Slack guard writes "[channels] [slack] provider failed to start..."
+  // when a token is rejected; ignoring that line here would leave the user
+  // with a generic "no breadcrumb" warning instead of the actionable cause.
+  const logProbe = executeSandboxExecCommand(
+    sandboxName,
+    `tail -n 400 /tmp/gateway.log 2>/dev/null | grep -E "^\\[${channelName}\\] |^\\[channels\\] \\[${channelName}\\]" || true`,
+    10000,
+  );
+  const lines = (logProbe?.stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in /tmp/gateway.log yet.`,
+    );
+    console.log(
+      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+    );
+    return;
+  }
+  const credentialWarnings = lines.filter((line) =>
+    /credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i.test(
+      line,
+    ),
+  );
+  if (credentialWarnings.length > 0) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`,
+    );
+    for (const line of credentialWarnings.slice(0, 3)) {
+      console.log(`    ${line}`);
+    }
+    console.log(
+      `    Verify the OpenShell provider for ${channelName} holds a valid credential and re-run '${CLI_NAME} ${sandboxName} rebuild' if needed.`,
+    );
+    return;
+  }
+  // Treat the channel as observably started only when we see a positive
+  // startup signal from the bridge module itself ("starting provider" /
+  // "provider ready"). Otherwise the grep above matched a tangential
+  // breadcrumb (e.g. a stale "no startup detected" line) and a green
+  // "startup detected" message would be misleading.
+  const positiveStartup = lines.some((line) =>
+    /\bstarting provider\b|\bprovider ready\b/.test(line),
+  );
+  if (positiveStartup) {
+    console.log(
+      `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
+    );
+    if (channelName === "telegram") {
+      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
+    }
+    return;
+  }
+  console.log(
+    `  ${YW}⚠${R} '${channelName}' bridge log lines found but no startup confirmation yet.`,
+  );
+  console.log(
+    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+  );
 }
 
 // Paste-prompt token acquisition for Telegram / Discord / Slack — extracted
@@ -669,6 +823,21 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
+  const presetContent = policies.loadPreset(canonical);
+  const presetPolicyKeys =
+    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+  if (presetContent === null || presetPolicyKeys.length === 0) {
+    if (presetContent !== null && presetPolicyKeys.length === 0) {
+      console.error(
+        `  Preset YAML for channel '${canonical}' has no parseable entries under 'network_policies:'.`,
+      );
+    }
+    console.error(
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
+    );
+    process.exit(1);
+  }
+
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
@@ -687,8 +856,30 @@ export async function addSandboxChannel(
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
-    await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    // Show post-pair guidance (e.g. the channels status hint for WhatsApp)
+    // here because the in-sandbox QR branch returns before the shared note
+    // loop the non-QR branches use.
+    for (const line of channel.setupNotes ?? []) {
+      console.log(`  ${line}`);
+    }
+    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
     return;
+  }
+
+  const priorEntry = registry.getSandbox(sandboxName);
+  const priorMessagingChannels: string[] = priorEntry?.messagingChannels
+    ? [...priorEntry.messagingChannels]
+    : [];
+  const wasAlreadyEnabled = priorMessagingChannels.includes(canonical);
+  const priorHashes: Record<string, string> = {
+    ...((priorEntry?.providerCredentialHashes as Record<string, string>) || {}),
+  };
+  const channelTokenKeys = getChannelTokenKeys(channel);
+  const priorCreds: Record<string, string> = {};
+  for (const key of channelTokenKeys) {
+    const existing = getCredential(key);
+    if (existing != null) priorCreds[key] = existing;
   }
 
   const acquired: Record<string, string> = {};
@@ -696,6 +887,17 @@ export async function addSandboxChannel(
     await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
   } else {
     await acquirePasteTokens(canonical, channel, acquired);
+  }
+
+  if (canonical === "slack") {
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
   }
 
   persistChannelTokens(acquired);
@@ -707,27 +909,96 @@ export async function addSandboxChannel(
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
-  applyChannelPresetIfAvailable(sandboxName, canonical);
+  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    await rollbackChannelAdd(sandboxName, channel, canonical, {
+      wasAlreadyEnabled,
+      priorMessagingChannels,
+      priorHashes,
+      priorCreds,
+    });
+    process.exit(1);
+  }
 
-  await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
 }
 
-// Must run before promptAndRebuild — the rebuild's backup manifest only
-// captures presets already applied (#3437). Without this, channel bridges
-// boot without egress to their upstream API after rebuild.
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
-  const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
-  if (!builtinPresets.has(channelName)) {
-    return true;
+async function rollbackChannelAdd(
+  sandboxName: string,
+  channel: ChannelDef,
+  canonical: string,
+  snapshot: {
+    wasAlreadyEnabled: boolean;
+    priorMessagingChannels: string[];
+    priorHashes: Record<string, string>;
+    priorCreds: Record<string, string>;
+  },
+): Promise<{ ok: boolean; residual: string[] }> {
+  if (snapshot.wasAlreadyEnabled) {
+    console.error(
+      `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
+    );
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: snapshot.priorMessagingChannels,
+      providerCredentialHashes:
+        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
+    });
+    clearChannelTokens(channel);
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      persistChannelTokens(snapshot.priorCreds);
+    }
+    const residual: string[] = ["gateway-providers"];
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      try {
+        const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
+          name: bridgeProviderName(sandboxName, canonical, envKey),
+          envKey,
+          token,
+        }));
+        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell, {
+          bestEffort: true,
+        });
+      } catch (err) {
+        console.error(
+          `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { ok: false, residual };
   }
+
+  console.error(
+    `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
+  );
+  clearChannelTokens(channel);
+  const result = await applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    canonical,
+    getChannelTokenKeys(channel),
+    { bestEffort: true },
+  );
+  if (!result.ok) {
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${result.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
+  }
+  return result;
+}
+
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
       console.error(
-        `  ${YW}⚠${R} Channel '${channelName}' bridge registered but its policy preset failed to apply.`,
+        `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
       );
       return false;
     }
@@ -737,7 +1008,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
     );
     return false;
   }

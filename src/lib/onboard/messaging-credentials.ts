@@ -67,10 +67,9 @@ export function detectMessagingCredentialRotation(
   const storedHashes = sb?.providerCredentialHashes || {};
   const changedProviders = [];
   for (const { name, envKey, token } of tokenDefs) {
-    if (!token) continue;
     const storedHash = storedHashes[envKey];
     if (!storedHash) continue;
-    if (storedHash !== hashCredential(token)) {
+    if (!token || storedHash !== hashCredential(token)) {
       changedProviders.push(name);
     }
   }

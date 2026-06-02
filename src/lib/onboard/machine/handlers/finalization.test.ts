@@ -13,6 +13,7 @@ type VerificationResult = { ok: boolean };
 function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {}) {
   const calls = {
     ensureAgentDashboard: vi.fn(() => 18789),
+    postVerify: vi.fn(async () => createSession({ machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 } })),
     complete: vi.fn(async () => createSession({ status: "complete" })),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
@@ -21,6 +22,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
+    verifyWebSearch: vi.fn(),
     dashboard: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
@@ -29,6 +31,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     calls,
     deps: {
       ensureAgentDashboardForward: calls.ensureAgentDashboard,
+      recordPostVerifyStarted: calls.postVerify,
       recordSessionComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
@@ -38,6 +41,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
       formatVerificationDiagnostics: calls.diagnostics,
+      verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
       error: calls.error,
       log: calls.log,
@@ -59,6 +63,7 @@ function baseOptions(
     hermesToolGateways: [],
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
+    webSearchEnabled: false,
     deps,
   };
 }
@@ -69,6 +74,13 @@ describe("handleFinalizationState", () => {
 
     const result = await handleFinalizationState(baseOptions(deps));
 
+    expect(calls.cleanupHost).toHaveBeenCalledOnce();
+    expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
+    expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
+    expect(calls.verify).toHaveBeenCalledWith("my-assistant", { port: 18789 });
+    expect(calls.log).toHaveBeenCalledWith("  ✓ verified");
+    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, null);
+    expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(calls.complete).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
       provider: "provider",
@@ -76,12 +88,6 @@ describe("handleFinalizationState", () => {
       hermesAuthMethod: null,
       hermesToolGateways: [],
     });
-    expect(calls.cleanupHost).toHaveBeenCalledOnce();
-    expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
-    expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
-    expect(calls.verify).toHaveBeenCalledWith("my-assistant", { port: 18789 });
-    expect(calls.log).toHaveBeenCalledWith("  ✓ verified");
-    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, null);
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
@@ -92,7 +98,25 @@ describe("handleFinalizationState", () => {
     await handleFinalizationState({ ...baseOptions(deps), agent });
 
     expect(calls.ensureAgentDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.complete).toHaveBeenCalled();
+    expect(calls.ensureAgentDashboard.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.complete.mock.invocationCallOrder[0],
+    );
     expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, agent);
+  });
+
+  it("does not complete the session when deployment verification fails", async () => {
+    const { deps, calls } = createDeps({
+      verifyDeployment: vi.fn(async () => {
+        throw new Error("verification failed");
+      }),
+    });
+
+    await expect(handleFinalizationState(baseOptions(deps))).rejects.toThrow("verification failed");
+
+    expect(calls.postVerify).toHaveBeenCalledOnce();
+    expect(calls.complete).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {
@@ -120,5 +144,27 @@ describe("handleFinalizationState", () => {
     expect(calls.removeLegacy).not.toHaveBeenCalled();
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("SLACK_BOT_TOKEN"));
     expect(result.unmigratedLegacyKeys).toEqual(["SLACK_BOT_TOKEN"]);
+  });
+
+  it("runs web-search verification only when webSearchEnabled is true", async () => {
+    const { deps: depsOff, calls: callsOff } = createDeps();
+    await handleFinalizationState(baseOptions(depsOff));
+    expect(callsOff.verifyWebSearch).not.toHaveBeenCalled();
+
+    const { deps: depsOn, calls: callsOn } = createDeps();
+    const agent = { name: "openclaw" };
+    await handleFinalizationState({
+      ...baseOptions(depsOn),
+      agent,
+      webSearchEnabled: true,
+    });
+    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent);
+    // Probe runs after sandbox-process recovery so the post-policy state is live.
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(
+      callsOn.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      callsOn.verify.mock.invocationCallOrder[0],
+    );
   });
 });

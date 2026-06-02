@@ -4,7 +4,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { requireValue } from "../core/require-value";
@@ -19,11 +18,19 @@ import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
+import {
+  formatHostServiceUnreachableMessage,
+  probeHostServiceSandboxReachability,
+} from "./host-service-reachability";
+import {
+  doesModelRouterProcessOwnPort,
+  isRouterHealthy,
+  stopModelRouterProcess,
+} from "./model-router-process";
 import { prepareModelRouterVenv } from "./model-router-python";
 
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
-const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
 const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
@@ -82,58 +89,6 @@ export function loadBlueprintProfile(
     return { ...profile, router } as BlueprintInferenceProfile;
   } catch {
     return null;
-  }
-}
-
-async function isRouterHealthy(port: number, timeoutMs = ROUTER_HEALTH_TIMEOUT_MS): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (healthy: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(healthy);
-    };
-    const request = http
-      .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
-        res.resume();
-        settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
-      })
-      .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
-      request.destroy();
-      settle(false);
-    });
-  });
-}
-
-function isProcessRunning(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopModelRouterProcess(pid: number, port: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
   }
 }
 
@@ -468,6 +423,35 @@ export function isRoutedInferenceProvider(provider: string | null | undefined): 
   return Boolean(bp?.provider_name && provider === bp.provider_name);
 }
 
+const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
+
+/**
+ * Verify the host Model Router is reachable from the OpenShell Docker network.
+ *
+ * `isRouterHealthy()` only proves the router answers on the host loopback. On
+ * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
+ * still fail to reach `host.openshell.internal:<routerPort>` even though the
+ * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
+ * `tcp_failed` result print the concrete `ufw allow` remediation and fail so
+ * onboarding does not declare an unreachable router healthy. A
+ * `probe_unavailable` result (Docker Desktop, missing network during fresh
+ * setup before the sandbox network exists, DNS) is non-fatal.
+ */
+async function verifyModelRouterSandboxReachability(routerPort: number): Promise<void> {
+  const reachability = await probeHostServiceSandboxReachability({ port: routerPort });
+  if (!reachability.ok && reachability.reason === "tcp_failed") {
+    console.error(
+      formatHostServiceUnreachableMessage(reachability, {
+        serviceLabel: MODEL_ROUTER_SERVICE_LABEL,
+        port: routerPort,
+      }),
+    );
+    throw new Error(
+      `Sandbox containers cannot reach the Model Router at host.openshell.internal:${routerPort}.`,
+    );
+  }
+}
+
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = bp.router.port || 4000;
@@ -486,15 +470,17 @@ export async function reconcileModelRouter(): Promise<void> {
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
   if (await isRouterHealthy(routerPort)) {
+    const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
       routerCredentialHash &&
       recordedCredentialHash === routerCredentialHash &&
-      isProcessRunning(recordedPid)
+      recordedProcessOwnsRouter
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
+      await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
-    if (isProcessRunning(recordedPid)) {
+    if (recordedProcessOwnsRouter) {
       console.log("  Restarting model router with updated credentials...");
       await stopModelRouterProcess(requireValue(recordedPid, "Expected recorded router PID"), routerPort);
     } else {
@@ -512,4 +498,5 @@ export async function reconcileModelRouter(): Promise<void> {
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });
+  await verifyModelRouterSandboxReachability(routerPort);
 }

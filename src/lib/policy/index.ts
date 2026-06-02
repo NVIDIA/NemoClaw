@@ -13,6 +13,9 @@ const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("../runner");
 const registry = require("../state/registry");
 const { loadAgent } = require("../agent/defs");
+// Late-binding access via the module exports so tests can spy on
+// resolveOpenshell without rewiring requires.
+const openshellResolveModule = require("../adapters/openshell/resolve");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -210,7 +213,23 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
   whatsapp: "WhatsApp",
 };
 
-function getMessagingPresetWarning(presetName: string): string | null {
+function getPresetValidationWarning(presetName: string): string | null {
+  if (presetName === "jira") {
+    return [
+      "Jira preset validation uses per-binary policy signals.",
+      "Node HTTPS is allowed for Atlassian API traffic:",
+      'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
+      "curl is intentionally not in the preset binary allowlist. Avoid plain",
+      "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
+      "redirect body, which looks the same as a blocked request. Use a",
+      "body-visible API probe instead:",
+      "curl -sS --max-time 10 -w '\\n%{http_code}\\n' https://api.atlassian.com/oauth/token/accessible-resources",
+      "Before approval, expect 000 or a local policy denial. After explicitly",
+      "approving curl for api.atlassian.com, expect Atlassian's 401 JSON",
+      "response, which proves curl reached the service without Jira credentials.",
+    ].join("\n  ");
+  }
+
   const label = MESSAGING_PRESET_LABELS[presetName];
   if (!label) return null;
   const lines = [
@@ -309,19 +328,66 @@ function parseCurrentPolicy(raw: string | null | undefined): string {
 }
 
 /**
+ * Resolve the openshell binary, preferring an absolute path so spawnSync does
+ * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
+ * from PATH (issue #4224). Falls back to the literal "openshell" so callers
+ * that build argv at module scope (or in tests that only check argv shape)
+ * don't side-effect on a missing binary; command entry points call
+ * `assertOpenshellResolvable()` before invoking openshell to surface the
+ * actionable diagnostic.
+ */
+function resolveOpenshellBinary(): string {
+  return openshellResolveModule.resolveOpenshell() ?? "openshell";
+}
+
+/**
+ * Pre-spawn check used at command entry points before any
+ * `run(buildPolicy*Command(...))`. If the binary cannot be resolved, prints
+ * every location checked and an install hint, then exits nonzero — instead
+ * of letting the spawn surface as the opaque `spawnSync openshell ENOENT`
+ * (issue #4224).
+ */
+function assertOpenshellResolvable(): void {
+  if (openshellResolveModule.resolveOpenshell()) return;
+
+  const home = process.env.HOME;
+  const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const currentPath = process.env.PATH;
+  const checked: string[] = [];
+  if (override) checked.push(`NEMOCLAW_OPENSHELL_BIN=${override}`);
+  // Log the concrete PATH so bug reports name what was actually searched.
+  // The whole point of #4224 is that non-interactive shells drop ~/.local/bin
+  // from PATH; the value is the most actionable single piece of context.
+  checked.push(
+    currentPath
+      ? `PATH=${currentPath} (via \`command -v openshell\`)`
+      : "PATH=<unset> (via `command -v openshell`)",
+  );
+  if (home?.startsWith("/")) checked.push(`${home}/.local/bin/openshell`);
+  checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
+
+  console.error("  openshell binary not found. Checked:");
+  for (const location of checked) {
+    console.error(`    - ${location}`);
+  }
+  console.error(
+    "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
+  );
+  process.exit(1);
+}
+
+/**
  * Build the openshell policy set command as an argv array.
  */
 function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
-  return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
+  return [resolveOpenshellBinary(), "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
 
 /**
  * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName: string): string[] {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
-  return [binary, "policy", "get", "--full", sandboxName];
+  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -584,6 +650,10 @@ function removePreset(sandboxName: string, presetName: string): boolean {
     console.log(`  Narrowing sandbox egress — removing: ${endpoints.join(", ")}`);
   }
 
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
   fs.writeFileSync(tmpFile, updated, { encoding: "utf-8", mode: 0o600 });
@@ -722,6 +792,10 @@ function applyPresetContent(
     console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
   }
 
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
   fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
@@ -834,6 +908,10 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
     }
   }
+
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
@@ -1189,6 +1267,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   console.log("  Applying permissive policy...");
+  assertOpenshellResolvable();
   run(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
 }
@@ -1199,15 +1278,17 @@ export {
   listPresets,
   loadPreset,
   getPresetEndpoints,
-  getMessagingPresetWarning,
+  getPresetValidationWarning,
   setupPolicyPresetSupported,
   filterSetupPolicyPresets,
   listSetupPolicyPresets,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
+  parsePresetPolicyKeys,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,
+  assertOpenshellResolvable,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   removePresetFromPolicy,

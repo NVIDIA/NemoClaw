@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import {
   baseImageInputsChangedSinceMain,
@@ -17,8 +17,16 @@ import {
 } from "../../dist/lib/sandbox-base-image";
 
 const tmpRoots: string[] = [];
+const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
+const emptyGitConfig = path.join(emptyGitConfigDir, "gitconfig");
+const emptyGitConfigFd = fs.openSync(emptyGitConfig, "wx", 0o600);
+fs.closeSync(emptyGitConfigFd);
+
 const gitEnv = {
   ...process.env,
+  GIT_CONFIG_GLOBAL: emptyGitConfig,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
   GIT_AUTHOR_NAME: "Test User",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test User",
@@ -76,6 +84,10 @@ afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+afterAll(() => {
+  fs.rmSync(emptyGitConfigDir, { recursive: true, force: true });
 });
 
 describe("sandbox base image helpers", () => {

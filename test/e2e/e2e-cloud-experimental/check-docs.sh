@@ -571,6 +571,42 @@ run_install_check() {
     done <<<"$_payload_values"
   fi
 
+  local COMMANDS_REF="$REPO_ROOT/docs/reference/commands.mdx"
+  if [[ ! -f "$COMMANDS_REF" ]]; then
+    echo "check-docs: [install] missing $COMMANDS_REF" >&2
+    return 1
+  fi
+
+  local _doc_provider_row _doc_provider_values
+  _doc_provider_row="$(grep -F "| \`NEMOCLAW_PROVIDER\` |" "$COMMANDS_REF" || true)"
+  if [[ -z "$_doc_provider_row" ]]; then
+    echo "check-docs: [install] no NEMOCLAW_PROVIDER row found in ${COMMANDS_REF#"$REPO_ROOT"/}" >&2
+    _drift=1
+  else
+    _doc_provider_values="$(
+      printf '%s\n' "$_doc_provider_row" \
+        | awk -F '|' '{ print $3 }' \
+        | grep -oE "\`[a-zA-Z][a-zA-Z0-9-]*\`" \
+        | tr -d '`' \
+        | grep -vxE 'install-.*|start-windows-ollama' \
+        | LC_ALL=C sort -u
+    )"
+    while IFS= read -r v; do
+      [[ -z "$v" ]] && continue
+      if ! grep -qxF -- "$v" <<<"$_doc_provider_values"; then
+        echo "check-docs: [install] provider \"$v\" canonical but absent from ${COMMANDS_REF#"$REPO_ROOT"/} NEMOCLAW_PROVIDER row" >&2
+        _drift=1
+      fi
+    done <<<"$_canonical_values"
+    while IFS= read -r v; do
+      [[ -z "$v" ]] && continue
+      if ! grep -qxF -- "$v" <<<"$_canonical_values"; then
+        echo "check-docs: [install] provider \"$v\" appears in ${COMMANDS_REF#"$REPO_ROOT"/} NEMOCLAW_PROVIDER row but is not canonical" >&2
+        _drift=1
+      fi
+    done <<<"$_doc_provider_values"
+  fi
+
   if [[ "$_drift" -ne 0 ]]; then
     return 1
   fi
@@ -655,6 +691,7 @@ extract_targets() {
 
     while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
     while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    while ($visible =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
     END {
       die "malformed HTML comment\n" if $in_comment;
     }
@@ -682,14 +719,26 @@ check_local_ref() {
 
   if [[ "$stripped" == /* ]]; then
     local site_path="${stripped#/}"
-    local candidate
-    for candidate in \
-      "$REPO_ROOT/docs/$site_path" \
-      "$REPO_ROOT/docs/$site_path.mdx" \
-      "$REPO_ROOT/docs/$site_path.md" \
-      "$REPO_ROOT/docs/$site_path/index.mdx" \
-      "$REPO_ROOT/docs/$site_path/index.md"; do
-      [[ -e "$candidate" ]] && return 0
+    local -a site_paths=("$site_path")
+    case "$site_path" in
+      user-guide/openclaw/*)
+        site_paths+=("${site_path#user-guide/openclaw/}")
+        ;;
+      user-guide/hermes/*)
+        site_paths+=("${site_path#user-guide/hermes/}")
+        ;;
+    esac
+
+    local route_path candidate
+    for route_path in "${site_paths[@]}"; do
+      for candidate in \
+        "$REPO_ROOT/docs/$route_path" \
+        "$REPO_ROOT/docs/$route_path.mdx" \
+        "$REPO_ROOT/docs/$route_path.md" \
+        "$REPO_ROOT/docs/$route_path/index.mdx" \
+        "$REPO_ROOT/docs/$route_path/index.md"; do
+        [[ -e "$candidate" ]] && return 0
+      done
     done
     echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
     return 1

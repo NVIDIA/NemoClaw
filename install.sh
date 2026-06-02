@@ -17,13 +17,14 @@ fi
 LOCAL_PAYLOAD="${SCRIPT_DIR:+${SCRIPT_DIR}/scripts/install.sh}"
 BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
+DEFAULT_INSTALL_REF="lkg"
 
 resolve_release_tag() {
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
     printf "%s" "${NEMOCLAW_INSTALL_REF}"
     return
   fi
-  printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
+  printf "%s" "${NEMOCLAW_INSTALL_TAG:-$DEFAULT_INSTALL_REF}"
 }
 
 verify_downloaded_script() {
@@ -113,7 +114,7 @@ bootstrap_usage() {
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  Environment:\n"
   printf "    NEMOCLAW_INSTALL_REF         Exact Git ref/SHA to install\n"
-  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
+  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: lkg)\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
