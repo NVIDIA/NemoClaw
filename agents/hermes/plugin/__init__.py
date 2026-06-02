@@ -1079,14 +1079,41 @@ def _strip_wrapping_quotes(text):
     return value
 
 
-def _normalize_raw_messaging_tool_response(response):
+# Tracks the messaging platform of the active LLM call so the normalizer
+# below can refuse to silently rewrite cross-platform send_message pseudo-calls
+# into the wrong chat (PR #4175 review feedback from @cv). Updated on every
+# `_pre_llm_call` and read by the patched `_strip_think_blocks`.
+_current_messaging_platform = {"value": None}
+
+
+def _set_current_messaging_platform(platform):
+    raw = str(platform or "").strip().lower()
+    _current_messaging_platform["value"] = raw if raw in _MESSAGING_PLATFORMS else None
+
+
+def _get_current_messaging_platform():
+    return _current_messaging_platform["value"]
+
+
+def _normalize_raw_messaging_tool_response(response, current_platform=None):
     """Convert a raw send_message pseudo-call into the message body.
 
-    Some first-turn messaging models emit text like
-    ``send_message: "to telegram: Hello"`` as the whole final answer instead
-    of using the structured tool-calling channel. In a gateway chat, returning
-    the body is the correct delivery path because Hermes will send the final
-    response back to the origin chat.
+    Defense-in-depth fallback for the first-turn race in #3893 where the
+    Hermes tool-dispatch isn't ready when the messaging adapter delivers the
+    first user turn, so the model emits text like
+    ``send_message: "to telegram: Hello"`` as the final answer instead of
+    using the structured tool-calling channel. Returning the body is the
+    correct delivery path **only when the target platform matches the current
+    chat platform** — otherwise (per the #4175 review) a stray
+    ``send_message: "to slack: ..."`` from a Telegram chat would be silently
+    delivered back to Telegram, misrouting a cross-platform send_message
+    intent.
+
+    Source of truth for send_message routing is the Hermes tool dispatcher
+    in ``agents/hermes/run_agent.py`` (openclaw runtime); this normalizer is
+    purely an output filter on `AIAgent._strip_think_blocks`. End-to-end
+    coverage runs via ``hermes-e2e``, ``hermes-discord-e2e``, and
+    ``hermes-slack-e2e`` against a real gateway first-message path.
     """
     if not isinstance(response, str):
         return response
@@ -1097,6 +1124,14 @@ def _normalize_raw_messaging_tool_response(response):
     body = _strip_wrapping_quotes(match.group("body"))
     target_match = _RAW_MESSAGING_TARGET_RE.match(body)
     if not target_match:
+        return response
+
+    target_platform = (target_match.group("platform") or "").strip().lower()
+    current = (str(current_platform or "").strip().lower()) or None
+    if current is None or target_platform != current:
+        # Cross-platform or unknown-platform pseudo-call — leave it intact so
+        # it surfaces as a dispatch/error path rather than getting silently
+        # delivered into the wrong chat.
         return response
 
     message = _strip_wrapping_quotes(target_match.group("message"))
@@ -1119,7 +1154,10 @@ def _install_messaging_response_patch():
         return False
 
     def _strip_think_blocks(content):
-        return _normalize_raw_messaging_tool_response(original(content))
+        return _normalize_raw_messaging_tool_response(
+            original(content),
+            current_platform=_get_current_messaging_platform(),
+        )
 
     agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
     setattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, True)
@@ -1204,6 +1242,10 @@ def _build_nemoclaw_agent_context(platform=None):
 
 def _pre_llm_call(**kwargs):
     """Inject non-visible NemoClaw runtime context into relevant Hermes turns."""
+    # Track platform on every turn (not gated on context injection) so the
+    # `_strip_think_blocks` normalizer (#4175) has a current-platform anchor
+    # even on non-first turns and non-grounding turns.
+    _set_current_messaging_platform(kwargs.get("platform"))
     if not _should_inject_nemoclaw_context(
         user_message=kwargs.get("user_message"),
         is_first_turn=bool(kwargs.get("is_first_turn")),

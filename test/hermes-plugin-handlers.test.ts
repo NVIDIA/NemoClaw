@@ -245,17 +245,46 @@ spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
 plugin = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plugin)
 
+patched = plugin._install_messaging_response_patch()
+
+# Same-platform: normalizes
+plugin._set_current_messaging_platform("telegram")
+class_patch_same = run_agent.AIAgent._strip_think_blocks(
+    'send_message: "to telegram: Hello from the first message."'
+)
+
+# Cross-platform (telegram chat, slack target): MUST NOT normalize (#4175 review)
+class_patch_cross = run_agent.AIAgent._strip_think_blocks(
+    'send_message: "to slack: should not leak to telegram"'
+)
+
+# Unknown current platform: MUST NOT normalize even when target is valid (#4175 review)
+plugin._set_current_messaging_platform(None)
+class_patch_unknown = run_agent.AIAgent._strip_think_blocks(
+    'send_message: "to telegram: should not normalize without context"'
+)
+
 result = {
-    "patched": plugin._install_messaging_response_patch(),
+    "patched": patched,
     "targeted": plugin._normalize_raw_messaging_tool_response(
-        'send_message: "to telegram: Hello! I am Hermes."'
+        'send_message: "to telegram: Hello! I am Hermes."',
+        current_platform="telegram",
     ),
     "untargeted": plugin._normalize_raw_messaging_tool_response(
-        "send_message: this is documentation, not a delivery target"
+        "send_message: this is documentation, not a delivery target",
+        current_platform="telegram",
     ),
-    "class_patch": run_agent.AIAgent._strip_think_blocks(
-        'send_message: "to telegram: Hello from the first message."'
+    "cross_platform_blocked": plugin._normalize_raw_messaging_tool_response(
+        'send_message: "to slack: leaked into telegram chat"',
+        current_platform="telegram",
     ),
+    "unknown_platform_blocked": plugin._normalize_raw_messaging_tool_response(
+        'send_message: "to telegram: should not normalize without context"',
+        current_platform=None,
+    ),
+    "class_patch": class_patch_same,
+    "class_patch_cross": class_patch_cross,
+    "class_patch_unknown": class_patch_unknown,
 }
 print(json.dumps(result))
 `);
@@ -264,15 +293,39 @@ print(json.dumps(result))
       patched: boolean;
       targeted: string;
       untargeted: string;
+      cross_platform_blocked: string;
+      unknown_platform_blocked: string;
       class_patch: string;
+      class_patch_cross: string;
+      class_patch_unknown: string;
     };
 
     expect(result.patched).toBe(true);
+    // Same-platform: normalizer extracts the body
     expect(result.targeted).toBe("Hello! I am Hermes.");
+    expect(result.class_patch).toBe("Hello from the first message.");
+    // No-platform body: original send_message: text is left intact
     expect(result.untargeted).toBe(
       "send_message: this is documentation, not a delivery target",
     );
-    expect(result.class_patch).toBe("Hello from the first message.");
+    // Cross-platform target (telegram chat, slack target): must NOT be
+    // silently delivered into the telegram chat. The raw send_message: text
+    // is preserved so dispatch / error surfaces upstream. (#4175 review.)
+    expect(result.cross_platform_blocked).toBe(
+      'send_message: "to slack: leaked into telegram chat"',
+    );
+    expect(result.class_patch_cross).toBe(
+      'send_message: "to slack: should not leak to telegram"',
+    );
+    // Unknown current-platform context: refuse to normalize even when the
+    // target platform is valid, so a stray pseudo-call outside a known
+    // messaging session doesn't get delivered into the wrong chat.
+    expect(result.unknown_platform_blocked).toBe(
+      'send_message: "to telegram: should not normalize without context"',
+    );
+    expect(result.class_patch_unknown).toBe(
+      'send_message: "to telegram: should not normalize without context"',
+    );
   });
 
   it("grounds first Telegram turns to reply directly instead of spelling tool calls", () => {
