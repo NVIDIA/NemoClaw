@@ -841,12 +841,11 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   refresh_hermes_provider_placeholders
   configure_messaging_channels
+  retry_tirith_marker_if_needed
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
-
-  retry_tirith_marker_if_needed
 
   cleanup_stale_hermes_gateway_runtime
 
@@ -889,12 +888,11 @@ export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 refresh_hermes_provider_placeholders
 configure_messaging_channels
+retry_tirith_marker_if_needed
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
-
-retry_tirith_marker_if_needed
 
 cleanup_stale_hermes_gateway_runtime
 
