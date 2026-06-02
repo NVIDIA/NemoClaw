@@ -2985,7 +2985,31 @@ describe("provider placeholder refresh (#4251)", () => {
 
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.result.stderr).toContain(
-      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither an OpenShell placeholder nor a xoxb- Slack token",
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+    );
+  });
+
+  it("warns when the Slack runtime env resolves a different key than expected", () => {
+    // A placeholder for the wrong key must not look healthy — Bolt would still
+    // inherit a non-Slack placeholder and fail at startup.
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      { SLACK_BOT_TOKEN: "openshell:resolve:env:v51_OTHER_KEY" },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
     );
   });
 });
@@ -3109,6 +3133,19 @@ describe("Slack runtime env normalization (#4274)", () => {
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.bot).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
     expect(run.app).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
+  });
+
+  it("leaves a suffix-collision key (…_NOT_SLACK_BOT_TOKEN) untouched", () => {
+    // The match is anchored: only the canonical key or its v<rev>_ form is
+    // rebound, never a key that merely ends with the same suffix.
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:MY_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN");
+    expect(run.app).toBe("openshell:resolve:env:MY_SLACK_APP_TOKEN");
   });
 });
 

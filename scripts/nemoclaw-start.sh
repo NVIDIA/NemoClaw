@@ -1013,6 +1013,7 @@ refresh_openclaw_provider_placeholders() {
       python3 - "$config_file" <<'PYPLACEHOLDERS'
 import json
 import os
+import re
 import sys
 
 config_file = sys.argv[1]
@@ -1103,16 +1104,21 @@ if isinstance(channels, dict):
                     continue
                 label = f"slack.{account_id}.{field}"
                 env_value = os.environ.get(env_key, "")
+                # A valid runtime placeholder is the canonical self-referential
+                # form or its revision-scoped variant for *this* key; a
+                # placeholder for a different key (or a suffix collision) is not
+                # accepted and must be surfaced. A genuine xoxb-/xapp- token is
+                # accepted by Bolt as-is.
+                placeholder_re = re.compile(
+                    rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
+                )
                 if not env_value:
                     warnings.append(
                         f"[channels] {label} expects the {env_key} provider placeholder but it is missing from the runtime environment"
                     )
-                elif not env_value.startswith(prefix) and not env_value.startswith(token_scheme):
-                    # A genuine xoxb-/xapp- token (token_scheme) is accepted by
-                    # Bolt, so only warn when the runtime value is neither an
-                    # OpenShell placeholder nor a plausibly-real Slack token.
+                elif not placeholder_re.match(env_value) and not env_value.startswith(token_scheme):
                     warnings.append(
-                        f"[channels] {label} runtime {env_key} is neither an OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
+                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
                     )
 
 if updated != config:
@@ -1166,26 +1172,24 @@ PYPLACEHOLDERS
 # are left untouched, so it is safe to call unconditionally and is idempotent.
 #
 # OpenShell injects self-referential placeholders (the SLACK_BOT_TOKEN env var
-# resolves to "openshell:resolve:env:<rev>_SLACK_BOT_TOKEN"), so the match
-# requires the trailing key name as well as the prefix — a placeholder that
-# resolves some *other* key is left alone rather than silently rebound to the
-# Slack secret.
+# resolves to "openshell:resolve:env:SLACK_BOT_TOKEN" or its revision-scoped
+# form "openshell:resolve:env:v<rev>_SLACK_BOT_TOKEN"). The match is anchored to
+# exactly those two shapes so a placeholder that resolves some *other* key
+# (including a suffix collision like ...v1_NOT_SLACK_BOT_TOKEN) is left alone
+# rather than silently rebound to the Slack secret.
 normalize_slack_runtime_env() {
-  local prefix="openshell:resolve:env:"
+  local bot_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$'
+  local app_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$'
 
-  case "${SLACK_BOT_TOKEN-}" in
-    "$prefix"*SLACK_BOT_TOKEN)
-      export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
-      printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-      ;;
-  esac
+  if [[ "${SLACK_BOT_TOKEN-}" =~ $bot_re ]]; then
+    export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
+    printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+  fi
 
-  case "${SLACK_APP_TOKEN-}" in
-    "$prefix"*SLACK_APP_TOKEN)
-      export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
-      printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
-      ;;
-  esac
+  if [[ "${SLACK_APP_TOKEN-}" =~ $app_re ]]; then
+    export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
+    printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+  fi
 }
 
 # ── Slack secrets-on-disk tripwire ────────────────────────────────
