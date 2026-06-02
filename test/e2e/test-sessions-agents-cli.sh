@@ -36,6 +36,12 @@
 
 set -uo pipefail
 
+# Silence Node.js experimental-feature warnings (e.g. UNDICI-EHPA "EnvHttpProxyAgent
+# is experimental") from every `nemoclaw` invocation. These warnings go to stderr
+# but every JSON-capture below uses `2>&1` for diagnostics-on-failure, so without
+# this they would prefix the JSON payload and break `python -c json.loads`.
+export NODE_NO_WARNINGS=1
+
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT="${NEMOCLAW_E2E_DEFAULT_TIMEOUT:-2400}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
@@ -119,7 +125,26 @@ install_nemoclaw_from_source() {
 }
 
 is_valid_json() {
-  printf '%s' "$1" | python3 -c "import json,sys; json.loads(sys.stdin.read())" 2>/dev/null
+  # Tolerate leading non-JSON lines on stdout (Node deprecation warnings, oclif
+  # banner) by scanning for the first line that begins with `{` or `[` and
+  # parsing from there. Anchoring at line-start avoids false positives like the
+  # `[UNDICI-EHPA]` token inside Node warning text. `NODE_NO_WARNINGS=1` already
+  # suppresses the known UNDICI-EHPA warning, but this stays defensive against
+  # any future stderr leakage when a JSON-capture uses `2>&1`.
+  printf '%s' "$1" | python3 -c "
+import json, sys
+raw = sys.stdin.read()
+offset = -1
+cursor = 0
+for line in raw.splitlines(keepends=True):
+  if line.startswith('{') or line.startswith('['):
+    offset = cursor
+    break
+  cursor += len(line)
+if offset < 0:
+  sys.exit(1)
+json.loads(raw[offset:])
+" 2>/dev/null
 }
 
 preflight() {
@@ -150,6 +175,52 @@ onboard_sandbox() {
     exit 1
   }
   pass "onboard: sandbox '${SANDBOX_NAME}' is up"
+}
+
+# Approve any pending OpenClaw CLI device-pairing / scope-upgrade requests so
+# downstream `openclaw gateway call ...` invocations (used by `sessions reset`
+# and `sessions delete`) do not fall back to the embedded agent. The
+# `nemoclaw-start.sh` auto-pair watcher allowlists `cli` / `openclaw-control-ui`
+# clients, but a fresh CI sandbox can race the watcher's slow-mode polling on
+# late scope upgrades; this loop is defensive and idempotent.
+approve_pending_pairing_requests() {
+  section "Approve any pending OpenClaw pairing / scope-upgrade requests"
+  local max_iters=10
+  local interval=3
+  local i state ids
+  for ((i = 0; i < max_iters; i++)); do
+    state="$(nemoclaw "$SANDBOX_NAME" exec -- openclaw devices list --json 2>/dev/null || true)"
+    if [ -z "$state" ]; then
+      sleep "$interval"
+      continue
+    fi
+    ids="$(printf '%s' "$state" | python3 -c "
+import json, sys
+try:
+  data = json.loads(sys.stdin.read())
+except Exception:
+  sys.exit(0)
+pending = data.get('pending') or []
+for d in pending:
+  if not isinstance(d, dict):
+    continue
+  rid = d.get('requestId') or d.get('id')
+  if rid:
+    print(rid)
+" 2>/dev/null || true)"
+    if [ -z "$ids" ]; then
+      pass "gateway scope: no pending pairing/scope-upgrade requests"
+      return 0
+    fi
+    while IFS= read -r rid; do
+      [ -z "$rid" ] && continue
+      info "approving pending request '$rid'"
+      nemoclaw "$SANDBOX_NAME" exec -- openclaw devices approve "$rid" --json >/dev/null 2>&1 || true
+    done <<<"$ids"
+    sleep "$interval"
+  done
+  info "gateway scope: gave up after $((max_iters * interval))s; gateway-RPC tests may still hit pending-scope failures"
+  return 1
 }
 
 seed_main_session() {
@@ -228,7 +299,12 @@ test_sessions_list_after_reset() {
 test_agents_add_passthrough() {
   section "TC-AGENT-01: agents add ${TEST_AGENT_ID} (passthrough wizard)"
   local add_out
-  if ! add_out="$(nemoclaw "$SANDBOX_NAME" agents add "$TEST_AGENT_ID" --non-interactive 2>&1)"; then
+  # OpenClaw's `agents add --non-interactive` mandates --workspace; the wizard
+  # only fills it interactively. We pass the canonical workspace path that the
+  # bake convention (NemoClaw#4560) reserves for secondary agents.
+  if ! add_out="$(nemoclaw "$SANDBOX_NAME" agents add "$TEST_AGENT_ID" \
+    --workspace "/sandbox/.openclaw/workspace-${TEST_AGENT_ID}" \
+    --non-interactive 2>&1)"; then
     fail "TC-AGENT-01: agents add ${TEST_AGENT_ID} exited non-zero"
     info "$add_out"
     return 1
@@ -311,7 +387,12 @@ test_agents_delete_passthrough() {
 preflight
 install_nemoclaw_from_source
 onboard_sandbox
+approve_pending_pairing_requests
 if seed_main_session; then
+  # The seed prompt itself may have triggered a scope-upgrade request — drain
+  # again before the first gateway-RPC test (TC-SESS-03) so the call does not
+  # land on a still-pending scope.
+  approve_pending_pairing_requests
   test_sessions_default_json
   test_sessions_list_json
   test_sessions_reset_main
@@ -327,6 +408,7 @@ fi
 # CLI surface — any failure must fail the whole job rather than be skipped.
 test_agents_add_passthrough
 seed_agent_session
+approve_pending_pairing_requests
 test_sessions_delete_non_main
 test_agents_delete_passthrough
 
