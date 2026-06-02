@@ -10,7 +10,7 @@ navigation:
   - tab: user-guide
     variants:
       - title: NemoClaw for OpenClaw
-        subtitle: Guide for the OpenClaw agent
+        subtitle: Guide for OpenClaw agents
         slug: openclaw
         default: true
         layout:
@@ -167,7 +167,7 @@ navigation:
               - link: "Discord"
                 href: https://discord.gg/XFpfPv9Uvx
       - title: NemoClaw for Hermes
-        subtitle: Guide for the Hermes agent
+        subtitle: Guide for Hermes agents
         slug: hermes
         layout:
           - page: "Home"
