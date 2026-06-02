@@ -401,4 +401,19 @@ describe("planInferenceRouteReconcile", () => {
       recorded,
     });
   });
+
+  it("repairs a partial gateway route (provider only) instead of diverging", () => {
+    expect(planInferenceRouteReconcile({ provider: "nvidia-prod", model: null }, recorded)).toEqual({
+      kind: "repair",
+    });
+  });
+
+  it("repairs a partial gateway route (model only) instead of diverging", () => {
+    expect(
+      planInferenceRouteReconcile(
+        { provider: null, model: "nvidia/nemotron-3-super-120b-a12b" },
+        recorded,
+      ),
+    ).toEqual({ kind: "repair" });
+  });
 });

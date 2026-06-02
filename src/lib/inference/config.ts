@@ -281,7 +281,8 @@ export function planInferenceRouteReconcile(
   live: GatewayInference | null,
   recorded: RecordedInferenceRoute,
 ): InferenceRoutePlan {
-  if (!live) {
+  // No usable live route (absent or partial) → repair, not a loud override.
+  if (!live || !live.provider || !live.model) {
     return { kind: "repair" };
   }
   if (live.provider !== recorded.provider || live.model !== recorded.model) {
