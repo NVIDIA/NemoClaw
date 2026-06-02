@@ -2885,8 +2885,11 @@ describe("installer flag parsing", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_INSTALL_TAG/);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/default: lkg/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_INSTALL_TAG/);
+    expect(output).toMatch(/default: lkg/);
+    expect(output).toMatch(/set this on bash or export it first/);
+    expect(output).toMatch(/curl .* \| NEMOCLAW_INSTALL_TAG=v0\.0\.56 bash/);
   });
 });
 
@@ -3696,6 +3699,52 @@ main() {
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/^nemoclaw-installer\s*$/m);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/LOCAL_PAYLOAD_USED/);
+  });
+
+  it("piped root installer fails clearly when the selected ref is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-missing-ref-"));
+    const fakeBin = path.join(tmp, "bin");
+    const gitLog = path.join(tmp, "git.log");
+    fs.mkdirSync(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "$1" = "init" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target"
+  exit 0
+fi
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "remote" ]; then exit 0; fi
+if [ "$1" = "fetch" ]; then
+  echo "fatal: couldn't find remote ref \${@: -1}" >&2
+  exit 128
+fi
+exit 0`,
+    );
+
+    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: installerInput,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        GIT_LOG_PATH: gitLog,
+        NEMOCLAW_INSTALL_TAG: "v9.9.9",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Requested install ref 'v9\.9\.9' is not available/);
+    expect(output).toMatch(/Check NEMOCLAW_INSTALL_TAG\/NEMOCLAW_INSTALL_REF/);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/fetch --quiet --depth 1 origin v9\.9\.9/);
   });
 
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {

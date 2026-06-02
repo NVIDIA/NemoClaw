@@ -222,6 +222,20 @@ export function getSandboxInferenceConfig(
         supportsStore: false,
       };
       break;
+    case "ollama-local":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      // Source-of-truth boundary: once local Ollama is routed through the
+      // managed "inference" provider, OpenClaw no longer sees an
+      // ollama/ollama-local provider key and cannot apply its Ollama streaming
+      // usage fallback. Seed the compat flag here, while NemoClaw still knows
+      // the original host-side provider selection. Remove this only after
+      // OpenClaw infers include_usage for inference.local Ollama routes or
+      // NemoClaw stops mapping ollama-local through the managed provider.
+      inferenceCompat = {
+        supportsUsageInStreaming: true,
+      };
+      break;
     case "nvidia-router":
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;

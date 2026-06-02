@@ -16,13 +16,13 @@ import { AgentOnly } from "../_components/AgentGuide";
 Telegram, Discord, Slack, WeChat, and WhatsApp reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.
 For token-based channels, NemoClaw registers credentials with OpenShell providers.
 WeChat captures a token through a host-side QR scan during onboarding.
-WhatsApp pairs inside the sandbox via QR scan and intentionally stores mutable session state there.
+WhatsApp pairs inside the sandbox through a QR scan and intentionally stores mutable session state there.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 <Warning title="Experimental Channels">
 WeChat and WhatsApp are experimental.
 Both rely on QR-based pairing flows that are more fragile than token-based bots, and the upstream client libraries can change behavior without notice.
-Interfaces, defaults, and supported features may change, and these channels are not recommended for production use.
+Interfaces, defaults, and supported features can change, and NVIDIA does not recommend these channels for production use.
 </Warning>
 
 <AgentOnly variant="openclaw">
@@ -68,8 +68,8 @@ For details, refer to [Commands](../reference/commands).
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
-| WeChat (experimental) | None. Captured via host-side QR scan during `nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
-| WhatsApp (experimental) | None. Pair via QR after rebuild | None |
+| WeChat (experimental) | None. Captured through host-side QR scan during `nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
+| WhatsApp (experimental) | None. Pair through QR after rebuild | None |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -79,8 +79,8 @@ For details, refer to [Commands](../reference/commands).
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
-| WeChat (experimental) | None. Captured via host-side QR scan during `nemohermes onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
-| WhatsApp (experimental) | None. Pair via QR after rebuild | None |
+| WeChat (experimental) | None. Captured through host-side QR scan during `nemohermes onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
+| WhatsApp (experimental) | None. Pair through QR after rebuild | None |
 
 </AgentOnly>
 
@@ -108,7 +108,7 @@ Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict ch
 When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
 Channel messages still require an explicit bot mention.
 
-WeChat (experimental) delivers messages over Tencent's iLink gateway via the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
+WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
 WeChat Official Account and WeCom/Enterprise WeChat are not wired up.
 
@@ -120,11 +120,11 @@ Because the bot token only exists after a successful iLink QR handshake, NemoCla
 </AgentOnly>
 You scan the QR with WeChat on your phone (Discover → Scan), confirm the login, and NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
 NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and substitutes the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder for it inside the sandbox, so the token never lands in the image or on disk inside the running container.
-The non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) is baked into the sandbox image so the in-sandbox bridge can pre-seed the per-account context tokens without re-running the QR handshake.
+NemoClaw bakes the non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) into the sandbox image so the in-sandbox bridge can pre-seed the per-account context tokens without re-running the QR handshake.
 
 WeChat is DM-only (`allowIdsMode: "dm"`).
 NemoClaw adds the operator who scanned the QR to `WECHAT_ALLOWED_IDS` automatically, and you can append more comma-separated WeChat user IDs through the same env var.
-You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` once the flow is stable in your environment.
+You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` after the flow is stable in your environment.
 
 Tencent's iLink gateway is a third-party service.
 Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat.
@@ -140,9 +140,9 @@ hermes whatsapp                             # Hermes sandboxes
 ```
 
 For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
-If pairing exits with a gateway close such as `1008`, rerun the login command once and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
 
-Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
+The sandbox generates and stores session credentials inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
 Pair only one sandbox per WhatsApp account at a time.
@@ -151,7 +151,7 @@ Pair only one sandbox per WhatsApp account at a time.
 
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it on or off, then press **Enter** when done.
-If no channels are selected, pressing **Enter** skips messaging setup.
+If you select no channels, pressing **Enter** skips messaging setup.
 If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
 
 If you enable WeChat (experimental), the wizard does not prompt for a paste token.
@@ -238,13 +238,15 @@ nemohermes my-assistant channels add whatsapp
 
 `channels add` collects whatever each channel needs.
 It prompts for Telegram, Discord, and Slack tokens, runs an interactive host-side QR scan for WeChat, and collects nothing for WhatsApp because pairing happens in-sandbox after rebuild.
-It registers bridge providers with the OpenShell gateway when tokens were captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
+It registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
 `channels add` requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
 With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
 When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
-When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel.
+When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers.
+It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
+Verify the gateway bridge before relying on the channel.
 <AgentOnly variant="openclaw">
 Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
 </AgentOnly>
@@ -311,7 +313,7 @@ DISCORD_BOT_TOKEN=<your-discord-bot-token> \
 `channels add wechat` (experimental) follows the same shape as the other channels with two differences driven by the iLink QR handshake.
 
 First, the command does not prompt for a paste token.
-Instead, it renders a QR code in your terminal, polls Tencent's iLink gateway, and captures both the bot token and the per-account metadata (`accountId`, `baseUrl`, `userId`) once you scan the QR with WeChat on your phone (Discover → Scan).
+Instead, it renders a QR code in your terminal, polls Tencent's iLink gateway, and captures both the bot token and the per-account metadata (`accountId`, `baseUrl`, `userId`) after you scan the QR with WeChat on your phone (**Discover** > **Scan**).
 The login has an eight-minute deadline and refreshes the QR up to three times on expiry.
 Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
 
@@ -364,9 +366,10 @@ The cleanup tries `openshell sandbox exec` and falls back to SSH if that does no
 If neither transport can reach a running sandbox for a QR-paired channel, the command exits non-zero and asks you to start the sandbox and re-run.
 NemoClaw deliberately leaves the registry, policy preset, and `session.policyPresets` unchanged on that failure path, so a follow-up re-run completes the removal cleanly.
 
-`channels remove whatsapp` clears the client-side Baileys session inside the sandbox; it cannot deregister the linked device with WhatsApp's servers because that requires an active Baileys connection to issue the logout RPC, which we no longer have once the session files are gone.
+`channels remove whatsapp` clears the client-side Baileys session inside the sandbox.
+It cannot deregister the linked device with WhatsApp's servers because that requires an active Baileys connection to issue the logout RPC, and the command no longer has that connection after it removes the session files.
 The phone account will continue to list the sandbox as a Linked Device until you remove it manually from your phone (Settings → Linked Devices → tap the entry → Log out) or until WhatsApp's 14-day inactivity timeout expires.
-Removing the entry from the phone is recommended if you plan to re-pair the same phone with a different sandbox.
+Remove the entry from the phone if you plan to re-pair the same phone with a different sandbox.
 
 Use `channels stop` when you want to pause a bridge without deleting credentials:
 

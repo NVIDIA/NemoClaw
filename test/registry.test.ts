@@ -49,6 +49,29 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
   });
 
+  it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
+    registry.registerSandbox({
+      name: "first",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      dashboardPort: 18789,
+    });
+    registry.registerSandbox({
+      name: "second",
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+      dashboardPort: 18790,
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.first.gatewayName).toBe("nemoclaw");
+    expect(data.sandboxes.first.gatewayPort).toBe(8080);
+    expect(data.sandboxes.second.gatewayName).toBe("nemoclaw-8081");
+    expect(data.sandboxes.second.gatewayPort).toBe(8081);
+    // The second registration must not retarget the first sandbox's binding.
+    expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
+    expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
   it("first registered becomes default", () => {
     registry.registerSandbox({ name: "first" });
     registry.registerSandbox({ name: "second" });
@@ -76,6 +99,16 @@ describe("registry", () => {
 
   it("updateSandbox returns false for nonexistent sandbox", () => {
     expect(registry.updateSandbox("nope", {})).toBe(false);
+  });
+
+  it("registerSandbox does not inherit a finalized policy marker (#4621)", () => {
+    // Snapshot restore spreads the source entry (possibly finalized) but resets
+    // policies; the clone must not carry a stale finalized marker.
+    registry.registerSandbox({ name: "clone", policies: [], policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBeUndefined();
+    // The marker is set only by the post-policy registry write.
+    registry.updateSandbox("clone", { policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBe(true);
   });
 
   it("updateSandbox rejects name changes", () => {
