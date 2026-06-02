@@ -363,6 +363,7 @@ describe("runInferenceSet", () => {
       primaryModelRef: "inference/nvidia/nemotron-3-super-120b-a12b",
       configChanged: true,
       sessionUpdated: true,
+      inSandboxConfigSynced: true,
     });
   });
 
@@ -557,10 +558,49 @@ describe("runInferenceSet", () => {
     expect(result).toMatchObject({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
+      inSandboxConfigSynced: false,
     });
-    // Warned + pointed at rebuild.
+    // Warned + pointed at rebuild, and never falsely reports "synced".
     const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
     expect(logged).toMatch(/in-sandbox config failed/);
     expect(logged).toMatch(/rebuild/);
+    expect(logged).not.toMatch(/Inference route synced/);
+  });
+
+  it("reports degraded (not synced) when the in-sandbox hash recompute fails (#3726)", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({ config, session: baseSession() });
+    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
+      throw new Error("hash recompute failed");
+    });
+
+    const result = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+      deps,
+    );
+
+    // Config write happened and registry is updated; the run resolves without aborting.
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+    expect(result).toMatchObject({ inSandboxConfigSynced: false });
+
+    // Degraded: warns about the stale integrity hash, points at rebuild, no "synced".
+    const logged = deps.calls.log.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(logged).toMatch(/integrity hash/);
+    expect(logged).toMatch(/rebuild/);
+    expect(logged).not.toMatch(/Inference route synced/);
   });
 });

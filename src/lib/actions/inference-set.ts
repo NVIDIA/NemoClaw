@@ -40,6 +40,7 @@ export interface InferenceSetResult {
   providerKey: string;
   configChanged: boolean;
   sessionUpdated: boolean;
+  inSandboxConfigSynced: boolean;
 }
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
@@ -382,15 +383,31 @@ export async function runInferenceSet(
       ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
       : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
   );
-  // Best-effort: gateway + registry are already consistent, so don't abort on a
-  // sync failure — warn and point at rebuild.
+  // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent):
+  //   - don't abort on failure; track whether it synced, never report a false "synced"
+  // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
+  //   - write fails:           config left old (old .config-hash still matches it)
+  //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch
+  let inSandboxConfigSynced = false;
   try {
     deps.writeSandboxConfig(sandboxName, target, config);
-    deps.recomputeSandboxConfigHash(sandboxName, target);
-  } catch (error) {
-    const detail = error instanceof Error && error.message ? error.message : String(error);
+    try {
+      deps.recomputeSandboxConfigHash(sandboxName, target);
+      inSandboxConfigSynced = true;
+    } catch (hashError) {
+      const detail =
+        hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
+      deps.log(
+        `  Warning: wrote the in-sandbox config for '${sandboxName}' but failed to refresh its ` +
+          `integrity hash: ${detail}`,
+      );
+      deps.log(`  Run '${CLI_NAME} ${sandboxName} rebuild' to resync the in-sandbox config.`);
+    }
+  } catch (writeError) {
+    const detail =
+      writeError instanceof Error && writeError.message ? writeError.message : String(writeError);
     deps.log(
-      `  Warning: gateway and registry now use ${provider} / ${model}, but syncing the ` +
+      `  Warning: gateway and registry now use ${provider} / ${model}, but writing the ` +
         `in-sandbox config failed: ${detail}`,
     );
     deps.log(
@@ -403,14 +420,20 @@ export async function runInferenceSet(
     action: "shields_down",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}`,
+    reason: `inference set ${agentName}:${provider}:${model}${
+      inSandboxConfigSynced ? "" : " (in-sandbox sync incomplete)"
+    }`,
   });
 
-  deps.log(
-    agentName === "hermes"
-      ? `  Inference route synced for '${sandboxName}': ${model}`
-      : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-  );
+  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
+  // warning above already described the degraded state.
+  if (inSandboxConfigSynced) {
+    deps.log(
+      agentName === "hermes"
+        ? `  Inference route synced for '${sandboxName}': ${model}`
+        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
+    );
+  }
 
   return {
     sandboxName,
@@ -420,5 +443,6 @@ export async function runInferenceSet(
     providerKey: patched.route.providerKey,
     configChanged: patched.changed,
     sessionUpdated,
+    inSandboxConfigSynced,
   };
 }
