@@ -84,9 +84,39 @@ print_summary() {
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-sessions-agents-cli}"
 TEST_AGENT_ID="${NEMOCLAW_E2E_AGENT_ID:-work}"
 
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+INSTALL_LOG="${E2E_SESSIONS_AGENTS_INSTALL_LOG:-/tmp/nemoclaw-e2e-install.log}"
+
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/install-path-refresh.sh"
+
+install_nemoclaw_from_source() {
+  section "Install NemoClaw from source (install.sh --non-interactive)"
+  if command -v nemoclaw >/dev/null 2>&1; then
+    info "nemoclaw already on PATH at $(command -v nemoclaw); skipping install"
+    pass "install: nemoclaw already available"
+    return 0
+  fi
+  if [ ! -x "${REPO_ROOT}/install.sh" ]; then
+    fail "install: ${REPO_ROOT}/install.sh missing or not executable"
+    print_summary
+    exit 1
+  fi
+  if ! bash "${REPO_ROOT}/install.sh" --non-interactive >"$INSTALL_LOG" 2>&1; then
+    info "install.sh exited non-zero (may be benign on re-install); verifying PATH"
+  fi
+  nemoclaw_refresh_install_env
+  if ! command -v nemoclaw >/dev/null 2>&1; then
+    fail "install: nemoclaw not found on PATH after install.sh (see ${INSTALL_LOG})"
+    print_summary
+    exit 1
+  fi
+  pass "install: nemoclaw installed at $(command -v nemoclaw)"
+}
 
 is_valid_json() {
   printf '%s' "$1" | python3 -c "import json,sys; json.loads(sys.stdin.read())" 2>/dev/null
@@ -279,6 +309,7 @@ test_agents_delete_passthrough() {
 }
 
 preflight
+install_nemoclaw_from_source
 onboard_sandbox
 if seed_main_session; then
   test_sessions_default_json
