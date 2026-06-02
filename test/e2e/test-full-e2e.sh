@@ -263,6 +263,38 @@ else
   fail "openshell policy get failed: ${policy_output:0:200}"
 fi
 
+# 3e: NemoClaw plugin remains registered after gateway policy initialization.
+# Regression coverage for #2021: OpenClaw's policy-changed registry rebuild can
+# drop path/npm-origin plugins from plugins[], which removes the /nemoclaw TUI
+# command surface. The startup refresh should restore the registry before users
+# interact with the sandbox.
+info "[PLUGIN] verifying NemoClaw plugin registry entry and command help..."
+ssh_config="$(mktemp)"
+plugin_check_output=""
+PLUGIN_CHECK_TIMEOUT_CMD=""
+command -v timeout >/dev/null 2>&1 && PLUGIN_CHECK_TIMEOUT_CMD="timeout 90"
+command -v gtimeout >/dev/null 2>&1 && PLUGIN_CHECK_TIMEOUT_CMD="gtimeout 90"
+if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
+  for plugin_attempt in 1 2 3 4 5; do
+    plugin_check_output=$($PLUGIN_CHECK_TIMEOUT_CMD ssh -F "$ssh_config" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -o LogLevel=ERROR \
+      "openshell-${SANDBOX_NAME}" \
+      "HOME=/sandbox openclaw plugins inspect nemoclaw >/tmp/nemoclaw-e2e-plugin-inspect.log 2>&1 && HOME=/sandbox openclaw nemoclaw --help >/tmp/nemoclaw-e2e-plugin-help.log 2>&1 && printf 'plugin-ok'" \
+      2>&1) || true
+    grep -Fq "plugin-ok" <<<"$plugin_check_output" && break
+    [ "$plugin_attempt" -lt 5 ] && sleep 3
+  done
+fi
+rm -f "$ssh_config"
+if grep -Fq "plugin-ok" <<<"$plugin_check_output"; then
+  pass "NemoClaw OpenClaw plugin is registered and command help is available"
+else
+  fail "NemoClaw OpenClaw plugin registry/help check failed: ${plugin_check_output:0:300}"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Live inference — the real proof
 # ══════════════════════════════════════════════════════════════════

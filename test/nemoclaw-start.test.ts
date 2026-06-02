@@ -3204,6 +3204,7 @@ describe("Telegram diagnostics (#2766)", () => {
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const autoPairLog = path.join(tmpDir, "auto-pair.log");
+    const pluginRefreshLog = path.join(tmpDir, "nemoclaw-plugin-refresh.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(configPath, '{"channels":{"telegram":{}}}\n');
     fs.writeFileSync(
@@ -3242,6 +3243,8 @@ describe("Telegram diagnostics (#2766)", () => {
         'harden_auth_profiles() { :; }',
         'run_step_down_as_sandbox() { :; }',
         'setup_auth_profile_as_sandbox() { :; }',
+        `PLUGIN_REFRESH_LOG=${JSON.stringify(pluginRefreshLog)}`,
+        extractShellFunctionFromSource(src, "prepare_plugin_refresh_log"),
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',

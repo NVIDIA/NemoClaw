@@ -2773,6 +2773,53 @@ setup_auth_profile_as_sandbox() {
     harden_auth_profiles
 }
 
+PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
+
+prepare_plugin_refresh_log() {
+  if [ -L "$PLUGIN_REFRESH_LOG" ]; then
+    echo "[SECURITY] refusing to use symlinked plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
+    return 1
+  fi
+  if [ -e "$PLUGIN_REFRESH_LOG" ] && [ ! -f "$PLUGIN_REFRESH_LOG" ]; then
+    echo "[SECURITY] refusing to use non-regular plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
+    return 1
+  fi
+  : >"$PLUGIN_REFRESH_LOG"
+  if [ "$(id -u)" -eq 0 ]; then
+    chown root:root "$PLUGIN_REFRESH_LOG"
+    chmod 644 "$PLUGIN_REFRESH_LOG"
+  else
+    chmod 600 "$PLUGIN_REFRESH_LOG" 2>/dev/null || true
+  fi
+}
+
+start_plugin_registry_refresh() {
+  (
+    local ready=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if "$OPENCLAW" gateway status >/dev/null 2>&1; then
+        ready=1
+        break
+      fi
+      sleep 1
+    done
+    if [ "$ready" -ne 1 ]; then
+      echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
+      return 0
+    fi
+    if [ "$(id -u)" -eq 0 ]; then
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox \
+        "$OPENCLAW" plugins registry --refresh \
+        >"$PLUGIN_REFRESH_LOG" 2>&1 || true
+    else
+      env HOME=/sandbox \
+        "$OPENCLAW" plugins registry --refresh \
+        >"$PLUGIN_REFRESH_LOG" 2>&1 || true
+    fi
+  ) &
+  PLUGIN_REFRESH_PID=$!
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .openclaw
@@ -2870,6 +2917,8 @@ if [ "$(id -u)" -ne 0 ]; then
   touch /tmp/auto-pair.log
   chmod 600 /tmp/auto-pair.log
 
+  prepare_plugin_refresh_log || exit 1
+
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
@@ -2887,6 +2936,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Persistent mirror: see root-mode block for rationale.
   start_persistent_gateway_log_mirror || exit 1
   start_auto_pair
+  start_plugin_registry_refresh
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -2894,6 +2944,7 @@ if [ "$(id -u)" -ne 0 ]; then
   [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
   [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
   [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
+  [ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
@@ -2997,6 +3048,8 @@ chmod 644 /tmp/gateway.log
 touch /tmp/auto-pair.log
 chown sandbox:sandbox /tmp/auto-pair.log
 chmod 600 /tmp/auto-pair.log
+
+prepare_plugin_refresh_log || exit 1
 
 # Provision per-agent workspaces for multi-agent OpenClaw deployments.
 #
@@ -3127,16 +3180,7 @@ start_auto_pair
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
 # Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
 # This is a temporary workaround; root fix is upstream (openclaw/openclaw#89606).
-(
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if "$OPENCLAW" gateway status >/dev/null 2>&1; then break; fi
-    sleep 1
-  done
-  "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox \
-    "$OPENCLAW" plugins registry --refresh \
-    >/tmp/nemoclaw-plugin-refresh.log 2>&1 || true
-) &
-PLUGIN_REFRESH_PID=$!
+start_plugin_registry_refresh
 
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before

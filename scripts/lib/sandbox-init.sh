@@ -28,6 +28,7 @@ _SANDBOX_INIT_LOADED=1
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
+# /tmp/nemoclaw-plugin-refresh.log root    644   root     all       no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
@@ -119,15 +120,38 @@ validate_tmp_permissions() {
   done
 
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
-  # world-readable for diagnostics). auto-pair.log is 600.
-  for f in /tmp/gateway.log /tmp/auto-pair.log; do
-    [ -f "$f" ] || continue
-    local perms
+  # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
+  # log is opened by the root entrypoint before privilege drop, so reject
+  # symlinks/non-regular files and require root ownership when root validates it.
+  for f in /tmp/gateway.log /tmp/auto-pair.log /tmp/nemoclaw-plugin-refresh.log; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if [ -L "$f" ]; then
+      echo "[SECURITY] $f is a symlink (expected regular log file)" >&2
+      failed=1
+      continue
+    fi
+    if [ ! -f "$f" ]; then
+      echo "[SECURITY] $f is not a regular file" >&2
+      failed=1
+      continue
+    fi
+    local perms owner
     perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
+    owner="$(stat -c '%U' "$f" 2>/dev/null || stat -f '%Su' "$f" 2>/dev/null || echo "unknown")"
     case "$f" in
       */gateway.log)
         if [ "$perms" != "600" ] && [ "$perms" != "644" ]; then
           echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600 or 644)" >&2
+          failed=1
+        fi
+        ;;
+      */nemoclaw-plugin-refresh.log)
+        if [ "$perms" != "600" ] && [ "$perms" != "644" ]; then
+          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600 or 644)" >&2
+          failed=1
+        fi
+        if [ "$(id -u)" -eq 0 ] && [ "$owner" != "root" ]; then
+          echo "[SECURITY] $f has unsafe owner: owner=$owner (expected root)" >&2
           failed=1
         fi
         ;;
