@@ -138,14 +138,14 @@ The sandbox never sees raw API keys.
 To use the router in scripted setup, set:
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemohermes onboard --non-interactive
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemohermes onboard --non-interactive
 ```
 </AgentOnly>
 
@@ -168,14 +168,14 @@ To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolut
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
 ```
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemohermes onboard
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemohermes onboard
 ```
 </AgentOnly>
 

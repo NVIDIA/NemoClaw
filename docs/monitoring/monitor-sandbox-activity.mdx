@@ -25,13 +25,13 @@ Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health,
 Run the status command to view the sandbox state, gateway health, and active inference configuration:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> status
+```bash
+nemoclaw <name> status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> status
+```bash
+nemohermes <name> status
 ```
 </AgentOnly>
 
@@ -63,26 +63,26 @@ Use `openshell sandbox list` for the underlying sandbox details.
 Stream the most recent log output from the blueprint runner and sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> logs
+```bash
+nemoclaw <name> logs
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> logs
+```bash
+nemohermes <name> logs
 ```
 </AgentOnly>
 
 To follow the log output in real time:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> logs --follow
+```bash
+nemoclaw <name> logs --follow
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> logs --follow
+```bash
+nemohermes <name> logs --follow
 ```
 </AgentOnly>
 
@@ -90,8 +90,8 @@ $ nemohermes <name> logs --follow
 
 Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:
 
-```console
-$ openshell term
+```bash
+openshell term
 ```
 
 For a remote sandbox, SSH to the instance and run `openshell term` there.
@@ -109,15 +109,15 @@ Refer to [Approve or Deny Agent Network Requests](../network-policy/approve-netw
 Run a test inference request to verify that the provider is responding:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant connect
-$ openclaw agent --agent main -m "Test inference" --session-id debug
+```bash
+nemoclaw my-assistant connect
+openclaw agent --agent main -m "Test inference" --session-id debug
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-hermes connect
-$ hermes
+```bash
+nemohermes my-hermes connect
+hermes
 ```
 </AgentOnly>
 

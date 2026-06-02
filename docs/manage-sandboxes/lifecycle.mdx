@@ -32,13 +32,13 @@ When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](..
 List every sandbox registered on this host:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw list
+```bash
+nemoclaw list
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes list
+```bash
+nemohermes list
 ```
 </AgentOnly>
 
@@ -46,13 +46,13 @@ The list shows each sandbox's model, provider, policy presets, active SSH sessio
 Use JSON output for scripts:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw list --json
+```bash
+nemoclaw list --json
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes list --json
+```bash
+nemohermes list --json
 ```
 </AgentOnly>
 
@@ -61,26 +61,26 @@ $ nemohermes list --json
 Check a specific sandbox's health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant status
+```bash
+nemoclaw my-assistant status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant status
+```bash
+nemohermes my-assistant status
 ```
 </AgentOnly>
 
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw status
+```bash
+nemoclaw status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes status
+```bash
+nemohermes status
 ```
 </AgentOnly>
 
@@ -89,26 +89,26 @@ $ nemohermes status
 View recent sandbox logs:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant logs
+```bash
+nemoclaw my-assistant logs
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant logs
+```bash
+nemohermes my-assistant logs
 ```
 </AgentOnly>
 
 Stream logs while you reproduce a problem:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant logs --follow
+```bash
+nemoclaw my-assistant logs --follow
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant logs --follow
+```bash
+nemohermes my-assistant logs --follow
 ```
 </AgentOnly>
 
@@ -124,26 +124,26 @@ The log command reads both Hermes gateway output and OpenShell audit events, so 
 Collect diagnostics for bug reports or support handoff:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+```bash
+nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+```bash
+nemohermes debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
 ```
 </AgentOnly>
 
 Use `--quick` for a smaller local summary:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw debug --quick --sandbox my-assistant
+```bash
+nemoclaw debug --quick --sandbox my-assistant
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes debug --quick --sandbox my-assistant
+```bash
+nemohermes debug --quick --sandbox my-assistant
 ```
 </AgentOnly>
 
@@ -153,14 +153,14 @@ The debug command gathers system information, Docker state, gateway logs, and sa
 
 If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
 
-```console
-$ openshell forward start --background <dashboard-port> my-gpt-claw
+```bash
+openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
 To list active forwards across all sandboxes, run the following command.
 
-```console
-$ openshell forward list
+```bash
+openshell forward list
 ```
 
 ## Run Multiple Sandboxes
@@ -174,43 +174,43 @@ When the default API port is already held by another sandbox, `nemohermes onboar
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard                                      # first sandbox uses 18789
-$ nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+```bash
+nemoclaw onboard                                      # first sandbox uses 18789
+nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard                                      # first sandbox uses 18789
-$ nemohermes onboard                                      # second sandbox uses the next free port, such as 18790
+```bash
+nemohermes onboard                                      # first sandbox uses 18789
+nemohermes onboard                                      # second sandbox uses the next free port, such as 18790
 ```
 </AgentOnly>
 
 To choose a specific port, pass `--control-ui-port`:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard --control-ui-port 19000
+```bash
+nemoclaw onboard --control-ui-port 19000
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard --control-ui-port 19000
+```bash
+nemohermes onboard --control-ui-port 19000
 ```
 </AgentOnly>
 
 You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
 
 <AgentOnly variant="openclaw">
-```console
-$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
-$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```bash
+CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
+NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ CHAT_UI_URL=http://127.0.0.1:19000 nemohermes onboard
-$ NEMOCLAW_DASHBOARD_PORT=19000 nemohermes onboard
+```bash
+CHAT_UI_URL=http://127.0.0.1:19000 nemohermes onboard
+NEMOCLAW_DASHBOARD_PORT=19000 nemohermes onboard
 ```
 </AgentOnly>
 
@@ -225,13 +225,13 @@ Recover from a misconfigured sandbox without re-running the full onboard wizard 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw inference set --model <model> --provider <provider>
+```bash
+nemoclaw inference set --model <model> --provider <provider>
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes inference set --model <model> --provider <provider>
+```bash
+nemohermes inference set --model <model> --provider <provider>
 ```
 </AgentOnly>
 
@@ -247,13 +247,13 @@ If `nemohermes <name> status` reports the sandbox is alive but the Hermes gatewa
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <sandbox-name> recover
+```bash
+nemoclaw <sandbox-name> recover
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <sandbox-name> recover
+```bash
+nemohermes <sandbox-name> recover
 ```
 </AgentOnly>
 
@@ -271,17 +271,17 @@ Refer to the command reference for details on `nemohermes <name> recover`.
 If a provider credential was entered incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw credentials list                # see which providers are registered
-$ nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
-$ nemoclaw onboard                         # re-run to re-enter the cleared provider
+```bash
+nemoclaw credentials list                # see which providers are registered
+nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes credentials list                # see which providers are registered
-$ nemohermes credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
-$ nemohermes onboard                         # re-run to re-enter the cleared provider
+```bash
+nemohermes credentials list                # see which providers are registered
+nemohermes credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+nemohermes onboard                         # re-run to re-enter the cleared provider
 ```
 </AgentOnly>
 
@@ -302,13 +302,13 @@ If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a 
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <sandbox-name> rebuild
+```bash
+nemoclaw <sandbox-name> rebuild
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <sandbox-name> rebuild
+```bash
+nemohermes <sandbox-name> rebuild
 ```
 </AgentOnly>
 
@@ -326,13 +326,13 @@ Refer to the [Commands reference](../reference/commands) for `nemohermes <name> 
 Apply an additional preset, such as Telegram or GitHub, to a running sandbox without re-onboarding:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <sandbox-name> policy-add
+```bash
+nemoclaw <sandbox-name> policy-add
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <sandbox-name> policy-add
+```bash
+nemohermes <sandbox-name> policy-add
 ```
 </AgentOnly>
 
@@ -371,8 +371,8 @@ The automatic path is offered only when the existing `nemohermes` CLI supports `
 For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemohermes backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 </AgentOnly>
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ### Upgrade Sandboxes with Stale Agent and Runtime Versions
@@ -387,19 +387,19 @@ Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped 
 The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-$ nemoclaw update --yes                                        # updates CLI through the maintained installer flow
-$ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
-$ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
+```bash
+nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
+nemoclaw update --yes                                        # updates CLI through the maintained installer flow
+nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
+nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-$ nemohermes update --yes                                        # updates CLI through the maintained installer flow
-$ nemohermes upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
-$ nemohermes upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
+```bash
+nemohermes <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
+nemohermes update --yes                                        # updates CLI through the maintained installer flow
+nemohermes upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
+nemohermes upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
 ```
 </AgentOnly>
 
@@ -423,13 +423,13 @@ If the upgraded sandbox needs its workspace state reverted, restore the pre-upgr
 This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <sandbox-name> snapshot restore pre-upgrade
+```bash
+nemoclaw <sandbox-name> snapshot restore pre-upgrade
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <sandbox-name> snapshot restore pre-upgrade
+```bash
+nemohermes <sandbox-name> snapshot restore pre-upgrade
 ```
 </AgentOnly>
 

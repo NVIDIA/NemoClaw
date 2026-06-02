@@ -36,20 +36,20 @@ Replace `my-assistant` with your sandbox name in the examples.
 Check the current policy state first:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-list
+```bash
+nemoclaw my-assistant policy-list
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-list
+```bash
+nemohermes my-assistant policy-list
 ```
 </AgentOnly>
 
 For a live view of blocked requests, open the OpenShell TUI in a separate host terminal:
 
-```console
-$ openshell term
+```bash
+openshell term
 ```
 
 When the agent reaches an endpoint that is not in policy, the TUI shows the host, port, requesting binary, method, and path when available.
@@ -81,39 +81,39 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 Preview the endpoints before applying:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add outlook --dry-run
+```bash
+nemoclaw my-assistant policy-add outlook --dry-run
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add outlook --dry-run
+```bash
+nemohermes my-assistant policy-add outlook --dry-run
 ```
 </AgentOnly>
 
 Apply the preset:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add outlook --yes
+```bash
+nemoclaw my-assistant policy-add outlook --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add outlook --yes
+```bash
+nemohermes my-assistant policy-add outlook --yes
 ```
 </AgentOnly>
 
 Remove it later if the sandbox no longer needs that access:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-remove outlook --yes
+```bash
+nemoclaw my-assistant policy-remove outlook --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-remove outlook --yes
+```bash
+nemohermes my-assistant policy-remove outlook --yes
 ```
 </AgentOnly>
 
@@ -123,15 +123,15 @@ Use the `outlook` preset for Microsoft 365 email and calendar workflows that use
 The preset allows `graph.microsoft.com`, Microsoft login, and Outlook service endpoints.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add outlook --dry-run
-$ nemoclaw my-assistant policy-add outlook --yes
+```bash
+nemoclaw my-assistant policy-add outlook --dry-run
+nemoclaw my-assistant policy-add outlook --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add outlook --dry-run
-$ nemohermes my-assistant policy-add outlook --yes
+```bash
+nemohermes my-assistant policy-add outlook --dry-run
+nemohermes my-assistant policy-add outlook --yes
 ```
 </AgentOnly>
 
@@ -147,39 +147,39 @@ Telegram needs both channel configuration and egress policy.
 If you already enabled Telegram during onboarding but did not include the preset, add it to the running sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add telegram --yes
+```bash
+nemoclaw my-assistant policy-add telegram --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add telegram --yes
+```bash
+nemohermes my-assistant policy-add telegram --yes
 ```
 </AgentOnly>
 
 To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the image picks up the channel config, and make sure the policy preset is applied:
 
 <AgentOnly variant="openclaw">
-```console
-$ export TELEGRAM_BOT_TOKEN=<your-bot-token>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add telegram
-$ nemoclaw my-assistant rebuild
-$ nemoclaw my-assistant policy-add telegram --yes
+```bash
+export TELEGRAM_BOT_TOKEN=<your-bot-token>
+NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add telegram
+nemoclaw my-assistant rebuild
+nemoclaw my-assistant policy-add telegram --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export TELEGRAM_BOT_TOKEN=<your-bot-token>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add telegram
-$ nemohermes my-assistant rebuild
-$ nemohermes my-assistant policy-add telegram --yes
+```bash
+export TELEGRAM_BOT_TOKEN=<your-bot-token>
+NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add telegram
+nemohermes my-assistant rebuild
+nemohermes my-assistant policy-add telegram --yes
 ```
 </AgentOnly>
 
 If delivery fails, open the TUI and send a test message to the bot:
 
-```console
-$ openshell term
+```bash
+openshell term
 ```
 
 The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
@@ -192,57 +192,57 @@ Use the matching policy preset after you configure the channel credentials.
 For Slack:
 
 <AgentOnly variant="openclaw">
-```console
-$ export SLACK_BOT_TOKEN=<your-slack-bot-token>
-$ export SLACK_APP_TOKEN=<your-slack-app-token>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add slack
-$ nemoclaw my-assistant rebuild
-$ nemoclaw my-assistant policy-add slack --yes
+```bash
+export SLACK_BOT_TOKEN=<your-slack-bot-token>
+export SLACK_APP_TOKEN=<your-slack-app-token>
+NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add slack
+nemoclaw my-assistant rebuild
+nemoclaw my-assistant policy-add slack --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export SLACK_BOT_TOKEN=<your-slack-bot-token>
-$ export SLACK_APP_TOKEN=<your-slack-app-token>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add slack
-$ nemohermes my-assistant rebuild
-$ nemohermes my-assistant policy-add slack --yes
+```bash
+export SLACK_BOT_TOKEN=<your-slack-bot-token>
+export SLACK_APP_TOKEN=<your-slack-app-token>
+NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add slack
+nemohermes my-assistant rebuild
+nemohermes my-assistant policy-add slack --yes
 ```
 </AgentOnly>
 
 For Discord:
 
 <AgentOnly variant="openclaw">
-```console
-$ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
-$ export DISCORD_SERVER_ID=<your-discord-server-id>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add discord
-$ nemoclaw my-assistant rebuild
-$ nemoclaw my-assistant policy-add discord --yes
+```bash
+export DISCORD_BOT_TOKEN=<your-discord-bot-token>
+export DISCORD_SERVER_ID=<your-discord-server-id>
+NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add discord
+nemoclaw my-assistant rebuild
+nemoclaw my-assistant policy-add discord --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
-$ export DISCORD_SERVER_ID=<your-discord-server-id>
-$ NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add discord
-$ nemohermes my-assistant rebuild
-$ nemohermes my-assistant policy-add discord --yes
+```bash
+export DISCORD_BOT_TOKEN=<your-discord-bot-token>
+export DISCORD_SERVER_ID=<your-discord-server-id>
+NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add discord
+nemohermes my-assistant rebuild
+nemohermes my-assistant policy-add discord --yes
 ```
 </AgentOnly>
 
 If you enabled Slack or Discord during onboarding, apply only the matching preset:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add slack --yes
-$ nemoclaw my-assistant policy-add discord --yes
+```bash
+nemoclaw my-assistant policy-add slack --yes
+nemoclaw my-assistant policy-add discord --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add slack --yes
-$ nemohermes my-assistant policy-add discord --yes
+```bash
+nemohermes my-assistant policy-add slack --yes
+nemohermes my-assistant policy-add discord --yes
 ```
 </AgentOnly>
 
@@ -256,17 +256,17 @@ The bot token is captured by a host-side QR scan during onboarding rather than p
 Add the channel interactively and apply the preset:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels add wechat
-$ nemoclaw my-assistant rebuild
-$ nemoclaw my-assistant policy-add wechat --yes
+```bash
+nemoclaw my-assistant channels add wechat
+nemoclaw my-assistant rebuild
+nemoclaw my-assistant policy-add wechat --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels add wechat
-$ nemohermes my-assistant rebuild
-$ nemohermes my-assistant policy-add wechat --yes
+```bash
+nemohermes my-assistant channels add wechat
+nemohermes my-assistant rebuild
+nemohermes my-assistant policy-add wechat --yes
 ```
 </AgentOnly>
 
@@ -274,32 +274,32 @@ WhatsApp Web pairs entirely inside the sandbox via QR scan, so `channels add` do
 Apply the preset and complete the in-sandbox pairing after the rebuild:
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add whatsapp
-$ nemoclaw my-assistant rebuild
-$ nemoclaw my-assistant policy-add whatsapp --yes
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add whatsapp
+nemoclaw my-assistant rebuild
+nemoclaw my-assistant policy-add whatsapp --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add whatsapp
-$ nemohermes my-assistant rebuild
-$ nemohermes my-assistant policy-add whatsapp --yes
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 nemohermes my-assistant channels add whatsapp
+nemohermes my-assistant rebuild
+nemohermes my-assistant policy-add whatsapp --yes
 ```
 </AgentOnly>
 
 If you enabled WeChat or WhatsApp during onboarding, apply only the matching preset:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add wechat --yes
-$ nemoclaw my-assistant policy-add whatsapp --yes
+```bash
+nemoclaw my-assistant policy-add wechat --yes
+nemoclaw my-assistant policy-add whatsapp --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add wechat --yes
-$ nemohermes my-assistant policy-add whatsapp --yes
+```bash
+nemohermes my-assistant policy-add wechat --yes
+nemohermes my-assistant policy-add whatsapp --yes
 ```
 </AgentOnly>
 
@@ -311,30 +311,30 @@ Use `jira` when the agent needs Atlassian Jira access.
 Preview first:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add github --dry-run
-$ nemoclaw my-assistant policy-add jira --dry-run
+```bash
+nemoclaw my-assistant policy-add github --dry-run
+nemoclaw my-assistant policy-add jira --dry-run
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add github --dry-run
-$ nemohermes my-assistant policy-add jira --dry-run
+```bash
+nemohermes my-assistant policy-add github --dry-run
+nemohermes my-assistant policy-add jira --dry-run
 ```
 </AgentOnly>
 
 Apply the preset that matches the workflow:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add github --yes
-$ nemoclaw my-assistant policy-add jira --yes
+```bash
+nemoclaw my-assistant policy-add github --yes
+nemoclaw my-assistant policy-add jira --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add github --yes
-$ nemohermes my-assistant policy-add jira --yes
+```bash
+nemohermes my-assistant policy-add github --yes
+nemohermes my-assistant policy-add jira --yes
 ```
 </AgentOnly>
 
@@ -356,15 +356,15 @@ This manual probe proves curl reached Atlassian, but no Jira credentials were su
 Remove access when the task is done:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-remove github --yes
-$ nemoclaw my-assistant policy-remove jira --yes
+```bash
+nemoclaw my-assistant policy-remove github --yes
+nemoclaw my-assistant policy-remove jira --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-remove github --yes
-$ nemohermes my-assistant policy-remove jira --yes
+```bash
+nemohermes my-assistant policy-remove github --yes
+nemohermes my-assistant policy-remove jira --yes
 ```
 </AgentOnly>
 
@@ -374,15 +374,15 @@ The default Balanced policy tier includes `brave`.
 If you chose Restricted during onboarding or removed the preset later, add it before enabling Brave Search workflows:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add brave --dry-run
-$ nemoclaw my-assistant policy-add brave --yes
+```bash
+nemoclaw my-assistant policy-add brave --dry-run
+nemoclaw my-assistant policy-add brave --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add brave --dry-run
-$ nemohermes my-assistant policy-add brave --yes
+```bash
+nemohermes my-assistant policy-add brave --dry-run
+nemohermes my-assistant policy-add brave --yes
 ```
 </AgentOnly>
 
@@ -402,38 +402,38 @@ Use these presets when an agent workflow installs packages or downloads model as
 Add only the preset required for the task:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add npm --yes
-$ nemoclaw my-assistant policy-add pypi --yes
-$ nemoclaw my-assistant policy-add brew --yes
-$ nemoclaw my-assistant policy-add huggingface --yes
+```bash
+nemoclaw my-assistant policy-add npm --yes
+nemoclaw my-assistant policy-add pypi --yes
+nemoclaw my-assistant policy-add brew --yes
+nemoclaw my-assistant policy-add huggingface --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add npm --yes
-$ nemohermes my-assistant policy-add pypi --yes
-$ nemohermes my-assistant policy-add brew --yes
-$ nemohermes my-assistant policy-add huggingface --yes
+```bash
+nemohermes my-assistant policy-add npm --yes
+nemohermes my-assistant policy-add pypi --yes
+nemohermes my-assistant policy-add brew --yes
+nemohermes my-assistant policy-add huggingface --yes
 ```
 </AgentOnly>
 
 Remove package access after a one-time setup task if the sandbox no longer needs it:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-remove npm --yes
-$ nemoclaw my-assistant policy-remove pypi --yes
-$ nemoclaw my-assistant policy-remove brew --yes
-$ nemoclaw my-assistant policy-remove huggingface --yes
+```bash
+nemoclaw my-assistant policy-remove npm --yes
+nemoclaw my-assistant policy-remove pypi --yes
+nemoclaw my-assistant policy-remove brew --yes
+nemoclaw my-assistant policy-remove huggingface --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-remove npm --yes
-$ nemohermes my-assistant policy-remove pypi --yes
-$ nemohermes my-assistant policy-remove brew --yes
-$ nemohermes my-assistant policy-remove huggingface --yes
+```bash
+nemohermes my-assistant policy-remove npm --yes
+nemohermes my-assistant policy-remove pypi --yes
+nemohermes my-assistant policy-remove brew --yes
+nemohermes my-assistant policy-remove huggingface --yes
 ```
 </AgentOnly>
 
@@ -447,17 +447,17 @@ A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while
 Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add brew --yes
-$ nemoclaw my-assistant exec -- brew install <formula>
-$ nemoclaw my-assistant exec -- bash -lc '<formula-command>'
+```bash
+nemoclaw my-assistant policy-add brew --yes
+nemoclaw my-assistant exec -- brew install <formula>
+nemoclaw my-assistant exec -- bash -lc '<formula-command>'
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add brew --yes
-$ nemohermes my-assistant exec -- brew install <formula>
-$ nemohermes my-assistant exec -- bash -lc '<formula-command>'
+```bash
+nemohermes my-assistant policy-add brew --yes
+nemohermes my-assistant exec -- brew install <formula>
+nemohermes my-assistant exec -- bash -lc '<formula-command>'
 ```
 </AgentOnly>
 
@@ -475,9 +475,9 @@ Tools that read the session log to display per-turn cost (audit dashboards, comp
 Apply the `openclaw-pricing` preset to allow both pricing endpoints.
 The preset pins each host to a single read-only path so it does not widen egress beyond the pricing fetch:
 
-```console
-$ nemoclaw my-assistant policy-add openclaw-pricing --dry-run
-$ nemoclaw my-assistant policy-add openclaw-pricing --yes
+```bash
+nemoclaw my-assistant policy-add openclaw-pricing --dry-run
+nemoclaw my-assistant policy-add openclaw-pricing --yes
 ```
 
 After the next gateway restart the WARN entries stop and `usage.cost` populates from the fetched pricing tables.
@@ -496,28 +496,28 @@ Onboarding auto-suggests this preset when you choose a local provider.
 If you need to add it after onboarding:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add local-inference --dry-run
-$ nemoclaw my-assistant policy-add local-inference --yes
+```bash
+nemoclaw my-assistant policy-add local-inference --dry-run
+nemoclaw my-assistant policy-add local-inference --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add local-inference --dry-run
-$ nemohermes my-assistant policy-add local-inference --yes
+```bash
+nemohermes my-assistant policy-add local-inference --dry-run
+nemohermes my-assistant policy-add local-inference --yes
 ```
 </AgentOnly>
 
 Then verify the sandbox status:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant status
+```bash
+nemoclaw my-assistant status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant status
+```bash
+nemohermes my-assistant status
 ```
 </AgentOnly>
 
@@ -526,26 +526,26 @@ $ nemohermes my-assistant status
 Use `policy-list` for normal preset state:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-list
+```bash
+nemoclaw my-assistant policy-list
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-list
+```bash
+nemohermes my-assistant policy-list
 ```
 </AgentOnly>
 
 Use OpenShell when you need the full enforced YAML:
 
-```console
-$ openshell policy get --full my-assistant > live-policy.yaml
+```bash
+openshell policy get --full my-assistant > live-policy.yaml
 ```
 
 If you must replace the live policy, edit the full policy file and set it back:
 
-```console
-$ openshell policy set --policy live-policy.yaml my-assistant --wait
+```bash
+openshell policy set --policy live-policy.yaml my-assistant --wait
 ```
 
 `openshell policy set` replaces the live policy with the file you provide.

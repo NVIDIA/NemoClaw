@@ -47,17 +47,17 @@ Treat snapshot directories as private local data: the Hermes database can
 contain session metadata and message history needed for a faithful restore.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant snapshot create
-$ nemoclaw my-assistant snapshot list
-$ nemoclaw my-assistant snapshot restore
+```bash
+nemoclaw my-assistant snapshot create
+nemoclaw my-assistant snapshot list
+nemoclaw my-assistant snapshot restore
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant snapshot create
-$ nemohermes my-assistant snapshot list
-$ nemohermes my-assistant snapshot restore
+```bash
+nemohermes my-assistant snapshot create
+nemohermes my-assistant snapshot list
+nemohermes my-assistant snapshot restore
 ```
 </AgentOnly>
 
@@ -66,30 +66,30 @@ $ nemohermes my-assistant snapshot restore
 To tag a snapshot with a human-readable label, pass `--name`:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant snapshot create --name before-upgrade
+```bash
+nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant snapshot create --name before-upgrade
+```bash
+nemohermes my-assistant snapshot create --name before-upgrade
 ```
 </AgentOnly>
 
 To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant snapshot restore v3
-$ nemoclaw my-assistant snapshot restore before-upgrade
-$ nemoclaw my-assistant snapshot restore 2026-04-14T
+```bash
+nemoclaw my-assistant snapshot restore v3
+nemoclaw my-assistant snapshot restore before-upgrade
+nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant snapshot restore v3
-$ nemohermes my-assistant snapshot restore before-upgrade
-$ nemohermes my-assistant snapshot restore 2026-04-14T
+```bash
+nemohermes my-assistant snapshot restore v3
+nemohermes my-assistant snapshot restore before-upgrade
+nemohermes my-assistant snapshot restore 2026-04-14T
 ```
 </AgentOnly>
 
@@ -97,15 +97,15 @@ To clone a snapshot into a different sandbox name, pass `--to <name>`.
 If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
-$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
+```bash
+nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
+nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant snapshot restore before-upgrade --to my-assistant-clone
-$ nemohermes my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
+```bash
+nemohermes my-assistant snapshot restore before-upgrade --to my-assistant-clone
+nemohermes my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
 </AgentOnly>
 
@@ -134,30 +134,30 @@ Use `openshell sandbox download` to copy files from the sandbox to your host.
 
 <AgentOnly variant="openclaw">
 
-```console
-$ SANDBOX=my-assistant
-$ BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-$ mkdir -p "$BACKUP_DIR"
+```bash
+SANDBOX=my-assistant
+BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP_DIR"
 
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
 ```
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-```console
-$ SANDBOX=my-hermes
-$ BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-$ mkdir -p "$BACKUP_DIR"
+```bash
+SANDBOX=my-hermes
+BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP_DIR"
 
-$ openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
-$ openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
+openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
 
 </AgentOnly>
@@ -168,28 +168,28 @@ Use `openshell sandbox upload` to push files back into a sandbox.
 
 <AgentOnly variant="openclaw">
 
-```console
-$ SANDBOX=my-assistant
-$ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+```bash
+SANDBOX=my-assistant
+BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
 ```
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-```console
-$ SANDBOX=my-hermes
-$ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+```bash
+SANDBOX=my-hermes
+BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
-$ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 
 </AgentOnly>
@@ -212,14 +212,14 @@ Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
 
 Restore from the most recent backup:
 
-```console
-$ ./scripts/backup-workspace.sh restore my-assistant
+```bash
+./scripts/backup-workspace.sh restore my-assistant
 ```
 
 Restore from a specific timestamp:
 
-```console
-$ ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
+```bash
+./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 ```
 
 ## Verifying a Backup

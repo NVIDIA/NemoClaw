@@ -68,9 +68,9 @@ If Docker is installed but your current shell cannot use the Docker socket yet, 
 
 On macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 
-```console
-$ newgrp docker
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+newgrp docker
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
@@ -249,8 +249,8 @@ Respond to the wizard as follows.
 
 For scripted setup, set:
 
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
 
 The router listens on the host at port `4000`.

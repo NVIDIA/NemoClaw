@@ -26,11 +26,11 @@ This page is for users who installed NemoClaw with the installer and do not have
 
 Fetch only the skills from the NemoClaw repository without downloading the full source tree.
 
-```console
-$ git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
-$ cd NemoClaw
-$ git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-*/**' '/.agents/skills/nemoclaw-skills-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
-$ git checkout
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-*/**' '/.agents/skills/nemoclaw-skills-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
+git checkout
 ```
 
 Open the `NemoClaw` directory in your AI coding assistant.

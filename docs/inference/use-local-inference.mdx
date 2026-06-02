@@ -71,13 +71,13 @@ The user-local path cannot bootstrap system packages without elevation, so if `z
 Run the onboard wizard.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard
+```bash
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -147,15 +147,15 @@ On native Linux hosts, a firewall can allow the host proxy health check while st
 When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
 
 <AgentOnly variant="openclaw">
-```console
-$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
-$ nemoclaw onboard
+```bash
+sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
-$ nemohermes onboard
+```bash
+sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -184,15 +184,15 @@ This does not delete downloaded model files.
 ### Non-Interactive Setup
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=ollama \
+```bash
+NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen2.5:14b \
   nemoclaw onboard --non-interactive --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=ollama \
+```bash
+NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen2.5:14b \
   nemohermes onboard --non-interactive --yes
 ```
@@ -222,21 +222,21 @@ To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` befo
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
 
-```console
-$ vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 ```
 
 Run the onboard wizard.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard
+```bash
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -257,8 +257,8 @@ Route, configuration, and authentication failures still fail immediately.
 Set the following environment variables for scripted or CI/CD deployments.
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=custom \
+```bash
+NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
   NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
   COMPATIBLE_API_KEY=dummy \
@@ -267,8 +267,8 @@ $ NEMOCLAW_PROVIDER=custom \
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=custom \
+```bash
+NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
   NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
   COMPATIBLE_API_KEY=dummy \
@@ -292,13 +292,13 @@ without probing the Responses API.
 To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API` before running onboard:
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
+```bash
+NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PREFERRED_API=openai-responses nemohermes onboard
+```bash
+NEMOCLAW_PREFERRED_API=openai-responses nemohermes onboard
 ```
 </AgentOnly>
 
@@ -327,20 +327,20 @@ Refer to [Switch Inference Models](switch-inference-providers) for more informat
 If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard
+```bash
+nemohermes onboard
 ```
 </AgentOnly>
 For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=anthropicCompatible \
+```bash
+NEMOCLAW_PROVIDER=anthropicCompatible \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
   NEMOCLAW_MODEL=my-model \
   COMPATIBLE_ANTHROPIC_API_KEY=dummy \
@@ -348,8 +348,8 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=anthropicCompatible \
+```bash
+NEMOCLAW_PROVIDER=anthropicCompatible \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
   NEMOCLAW_MODEL=my-model \
   COMPATIBLE_ANTHROPIC_API_KEY=dummy \
@@ -394,14 +394,14 @@ The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool
 Use an already-running vLLM server:
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=vllm \
+```bash
+NEMOCLAW_PROVIDER=vllm \
   nemoclaw onboard --non-interactive
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=vllm \
+```bash
+NEMOCLAW_PROVIDER=vllm \
   nemohermes onboard --non-interactive
 ```
 </AgentOnly>
@@ -410,14 +410,14 @@ Install or start managed vLLM when a supported profile is detected.
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is enough for non-interactive runs; add `NEMOCLAW_EXPERIMENTAL=1` on generic Linux NVIDIA GPU hosts.
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_PROVIDER=install-vllm \
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
   nemoclaw onboard --non-interactive
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_PROVIDER=install-vllm \
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
   nemohermes onboard --non-interactive
 ```
 </AgentOnly>
@@ -445,17 +445,17 @@ An unrecognised value fails fast with a list of valid slugs.
 Gated models require a Hugging Face token; export it before onboarding so NemoClaw can forward it into the managed vLLM container:
 
 <AgentOnly variant="openclaw">
-```console
-$ export HF_TOKEN=<your-hf-token>
-$ NEMOCLAW_PROVIDER=install-vllm \
+```bash
+export HF_TOKEN=<your-hf-token>
+NEMOCLAW_PROVIDER=install-vllm \
   NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
   nemoclaw onboard --non-interactive
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export HF_TOKEN=<your-hf-token>
-$ NEMOCLAW_PROVIDER=install-vllm \
+```bash
+export HF_TOKEN=<your-hf-token>
+NEMOCLAW_PROVIDER=install-vllm \
   NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
   nemohermes onboard --non-interactive
 ```
@@ -471,13 +471,13 @@ NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable
 Set the experimental flag and run onboard.
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+```bash
+NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_EXPERIMENTAL=1 nemohermes onboard
+```bash
+NEMOCLAW_EXPERIMENTAL=1 nemohermes onboard
 ```
 </AgentOnly>
 
@@ -505,15 +505,15 @@ The same `chat/completions` API path restriction applies.
 ### Non-Interactive Setup
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_EXPERIMENTAL=1 \
+```bash
+NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=nim \
   nemoclaw onboard --non-interactive
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_EXPERIMENTAL=1 \
+```bash
+NEMOCLAW_EXPERIMENTAL=1 \
   NEMOCLAW_PROVIDER=nim \
   nemohermes onboard --non-interactive
 ```
@@ -529,15 +529,15 @@ Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so Nemo
 To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
 
 <AgentOnly variant="openclaw">
-```console
-$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
-$ nemoclaw onboard
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
-$ nemohermes onboard
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -557,17 +557,17 @@ The post-create readiness wait (image build, gateway upload, in-sandbox boot) ha
 On hosts where the sandbox image takes minutes to build or upload — large quantised models, DGX Station first runs, or remote VMs over a slow link — raise both together:
 
 <AgentOnly variant="openclaw">
-```console
-$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
-$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-$ nemoclaw onboard
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
-$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-$ nemohermes onboard
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -578,13 +578,13 @@ If onboard ends with `Sandbox '<name>' was created but did not become ready with
 After onboarding completes, confirm the active provider and model.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> status
+```bash
+nemoclaw <name> status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> status
+```bash
+nemohermes <name> status
 ```
 </AgentOnly>
 
@@ -600,13 +600,13 @@ Refer to [Switch Inference Models](switch-inference-providers) for the full proc
 For compatible endpoints, the command is:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw inference set --provider compatible-endpoint --model <model-name>
+```bash
+nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes inference set --provider compatible-endpoint --model <model-name>
+```bash
+nemohermes inference set --provider compatible-endpoint --model <model-name>
 ```
 </AgentOnly>
 

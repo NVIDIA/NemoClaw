@@ -134,9 +134,9 @@ NemoClaw advertises WhatsApp for both OpenClaw and Hermes sandboxes, and each ag
 Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
 Connect to the sandbox and then use the agent-specific pairing command to render the QR code in the terminal:
 
-```console
-$ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
-$ hermes whatsapp                             # Hermes sandboxes
+```bash
+openclaw channels login --channel whatsapp  # OpenClaw sandboxes
+hermes whatsapp                             # Hermes sandboxes
 ```
 
 For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
@@ -165,15 +165,15 @@ NemoClaw also selects the matching network policy preset during policy setup so 
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
 
-```console
-$ export TELEGRAM_BOT_TOKEN=<your-bot-token>
-$ export TELEGRAM_REQUIRE_MENTION=1
-$ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
-$ export DISCORD_SERVER_ID=<your-discord-server-id>
-$ export SLACK_BOT_TOKEN=<your-slack-bot-token>
-$ export SLACK_APP_TOKEN=<your-slack-app-token>
-$ export SLACK_ALLOWED_USERS=<your-slack-member-id>
-$ export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
+```bash
+export TELEGRAM_BOT_TOKEN=<your-bot-token>
+export TELEGRAM_REQUIRE_MENTION=1
+export DISCORD_BOT_TOKEN=<your-discord-bot-token>
+export DISCORD_SERVER_ID=<your-discord-server-id>
+export SLACK_BOT_TOKEN=<your-slack-bot-token>
+export SLACK_APP_TOKEN=<your-slack-app-token>
+export SLACK_ALLOWED_USERS=<your-slack-member-id>
+export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
 ```
 
 This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
@@ -187,13 +187,13 @@ Run `nemohermes onboard` interactively when you want to enable WeChat.
 Then run onboarding:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard
+```bash
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -205,34 +205,34 @@ Run channel commands from the host, not from inside the sandbox.
 Use `channels list` to see the supported channel names:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels list
+```bash
+nemoclaw my-assistant channels list
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels list
+```bash
+nemohermes my-assistant channels list
 ```
 </AgentOnly>
 
 Add the channel you want:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels add telegram
-$ nemoclaw my-assistant channels add discord
-$ nemoclaw my-assistant channels add slack
-$ nemoclaw my-assistant channels add wechat
-$ nemoclaw my-assistant channels add whatsapp
+```bash
+nemoclaw my-assistant channels add telegram
+nemoclaw my-assistant channels add discord
+nemoclaw my-assistant channels add slack
+nemoclaw my-assistant channels add wechat
+nemoclaw my-assistant channels add whatsapp
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels add telegram
-$ nemohermes my-assistant channels add discord
-$ nemohermes my-assistant channels add slack
-$ nemohermes my-assistant channels add wechat
-$ nemohermes my-assistant channels add whatsapp
+```bash
+nemohermes my-assistant channels add telegram
+nemohermes my-assistant channels add discord
+nemohermes my-assistant channels add slack
+nemohermes my-assistant channels add wechat
+nemohermes my-assistant channels add whatsapp
 ```
 </AgentOnly>
 
@@ -259,13 +259,13 @@ For a repeatable live Telegram reply check, run `test/e2e/test-messaging-provide
 If you defer the rebuild, apply the change later:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant rebuild
+```bash
+nemoclaw my-assistant rebuild
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant rebuild
+```bash
+nemohermes my-assistant rebuild
 ```
 </AgentOnly>
 
@@ -273,33 +273,33 @@ In non-interactive mode, set the required environment variables before running `
 Missing credentials fail fast, and the command queues the change for a manual rebuild:
 
 <AgentOnly variant="openclaw">
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
   nemoclaw my-assistant channels add telegram
-$ nemoclaw my-assistant rebuild
+nemoclaw my-assistant rebuild
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
   nemohermes my-assistant channels add telegram
-$ nemohermes my-assistant rebuild
+nemohermes my-assistant rebuild
 ```
 </AgentOnly>
 
 For Discord server access after onboarding, include the server settings when you add the channel and rebuild:
 
 <AgentOnly variant="openclaw">
-```console
-$ DISCORD_BOT_TOKEN=<your-discord-bot-token> \
+```bash
+DISCORD_BOT_TOKEN=<your-discord-bot-token> \
   DISCORD_SERVER_ID=<your-discord-server-id> \
   DISCORD_REQUIRE_MENTION=1 \
   nemoclaw my-assistant channels add discord
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ DISCORD_BOT_TOKEN=<your-discord-bot-token> \
+```bash
+DISCORD_BOT_TOKEN=<your-discord-bot-token> \
   DISCORD_SERVER_ID=<your-discord-server-id> \
   DISCORD_REQUIRE_MENTION=1 \
   nemohermes my-assistant channels add discord
@@ -319,13 +319,13 @@ Second, the command requires an interactive terminal.
 Non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`) fails fast with a clear error because the QR handshake needs a paired phone.
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels add wechat
+```bash
+nemoclaw my-assistant channels add wechat
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels add wechat
+```bash
+nemohermes my-assistant channels add wechat
 ```
 </AgentOnly>
 
@@ -343,15 +343,15 @@ Rebuild the sandbox after the update so the image reflects the current channel s
 To remove a channel and clear its stored credentials, run:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels remove telegram
-$ nemoclaw my-assistant channels remove wechat
+```bash
+nemoclaw my-assistant channels remove telegram
+nemoclaw my-assistant channels remove wechat
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels remove telegram
-$ nemohermes my-assistant channels remove wechat
+```bash
+nemohermes my-assistant channels remove telegram
+nemohermes my-assistant channels remove wechat
 ```
 </AgentOnly>
 
@@ -371,21 +371,21 @@ Removing the entry from the phone is recommended if you plan to re-pair the same
 Use `channels stop` when you want to pause a bridge without deleting credentials:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant channels stop telegram
-$ nemoclaw my-assistant channels start telegram
+```bash
+nemoclaw my-assistant channels stop telegram
+nemoclaw my-assistant channels start telegram
 
-$ nemoclaw my-assistant channels stop wechat
-$ nemoclaw my-assistant channels start wechat
+nemoclaw my-assistant channels stop wechat
+nemoclaw my-assistant channels start wechat
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant channels stop telegram
-$ nemohermes my-assistant channels start telegram
+```bash
+nemohermes my-assistant channels stop telegram
+nemohermes my-assistant channels start telegram
 
-$ nemohermes my-assistant channels stop wechat
-$ nemohermes my-assistant channels start wechat
+nemohermes my-assistant channels stop wechat
+nemohermes my-assistant channels start wechat
 ```
 </AgentOnly>
 
@@ -448,13 +448,13 @@ The older `nemoclaw start` still works as a deprecated alias.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw tunnel start
+```bash
+nemoclaw tunnel start
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes tunnel start
+```bash
+nemohermes tunnel start
 ```
 </AgentOnly>
 

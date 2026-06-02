@@ -81,13 +81,13 @@ Each entry in the `network` section defines an endpoint group with the following
 Apply the updated policy by re-running the onboard wizard:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes onboard
+```bash
+nemohermes onboard
 ```
 </AgentOnly>
 
@@ -98,13 +98,13 @@ The wizard picks up the modified policy file and applies it to the sandbox.
 Check that the sandbox is running with the updated policy:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> status
+```bash
+nemoclaw <name> status
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> status
+```bash
+nemohermes <name> status
 ```
 </AgentOnly>
 
@@ -152,15 +152,15 @@ This is the non-destructive path and the only flow NemoClaw supports out of the 
 
 <AgentOnly variant="openclaw">
 
-```console
-$ nemoclaw my-assistant policy-add
+```bash
+nemoclaw my-assistant policy-add
 ```
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-```console
-$ nemohermes my-assistant policy-add
+```bash
+nemohermes my-assistant policy-add
 ```
 
 </AgentOnly>
@@ -174,14 +174,14 @@ The preset file under `presets/` also persists across sandbox recreations.
 Use this path only when you cannot add a file under the NemoClaw source tree.
 You must start from the **live** policy, not from a baseline policy file, so the presets layered on at onboarding are preserved in the file you apply.
 
-```console
-$ openshell policy get --full my-assistant > live-policy.yaml
+```bash
+openshell policy get --full my-assistant > live-policy.yaml
 ```
 
 Edit `live-policy.yaml` to add your entries under `network_policies:`, keeping the existing `version` field intact, then apply:
 
-```console
-$ openshell policy set --policy live-policy.yaml my-assistant
+```bash
+openshell policy set --policy live-policy.yaml my-assistant
 ```
 
 ### Scope of Dynamic Changes
@@ -199,8 +199,8 @@ To make a custom policy survive a sandbox recreation, ship the preset file in th
 
 For one-off access, you can approve blocked requests in the OpenShell TUI instead of editing the baseline policy:
 
-```console
-$ openshell term
+```bash
+openshell term
 ```
 
 This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
@@ -237,13 +237,13 @@ Available presets:
 To apply a preset to a running sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> policy-add
+```bash
+nemoclaw <name> policy-add
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> policy-add
+```bash
+nemohermes <name> policy-add
 ```
 </AgentOnly>
 
@@ -255,26 +255,26 @@ Pass a preset name with `--yes` for scripted workflows.
 For example, to interactively add PyPI access to a running sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add
+```bash
+nemoclaw my-assistant policy-add
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add
+```bash
+nemohermes my-assistant policy-add
 ```
 </AgentOnly>
 
 To list which presets are applied to a sandbox:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw <name> policy-list
+```bash
+nemoclaw <name> policy-list
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes <name> policy-list
+```bash
+nemohermes <name> policy-list
 ```
 </AgentOnly>
 
@@ -299,15 +299,15 @@ Use `nemohermes <name> policy-add` for presets.
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add pypi --yes
-$ nemoclaw my-assistant policy-remove pypi --yes
+```bash
+nemoclaw my-assistant policy-add pypi --yes
+nemoclaw my-assistant policy-remove pypi --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add pypi --yes
-$ nemohermes my-assistant policy-remove pypi --yes
+```bash
+nemohermes my-assistant policy-add pypi --yes
+nemohermes my-assistant policy-remove pypi --yes
 ```
 </AgentOnly>
 
@@ -353,13 +353,13 @@ Rename `preset.name` if NemoClaw refuses to apply the file because of a collisio
 ### Apply a Single File
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```bash
+nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```bash
+nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
 </AgentOnly>
 
@@ -368,13 +368,13 @@ Preview the endpoints without applying with `--dry-run`, and skip the confirmati
 ### Apply Every File in a Directory
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+```bash
+nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-add --from-dir ./presets/ --yes
+```bash
+nemohermes my-assistant policy-add --from-dir ./presets/ --yes
 ```
 </AgentOnly>
 
@@ -392,13 +392,13 @@ Review every host in a custom preset before applying it, especially when the fil
 Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
 
 <AgentOnly variant="openclaw">
-```console
-$ nemoclaw my-assistant policy-remove my-internal-api --yes
+```bash
+nemoclaw my-assistant policy-remove my-internal-api --yes
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
-```console
-$ nemohermes my-assistant policy-remove my-internal-api --yes
+```bash
+nemohermes my-assistant policy-remove my-internal-api --yes
 ```
 </AgentOnly>
 

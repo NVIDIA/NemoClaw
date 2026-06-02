@@ -24,9 +24,9 @@ It selects Hermes by default during onboarding and for other commands.
 Use `--agent hermes` during onboarding or set `NEMOCLAW_AGENT=hermes` when you need the same selection through another entry point.
 Hermes-specific sections below describe the OpenAI-compatible API endpoint, optional Hermes dashboard, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
 
-```console
-$ nemohermes onboard              # selects Hermes by default
-$ nemohermes my-sandbox connect   # connects to a Hermes sandbox
+```bash
+nemohermes onboard              # selects Hermes by default
+nemohermes my-sandbox connect   # connects to a Hermes sandbox
 ```
 
 ## In-Sandbox Commands
@@ -44,16 +44,16 @@ The CLI handles host-side operations that run outside the selected agent runtime
 Show the top-level usage summary and command groups.
 Running `nemohermes` with no arguments shows the same help output.
 
-```console
-$ nemohermes help
+```bash
+nemohermes help
 ```
 
 ### `nemohermes --version`, `nemohermes -v`
 
 Print the installed NemoClaw CLI version.
 
-```console
-$ nemohermes --version
+```bash
+nemohermes --version
 ```
 
 ### `nemohermes resources`
@@ -61,8 +61,8 @@ $ nemohermes --version
 Display host hardware inventory and configured sandbox resource profiles.
 Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
 
-```console
-$ nemohermes resources [--json]
+```bash
+nemohermes resources [--json]
 ```
 
 If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
@@ -73,15 +73,15 @@ Run the interactive setup wizard (recommended for new installs).
 The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
-```console
-$ nemohermes onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+```bash
+nemohermes onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 For Hermes, use the alias or pass the agent explicitly:
 
-```console
-$ nemohermes onboard [options]
-$ nemohermes onboard --agent hermes [options]
+```bash
+nemohermes onboard [options]
+nemohermes onboard --agent hermes [options]
 ```
 
 #### `--resume` and `--fresh`
@@ -105,8 +105,8 @@ Use `--fresh` to ignore any saved onboarding session and restart the wizard from
 The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
 To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 
-```console
-$ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
@@ -134,8 +134,8 @@ For details on tiers and the presets each includes, see [Network Policies](netwo
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
-```console
-$ NEMOCLAW_POLICY_TIER=restricted nemohermes onboard --non-interactive --yes-i-accept-third-party-software
+```bash
+NEMOCLAW_POLICY_TIER=restricted nemohermes onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
@@ -154,28 +154,28 @@ NemoClaw filters tier suggestions and resume selections by active agent support,
 
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
 
-```console
-$ nemohermes onboard --non-interactive --yes-i-accept-third-party-software
+```bash
+nemohermes onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 or:
 
-```console
-$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemohermes onboard --non-interactive
+```bash
+NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemohermes onboard --non-interactive
 ```
 
 For scripted installer runs, pass explicit acceptance to the `bash` side of the installer pipe:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
 To enable Brave Search in non-interactive mode, set:
 
-```console
-$ BRAVE_API_KEY=... \
+```bash
+BRAVE_API_KEY=... \
   nemohermes onboard --non-interactive
 ```
 
@@ -249,8 +249,8 @@ Other build outputs such as `dist/`, `target/`, or `build/` are still included.
 If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
-```console
-$ nemohermes onboard --from path/to/Dockerfile
+```bash
+nemohermes onboard --from path/to/Dockerfile
 ```
 
 The Dockerfile path must exist.
@@ -270,8 +270,8 @@ All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCL
 In non-interactive mode, the path can also be supplied via the `NEMOCLAW_FROM_DOCKERFILE` environment variable.
 You must also supply a sandbox name via `--name <sandbox>` or `NEMOCLAW_SANDBOX_NAME` so a `--from` build cannot silently clobber the default `my-assistant` sandbox.
 
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLAW_SANDBOX_NAME=my-build nemohermes onboard
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_FROM_DOCKERFILE=path/to/Dockerfile NEMOCLAW_SANDBOX_NAME=my-build nemohermes onboard
 ```
 
 If a `--resume` is attempted with a different `--from` path than the original session, onboarding exits with a conflict error rather than silently building from the wrong image.
@@ -282,8 +282,8 @@ Set the sandbox name without going through the interactive prompt.
 The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
-```console
-$ nemohermes onboard --non-interactive --name my-build --from path/to/Dockerfile
+```bash
+nemohermes onboard --non-interactive --name my-build --from path/to/Dockerfile
 ```
 
 The flag wins over `NEMOCLAW_SANDBOX_NAME`.
@@ -296,8 +296,8 @@ Combining `--from <Dockerfile>` with non-interactive onboarding requires one of 
 Use a custom Dockerfile for the sandbox image.
 This variant of `nemohermes onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
 
-```console
-$ nemohermes onboard --from ./Dockerfile.custom
+```bash
+nemohermes onboard --from ./Dockerfile.custom
 ```
 
 ### GPU passthrough
@@ -332,9 +332,9 @@ Pass `--json` for machine-readable output that includes a `schemaVersion`, the d
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
 
-```console
-$ nemohermes list [--json]
-$ nemohermes list --json
+```bash
+nemohermes list [--json]
+nemohermes list --json
 ```
 
 ### `nemohermes deploy`
@@ -349,8 +349,8 @@ This command remains as a compatibility wrapper for the older Brev-specific boot
 The Brev instance name is the positional argument.
 The sandbox name comes from `NEMOCLAW_SANDBOX_NAME` and defaults to `my-assistant`; invalid sandbox names fail before Brev provisioning starts.
 
-```console
-$ nemohermes deploy <instance-name>
+```bash
+nemohermes deploy <instance-name>
 ```
 
 ### `nemohermes <name> connect`
@@ -373,8 +373,8 @@ After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `nemohermes onboard` after a reboot in this case.
 
-```console
-$ nemohermes my-assistant connect [--probe-only]
+```bash
+nemohermes my-assistant connect [--probe-only]
 ```
 
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
@@ -388,9 +388,9 @@ This is the supported substitute for `docker exec` on the sandbox container; raw
 
 Hermes config resolves under `/sandbox/.hermes`.
 
-```console
-$ nemohermes my-assistant exec -- hermes --version
-$ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
+```bash
+nemohermes my-assistant exec -- hermes --version
+nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
@@ -411,8 +411,8 @@ Use this after a sandbox pod restart, a sandbox crash, or whenever `nemohermes <
 It is idempotent.
 If the gateway is already running, the command exits zero with a probe message and makes no changes.
 
-```console
-$ nemohermes my-assistant recover
+```bash
+nemohermes my-assistant recover
 ```
 
 ### `nemohermes <name> status`
@@ -425,10 +425,10 @@ The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `pr
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, or the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`).
 The alias form `nemohermes <name> status --json` requires the sandbox to be registered locally; the canonical form `nemohermes sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
-```console
-$ nemohermes my-assistant status
-$ nemohermes my-assistant status --json
-$ nemohermes sandbox status my-assistant --json
+```bash
+nemohermes my-assistant status
+nemohermes my-assistant status --json
+nemohermes sandbox status my-assistant --json
 ```
 
 The command probes every inference provider and reports one of three states on the `Inference` line:
@@ -462,8 +462,8 @@ If the sandbox is running an outdated agent version, the output includes an `Upd
 When other sandboxes have the same messaging channel enabled (Telegram, Discord, or Slack) with the same bot token, the output includes a cross-sandbox overlap warning so you can resolve the conflict before messages start dropping.
 The command also tails `/tmp/gateway.log` inside the default sandbox and flags Telegram `409 Conflict` errors that indicate a duplicate consumer for the bot token.
 
-```console
-$ nemohermes my-assistant status
+```bash
+nemohermes my-assistant status
 ```
 
 #### Checking the Hermes version
@@ -493,8 +493,8 @@ Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
-```console
-$ nemohermes my-assistant doctor [--json]
+```bash
+nemohermes my-assistant doctor [--json]
 ```
 
 ### `nemohermes <name> exec`
@@ -503,8 +503,8 @@ Run a command non-interactively inside a running sandbox through the OpenShell e
 The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
 
-```console
-$ nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
+```bash
+nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
 ```
 
 | Flag | Description |
@@ -523,8 +523,8 @@ The command reads both agent gateway output and OpenShell audit events, so polic
 If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
 NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
 
-```console
-$ nemohermes my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
+```bash
+nemohermes my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
 ### `nemohermes <name> dashboard-url`
@@ -558,8 +558,8 @@ Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 By default, `destroy` preserves the shared NemoClaw gateway.
 Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
 
-```console
-$ nemohermes my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
+```bash
+nemohermes my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
 ```
 
 ### `nemohermes <name> policy-add`
@@ -568,14 +568,14 @@ Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
 Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
 
-```console
-$ nemohermes my-assistant policy-add
+```bash
+nemohermes my-assistant policy-add
 ```
 
 To apply a specific preset without the interactive picker, pass its name as a positional argument:
 
-```console
-$ nemohermes my-assistant policy-add pypi --yes
+```bash
+nemohermes my-assistant policy-add pypi --yes
 ```
 
 The positional form is required in scripted workflows.
@@ -593,20 +593,20 @@ Custom preset files are tracked with the sandbox that applied them.
 
 Use `--dry-run` to audit a preset before applying it:
 
-```console
-$ nemohermes my-assistant policy-add --dry-run
+```bash
+nemohermes my-assistant policy-add --dry-run
 ```
 
 Apply a custom preset file when you need to grant access to an endpoint that is not covered by a built-in preset:
 
-```console
-$ nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+```bash
+nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
 
 For batch workflows, apply all preset files from a directory:
 
-```console
-$ nemohermes my-assistant policy-add --from-dir ./presets/ --yes
+```bash
+nemohermes my-assistant policy-add --from-dir ./presets/ --yes
 ```
 
 Review every host in custom preset files before applying them.
@@ -618,8 +618,8 @@ List available policy presets and show which ones are applied to the sandbox.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 
-```console
-$ nemohermes my-assistant policy-list
+```bash
+nemohermes my-assistant policy-list
 ```
 
 ### `nemohermes <name> policy-remove`
@@ -627,14 +627,14 @@ $ nemohermes my-assistant policy-list
 Remove a previously applied policy preset from a sandbox.
 The command lists only the presets currently applied, prompts you to select one, shows the endpoints that would be removed, and asks for confirmation before narrowing egress.
 
-```console
-$ nemohermes my-assistant policy-remove
+```bash
+nemohermes my-assistant policy-remove
 ```
 
 To remove a specific preset non-interactively, pass its name as a positional argument:
 
-```console
-$ nemohermes my-assistant policy-remove pypi --yes
+```bash
+nemohermes my-assistant policy-remove pypi --yes
 ```
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
@@ -652,8 +652,8 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 Add a host alias to the sandbox pod template.
 Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
 
-```console
-$ nemohermes my-assistant hosts-add searxng.local 192.168.1.105
+```bash
+nemohermes my-assistant hosts-add searxng.local 192.168.1.105
 ```
 
 The command validates the hostname and IP address, rejects duplicate hostnames, and patches `spec.podTemplate.spec.hostAliases` on the sandbox resource.
@@ -666,16 +666,16 @@ The command validates the hostname and IP address, rejects duplicate hostnames, 
 
 List host aliases configured on the sandbox resource.
 
-```console
-$ nemohermes my-assistant hosts-list
+```bash
+nemohermes my-assistant hosts-list
 ```
 
 ### `nemohermes <name> hosts-remove`
 
 Remove a hostname from the sandbox `hostAliases` list.
 
-```console
-$ nemohermes my-assistant hosts-remove searxng.local
+```bash
+nemohermes my-assistant hosts-remove searxng.local
 ```
 
 | Flag | Description |
@@ -688,8 +688,8 @@ List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`
 The command is a static reference; it does not consult credentials or the running sandbox.
 WeChat and WhatsApp are experimental.
 
-```console
-$ nemohermes my-assistant channels list
+```bash
+nemohermes my-assistant channels list
 ```
 
 ### `nemohermes <name> channels add <channel>`
@@ -718,8 +718,8 @@ When the same failure happens on a re-add of an already-enabled channel, NemoCla
 Restore the preset YAML and re-run `nemohermes <name> channels add <channel>`.
 For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 
-```console
-$ nemohermes my-assistant channels add telegram
+```bash
+nemohermes my-assistant channels add telegram
 ```
 
 | Flag | Description |
@@ -746,8 +746,8 @@ For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-s
 
 The cleanup tries `openshell sandbox exec` first and falls back to SSH if the exec wrapper does not return the success sentinel. If both transports fail (the sandbox is stopped, the gateway is down, or SSH cannot reach it) the command refuses to proceed to the rebuild and asks you to start the sandbox and re-run, so a half-removed state cannot leave stale Baileys auth files behind for the next rebuild to restore.
 
-```console
-$ nemohermes my-assistant channels remove telegram
+```bash
+nemohermes my-assistant channels remove telegram
 ```
 
 | Flag | Description |
@@ -765,8 +765,8 @@ Pause a single messaging bridge (`telegram`, `discord`, `slack`, `wechat`, or `w
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
-```console
-$ nemohermes my-assistant channels stop telegram
+```bash
+nemohermes my-assistant channels stop telegram
 ```
 
 | Flag | Description |
@@ -779,8 +779,8 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
 
-```console
-$ nemohermes my-assistant channels start telegram
+```bash
+nemohermes my-assistant channels start telegram
 ```
 
 | Flag | Description |
@@ -807,8 +807,8 @@ The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeo
 Deploy a skill directory to a running sandbox.
 The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
 
-```console
-$ nemohermes my-assistant skill install ./my-skill/
+```bash
+nemohermes my-assistant skill install ./my-skill/
 ```
 
 The skill directory must contain a `SKILL.md` file with YAML frontmatter that includes a `name` field.
@@ -850,8 +850,8 @@ The recorded sandbox GPU mode is preserved across rebuild.
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.
 
-```console
-$ nemohermes my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
+```bash
+nemohermes my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
 ```
 
 | Flag | Description |
@@ -873,12 +873,12 @@ After restore, the command restores Hermes manifest-defined state and starts the
 Check for a NemoClaw CLI update and, when requested, run the maintained installer flow.
 This command is a discoverable CLI wrapper around the supported installer path:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-```console
-$ nemohermes update [--check] [--yes|-y]
+```bash
+nemohermes update [--check] [--yes|-y]
 ```
 
 | Flag | Description |
@@ -897,8 +897,8 @@ Rebuild sandboxes whose base image is older than the one currently pinned by Nem
 NemoClaw resolves the digest of `ghcr.io/nvidia/nemohermes/sandbox-base:latest` from the registry, then compares it against the digest each sandbox was created with.
 Sandboxes that match the current digest are left alone.
 
-```console
-$ nemohermes upgrade-sandboxes [--check] [--auto] [--yes|-y]
+```bash
+nemohermes upgrade-sandboxes [--check] [--auto] [--yes|-y]
 ```
 
 | Flag | Description |
@@ -915,8 +915,8 @@ If the registry is unreachable (offline or firewalled hosts), NemoClaw falls bac
 Back up all registered running sandboxes to `~/.nemohermes/rebuild-backups/`.
 Sandboxes that are not running are skipped.
 
-```console
-$ nemohermes backup-all
+```bash
+nemohermes backup-all
 ```
 
 The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
@@ -926,8 +926,8 @@ The installer calls `backup-all` automatically before onboarding to protect agai
 Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemohermes/rebuild-backups/<name>/`.
 
-```console
-$ nemohermes my-assistant snapshot create
+```bash
+nemohermes my-assistant snapshot create
 ```
 
 | Flag | Description |
@@ -936,8 +936,8 @@ $ nemohermes my-assistant snapshot create
 
 Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumeric character, and cannot look like a version selector (`v1`, `v2`, ...). Duplicate names per sandbox are rejected; pick a different name or delete the existing snapshot first.
 
-```console
-$ nemohermes my-assistant snapshot create --name before-upgrade
+```bash
+nemohermes my-assistant snapshot create --name before-upgrade
 ```
 
 ### `nemohermes <name> snapshot list`
@@ -945,8 +945,8 @@ $ nemohermes my-assistant snapshot create --name before-upgrade
 List available snapshots for a sandbox as a table of version, name, timestamp, and path.
 Versions (`v1`, `v2`, ...) are computed on read from timestamp-ascending order, so `v1` is the oldest snapshot and `vN` is the newest. Snapshots created before this feature landed are numbered retroactively.
 
-```console
-$ nemohermes my-assistant snapshot list
+```bash
+nemohermes my-assistant snapshot list
 ```
 
 ### `nemohermes <name> snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`
@@ -970,24 +970,24 @@ The `--force` path prompts interactively to confirm the destination name before 
 Pass `--yes` (or set `NEMOCLAW_NON_INTERACTIVE=1`) to skip the prompt.
 The snapshot selector and source pod image are both validated before any deletion, so a bad selector or unresolvable image cannot destroy `dst` and only fail afterwards.
 
-```console
+```bash
 # restore latest snapshot in-place
-$ nemohermes my-assistant snapshot restore
+nemohermes my-assistant snapshot restore
 
 # restore by version
-$ nemohermes my-assistant snapshot restore v3
+nemohermes my-assistant snapshot restore v3
 
 # restore by user-assigned name
-$ nemohermes my-assistant snapshot restore before-upgrade
+nemohermes my-assistant snapshot restore before-upgrade
 
 # restore by exact timestamp
-$ nemohermes my-assistant snapshot restore 2026-04-21T07-35-55-987Z
+nemohermes my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 
 # clone v3 into a new sandbox
-$ nemohermes my-assistant snapshot restore v3 --to my-assistant-clone
+nemohermes my-assistant snapshot restore v3 --to my-assistant-clone
 
 # overwrite an existing destination with v3, non-interactively
-$ nemohermes my-assistant snapshot restore v3 --to my-assistant-clone --force --yes
+nemohermes my-assistant snapshot restore v3 --to my-assistant-clone --force --yes
 ```
 
 When `--to` names an existing sandbox, restore refuses to overwrite it unless you pass `--force`.
@@ -1018,17 +1018,17 @@ Prerequisites:
 - The local mount path must be on a writable filesystem; FUSE creates the mount on the host side.
   If the default `~/.nemohermes/mounts/<name>` lives on a read-only filesystem, pass an explicit writable path as the second positional argument.
 
-```console
+```bash
 # mount a specific path to a custom local directory
-$ nemohermes my-assistant share mount /sandbox/workspace ~/my-workspace
+nemohermes my-assistant share mount /sandbox/workspace ~/my-workspace
 ```
 
 ### `nemohermes <name> share unmount`
 
 Unmount a previously mounted sandbox filesystem.
 
-```console
-$ nemohermes my-assistant share unmount
+```bash
+nemohermes my-assistant share unmount
 ```
 
 | Argument | Default | Description |
@@ -1053,8 +1053,8 @@ $ nemohermes my-assistant share status
 Open the OpenShell TUI to monitor sandbox activity and approve network egress requests.
 Run this on the host where the sandbox is running.
 
-```console
-$ openshell term
+```bash
+openshell term
 ```
 
 For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
@@ -1065,8 +1065,8 @@ Start optional host auxiliary services.
 This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
 Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemohermes onboard` and runs through OpenShell-managed constructs.
 
-```console
-$ nemohermes tunnel start
+```bash
+nemohermes tunnel start
 ```
 
 By default, NemoClaw starts a Cloudflare quick tunnel and prints the generated `*.trycloudflare.com` URL when `cloudflared` reports it.
@@ -1074,9 +1074,9 @@ Set `CLOUDFLARE_TUNNEL_TOKEN` to start a Cloudflare named tunnel instead.
 The named tunnel hostname and `localhost:<dashboard-port>` route must already be configured in the Cloudflare dashboard.
 NemoClaw passes the token to `cloudflared` through the `TUNNEL_TOKEN` environment variable, so the token does not appear in the `cloudflared` command-line arguments.
 
-```console
-$ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
-$ nemohermes tunnel start
+```bash
+export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
+nemohermes tunnel start
 ```
 
 `nemohermes start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
@@ -1089,8 +1089,8 @@ For Hermes sandboxes, use channel lifecycle commands when you only want to pause
 
 Use `nemohermes <name> channels stop <channel>` when you only want to pause one bridge without stopping the gateway.
 
-```console
-$ nemohermes tunnel stop
+```bash
+nemohermes tunnel stop
 ```
 
 `nemohermes stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
@@ -1117,9 +1117,9 @@ Show the sandbox list and the status of host auxiliary services (for example clo
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 
-```console
-$ nemohermes status
-$ nemohermes status --json
+```bash
+nemohermes status
+nemohermes status --json
 ```
 
 When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
@@ -1135,9 +1135,9 @@ If cloudflared is installed but not running, the host-service section reports wh
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
 
-```console
-$ nemohermes inference get
-$ nemohermes inference get --json
+```bash
+nemohermes inference get
+nemohermes inference get --json
 ```
 
 ### `nemohermes inference set`
@@ -1150,8 +1150,8 @@ Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly
 
 By default, the command syncs the default registered sandbox.
 
-```console
-$ nemohermes inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
+```bash
+nemohermes inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
@@ -1170,8 +1170,8 @@ Use `nemohermes onboard` instead.
 
 This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
-```console
-$ nemohermes setup
+```bash
+nemohermes setup
 ```
 
 ### `nemohermes setup-spark`
@@ -1183,8 +1183,8 @@ Use the standard installer and run `nemohermes onboard` instead, because current
 
 This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
-```console
-$ nemohermes setup-spark
+```bash
+nemohermes setup-spark
 ```
 
 ### `nemohermes debug`
@@ -1193,8 +1193,8 @@ Collect diagnostics for bug reports.
 Gathers system info, Docker state, gateway logs, and sandbox status into a summary or tarball.
 Use `--sandbox <name>` to target a specific sandbox, `--quick` for a smaller snapshot, or `--output <path>` to save a tarball that you can attach to an issue.
 
-```console
-$ nemohermes debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
+```bash
+nemohermes debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 ```
 
 | Flag | Description |
@@ -1213,8 +1213,8 @@ When `--sandbox` is supplied explicitly (via flag or one of `NEMOCLAW_SANDBOX_NA
 List the provider credentials registered with the OpenShell gateway.
 Values are not printed.
 
-```console
-$ nemohermes credentials list
+```bash
+nemohermes credentials list
 ```
 
 ### `nemohermes credentials reset <PROVIDER>`
@@ -1223,8 +1223,8 @@ Remove a provider credential from the OpenShell gateway by provider name.
 After removal, re-running `nemohermes onboard` re-prompts for that provider's credential.
 Run `nemohermes credentials list` first if you are not sure of the provider name.
 
-```console
-$ nemohermes credentials reset nvidia-prod
+```bash
+nemohermes credentials reset nvidia-prod
 ```
 
 | Flag | Description |
@@ -1238,8 +1238,8 @@ Each `nemohermes onboard` builds an `openshell/sandbox-from:<timestamp>` image (
 The `destroy` and `rebuild` commands clean up the image automatically, but images from older NemoClaw versions or interrupted operations may remain.
 This command lists all `openshell/sandbox-from:*` images, cross-references the sandbox registry, and removes any that are no longer associated with a registered sandbox.
 
-```console
-$ nemohermes gc [--dry-run] [--yes|-y|--force]
+```bash
+nemohermes gc [--dry-run] [--yes|-y|--force]
 ```
 
 | Flag | Description |
@@ -1268,8 +1268,8 @@ On Linux, uninstall removes `~/.local/state/nemohermes`, which contains Docker-d
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--gateway <name>` | Override the gateway name to remove (default: `nemohermes`) |
 
-```console
-$ nemohermes uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
+```bash
+nemohermes uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
 ##### User-data preservation under `~/.nemohermes/`
@@ -1339,13 +1339,13 @@ By default the forward stays on `127.0.0.1` (loopback only).
 Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `nemohermes onboard` (or `nemohermes <sandbox> connect`) to bind the forward on all interfaces, which is useful when the host is reached over SSH or a cloud workstation.
 Only `0.0.0.0` enables the remote bind; other values are ignored.
 
-```console
-$ export NEMOCLAW_DASHBOARD_PORT=19000
-$ nemohermes onboard
+```bash
+export NEMOCLAW_DASHBOARD_PORT=19000
+nemohermes onboard
 ```
 
-```console
-$ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemohermes onboard
+```bash
+NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemohermes onboard
 ```
 
 These overrides apply to onboarding, status checks, health probes, and the uninstaller.
@@ -1440,10 +1440,10 @@ Set `NEMOCLAW_TRACE=1` before `nemohermes onboard` to write an OpenTelemetry-sty
 When no explicit path is provided, NemoClaw writes a timestamped file under `.e2e/traces/` in the current working directory.
 Use `NEMOCLAW_TRACE_DIR` to choose the output directory, or `NEMOCLAW_TRACE_FILE` to choose the exact output file.
 
-```console
-$ NEMOCLAW_TRACE=1 nemohermes onboard
-$ NEMOCLAW_TRACE_DIR=/tmp/nemohermes-traces nemohermes onboard
-$ NEMOCLAW_TRACE_FILE=/tmp/nemohermes-onboard-trace.json nemohermes onboard
+```bash
+NEMOCLAW_TRACE=1 nemohermes onboard
+NEMOCLAW_TRACE_DIR=/tmp/nemohermes-traces nemohermes onboard
+NEMOCLAW_TRACE_FILE=/tmp/nemohermes-onboard-trace.json nemohermes onboard
 ```
 
 Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
@@ -1470,10 +1470,10 @@ Set them before running `nemohermes onboard` if a slow connection or large model
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
 
-```console
-$ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
-$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-$ nemohermes onboard
+```bash
+export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+nemohermes onboard
 ```
 
 If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
@@ -1495,6 +1495,6 @@ These flags change defaults for commands that manage existing sandboxes.
 Deprecated. Use `nemohermes onboard` instead.
 Running `nemohermes setup` now delegates directly to `nemohermes onboard`.
 
-```console
-$ nemohermes setup
+```bash
+nemohermes setup
 ```
