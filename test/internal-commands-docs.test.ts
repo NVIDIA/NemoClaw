@@ -11,10 +11,14 @@
  * trivially reachable": registered, routable, and explained only in the
  * developer-facing src/commands/internal/README.md.
  *
- * This test pins the user-facing reference instead: every registered hidden
+ * This test pins the user-facing references instead: every registered hidden
  * `internal:*` command must be listed in docs/reference/commands.mdx (by its
  * space-form invocation), while staying out of the public `### \`nemoclaw …\``
- * headings so command-level parity keeps treating them as hidden.
+ * headings so command-level parity keeps treating them as hidden. The same
+ * assertions run against the generated NemoHermes reference
+ * (docs/reference/commands-nemohermes.mdx, `nemohermes` binary form) so a
+ * regression in scripts/sync-agent-variant-docs.ts cannot silently drop the
+ * section from the agent variant.
  */
 
 import { readFileSync } from "node:fs";
@@ -24,7 +28,20 @@ import { describe, expect, it } from "vitest";
 import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const commandsMdPath = path.join(repoRoot, "docs/reference/commands.mdx");
+
+/** User-facing command references, one per agent CLI variant. */
+const references = [
+  {
+    name: "commands.mdx",
+    binary: "nemoclaw",
+    text: readFileSync(path.join(repoRoot, "docs/reference/commands.mdx"), "utf8"),
+  },
+  {
+    name: "commands-nemohermes.mdx",
+    binary: "nemohermes",
+    text: readFileSync(path.join(repoRoot, "docs/reference/commands-nemohermes.mdx"), "utf8"),
+  },
+];
 
 /** Hidden `internal:*` command IDs from the generated oclif manifest. */
 function hiddenInternalCommandIds(): string[] {
@@ -34,13 +51,12 @@ function hiddenInternalCommandIds(): string[] {
     .sort();
 }
 
-/** `internal:uninstall:plan` -> `nemoclaw internal uninstall plan`. */
-function spaceFormInvocation(commandId: string): string {
-  return `nemoclaw ${commandId.replace(/:/g, " ")}`;
+/** `internal:uninstall:plan` -> `<binary> internal uninstall plan`. */
+function spaceFormInvocation(binary: string, commandId: string): string {
+  return `${binary} ${commandId.replace(/:/g, " ")}`;
 }
 
 describe("internal command documentation (#3782)", () => {
-  const commandsMd = readFileSync(commandsMdPath, "utf8");
   const internalIds = hiddenInternalCommandIds();
 
   it("registers the hidden internal command family", () => {
@@ -49,21 +65,28 @@ describe("internal command documentation (#3782)", () => {
     expect(internalIds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it("documents every hidden internal command in commands.mdx", () => {
-    const undocumented = internalIds.filter(
-      (id) => !commandsMd.includes(spaceFormInvocation(id)),
-    );
-    expect(undocumented).toEqual([]);
-  });
+  it.each(references)(
+    "documents every hidden internal command in $name",
+    ({ text, binary }) => {
+      const undocumented = internalIds.filter(
+        (id) => !text.includes(spaceFormInvocation(binary, id)),
+      );
+      expect(undocumented).toEqual([]);
+    },
+  );
 
-  it("keeps internal commands out of the public `### \\`nemoclaw …\\`` parity headings", () => {
-    // canonicalUsageList() (and thus check-docs.sh command-level parity) only
-    // sees non-hidden commands, so an `### \`nemoclaw internal …\`` heading
-    // would be flagged as docs-only drift. Internal commands must be listed
-    // in some other form (a table, prose, fenced block) instead.
-    const offendingHeadings = commandsMd
-      .split("\n")
-      .filter((line) => /^### `nemoclaw internal\b/.test(line));
-    expect(offendingHeadings).toEqual([]);
-  });
+  it.each(references)(
+    "keeps internal commands out of the public command headings in $name",
+    ({ text, binary }) => {
+      // canonicalUsageList() (and thus check-docs.sh command-level parity) only
+      // sees non-hidden commands, so an `### \`<binary> internal …\`` heading
+      // would be flagged as docs-only drift. Internal commands must be listed
+      // in some other form (a table, prose, fenced block) instead.
+      const headingPrefix = `### \`${binary} internal`;
+      const offendingHeadings = text
+        .split("\n")
+        .filter((line) => line.startsWith(headingPrefix));
+      expect(offendingHeadings).toEqual([]);
+    },
+  );
 });

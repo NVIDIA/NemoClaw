@@ -1319,16 +1319,16 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 ## Internal Commands
 
 NemoClaw registers a hidden `internal` command namespace. These commands are
-compatibility entrypoints for repo-owned scripts — the installer, the
-uninstaller, DNS setup, and developer tooling — not part of the supported
-public CLI surface.
+compatibility entrypoints for repo-owned scripts, such as the installer, the
+uninstaller, DNS setup, and developer tooling. They are not part of the
+supported public CLI surface.
 
-They are intentionally omitted from `nemohermes --help` (each command class sets
-`hidden = true`), but they remain registered and routable, which is why they
-are listed here for reference. Treat their names, flags, and output as
-implementation details: they exist to back `install.sh`, `uninstall.sh`, and
-related automation, and they may change or be removed without notice. Most are
-invoked indirectly by those scripts rather than typed by hand.
+Each command class sets `hidden = true`, so the commands stay out of
+`nemohermes --help`. They remain registered and routable, which is why they are
+listed here for reference. Treat their names, flags, and output as
+implementation details. They exist to back `install.sh`, `uninstall.sh`, and
+related automation, and they may change or be removed without notice. Most run
+indirectly through those scripts rather than being typed by hand.
 
 For contributor guidance on how these command files are structured, see
 `src/commands/internal/README.md`.
