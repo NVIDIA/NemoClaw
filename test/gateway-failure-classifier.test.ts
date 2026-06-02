@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyGatewayFailure,
+  classifySandboxContainerFailure,
   getLayerHeader,
   type GatewayFailureRunners,
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
+  type SandboxContainerFailureRunners,
 } from "../dist/lib/actions/sandbox/gateway-failure-classifier.js";
 
 function makeRunners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
@@ -227,5 +229,223 @@ describe("getLayerHeader", () => {
     );
     expect(getLayerHeader("container_exited")).toContain("container_exited");
     expect(getLayerHeader("gateway_unreachable")).toContain("gateway_unreachable");
+    expect(getLayerHeader("sandbox_container_stopped")).toContain(
+      "sandbox_container_stopped",
+    );
+    expect(getLayerHeader("sandbox_dashboard_port_conflict")).toContain(
+      "sandbox_dashboard_port_conflict",
+    );
+  });
+});
+
+function makeSandboxRunners(
+  overrides: Partial<SandboxContainerFailureRunners> = {},
+): SandboxContainerFailureRunners {
+  return {
+    listAllContainerNames: () => "",
+    listRunningContainerNames: () => "",
+    listSandboxNames: () => [],
+    portProbe: async () => false,
+    ...overrides,
+  };
+}
+
+describe("classifySandboxContainerFailure", () => {
+  it("returns null when the sandbox container is running", async () => {
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listRunningContainerNames: () =>
+          "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
+        listAllContainerNames: () =>
+          "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
+      }),
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the sandbox container is not present anywhere", async () => {
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-cluster-nemoclaw\n",
+      }),
+    });
+    expect(result).toBeNull();
+  });
+
+  it("returns sandbox_container_stopped when the container exists but is not running and no port is recorded", async () => {
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () =>
+          "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(result?.detail).toContain("openshell-my-assistant-7616dcb1");
+  });
+
+  it("returns sandbox_container_stopped when the container exists, is stopped, and the dashboard port is free", async () => {
+    let probedPort: number | null = null;
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 18789,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\n",
+        portProbe: async (port) => {
+          probedPort = port;
+          return false;
+        },
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(probedPort).toBe(18789);
+  });
+
+  it("returns sandbox_dashboard_port_conflict when the container exists, is stopped, and the dashboard port is held", async () => {
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 18789,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\n",
+        portProbe: async () => true,
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_dashboard_port_conflict");
+    expect(result?.detail).toContain("18789");
+    expect(result?.detail).toContain("openshell-my-assistant-7616dcb1");
+  });
+
+  it("does not probe the port when the container is running", async () => {
+    let portProbeCalled = false;
+    await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 18789,
+      runners: makeSandboxRunners({
+        listRunningContainerNames: () => "openshell-my-assistant-7616dcb1",
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1",
+        portProbe: async () => {
+          portProbeCalled = true;
+          return true;
+        },
+      }),
+    });
+    expect(portProbeCalled).toBe(false);
+  });
+
+  it("does not probe the port when the container is not present at all", async () => {
+    let portProbeCalled = false;
+    await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 18789,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-cluster-nemoclaw\n",
+        portProbe: async () => {
+          portProbeCalled = true;
+          return true;
+        },
+      }),
+    });
+    expect(portProbeCalled).toBe(false);
+  });
+
+  it("matches the exact prefix and accepts uuid-suffixed shapes that resolve back to the queried sandbox", async () => {
+    const exactResult = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant\n",
+      }),
+    });
+    expect(exactResult?.layer).toBe("sandbox_container_stopped");
+    expect(exactResult?.detail).toContain("openshell-my-assistant");
+
+    // `openshell-my-assistant-7616dcb1` belongs to `my-assistant` because no
+    // other registered sandbox name claims it via the longest-owner rule.
+    const uuidResult = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () =>
+          "openshell-my-assistant-7616dcb1\nopenshell-different-sandbox-abc",
+        listSandboxNames: () => ["my-assistant", "different-sandbox"],
+      }),
+    });
+    expect(uuidResult?.layer).toBe("sandbox_container_stopped");
+    expect(uuidResult?.detail).toContain("openshell-my-assistant-7616dcb1");
+
+    const unrelated = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () =>
+          "openshell-cluster-nemoclaw\nopenshell-my-assistantextra\n",
+      }),
+    });
+    expect(unrelated).toBeNull();
+  });
+
+  it("rejects a longer registered sandbox's container even when the literal prefix matches the queried name", async () => {
+    // `openshell-my-assistant-prod-7616dcb1` resolves to the longer
+    // `my-assistant-prod` sandbox via the longest-owner rule; the query for
+    // `my-assistant` must not consume it. Mirrors the docker-health.ts
+    // resolver and prevents the prefix-collision bug.
+    const collision = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () =>
+          "openshell-my-assistant-prod-7616dcb1\nopenshell-cluster-nemoclaw",
+        listSandboxNames: () => ["my-assistant", "my-assistant-prod"],
+      }),
+    });
+    expect(collision).toBeNull();
+  });
+
+  it("matches an `openshell-<name>` exact container even when a co-tenant `openshell-<name>-<id>` exists in the same listing", async () => {
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      runners: makeSandboxRunners({
+        listAllContainerNames: () =>
+          "openshell-my-assistant-7616dcb1\nopenshell-my-assistant",
+        listSandboxNames: () => ["my-assistant"],
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(result?.detail).toContain("openshell-my-assistant");
+    expect(result?.detail).not.toContain("openshell-my-assistant-7616dcb1");
+  });
+
+  it("ignores an out-of-range dashboardPort and falls back to sandbox_container_stopped", async () => {
+    let portProbeCalled = false;
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 70000,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\n",
+        portProbe: async () => {
+          portProbeCalled = true;
+          return true;
+        },
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(portProbeCalled).toBe(false);
+  });
+
+  it("ignores a non-integer dashboardPort and falls back to sandbox_container_stopped", async () => {
+    let portProbeCalled = false;
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 18789.5 as unknown as number,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\n",
+        portProbe: async () => {
+          portProbeCalled = true;
+          return true;
+        },
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(portProbeCalled).toBe(false);
+  });
+
+  it("ignores a zero dashboardPort and falls back to sandbox_container_stopped", async () => {
+    let portProbeCalled = false;
+    const result = await classifySandboxContainerFailure("my-assistant", {
+      dashboardPort: 0,
+      runners: makeSandboxRunners({
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\n",
+        portProbe: async () => {
+          portProbeCalled = true;
+          return true;
+        },
+      }),
+    });
+    expect(result?.layer).toBe("sandbox_container_stopped");
+    expect(portProbeCalled).toBe(false);
   });
 });

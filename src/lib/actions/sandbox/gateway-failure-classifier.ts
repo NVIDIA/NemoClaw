@@ -8,6 +8,7 @@ import { dockerCapture } from "../../adapters/docker/run";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
 import * as registry from "../../state/registry";
+import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
 const DEFAULT_CONTAINER = "openshell-cluster-nemoclaw";
 const DOCKER_TIMEOUT_MS = 3000;
@@ -18,7 +19,9 @@ export type GatewayFailureLayer =
   | "container_missing"
   | "container_exited_port_conflict"
   | "container_exited"
-  | "gateway_unreachable";
+  | "gateway_unreachable"
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
 
 export type GatewayFailureResult = {
   layer: GatewayFailureLayer;
@@ -32,8 +35,28 @@ export type GatewayFailureRunners = {
   portProbe: (port: number) => Promise<boolean>;
 };
 
+export type SandboxContainerFailureLayer =
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
+
+export type SandboxContainerFailureResult = {
+  layer: SandboxContainerFailureLayer;
+  detail: string;
+};
+
+export type SandboxContainerFailureRunners = {
+  listAllContainerNames: () => string;
+  listRunningContainerNames: () => string;
+  listSandboxNames: () => string[];
+  portProbe: (port: number) => Promise<boolean>;
+};
+
 function defaultDockerInfo(): boolean {
   return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;
+}
+
+export function isDockerDaemonReachable(): boolean {
+  return defaultDockerInfo();
 }
 
 function dockerContainerListed(container: string, allFlag: boolean): boolean {
@@ -129,10 +152,83 @@ const LAYER_HEADERS: Record<GatewayFailureLayer, string> = {
   container_exited: "Failure layer: container_exited — container exited.",
   gateway_unreachable:
     "Failure layer: gateway_unreachable — container running but gateway API unresponsive.",
+  sandbox_container_stopped:
+    "Failure layer: sandbox_container_stopped — sandbox container exists but is not running.",
+  sandbox_dashboard_port_conflict:
+    "Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.",
 };
 
 export function getLayerHeader(layer: GatewayFailureLayer): string {
   return LAYER_HEADERS[layer];
+}
+
+function defaultListAllContainerNames(): string {
+  return dockerCapture(["ps", "-a", "--format", "{{.Names}}"], {
+    ignoreError: true,
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+}
+
+function defaultListRunningContainerNames(): string {
+  return dockerCapture(["ps", "--format", "{{.Names}}"], {
+    ignoreError: true,
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+}
+
+function defaultListSandboxNames(): string[] {
+  try {
+    return registry.listSandboxes().sandboxes.map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+const defaultSandboxContainerRunners: SandboxContainerFailureRunners = {
+  listAllContainerNames: defaultListAllContainerNames,
+  listRunningContainerNames: defaultListRunningContainerNames,
+  listSandboxNames: defaultListSandboxNames,
+  portProbe: defaultPortProbe,
+};
+
+function isValidDashboardPort(port: number | null | undefined): port is number {
+  return (
+    typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535
+  );
+}
+
+export async function classifySandboxContainerFailure(
+  sandboxName: string,
+  opts: {
+    dashboardPort?: number | null;
+    runners?: SandboxContainerFailureRunners;
+  } = {},
+): Promise<SandboxContainerFailureResult | null> {
+  const runners = opts.runners ?? defaultSandboxContainerRunners;
+  const registeredSandboxNames = runners.listSandboxNames();
+  const running = resolveSandboxContainerOwner(
+    runners.listRunningContainerNames(),
+    sandboxName,
+    registeredSandboxNames,
+  );
+  if (running) return null;
+  const present = resolveSandboxContainerOwner(
+    runners.listAllContainerNames(),
+    sandboxName,
+    registeredSandboxNames,
+  );
+  if (!present) return null;
+  const dashboardPort = opts.dashboardPort;
+  if (isValidDashboardPort(dashboardPort) && (await runners.portProbe(dashboardPort))) {
+    return {
+      layer: "sandbox_dashboard_port_conflict",
+      detail: `Sandbox container '${present}' is stopped and dashboard port ${dashboardPort} is held by another process.`,
+    };
+  }
+  return {
+    layer: "sandbox_container_stopped",
+    detail: `Sandbox container '${present}' exists but is not running.`,
+  };
 }
 
 type SandboxDriverLookup = (
@@ -160,7 +256,10 @@ const NON_DOCKER_DRIVERS = new Set(["vm"]);
  * guidance on a Docker-less host; that is preferable to silently regressing
  * every legacy Docker sandbox. (#4428)
  */
-function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLookup): boolean {
+function isDockerBackedSandbox(
+  sandboxName: string,
+  getSandbox: SandboxDriverLookup,
+): boolean {
   const driver = getSandbox(sandboxName)?.openshellDriver;
   return !(typeof driver === "string" && NON_DOCKER_DRIVERS.has(driver.toLowerCase()));
 }
@@ -170,10 +269,9 @@ function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLoo
  * `docker_unreachable` layer of {@link classifyGatewayFailure}). Sandbox
  * commands use this as a fast preflight so a transient Docker daemon outage is
  * classified as a host runtime problem rather than a stuck sandbox phase or a
- * connect timeout (#4428). Returns `false` for non-Docker drivers so VM/
- * Kubernetes sandboxes are never misclassified. `docker info` is a `spawnSync`
- * call, so this stays synchronous and can run from non-async call sites such
- * as `logs` and `policy-list`.
+ * connect timeout (#4428). Returns `false` for VM sandboxes so they are never
+ * misclassified. `docker info` is a `spawnSync` call, so this stays synchronous
+ * and can run from non-async call sites such as `logs` and `policy-list`.
  */
 export function isDockerRuntimeDown(
   sandboxName: string,
