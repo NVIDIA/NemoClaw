@@ -89,28 +89,15 @@ describe("channels mutation oclif commands", () => {
     });
   });
 
-  // Scenario 12 (#4305): the shared flag exposes a (no-op) --force on
-  // remove/start/stop too; confirm it is threaded so the no-op is faithful.
-  it("threads --force through remove/start/stop (shared flag, no-op downstream)", async () => {
-    await ChannelsRemoveCommand.run(["alpha", "telegram", "--force"], rootDir);
-    await ChannelsStartCommand.run(["alpha", "telegram", "--force"], rootDir);
-    await ChannelsStopCommand.run(["alpha", "slack", "--force"], rootDir);
-
-    expect(mocks.removeSandboxChannel).toHaveBeenCalledWith("alpha", {
-      channel: "telegram",
-      dryRun: false,
-      force: true,
-    });
-    expect(mocks.startSandboxChannel).toHaveBeenCalledWith("alpha", {
-      channel: "telegram",
-      dryRun: false,
-      force: true,
-    });
-    expect(mocks.stopSandboxChannel).toHaveBeenCalledWith("alpha", {
-      channel: "slack",
-      dryRun: false,
-      force: true,
-    });
+  // Scenario 12 (#4305): --force is add-only. Only `channels add` can create a
+  // cross-sandbox credential overlap, so only it exposes the override; surfacing
+  // a no-op --force on remove/start/stop would mislead users and break the
+  // CLI/docs flag-parity check.
+  it("exposes --force only on add, not on remove/start/stop", () => {
+    expect(ChannelsAddCommand.flags).toHaveProperty("force");
+    expect(ChannelsRemoveCommand.flags).not.toHaveProperty("force");
+    expect(ChannelsStartCommand.flags).not.toHaveProperty("force");
+    expect(ChannelsStopCommand.flags).not.toHaveProperty("force");
   });
 
   it("requires a channel before dispatch", async () => {
