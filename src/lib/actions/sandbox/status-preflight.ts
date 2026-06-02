@@ -127,15 +127,19 @@ export async function getSandboxStatusPreflight(
 }
 
 /**
- * Print the exact first-line preflight header. Unlike gateway-level fallback
- * headers this intentionally has no leading indentation because users and
- * tests rely on `docker_unreachable` being the first bytes of status output.
+ * Preserve terminal OpenShell sandbox phases as the primary user-facing cause
+ * only for host-wide Docker daemon outages. A terminal `Failed`/`Error` phase
+ * is authoritative enough that docker_unreachable guidance would be misleading
+ * (#4428). Per-sandbox stopped-container and dashboard-port-conflict failures
+ * are more specific local delivery failures and must remain visible even when
+ * OpenShell reports `Phase: Error` (#4515).
  */
 export function withoutTerminalPhasePreflight(
   preflight: SandboxStatusPreflightResult,
   phase: string | null,
 ): SandboxStatusPreflightResult {
   if (!phase || !isTerminalSandboxPhase(phase)) return preflight;
+  if (preflight.failureLayer !== "docker_unreachable") return preflight;
   return {
     failure: null,
     failureLayer: null,
@@ -144,6 +148,11 @@ export function withoutTerminalPhasePreflight(
   };
 }
 
+/**
+ * Print the exact first-line preflight header. Unlike gateway-level fallback
+ * headers this intentionally has no leading indentation because users and
+ * tests rely on `docker_unreachable` being the first bytes of status output.
+ */
 export function printSandboxStatusPreflightHeader(
   preflight: SandboxStatusPreflightResult,
   writer: (message: string) => void = console.log,

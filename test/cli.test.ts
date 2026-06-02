@@ -1250,6 +1250,12 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Error'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo '  Provider: openai-api'",
@@ -1282,6 +1288,7 @@ describe("CLI dispatch", () => {
       ),
     ).toBe(true);
     expect(r.out).not.toContain("Inference: healthy");
+    expect(r.out).toContain("Phase: Error");
     expect(r.out).not.toContain("Failure layer: docker_unreachable");
     expect(r.out).not.toContain("Failure layer: sandbox_dashboard_port_conflict");
     const headerIdx = r.out.indexOf("Failure layer: sandbox_container_stopped");
@@ -1337,6 +1344,12 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo '  Name: alpha'",
+          "  echo '  Phase: Error'",
+          "  exit 0",
+          "fi",
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
           "  echo 'Gateway inference:'",
           "  echo '  Provider: openai-api'",
@@ -1369,6 +1382,7 @@ describe("CLI dispatch", () => {
         ),
       ).toBe(true);
       expect(r.out).not.toContain("Inference: healthy");
+      expect(r.out).toContain("Phase: Error");
       expect(r.out).not.toContain("Failure layer: sandbox_container_stopped —");
       const headerIdx = r.out.indexOf("Failure layer: sandbox_dashboard_port_conflict");
       const sandboxIdx = r.out.indexOf("Sandbox: alpha");
@@ -1816,6 +1830,12 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Error'",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo '  Provider: openai-api'",
@@ -1844,6 +1864,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     const parsed = JSON.parse(r.out);
     expect(parsed.failureLayer).toBe("sandbox_container_stopped");
+    expect(parsed.phase).toBe("Error");
     expect(parsed.inferenceHealth).toBeNull();
   });
 
@@ -1889,6 +1910,12 @@ describe("CLI dispatch", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo '  Name: alpha'",
+          "  echo '  Phase: Error'",
+          "  exit 0",
+          "fi",
           'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
           "  echo 'Gateway inference:'",
           "  echo '  Provider: openai-api'",
@@ -1917,6 +1944,7 @@ describe("CLI dispatch", () => {
       expect(r.code).toBe(1);
       const parsed = JSON.parse(r.out);
       expect(parsed.failureLayer).toBe("sandbox_dashboard_port_conflict");
+      expect(parsed.phase).toBe("Error");
       expect(parsed.inferenceHealth).toBeNull();
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
