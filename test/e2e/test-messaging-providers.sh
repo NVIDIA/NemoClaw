@@ -925,6 +925,12 @@ fi
 whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
 if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
   pass "M-WA6b: WhatsApp compact-QR preload installed root:444 (#4522)"
+elif [ "$whatsapp_qr_preload_stat" = "sandbox:444" ]; then
+  # Non-root sandbox mode: emit_sandbox_sourced_file produces sandbox:444
+  # because chown root:root is skipped when id -u != 0.  The file is still
+  # read-only (mode 444) which is the security-relevant property; ownership
+  # differs only in privilege-separation posture (see sandbox-init.sh).
+  pass "M-WA6b: WhatsApp compact-QR preload installed sandbox:444 (non-root mode) (#4522)"
 elif [ "$whatsapp_qr_preload_stat" = "missing" ]; then
   fail "M-WA6b: WhatsApp compact-QR preload not installed in sandbox (#4522)"
 else
