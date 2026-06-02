@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isTerminalSandboxPhase } from "../../state/gateway";
 import type * as registry from "../../state/registry";
 import {
   classifyGatewayFailure,
@@ -39,6 +40,13 @@ export type SandboxStatusFailureLayer =
 export interface SandboxStatusPreflightFailure {
   layer: SandboxStatusFailureLayer;
   dockerUnreachable: boolean;
+}
+
+export interface SandboxStatusPreflightResult {
+  failure: SandboxStatusPreflightFailure | null;
+  failureLayer: SandboxStatusFailureLayer | null;
+  suppressInferenceProbe: boolean;
+  exitCode: 0 | 1;
 }
 
 export type DockerInfoProbe = () => boolean;
@@ -97,6 +105,52 @@ export async function classifySandboxStatusPreflightFailure(
     return { layer: sandboxFailure.layer, dockerUnreachable: false };
   }
   return null;
+}
+
+/**
+ * Shared text/JSON adapter for preflight failures. It owns the projection from
+ * classifier result to JSON `failureLayer`, inference-probe suppression, and
+ * the text renderer's non-zero exit decision so `status.ts` only renders the
+ * returned contract.
+ */
+export async function getSandboxStatusPreflight(
+  sb: registry.SandboxEntry | null,
+  deps: ClassifySandboxStatusPreflightFailureDeps = {},
+): Promise<SandboxStatusPreflightResult> {
+  const failure = await classifySandboxStatusPreflightFailure(sb, deps);
+  return {
+    failure,
+    failureLayer: failure ? failure.layer : null,
+    suppressInferenceProbe: failure !== null,
+    exitCode: failure ? 1 : 0,
+  };
+}
+
+/**
+ * Print the exact first-line preflight header. Unlike gateway-level fallback
+ * headers this intentionally has no leading indentation because users and
+ * tests rely on `docker_unreachable` being the first bytes of status output.
+ */
+export function withoutTerminalPhasePreflight(
+  preflight: SandboxStatusPreflightResult,
+  phase: string | null,
+): SandboxStatusPreflightResult {
+  if (!phase || !isTerminalSandboxPhase(phase)) return preflight;
+  return {
+    failure: null,
+    failureLayer: null,
+    suppressInferenceProbe: preflight.suppressInferenceProbe,
+    exitCode: 0,
+  };
+}
+
+export function printSandboxStatusPreflightHeader(
+  preflight: SandboxStatusPreflightResult,
+  writer: (message: string) => void = console.log,
+): void {
+  if (preflight.failure) {
+    writer(getLayerHeader(preflight.failure.layer));
+  }
 }
 
 /**

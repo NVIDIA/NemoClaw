@@ -130,8 +130,8 @@ function stageOptimizedSandboxBuildContext(
   );
   // OpenClaw config generator extracted in #2449 (fixed in #2565)
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "generate-openclaw-config.py"),
-    path.join(stagedScriptsDir, "generate-openclaw-config.py"),
+    path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
+    path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "openclaw-build-messaging-plugins.py"),

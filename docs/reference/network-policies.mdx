@@ -72,6 +72,9 @@ After selecting a tier, a combined preset and access-mode screen lets you includ
 Tier-default presets are pre-selected; additional presets can be added from the full list.
 NemoClaw filters tier defaults by the active agent's supported integrations.
 For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+Claude Code direct egress is not included in any tier or `shields down` permissive policy.
+If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
+Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 
