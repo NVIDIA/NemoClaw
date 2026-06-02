@@ -112,6 +112,27 @@ describe("onboard policy preset suggestions", () => {
     expect(getSuggestedPolicyPresets({})).not.toContain("openclaw-pricing");
   });
 
+  it("suggests local OTEL policy only when OpenClaw OTEL is enabled", () => {
+    const original = process.env.NEMOCLAW_OPENCLAW_OTEL;
+    try {
+      delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+      expect(getSuggestedPolicyPresets({ agent: "openclaw" })).not.toContain(
+        "openclaw-diagnostics-otel-local",
+      );
+
+      process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+      expect(getSuggestedPolicyPresets({ agent: "openclaw" })).toContain(
+        "openclaw-diagnostics-otel-local",
+      );
+      expect(getSuggestedPolicyPresets({ agent: "hermes" })).not.toContain(
+        "openclaw-diagnostics-otel-local",
+      );
+    } finally {
+      if (original === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+      else process.env.NEMOCLAW_OPENCLAW_OTEL = original;
+    }
+  });
+
   it("adds openclaw-pricing to tier suggestions when agent is openclaw", () => {
     const knownWithPricing = [...known, "openclaw-pricing"];
     const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
@@ -144,6 +165,31 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: knownWithPricing,
     });
     expect(omittedAgentSuggestions).not.toContain("openclaw-pricing");
+  });
+
+  it("adds local OTEL policy to tier suggestions only when OpenClaw OTEL is enabled", () => {
+    const original = process.env.NEMOCLAW_OPENCLAW_OTEL;
+    const knownWithOtel = [...known, "openclaw-pricing", "openclaw-diagnostics-otel-local"];
+    try {
+      process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+      const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithOtel,
+        agent: "openclaw",
+      });
+      expect(openclawSuggestions).toContain("openclaw-diagnostics-otel-local");
+
+      process.env.NEMOCLAW_OPENCLAW_OTEL = "0";
+      const disabledSuggestions = computeSetupPresetSuggestions("balanced", {
+        enabledChannels: [],
+        knownPresetNames: knownWithOtel,
+        agent: "openclaw",
+      });
+      expect(disabledSuggestions).not.toContain("openclaw-diagnostics-otel-local");
+    } finally {
+      if (original === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+      else process.env.NEMOCLAW_OPENCLAW_OTEL = original;
+    }
   });
 
   it("returns balanced tier defaults without messaging presets when no channels enabled", () => {

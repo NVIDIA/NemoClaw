@@ -13,6 +13,10 @@ import {
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
+import {
+  isOpenclawOtelEnabled,
+  mergeRequiredOpenclawOtelPolicyPresets,
+} from "./openclaw-otel-policy-presets";
 import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
@@ -93,17 +97,26 @@ export function mergeRequiredSetupPolicyPresets(
   options: {
     enabledChannels?: string[] | null;
     hermesToolGateways?: string[] | null;
+    agent?: string | null;
     knownPresetNames?: string[] | Set<string> | null;
+    env?: NodeJS.ProcessEnv;
   } = {},
 ): string[] {
-  return mergeRequiredMessagingChannelPolicyPresets(
-    mergeRequiredHermesToolGatewayPolicyPresets(
-      policyPresets,
-      options.hermesToolGateways,
+  return mergeRequiredOpenclawOtelPolicyPresets(
+    mergeRequiredMessagingChannelPolicyPresets(
+      mergeRequiredHermesToolGatewayPolicyPresets(
+        policyPresets,
+        options.hermesToolGateways,
+        options.knownPresetNames,
+      ),
+      options.enabledChannels,
       options.knownPresetNames,
     ),
-    options.enabledChannels,
-    options.knownPresetNames,
+    {
+      agent: options.agent,
+      knownPresetNames: options.knownPresetNames,
+      env: options.env,
+    },
   );
 }
 
@@ -152,7 +165,10 @@ export function computeSetupPresetSuggestions(
   };
   if (webSearchConfig) add("brave");
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
-  if (agent === "openclaw") add("openclaw-pricing");
+  if (agent === "openclaw") {
+    add("openclaw-pricing");
+    if (isOpenclawOtelEnabled()) add("openclaw-diagnostics-otel-local");
+  }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
     for (const preset of requiredMessagingChannelPolicyPresets(enabledChannels)) add(preset);
@@ -173,8 +189,10 @@ export function preparePolicyPresetResumeSelection(
     disabledChannels?: string[] | null;
     enabledChannels?: string[] | null;
     hermesToolGateways?: string[] | null;
+    agent?: string | null;
     webSearchConfig?: WebSearchConfig | null;
     webSearchSupported?: boolean | null;
+    env?: NodeJS.ProcessEnv;
   },
 ): PreparedPolicyResumeSelection {
   const supportOptions = { webSearchSupported: options.webSearchSupported };
@@ -225,7 +243,9 @@ export function preparePolicyPresetResumeSelection(
     policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
       enabledChannels: options.enabledChannels,
       hermesToolGateways: options.hermesToolGateways,
+      agent: options.agent,
       knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
+      env: options.env,
     });
   }
 
@@ -311,7 +331,9 @@ async function setupPoliciesWithSelectionInner(
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
       enabledChannels,
       hermesToolGateways,
+      agent,
       knownPresetNames: knownSelectablePresets,
+      env: deps.env,
     });
     chosen = pruneDisabledPresets(chosen);
   }
@@ -379,7 +401,9 @@ async function setupPoliciesWithSelectionInner(
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
       enabledChannels,
       hermesToolGateways,
+      agent,
       knownPresetNames: knownPresets,
+      env: deps.env,
     });
     chosen = pruneDisabledPresets(chosen);
 
@@ -423,7 +447,13 @@ async function setupPoliciesWithSelectionInner(
   const interactiveChoice = pruneDisabledPresets(
     mergeRequiredSetupPolicyPresets(
       resolvedPresets.map((preset) => preset.name),
-      { enabledChannels, hermesToolGateways, knownPresetNames: knownNames },
+      {
+        enabledChannels,
+        hermesToolGateways,
+        agent,
+        knownPresetNames: knownNames,
+        env: deps.env,
+      },
     ),
   );
 

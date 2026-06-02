@@ -3402,6 +3402,7 @@ async function createSandbox(
     {
       directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled,
       dockerGpuPatch: useDockerGpuPatch,
+      agentName: agent?.name ?? "openclaw",
       additionalPresets: hermesToolGateways,
     },
   );

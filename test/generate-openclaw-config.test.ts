@@ -195,6 +195,47 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.models).toBeDefined();
   });
 
+  it("keeps OpenClaw OTEL diagnostics disabled by default", () => {
+    const config = runConfigScript();
+    expect(config.diagnostics).toBeUndefined();
+    expect(config.plugins.entries["diagnostics-otel"]).toBeUndefined();
+  });
+
+  it("enables traces-only OpenClaw OTEL diagnostics when requested", () => {
+    const config = buildConfigDirect({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+      NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "nemoclaw-local",
+      NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+    });
+
+    expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
+    expect(config.diagnostics).toEqual({
+      enabled: true,
+      otel: {
+        enabled: true,
+        endpoint: "http://host.openshell.internal:4318",
+        protocol: "http/protobuf",
+        serviceName: "nemoclaw-local",
+        traces: true,
+        metrics: false,
+        logs: false,
+        sampleRate: 0.5,
+      },
+    });
+    expect(config.diagnostics.otel.captureContent).toBeUndefined();
+  });
+
+  it("rejects OTEL endpoints with embedded credentials", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://token@example.com:4318",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  });
+
   it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);

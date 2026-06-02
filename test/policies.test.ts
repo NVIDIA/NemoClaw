@@ -177,6 +177,7 @@ describe("policies", () => {
         "nous-image",
         "nous-web",
         "npm",
+        "openclaw-diagnostics-otel-local",
         "openclaw-pricing",
         "outlook",
         "pypi",
@@ -355,6 +356,38 @@ describe("policies", () => {
         parsed?.network_policies?.["openclaw-pricing"]?.binaries ?? [];
       const binaryPaths = binaries.map((entry) => entry.path).sort();
       expect(binaryPaths).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    });
+
+    it("openclaw-diagnostics-otel-local preset pins OTLP traces to the host collector path", () => {
+      const parsed = parsePresetYaml("openclaw-diagnostics-otel-local");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.endpoints ?? [];
+
+      expect(endpoints).toHaveLength(1);
+      expect(endpoints[0]).toMatchObject({
+        host: "host.openshell.internal",
+        port: 4318,
+        protocol: "rest",
+        enforcement: "enforce",
+        rules: [
+          { allow: { method: "POST", path: "/v1/traces" } },
+          { allow: { method: "POST", path: "/v1/traces/**" } },
+        ],
+      });
+      expect(endpoints[0].allowed_ips).toEqual([
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+      ]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual([
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+        "/usr/local/bin/openclaw",
+      ]);
     });
 
     it("local-inference preset includes openclaw and common tool binaries", () => {

@@ -235,4 +235,22 @@ network_policies:
     expect(prepared.appliedPresets).toEqual(["slack", "nous-web"]);
     expect(prepared.cleanup?.()).toBe(true);
   });
+
+  it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled", () => {
+    const original = process.env.NEMOCLAW_OPENCLAW_OTEL;
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    try {
+      process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+      const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+        agentName: "openclaw",
+      });
+
+      expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
+      expect(prepared.policyPath).not.toBe(basePolicyPath);
+      expect(prepared.cleanup?.()).toBe(true);
+    } finally {
+      if (original === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+      else process.env.NEMOCLAW_OPENCLAW_OTEL = original;
+    }
+  });
 });

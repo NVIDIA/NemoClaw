@@ -7,6 +7,7 @@ import type { WebSearchConfig } from "../inference/web-search";
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
 };
+import { isOpenclawOtelEnabled } from "./openclaw-otel-policy-presets";
 
 export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
@@ -30,6 +31,7 @@ export function getSuggestedPolicyPresets({
   }
   if (agent === "openclaw") {
     suggestions.push("openclaw-pricing");
+    if (isOpenclawOtelEnabled()) suggestions.push("openclaw-diagnostics-otel-local");
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
   const nonInteractive =
