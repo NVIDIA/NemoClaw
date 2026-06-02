@@ -277,3 +277,35 @@ export function parseGatewayInference(output: string | null | undefined): Gatewa
   if (!provider && !model) return null;
   return { provider, model };
 }
+
+export interface RecordedInferenceRoute {
+  provider: string;
+  model: string;
+}
+
+export type InferenceRoutePlan =
+  | { kind: "aligned" }
+  | { kind: "repair" }
+  | { kind: "diverged"; live: GatewayInference; recorded: RecordedInferenceRoute };
+
+// Decide how `connect` reconciles the live gateway route with a sandbox's
+// recorded route. `diverged` (valid but different) must be surfaced loudly by
+// the caller — silently overriding it was #3726.
+export function planInferenceRouteReconcile(
+  live: GatewayInference | null,
+  recorded: RecordedInferenceRoute,
+): InferenceRoutePlan {
+  // No usable live route (absent or partial) → repair, not a loud override.
+  if (!live || !live.provider || !live.model) {
+    return { kind: "repair" };
+  }
+  if (live.provider !== recorded.provider || live.model !== recorded.model) {
+    return { kind: "diverged", live, recorded };
+  }
+  return { kind: "aligned" };
+}
+
+// Strip control chars so untrusted route values can't inject terminal escapes when printed.
+export function sanitizeRouteValueForDisplay(value: string | null | undefined): string {
+  return (value ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+}
