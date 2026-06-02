@@ -1271,6 +1271,27 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.models.providers.deepinfra).toBeUndefined();
   });
 
+  it("propagates ollama-local streaming usage compat through the managed inference route (#3947)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "qwen3.6:35b",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/qwen3.6:35b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsUsageInStreaming: true }),
+      ).toString("base64"),
+    });
+
+    expect(Object.keys(config.models.providers)).toEqual(["inference"]);
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "qwen3.6:35b",
+      name: "inference/qwen3.6:35b",
+      compat: { supportsUsageInStreaming: true },
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/qwen3.6:35b");
+  });
+
   it("adds Kimi K2.6 compat for managed inference.local chat completions", () => {
     const config = runConfigScript({
       NEMOCLAW_MODEL: "moonshotai/kimi-k2.6",
