@@ -194,6 +194,29 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# Drop the marker the Docker HEALTHCHECK reads to decide whether an
+# in-container gateway liveness check is meaningful. We write it as early as
+# possible on the gateway-serving path — before the long startup work below —
+# so a slow or hung boot is governed by the strict local liveness check
+# (pgrep + gateway log) instead of being masked as healthy. Its presence means
+# this container runs the OpenClaw gateway (standalone deployments and the
+# #3975 forwarded-port shape). Its absence means the gateway is delivered out
+# of this container's namespace (OpenShell docker-driver sandboxes run it on
+# the host — #4503); an in-container probe cannot observe it, so the HEALTHCHECK
+# reports healthy and defers to NemoClaw/OpenShell host-side delivery-chain
+# monitoring. See the HEALTHCHECK block in the Dockerfile.
+# Best-effort: a write failure must never block startup.
+mark_in_container_gateway() {
+  : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
+}
+# A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
+# (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
+# absent. Both the root and non-root entrypoint paths gate gateway startup on
+# the same emptiness check further below.
+if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+  mark_in_container_gateway
+fi
+
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
   python3 - "$CHAT_UI_URL" <<'PYPORT'

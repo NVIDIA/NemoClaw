@@ -145,9 +145,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 20 presets", () => {
+    it("returns all 21 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(20);
+      expect(presets.length).toBe(21);
     });
 
     it("each preset has name and description", () => {
@@ -165,6 +165,7 @@ describe("policies", () => {
       const expected = [
         "brave",
         "brew",
+        "claude-code",
         "discord",
         "github",
         "huggingface",
@@ -1639,6 +1640,64 @@ exit 1
           expect.arrayContaining(baselineReadWrite),
         );
       }
+    });
+
+    it("Claude Code hosts require the explicit claude-code preset", () => {
+      const claudeHosts = new Set(["api.anthropic.com", "statsig.anthropic.com", "sentry.io"]);
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+        "agents/hermes/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = parseRepoYaml(relativePath) as {
+          network_policies?: Record<string, { endpoints?: Array<{ host?: string }> }>;
+        };
+        expect(parsed.network_policies, relativePath).not.toHaveProperty("claude_code");
+        const hosts = Object.values(parsed.network_policies ?? {})
+          .flatMap((policy) => policy.endpoints ?? [])
+          .map((endpoint) => endpoint.host)
+          .filter((host): host is string => typeof host === "string");
+        expect(hosts.filter((host) => claudeHosts.has(host)), relativePath).toEqual([]);
+      }
+
+      const preset = parseRepoYaml("nemoclaw-blueprint/policies/presets/claude-code.yaml") as {
+        preset?: { name?: string };
+        network_policies?: Record<
+          string,
+          {
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: unknown[];
+            }>;
+            binaries?: Array<{ path?: string }>;
+          }
+        >;
+      };
+      const claudePolicy = preset.network_policies?.claude_code;
+      expect(preset.preset?.name).toBe("claude-code");
+      expect(claudePolicy).toBeDefined();
+      expect((claudePolicy?.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual(
+        [...claudeHosts].sort(),
+      );
+      for (const endpoint of claudePolicy?.endpoints ?? []) {
+        expect(endpoint.port).toBe(443);
+        expect(endpoint.protocol).toBe("rest");
+        expect(endpoint.enforcement).toBe("enforce");
+        expect(endpoint).not.toHaveProperty("access");
+        expect(endpoint.rules).toEqual(
+          expect.arrayContaining([
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/**" } },
+          ]),
+        );
+      }
+      expect((claudePolicy?.binaries ?? []).map((binary) => binary.path)).not.toContain("/**");
     });
 
     it("brew preset whitelists the PATH wrapper and Homebrew-managed entrypoints (#3913)", () => {

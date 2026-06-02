@@ -286,6 +286,43 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reachable from sandbox"));
   });
 
+  it("uses Docker GPU patch verifier when supplied", () => {
+    const verifyDirectSandboxGpu = vi.fn();
+    const verifyGpuOrExit = vi.fn((proof: (sandboxName: string) => void) => proof("alpha"));
+    verifyGpuSandboxAfterReady(
+      GPU_CONFIG,
+      "vllm-local",
+      baseOptions({
+        verifyDirectSandboxGpu,
+        verifyGpuOrExit,
+        deps: {
+          findContainerIds: () => ["container-abc"],
+          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
+          dockerRun: dockerRunWithCurl({ status: 0 }),
+          sleep: vi.fn(),
+        },
+      }),
+    );
+    expect(verifyGpuOrExit).toHaveBeenCalledWith(verifyDirectSandboxGpu);
+    expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not duplicate proof diagnostics when Docker GPU patch verifier handles them", () => {
+    const proofError = new Error("process.exit");
+    const verifyGpuOrExit = vi.fn(() => {
+      throw proofError;
+    });
+    const logError = vi.fn();
+    expect(() =>
+      verifyGpuSandboxAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        baseOptions({ verifyGpuOrExit, logError }),
+      ),
+    ).toThrow(proofError);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
   it("routes failure diagnostics through the provided error sink and exits", () => {
     const logError = vi.fn();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {

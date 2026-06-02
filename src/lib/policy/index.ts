@@ -1284,6 +1284,7 @@ export {
   listSetupPolicyPresets,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
+  parsePresetPolicyKeys,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,
