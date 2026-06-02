@@ -10,7 +10,7 @@ const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
 
 const GENERATED_NOTICE =
-  "{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Do not edit by hand. */}";
+  "{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
 
 const checkOnly = process.argv.includes("--check");
 

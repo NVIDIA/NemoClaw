@@ -9,29 +9,31 @@ keywords: ["nemohermes cli commands", "hermes command reference", "nemohermes co
 content:
   type: "reference"
 ---
-{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Do not edit by hand. */}
+{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}
 
 The `nemohermes` alias is the primary interface for managing Hermes sandboxes through NemoClaw.
 It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash`).
-Most commands in this reference share the same shape as `nemohermes`; use `nemohermes` when you want Hermes selected by default.
-For guidance on when to use `nemohermes`, `nemohermes`, or the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide).
+Most commands in this reference use the same arguments and subcommands across agent variants.
+Use `nemohermes` when you want Hermes selected by default.
+For guidance on choosing between the agent CLIs and the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide).
 
 ## Agent Selection
 
 Use `nemohermes` for the Hermes variant.
-It is equivalent to running `nemohermes` with `--agent hermes` during onboarding or `NEMOCLAW_AGENT=hermes` for other commands.
+It selects Hermes by default during onboarding and for other commands.
+Use `--agent hermes` during onboarding or set `NEMOCLAW_AGENT=hermes` when you need the same selection through another entry point.
 Hermes-specific sections below describe the OpenAI-compatible API endpoint, optional Hermes dashboard, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
 
 ```console
-$ nemohermes onboard              # equivalent to: nemohermes onboard --agent hermes
-$ nemohermes my-sandbox connect   # same command shape as: nemohermes my-sandbox connect
+$ nemohermes onboard              # selects Hermes by default
+$ nemohermes my-sandbox connect   # connects to a Hermes sandbox
 ```
 
 ## In-Sandbox Commands
 
-Hermes does not use the OpenClaw `/nemohermes` chat slash command.
+Hermes does not use the OpenClaw chat slash command.
 Use the host-side `nemohermes` commands for lifecycle, status, policy, and inference operations.
-The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes NemoClaw tools such as `nemohermes_status`, `nemohermes_info`, and `nemohermes_reload_skills`, plus an `on_session_start` hook.
+The in-sandbox Hermes integration installs the NemoClaw Hermes plugin, which exposes tools for status, environment information, and skill reload support, plus an `on_session_start` hook.
 
 ## Standalone Host Commands
 
