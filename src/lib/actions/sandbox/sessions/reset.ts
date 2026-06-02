@@ -1,6 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Scope boundary for `nemoclaw <name> sessions reset`:
+//
+//   - NemoClaw side (this file): validate the requested key/agent, canonicalise
+//     the session key, dispatch the `sessions.reset` JSON-RPC to the in-sandbox
+//     OpenClaw gateway, and surface the envelope to the user.
+//   - OpenClaw side (upstream openclaw.ai): owns the actual reset semantics,
+//     including clearing the session entry, releasing stale `.jsonl.lock`
+//     files, recovering from a corrupt `sessions.json`, and guaranteeing that
+//     the next message lands on a clean session. NemoClaw does not touch the
+//     in-sandbox session store directly; the upstream recovery contract and
+//     its test coverage live with the gateway server, not here.
+
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { callOpenclawGateway } from "./gateway-rpc";
 import {

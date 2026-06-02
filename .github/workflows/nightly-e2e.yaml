@@ -479,6 +479,13 @@ jobs:
   # add/delete lifecycle, and their related routing through the public-argv
   # translator. The OpenShell sandbox is provisioned end-to-end so the
   # groups are exercised against a live OpenClaw runtime.
+  #
+  # Secret-bearing target-ref execution: this job follows the same shape as
+  # the other `e2e-script.yaml` callers in this workflow. `NVIDIA_API_KEY`
+  # is the repo-scoped E2E credential (not a production key); the top-level
+  # `github.repository == 'NVIDIA/NemoClaw'` gate keeps fork events out, and
+  # `workflow_dispatch` is maintainer-only. `github_token` is intentionally
+  # disabled because the script does not consume a GitHub token.
   sessions-agents-cli-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||

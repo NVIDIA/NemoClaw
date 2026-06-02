@@ -49,10 +49,10 @@ describe("parseGatewayCallEnvelope", () => {
   });
 
   it("prefers the gateway envelope even when an unrelated JSON line trails it", () => {
-    // Regression for PR #4615 advisor finding: previously the parser picked
-    // the last JSON-shaped line on stdout. If a debug log line emits a JSON
-    // object after the envelope, that unrelated object should not be returned
-    // in place of the real envelope.
+    // Regression: the parser must ignore trailing non-envelope JSON. An
+    // earlier version picked the last JSON-shaped line on stdout, which
+    // would let a debug log object emitted after the envelope masquerade as
+    // the gateway response.
     const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
       [
         '{"result":{"ok":true,"key":"agent:main:main"}}',
