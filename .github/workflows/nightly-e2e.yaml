@@ -144,6 +144,13 @@ on:
         required: false
         type: string
         default: ""
+      post_to_slack:
+        description: >-
+          Post the scorecard to a preview Slack channel on selective
+          dispatches (schedule and full runs always post).
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -2246,6 +2253,14 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: Checkout scorecard builder
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/scorecard
+          sparse-checkout-cone-mode: false
+
       - name: Generate nightly scorecard
         id: scorecard
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -2291,11 +2306,31 @@ jobs:
             const ran = total - skipped;
             const perfect = failure === 0 && cancelled === 0 && ran > 0;
 
-            // ── Identify failed jobs ────────────────────────────────
-            const failedJobs = entries
+            // ── Identify failed jobs (with html_url for clickable links) ──
+            const failedNames = entries
               .filter(([, { result }]) => result === 'failure')
               .map(([name]) => name)
               .sort();
+
+            let urlByName = new Map();
+            if (failedNames.length > 0) {
+              try {
+                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                });
+                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
+              } catch (e) {
+                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+              }
+            }
+
+            const failedJobs = failedNames.map((name) => ({
+              name,
+              url: urlByName.get(name) || null,
+            }));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
@@ -2367,15 +2402,15 @@ jobs:
               `**Jobs run:** ${ran} of ${total}`,
               `  ✅ ${success} passed`,
               `  ❌ ${failure} failed`,
-              `  ⊘  ${cancelled} cancelled`,
-              `  ⏭️  ${skipped} skipped`,
+              `  🚫 ${cancelled} cancelled`,
+              `  ⏭️ ${skipped} skipped`,
             );
 
             if (failedJobs.length > 0) {
               lines.push('');
               lines.push('**Failed jobs:**');
-              for (const name of failedJobs) {
-                lines.push(`  - \`${name}\``);
+              for (const job of failedJobs) {
+                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
               }
             }
 
@@ -2394,37 +2429,94 @@ jobs:
             await core.summary.write();
             core.setOutput('scorecard', scorecard);
 
-      # ── Optional Slack notification ────────────────────────────
+            // Structured data for the Slack step.
+            // Contract: scripts/scorecard/build-slack-blocks.ts
+            core.setOutput('scorecardData', JSON.stringify({
+              today,
+              runMode,
+              isSelectiveDispatch,
+              requestedJobs,
+              total,
+              ran,
+              success,
+              failure,
+              cancelled,
+              skipped,
+              perfect,
+              failedJobs,
+              trendLine,
+              runUrl,
+            }));
+
+      # ── Slack notification ────────────────────────────
+      # Production routes (always post; runMode is computed by the generate step):
+      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
+      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #
+      # Selective dispatch is skipped by default. Devs may opt into the
+      # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
       - name: Post scorecard to Slack
-        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
+          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
+          SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
+          POST_TO_SLACK: ${{ inputs.post_to_slack }}
         with:
           script: |
-            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-            if (!webhookUrl) {
-              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
+            const path = require('path');
+            const {
+              buildBlocks,
+              buildFallbackText,
+              getStatusColor,
+              getSlackChannel,
+            } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+            );
+
+            const data = JSON.parse(process.env.SCORECARD_DATA);
+            const channel = getSlackChannel(data);
+
+            // Selective dispatches only post when the user explicitly opts in.
+            // Schedule + Manual full run always post.
+            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
+              core.info('Selective dispatch without post_to_slack — skipping');
               return;
             }
 
-            const scorecard = process.env.SCORECARD_TEXT;
+            const envByChannel = {
+              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
+              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
+            };
+            const webhookUrl = process.env[envByChannel[channel]];
 
-            // Strip markdown formatting for Slack plain-text rendering
-            const slackText = scorecard
-              .replace(/^## /gm, '')
-              .replace(/\*\*/g, '*')
-              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+            if (!webhookUrl) {
+              core.info(`Slack webhook for "${channel}" not configured — skipping`);
+              return;
+            }
+
+            // Legacy attachment wrapper enables the coloured left-edge bar.
+            const payload = {
+              text: buildFallbackText(data),
+              attachments: [
+                {
+                  color: getStatusColor(data),
+                  blocks: buildBlocks(data),
+                },
+              ],
+            };
 
             const resp = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: slackText }),
+              body: JSON.stringify(payload),
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
             } else {
-              core.info('Scorecard posted to Slack');
+              core.info(`Scorecard posted to Slack (${channel})`);
             }

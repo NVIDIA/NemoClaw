@@ -14,7 +14,10 @@ describe("detectVllmProfile", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Spark");
-    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
+    expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.image).toBe(
+      "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712",
+    );
   });
 
   it("returns the Spark profile when legacy gpu.spark is true", () => {
@@ -27,6 +30,9 @@ describe("detectVllmProfile", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
+    // Station is unchanged by the Spark NVFP4 move: NGC image + Qwen3.6-27B.
+    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
+    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
   });
 
   it("returns the generic Linux profile for non-Spark/Station NVIDIA hosts", () => {
@@ -34,6 +40,7 @@ describe("detectVllmProfile", () => {
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("Linux + NVIDIA GPU");
     expect(profile!.defaultModel.id).toContain("Nemotron-3-Nano-4B");
+    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
   });
 
   it("prefers Spark over generic when both flags qualify", () => {

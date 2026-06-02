@@ -177,6 +177,14 @@ function runFernGenerate(reason: string): void {
   ];
 
   console.log(`\n[${new Date().toLocaleTimeString()}] Running Fern (${reason})`);
+  if (!syncAgentVariantDocs()) {
+    running = false;
+    if (pending) {
+      runFernGenerate("queued file change");
+    }
+    return;
+  }
+
   console.log(`cd fern && npx ${args.join(" ")}`);
 
   const child = spawn("npx", args, {
@@ -207,6 +215,18 @@ function runFernGenerate(reason: string): void {
       runFernGenerate("queued file change");
     }
   });
+}
+
+function syncAgentVariantDocs(): boolean {
+  const result = spawnSync("npm", ["run", "docs:sync-agent-variants", "--silent"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+  if (result.status === 0) {
+    return true;
+  }
+  console.error("Failed to sync generated agent-variant docs.");
+  return false;
 }
 
 function closeWatchers(): void {
