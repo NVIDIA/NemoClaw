@@ -1512,6 +1512,40 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 | **Robustness** | Requires the npm package to be discoverable so the CLI can find the local script. | Works even if the `nemoclaw` CLI is missing, broken, or partially uninstalled. |
 | **Recommended for** | Routine uninstalls. | Recovery when the CLI is unavailable. |
 
+## Internal Commands
+
+NemoClaw registers a hidden `internal` command namespace. These commands are
+compatibility entrypoints for repo-owned scripts — the installer, the
+uninstaller, DNS setup, and developer tooling — not part of the supported
+public CLI surface.
+
+They are intentionally omitted from `nemoclaw --help` (each command class sets
+`hidden = true`), but they remain registered and routable, which is why they
+are listed here for reference. Treat their names, flags, and output as
+implementation details: they exist to back `install.sh`, `uninstall.sh`, and
+related automation, and they may change or be removed without notice. Most are
+invoked indirectly by those scripts rather than typed by hand.
+
+For contributor guidance on how these command files are structured, see
+`src/commands/internal/README.md`.
+
+| Command | Owning script context | Purpose |
+|---------|-----------------------|---------|
+| `nemoclaw internal installer plan` | `install.sh` | Build a deterministic installer plan from environment and probe inputs without applying it. |
+| `nemoclaw internal installer normalize-env` | `install.sh` | Normalize installer ref and provider environment values without applying installation changes. |
+| `nemoclaw internal installer resolve-release-tag` | `install.sh` | Resolve the installer ref using the same precedence as `install.sh`. |
+| `nemoclaw internal uninstall plan` | `uninstall.sh` / `nemoclaw uninstall` | Build a deterministic uninstall plan without applying it. |
+| `nemoclaw internal uninstall run-plan` | `uninstall.sh` / `nemoclaw uninstall` | Remove host-side NemoClaw resources from a previously built plan. |
+| `nemoclaw internal uninstall classify-shim` | `uninstall.sh` / `nemoclaw uninstall` | Classify whether a shim path is safe for the uninstaller to remove. |
+| `nemoclaw internal dns setup-proxy` | onboarding / sandbox setup | Configure the DNS forwarder bridge inside a sandbox pod. |
+| `nemoclaw internal dns fix-coredns` | onboarding / sandbox setup | Patch CoreDNS to use a non-loopback upstream resolver. |
+| `nemoclaw internal dev npm-link-or-shim` | `scripts/npm-link-or-shim.sh` (development) | Run `npm link`, falling back to a user-local NemoClaw development shim. |
+
+These commands do not appear in the command-level parity check, which compares
+`nemoclaw --help` against the public command headings in this reference; hidden
+commands are excluded from both. The table above is the canonical reference for
+the family.
+
 ## Environment Variables
 
 NemoClaw reads the following environment variables to configure service ports, onboarding behavior, and lifecycle defaults.
