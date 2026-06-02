@@ -473,13 +473,12 @@ jobs:
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-  # ── Channels add/remove lifecycle E2E (#3462 Test 2) ────────────────
-  # Regression coverage for #3437 (channels add must auto-apply the matching
-  # network policy preset so the bridge boots with egress to its upstream API)
-  # and #3671 (channels remove must detach providers, un-apply the preset,
-  # and survive a follow-up rebuild without being silently re-added from
-  # shell env). Telegram-only — the other paste-token channels walk the same
-  # KNOWN_CHANNELS + preset lookup code path.
+  # ── Sessions / agents CLI groups E2E ─────────────────────────────────
+  # Coverage for the `nemoclaw <name> sessions` and `nemoclaw <name> agents`
+  # CLI groups: openclaw-sessions passthrough (list/show/reset), agents
+  # add/delete lifecycle, and their related routing through the public-argv
+  # translator. The OpenShell sandbox is provisioned end-to-end so the
+  # groups are exercised against a live OpenClaw runtime.
   sessions-agents-cli-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||

@@ -254,4 +254,71 @@ describe("translatePublicSandboxArgv", () => {
       action: "bogus",
     });
   });
+
+  it("routes the sessions passthrough parent for empty or flag-only args", () => {
+    // sandbox:sessions is a non-strict passthrough; empty and flag-leading
+    // actionArgs both belong to the parent, not to a fabricated
+    // `sandbox:sessions:<flag>` dispatch that oclif cannot resolve.
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", []),
+      "sandbox:sessions",
+      ["alpha"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--json"]),
+      "sandbox:sessions",
+      ["alpha", "--json"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--all-agents"]),
+      "sandbox:sessions",
+      ["alpha", "--all-agents"],
+    );
+  });
+
+  it("routes registered sessions subcommands to their native ids", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["list"]),
+      "sandbox:sessions:list",
+      ["alpha"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["reset", "abc123"]),
+      "sandbox:sessions:reset",
+      ["alpha", "abc123"],
+    );
+  });
+
+  it("routes sessions help tokens to parent help", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--help"]),
+      "sandbox:sessions",
+      ["--help"],
+      ["sandbox", "sessions", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["help"]),
+      "sandbox:sessions",
+      ["--help"],
+      ["sandbox", "sessions", "--help"],
+    );
+  });
+
+  it("routes agents to parent help for empty or flag-only args without a runnable parent", () => {
+    // sandbox:agents has no top-level runnable; empty and flag-leading args
+    // must land on the parent help screen rather than a synthesised
+    // `sandbox:agents:--<flag>` subcommand.
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", []),
+      "sandbox:agents",
+      ["--help"],
+      ["sandbox", "agents", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["--json"]),
+      "sandbox:agents",
+      ["--help"],
+      ["sandbox", "agents", "--help"],
+    );
+  });
 });

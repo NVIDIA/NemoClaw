@@ -212,7 +212,7 @@ test_sessions_delete_non_main() {
   local key
   key="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null \
     | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key') and not s['key'].endswith(':main')), ''))" \
-    2>/dev/null || true)"
+      2>/dev/null || true)"
   if [ -z "$key" ]; then
     skip "TC-SESS-05: no non-main session found for agent '${TEST_AGENT_ID}'; gateway refuses deleting main"
     return 0
