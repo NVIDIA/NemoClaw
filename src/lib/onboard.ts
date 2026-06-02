@@ -509,6 +509,7 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
 import type { WebSearchConfig } from "./inference/web-search";
+import type { ChannelDef } from "./sandbox/channels";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -5561,6 +5562,119 @@ function getRecordedMessagingChannelsForResume(
 
 const telegramReachabilityDeps = { isNonInteractive, note, promptYesNoOrDefault };
 
+type MessagingChannelEntry = { name: string } & ChannelDef;
+
+type MessagingSelectorInput = typeof process.stdin & {
+  setRawMode?: (mode: boolean) => void;
+};
+
+type MessagingSelectorOutput = typeof process.stderr & {
+  isTTY?: boolean;
+};
+
+type MessagingSelectorKeyAction = "continue" | "redraw" | "finish" | "interrupt";
+
+const APPLICATION_KEYPAD_DIGITS: Record<string, string> = {
+  p: "0",
+  q: "1",
+  r: "2",
+  s: "3",
+  t: "4",
+  u: "5",
+  v: "6",
+  w: "7",
+  x: "8",
+  y: "9",
+  M: "\r",
+};
+
+function normalizeMessagingSelectorInput(text: string): string {
+  return text
+    .replace(/\x1bO([Mp-y])/g, (_match, key: string) => APPLICATION_KEYPAD_DIGITS[key] || "")
+    .replace(/\x1b\[(\d+)(?:;\d+)*u/g, (_match, code: string) => {
+      const charCode = Number.parseInt(code, 10);
+      if (charCode >= 48 && charCode <= 57) return String.fromCharCode(charCode);
+      if (charCode === 13) return "\r";
+      return "";
+    });
+}
+
+function applyMessagingSelectorKey(
+  key: string,
+  enabled: Set<string>,
+  availableChannels: readonly MessagingChannelEntry[],
+): MessagingSelectorKeyAction {
+  if (key === "\u0003") return "interrupt";
+  if (key === "\r" || key === "\n") return "finish";
+  const num = Number.parseInt(key, 10);
+  if (num >= 1 && num <= availableChannels.length) {
+    const channel = availableChannels[num - 1];
+    if (enabled.has(channel.name)) {
+      enabled.delete(channel.name);
+    } else {
+      enabled.add(channel.name);
+    }
+    return "redraw";
+  }
+  return "continue";
+}
+
+function renderMessagingChannelList(
+  output: Pick<MessagingSelectorOutput, "write">,
+  availableChannels: readonly MessagingChannelEntry[],
+  enabled: Set<string>,
+  statusForChannel: (channel: MessagingChannelEntry) => string,
+): void {
+  output.write("\n");
+  output.write("  Available messaging channels:\n");
+  availableChannels.forEach((ch, i) => {
+    const marker = enabled.has(ch.name) ? "●" : "○";
+    output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${statusForChannel(ch)}\n`);
+  });
+  output.write("\n");
+}
+
+function resolveMessagingChannelSelectorEntry(
+  value: string,
+  availableChannels: readonly MessagingChannelEntry[],
+): MessagingChannelEntry | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  const numeric = Number.parseInt(trimmed, 10);
+  if (String(numeric) === trimmed && numeric >= 1 && numeric <= availableChannels.length) {
+    return availableChannels[numeric - 1] || null;
+  }
+  return availableChannels.find((channel) => channel.name === trimmed) || null;
+}
+
+async function promptMessagingChannelLineSelection(
+  availableChannels: readonly MessagingChannelEntry[],
+  enabled: Set<string>,
+  statusForChannel: (channel: MessagingChannelEntry) => string,
+): Promise<void> {
+  renderMessagingChannelList(process.stderr, availableChannels, enabled, statusForChannel);
+  console.error("  Enter comma-separated numbers/names, Enter for current selection, or 'none'.");
+  const answer = (await prompt("  Messaging channels: ")).trim();
+  if (!answer) return;
+  if (/^(none|no|skip)$/i.test(answer)) {
+    enabled.clear();
+    return;
+  }
+
+  const next = new Set<string>();
+  for (const part of answer.split(/[\s,]+/).filter(Boolean)) {
+    const channel = resolveMessagingChannelSelectorEntry(part, availableChannels);
+    if (!channel) {
+      console.error(`  Unknown messaging channel selection: ${part}`);
+      process.exit(1);
+    }
+    next.add(channel.name);
+  }
+
+  enabled.clear();
+  for (const channel of next) enabled.add(channel);
+}
+
 async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
@@ -5600,100 +5714,94 @@ async function setupMessagingChannels(
   // channels that have no host token).
   const enabled = new Set(seedFromState(true));
 
-  const output = process.stderr;
-  // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
-  const linesAbovePrompt = availableChannels.length + 3;
-  let firstDraw = true;
-  const showList = () => {
-    if (!firstDraw) {
-      // Cursor is at end of prompt line. Move to column 0, go up, clear to end of screen.
-      output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
-    }
-    firstDraw = false;
-    output.write("\n");
-    output.write("  Available messaging channels:\n");
-    availableChannels.forEach((ch, i) => {
-      const marker = enabled.has(ch.name) ? "●" : "○";
-      const status = getValidatedMessagingToken(ch, ch.envKey) ? " (configured)" : "";
-      output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
-    });
-    output.write("\n");
-    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `);
-  };
+  const input = process.stdin as MessagingSelectorInput;
+  const output = process.stderr as MessagingSelectorOutput;
+  const statusForChannel = (channel: MessagingChannelEntry): string =>
+    getValidatedMessagingToken(channel, channel.envKey) ? " (configured)" : "";
 
-  showList();
-
-  await new Promise<void>((resolve, reject) => {
-    const input = process.stdin;
-    let rawModeEnabled = false;
-    let finished = false;
-
-    function cleanup() {
-      input.removeListener("data", onData);
-      if (rawModeEnabled && typeof input.setRawMode === "function") {
-        input.setRawMode(false);
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    await promptMessagingChannelLineSelection(availableChannels, enabled, statusForChannel);
+  } else {
+    // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
+    const linesAbovePrompt = availableChannels.length + 3;
+    let firstDraw = true;
+    const showList = () => {
+      if (!firstDraw) {
+        // Cursor is at end of prompt line. Move to column 0, go up, clear to end of screen.
+        output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
       }
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof input.pause === "function") {
-        input.pause();
-      }
-      if (typeof input.unref === "function") {
-        input.unref();
-      }
-    }
+      firstDraw = false;
+      renderMessagingChannelList(output, availableChannels, enabled, statusForChannel);
+      output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `);
+    };
 
-    function finish(): void {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      output.write("\n");
-      resolve();
-    }
+    showList();
 
-    function onData(chunk: Buffer | string): void {
-      const text = chunk.toString("utf8");
-      for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (ch === "\u0003") {
-          cleanup();
-          reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-          process.kill(process.pid, "SIGINT");
-          return;
+    await new Promise<void>((resolve, reject) => {
+      let rawModeEnabled = false;
+      let finished = false;
+
+      function cleanup() {
+        input.removeListener("data", onData);
+        if (rawModeEnabled && typeof input.setRawMode === "function") {
+          input.setRawMode(false);
         }
-        if (ch === "\r" || ch === "\n") {
-          finish();
-          return;
+        // Symmetric with the ref() at the entry; lets the wizard exit
+        // naturally if this is the last prompt.
+        if (typeof input.pause === "function") {
+          input.pause();
         }
-        const num = parseInt(ch, 10);
-        if (num >= 1 && num <= availableChannels.length) {
-          const channel = availableChannels[num - 1];
-          if (enabled.has(channel.name)) {
-            enabled.delete(channel.name);
-          } else {
-            enabled.add(channel.name);
+        if (typeof input.unref === "function") {
+          input.unref();
+        }
+      }
+
+      function finish(): void {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        output.write("\n");
+        resolve();
+      }
+
+      function onData(chunk: Buffer | string): void {
+        const text = normalizeMessagingSelectorInput(chunk.toString("utf8"));
+        for (let i = 0; i < text.length; i += 1) {
+          const ch = text[i];
+          const action = applyMessagingSelectorKey(ch, enabled, availableChannels);
+          if (action === "interrupt") {
+            cleanup();
+            reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+            process.kill(process.pid, "SIGINT");
+            return;
           }
-          showList();
+          if (action === "finish") {
+            finish();
+            return;
+          }
+          if (action === "redraw") {
+            showList();
+          }
         }
       }
-    }
 
-    // Re-attach stdin to the event loop. A prior prompt cleanup may have
-    // unref'd it (sticky), and resume() alone would leave the raw-mode read
-    // detached from the loop.
-    if (typeof input.ref === "function") {
-      input.ref();
-    }
-    input.setEncoding("utf8");
-    if (typeof input.resume === "function") {
-      input.resume();
-    }
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(true);
-      rawModeEnabled = true;
-    }
-    input.on("data", onData);
-  });
+      // Re-attach stdin to the event loop. A prior prompt cleanup may have
+      // unref'd it (sticky), and resume() alone would leave the raw-mode read
+      // detached from the loop.
+      if (typeof input.ref === "function") {
+        input.ref();
+      }
+      input.setEncoding("utf8");
+      if (typeof input.resume === "function") {
+        input.resume();
+      }
+      if (typeof input.setRawMode === "function") {
+        input.setRawMode(true);
+        rawModeEnabled = true;
+      }
+      input.on("data", onData);
+    });
+  }
 
   const selected = Array.from(enabled);
   if (selected.length === 0) {
@@ -7183,6 +7291,8 @@ module.exports = {
   computeSetupPresetSuggestions,
   mergeRequiredHermesToolGatewayPolicyPresets,
   filterSetupPolicyPresets: policies.filterSetupPolicyPresets,
+  normalizeMessagingSelectorInput,
+  applyMessagingSelectorKey,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,
   selectPolicyTier,
