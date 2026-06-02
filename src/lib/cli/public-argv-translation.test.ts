@@ -211,6 +211,11 @@ describe("translatePublicSandboxArgv", () => {
       "sandbox:snapshot:restore",
       ["alpha", "latest"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "skill", ["remove", "my-skill"]),
+      "sandbox:skill:remove",
+      ["alpha", "my-skill"],
+    );
   });
 
   it("translates unknown parent subcommands to native oclif argv for oclif-owned errors", () => {

@@ -34,9 +34,9 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  isOllamaRunnerCrash,
   parseOllamaList,
   parseOllamaTags,
-  probeOllamaRuntimeModelStatus,
   probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
@@ -330,7 +330,7 @@ describe("local inference helpers", () => {
         ok: true,
         httpStatus: 200,
         curlStatus: 0,
-        body: "{}",
+        body: '{"models":[]}',
         stderr: "",
         message: "HTTP 200",
       }),
@@ -379,7 +379,7 @@ describe("local inference helpers", () => {
           ok: true,
           httpStatus: 200,
           curlStatus: 0,
-          body: "{}",
+          body: '{"models":[]}',
           stderr: "",
           message: "HTTP 200",
         };
@@ -409,7 +409,7 @@ describe("local inference helpers", () => {
           ok: !isProxy,
           httpStatus: isProxy ? 401 : 200,
           curlStatus: 0,
-          body: "",
+          body: isProxy ? "" : '{"models":[]}',
           stderr: "",
           message: isProxy ? "HTTP 401" : "HTTP 200",
         };
@@ -443,7 +443,7 @@ describe("local inference helpers", () => {
               ok: true,
               httpStatus: 200,
               curlStatus: 0,
-              body: "{}",
+              body: '{"models":[]}',
               stderr: "",
               message: "HTTP 200",
             };
@@ -455,6 +455,76 @@ describe("local inference helpers", () => {
     expect(proxy?.failureLabel).toBe("unreachable");
     expect(proxy?.detail).toContain("unreachable");
     expect(proxy?.detail).toContain("11435");
+  });
+
+  // Scenario A (#4275): backend is down, auth proxy is still up. The backend's
+  // /api/tags should not register as healthy when the response body is not the
+  // Ollama wire format — a captive HTTP_PROXY or stale listener can otherwise
+  // answer with arbitrary 2xx that the curl-status-only check accepts.
+  it("rejects a backend 200 whose body is not the Ollama /api/tags JSON shape", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => null,
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        // E.g. a corporate HTTP proxy that intercepts loopback and serves an
+        // HTML landing page on every URL, or a stale unrelated listener.
+        body: "<html><body>Privoxy</body></html>",
+        stderr: "",
+        message: "HTTP 200",
+      }),
+    });
+    expect(result?.ok).toBe(false);
+    expect(result?.failureLabel).toBe("unhealthy");
+    expect(result?.detail).toContain("not a valid /api/tags response");
+    expect(result?.detail).toContain("HTTP_PROXY");
+  });
+
+  it("rejects an auth-proxy 200 whose body is not the Ollama /api/tags JSON shape", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => "token",
+      runCurlProbeImpl: (argv: string[]) => {
+        const isProxy = argv.some(
+          (a) => typeof a === "string" && a.includes("11435"),
+        );
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          // Proxy is up but its upstream Ollama backend is gone; the proxy
+          // returns a stub 200 with no models array.
+          body: isProxy ? '{"error":"backend unreachable"}' : '{"models":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        };
+      },
+    });
+    expect(result?.ok).toBe(true);
+    const proxy = result?.subprobes?.[0];
+    expect(proxy?.ok).toBe(false);
+    expect(proxy?.failureLabel).toBe("unhealthy");
+    expect(proxy?.detail).toContain("not a valid /api/tags response");
+    expect(proxy?.detail).toContain("upstream Ollama");
+  });
+
+  // Regression-lock for #4275 fix: an empty models array is still a valid
+  // /api/tags response (host just has no models pulled yet) and must remain
+  // healthy.
+  it("treats an empty Ollama /api/tags models array as healthy", () => {
+    const result = probeLocalProviderHealth("ollama-local", {
+      loadOllamaProxyTokenImpl: () => null,
+      runCurlProbeImpl: () => ({
+        ok: true,
+        httpStatus: 200,
+        curlStatus: 0,
+        body: '{"models":[]}',
+        stderr: "",
+        message: "HTTP 200",
+      }),
+    });
+    expect(result?.ok).toBe(true);
+    expect(result?.detail).toContain("reachable");
   });
 
   it("returns null when provider health probing is not supported", () => {
@@ -654,6 +724,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
         log,
+        () => "",
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
@@ -686,6 +757,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
         log,
+        () => "",
       ),
     ).toBe("qwen2.5:7b");
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
@@ -791,23 +863,6 @@ describe("local inference helpers", () => {
   it("treats non-JSON probe output as success once the model responds", () => {
     const captureEx = () => ({ stdout: "ok", exitCode: 0, timedOut: false });
     expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok", undefined, captureEx)).toEqual({ ok: true });
-  });
-
-  it("parses Ollama runtime status from /api/ps", () => {
-    const capture = () =>
-      JSON.stringify({
-        models: [
-          { name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" },
-        ],
-      });
-
-    expect(probeOllamaRuntimeModelStatus("qwen3.6:35b", capture)).toEqual({
-      probed: true,
-      loaded: true,
-      cpuOnly: true,
-      processor: "100% CPU",
-      sizeVram: 0,
-    });
   });
 
   it("fails Spark Ollama validation when the model is CPU-only after warmup", () => {
@@ -928,6 +983,46 @@ describe("local inference helpers", () => {
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("flags runner-crash error payloads as a daemon failure (#4365)", () => {
+    // Issue #4365: when Ollama's model runner crashes ("model runner has
+    // unexpectedly stopped"), surface daemonFailure so the wizard escapes the
+    // Ollama-model inner loop instead of asking for another tag.
+    const crashSamples = [
+      "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
+      "llama runner process has terminated: exit status 134",
+      "model runner crashed",
+      "Ollama runner process exited unexpectedly",
+      "runner died: signal 9",
+      "runner killed",
+    ];
+    for (const errText of crashSamples) {
+      expect(isOllamaRunnerCrash(errText)).toBe(true);
+      const payload = JSON.stringify({ error: errText });
+      const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+      const result = validateOllamaModel("nemotron-3-nano:30b", () => payload, undefined, captureEx);
+      expect(result.ok).toBe(false);
+      expect(result.daemonFailure).toBe(true);
+    }
+  });
+
+  it("does not flag model-fit / generic errors as a daemon failure (#4365)", () => {
+    expect(isOllamaRunnerCrash("model requires more system memory")).toBe(false);
+    expect(isOllamaRunnerCrash("model 'foo:latest' not found")).toBe(false);
+    expect(isOllamaRunnerCrash("")).toBe(false);
+    expect(isOllamaRunnerCrash(null)).toBe(false);
+    expect(isOllamaRunnerCrash(undefined)).toBe(false);
+    const payload = JSON.stringify({ error: "model requires more system memory" });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = validateOllamaModel(
+      "gabegoodhart/minimax-m2.1:latest",
+      () => payload,
+      () => false,
+      captureEx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.daemonFailure).toBeUndefined();
   });
 
   it("passes when first probe times out then retry returns OOM error but total RAM is sufficient", () => {

@@ -151,6 +151,19 @@ if (args[0] === "sandbox" && args[1] === "exec") {
   const command = args.join(" ");
   if (!command.includes("inference.local/v1/models")) {
     fs.writeFileSync(stateFile, JSON.stringify(state));
+    // Test hook (#4263 / CodeRabbit): when the connect-time auto-pair
+    // approval pass is specifically targeted, simulate the failure
+    // path the production code must tolerate. The approval-pass script
+    // is identifiable by its embedded \`openclaw devices approve\` call.
+    if (
+      process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
+      command.includes("openclaw") &&
+      command.includes("devices") &&
+      command.includes("approve")
+    ) {
+      process.stderr.write("simulated sandbox exec failure\\n");
+      process.exit(7);
+    }
     process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
     process.exit(0);
   }
@@ -466,7 +479,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
   );
 
   it(
-    "repairs the sandbox DNS proxy when inference.local returns 503",
+    "repairs the kubernetes sandbox DNS proxy when inference.local returns 503",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -475,7 +488,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          openshellDriver: "docker",
+          openshellDriver: "kubernetes",
           policies: [],
         },
         "nvidia-prod",
@@ -515,6 +528,59 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "inference.local is unavailable inside 'stale-dns-sandbox'",
       );
       expect(combined).toContain("inference.local route repaired");
+    },
+  );
+
+  it(
+    "recovers the route via inference set for docker sandboxes without the legacy cluster repair (#3403)",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "docker-route-sandbox",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          openshellDriver: "docker",
+          policies: [],
+        },
+        "nvidia-prod",
+        "nvidia/nemotron-3-super-120b-a12b",
+        {
+          inferenceProbeResponses: [
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            "OK 200",
+          ],
+        },
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      const dockerCalls = state.dockerCalls as string[][];
+      // The docker driver has no openshell-cluster container (the gateway runs
+      // as nemoclaw-openshell-gateway with host networking), so it must NOT take
+      // the legacy CoreDNS cluster repair; it recovers via `inference set`. (#3403)
+      expect(state.inferenceSetCalls).toEqual([
+        [
+          "--provider",
+          "nvidia-prod",
+          "--model",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "--no-verify",
+        ],
+      ]);
+      expect(
+        dockerCalls.some((call) =>
+          call.join(" ").includes("get service kube-dns"),
+        ),
+      ).toBe(false);
+
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("Reapplying OpenShell inference route");
+      expect(combined).toContain("inference.local route repaired");
+      expect(combined).not.toContain("Could not find gateway container");
     },
   );
 
@@ -920,7 +986,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          openshellDriver: "docker",
+          openshellDriver: "kubernetes",
           policies: [],
         },
         "nvidia-prod",
@@ -1143,6 +1209,111 @@ describe("sandbox connect inference route swap (#1248)", () => {
       );
       expect(combined).toContain("inference.local route repaired");
       expect(combined).not.toContain("Ollama auth proxy token is missing");
+    },
+  );
+});
+
+describe("sandbox connect auto-pair approval pass (#4263)", () => {
+  it(
+    "runs a bounded openclaw devices approval pass before opening SSH",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "approval-pass-sandbox",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      // Look for the approval-pass sandbox-exec invocation specifically.
+      const approvalExec = (state.sandboxExecCalls as string[][]).find(
+        (call) =>
+          call.includes("--") &&
+          call.some((segment) => segment.includes("openclaw")) &&
+          call.some((segment) => segment.includes("devices")) &&
+          call.some((segment) => segment.includes("approve")),
+      );
+      expect(approvalExec).toBeDefined();
+      // The exec must target the requested sandbox and use `sh -c <script>`.
+      expect(approvalExec).toContain("sandbox");
+      expect(approvalExec).toContain("exec");
+      expect(approvalExec).toContain("--name");
+      expect(approvalExec).toContain(sandboxName);
+      const script = approvalExec?.[approvalExec.length - 1] || "";
+      // Hardened script content: sources the proxy env, allowlists only
+      // openclaw-control-ui plus webchat/cli, and short-circuits when the
+      // tools aren't present.
+      expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
+      expect(script).toContain("command -v openclaw");
+      expect(script).toContain("command -v python3");
+      expect(script).toContain("devices");
+      expect(script).toContain("list");
+      expect(script).toContain("approve");
+      expect(script).toContain("approve_env = os.environ.copy()");
+      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_URL', None)");
+      expect(script).toContain("env=approve_env");
+      expect(script).toContain("if approve_proc.returncode == 0");
+      expect(script).toContain("openclaw-control-ui");
+      expect(script).toContain("webchat");
+      expect(script).toContain("cli");
+      expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
+        script.indexOf("approve_env = os.environ.copy()"),
+      );
+      // Allowlist must NOT silently approve arbitrary clients.
+      expect(script).not.toContain("evil-client");
+    },
+  );
+
+  it(
+    "does not block connect when the in-sandbox approval pass cannot run",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "approval-pass-tolerant",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+
+      // Force the approval-pass sandbox-exec to fail with exit status 7
+      // (simulated via the NEMOCLAW_TEST_FAIL_APPROVAL_PASS hook in the
+      // fake openshell). The connect flow must still reach SSH handoff —
+      // the approval pass is best-effort and must not surface failures.
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1",
+      });
+      expect(result.status).toBe(0);
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      // Approval-pass exec was attempted (and the fake openshell exited
+      // non-zero for it, per the hook above).
+      const approvalExec = (state.sandboxExecCalls as string[][]).find(
+        (call) =>
+          call.includes("--") &&
+          call.some((segment) => segment.includes("openclaw")) &&
+          call.some((segment) => segment.includes("devices")) &&
+          call.some((segment) => segment.includes("approve")),
+      );
+      expect(approvalExec).toBeDefined();
+      // Despite the approval-pass failure, SSH handoff still happens.
+      expect(state.sandboxConnectCalls).toContainEqual([
+        "sandbox",
+        "connect",
+        sandboxName,
+      ]);
     },
   );
 });

@@ -121,7 +121,22 @@ export function resolveLinuxUnmount(): string | null {
  */
 export function checkLocalMountWritable(localMount: string): { writable: boolean; reason?: string } {
   try {
-    fs.mkdirSync(localMount, { recursive: true });
+    // Node's fs.mkdirSync(path, { recursive: true }) masks EROFS as ENOENT when
+    // the leaf is missing on a read-only parent (#4311). Use non-recursive mkdir
+    // when the parent already exists so EROFS propagates with its true errno;
+    // fall back to recursive only when the parent is genuinely missing.
+    if (fs.existsSync(path.dirname(localMount))) {
+      try {
+        fs.mkdirSync(localMount);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") throw err;
+        if (!fs.statSync(localMount).isDirectory()) {
+          return { writable: false, reason: "mount target exists and is not a directory" };
+        }
+      }
+    } else {
+      fs.mkdirSync(localMount, { recursive: true });
+    }
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };

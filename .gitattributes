@@ -1,2 +1,7 @@
 # Ensure shell scripts always use LF line endings
 *.sh text eol=lf
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+/skills/nemoclaw/** linguist-generated=true
+/skills/nemoclaw/**/*.md diff=markdown

@@ -94,6 +94,7 @@ function getCheckoutStep(job: unknown): Record<string, unknown> | undefined {
 
 describe("nightly E2E workflow validation", () => {
   const workflow = loadYaml(".github/workflows/nightly-e2e.yaml");
+  const reusableRunner = loadYaml(".github/workflows/e2e-script.yaml");
 
   const nightlyJobs = getNightlyJobNames(workflow);
   const aggregateJobs = ["notify-on-failure", "report-to-pr", "scorecard"];
@@ -166,15 +167,49 @@ describe("nightly E2E workflow validation", () => {
     ];
     const invalid: string[] = [];
 
+    const runnerJobs = reusableRunner.jobs as Record<string, unknown>;
+    const reusableRefExporter = getJobStep(
+      runnerJobs.run,
+      "Export checked-out ref environment",
+    );
+    if (
+      typeof reusableRefExporter?.run !== "string" ||
+      !reusableRefExporter.run.includes("git -C repo rev-parse HEAD")
+    ) {
+      invalid.push("reusable runner missing checked-out ref exporter");
+    }
+
     for (const [jobName, stepName] of publicInstallerJobs) {
-      const checkoutWith = getCheckoutStep(jobs[jobName])?.with as
-        | Record<string, unknown>
-        | undefined;
+      const job = jobs[jobName] as Record<string, unknown> | undefined;
+      const jobWith = job?.with as Record<string, unknown> | undefined;
+
+      if (job?.uses === "./.github/workflows/e2e-script.yaml") {
+        if (jobWith?.ref !== expectedCheckoutRef) {
+          invalid.push(`${jobName} with.ref=${String(jobWith?.ref)}`);
+        }
+        if (jobWith?.checked_out_ref_env !== "NEMOCLAW_PUBLIC_INSTALL_REF") {
+          invalid.push(
+            `${jobName} checked_out_ref_env=${String(jobWith?.checked_out_ref_env)}`,
+          );
+        }
+        if (typeof jobWith?.env_json === "string") {
+          const env = JSON.parse(jobWith.env_json) as Record<string, unknown>;
+          if (env.NEMOCLAW_PUBLIC_INSTALL_REF !== undefined) {
+            invalid.push(`${jobName} hard-codes NEMOCLAW_PUBLIC_INSTALL_REF in env_json`);
+          }
+          if (env.NEMOCLAW_INSTALL_REF === "${{ github.ref_name }}") {
+            invalid.push(`${jobName} still pins public install to github.ref_name`);
+          }
+        }
+        continue;
+      }
+
+      const checkoutWith = getCheckoutStep(job)?.with as Record<string, unknown> | undefined;
       if (checkoutWith?.ref !== expectedCheckoutRef) {
         invalid.push(`${jobName} checkout.ref=${String(checkoutWith?.ref)}`);
       }
 
-      const resolver = getJobStep(jobs[jobName], "Resolve public install ref");
+      const resolver = getJobStep(job, "Resolve public install ref");
       if (!resolver) {
         invalid.push(`${jobName} missing resolved-ref step`);
       } else {
@@ -186,7 +221,7 @@ describe("nightly E2E workflow validation", () => {
         }
       }
 
-      const env = getStepEnv(jobs[jobName], stepName);
+      const env = getStepEnv(job, stepName);
       if (!env) {
         invalid.push(`${jobName} (${stepName} missing env)`);
         continue;
@@ -207,6 +242,57 @@ describe("nightly E2E workflow validation", () => {
         `through to the curl-install path; otherwise trusted dispatch can check out one ` +
         `commit but install another. ` +
         `Invalid jobs: ${invalid.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("messaging providers nightly can receive optional live message secrets", () => {
+    const expectedSecretNames = [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ];
+
+    const missing: string[] = [];
+    const reusableSecrets =
+      ((reusableRunner.on as Record<string, unknown> | undefined)?.workflow_call as
+        | Record<string, unknown>
+        | undefined) ?? {};
+    const reusableSecretDefs =
+      (reusableSecrets.secrets as Record<string, unknown> | undefined) ?? {};
+    const runnerJobs = (reusableRunner.jobs as Record<string, unknown> | undefined) ?? {};
+    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
+    const jobs = (workflow.jobs as Record<string, unknown> | undefined) ?? {};
+    const messagingJob = jobs["messaging-providers-e2e"] as
+      | Record<string, unknown>
+      | undefined;
+    if (!messagingJob) {
+      missing.push("nightly job messaging-providers-e2e");
+    }
+    const messagingSecrets =
+      (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
+
+    for (const name of expectedSecretNames) {
+      if (!reusableSecretDefs[name]) {
+        missing.push(`workflow_call.secrets.${name}`);
+      }
+      if (runStepEnv[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`e2e-script Run E2E script env.${name}`);
+      }
+      if (messagingSecrets[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`nightly messaging-providers-e2e secrets.${name}`);
+      }
+    }
+
+    expect(
+      missing,
+      `messaging-providers-e2e must pass optional live-message credentials and ` +
+        `targets through the reusable runner so Phase 6 can exercise ` +
+        `openclaw message send when repository secrets are configured. ` +
+        `Missing: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 });
