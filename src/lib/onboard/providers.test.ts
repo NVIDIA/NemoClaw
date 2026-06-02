@@ -35,7 +35,7 @@ const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessag
       providerType?: string;
     }>,
     runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
+    options?: { replaceExisting?: boolean; bestEffort?: boolean },
   ) => string[];
 };
 
@@ -226,6 +226,33 @@ describe("onboard provider helpers", () => {
       "provider get alpha-brave-search",
       "provider update alpha-brave-search --credential BRAVE_API_KEY",
     ]);
+  });
+
+  it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
+    const originalExit = process.exit;
+    process.exit = ((code?: number | string | null) => {
+      throw new Error(`unexpected process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [
+            {
+              name: "telegram-bridge",
+              envKey: "TELEGRAM_BOT_TOKEN",
+              token: "tg-test",
+            },
+          ],
+          (command) => {
+            if (command.includes("get")) return { status: 0, stdout: "", stderr: "" };
+            return { status: 1, stdout: "", stderr: "gateway unavailable" };
+          },
+          { bestEffort: true },
+        ),
+      ).toThrow(/telegram-bridge: gateway unavailable/);
+    } finally {
+      process.exit = originalExit;
+    }
   });
 
   it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {

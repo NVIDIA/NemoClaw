@@ -28,6 +28,22 @@ type ScenarioOptions = {
   // When true, stub waitForHttp to return false. Only used to verify that the
   // gated path does not even reach waitForHttp.
   waitForHttpReturnsFalse?: boolean;
+  // When true, allow the wizard to reach selectAndValidateOllamaModel by
+  // stubbing startOllamaAuthProxy to a no-op success rather than the bail-out
+  // sentinel. Used by the #4365 runner-crash escape scenarios.
+  proceedToModelSelection?: boolean;
+  // Body returned by the fake curl for `/api/generate` probes (used by
+  // validateOllamaModel). Defaults to a healthy response. Set to a runner-
+  // crash payload to drive the #4365 daemonFailure escape path.
+  ollamaGenerateBody?: string;
+  // Bound the subprocess wall-clock. Defaults to the scenario timeout. A
+  // pre-fix runner-crash loop would never exit — assert against this to catch
+  // regressions.
+  subprocessTimeoutMs?: number;
+  // Override the NEMOCLAW_PROVIDER env value. Default is the literal `ollama`
+  // (pinned). Use a casing variant ("OLLAMA", " ollama ") to exercise the
+  // isOllamaProviderPinned normalization path. (#4365)
+  providerEnv?: string;
 };
 
 type WizardResult = {
@@ -74,9 +90,36 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // which is what gates the wizard — the curl stub itself stays permissive.
   const toolCallBody =
     '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
+  // /api/generate body — validateOllamaModel parses this and looks for an
+  // `error` key. A healthy default; #4365 scenarios override with a runner-
+  // crash payload to drive the daemonFailure path.
+  const generateBody = opts.ollamaGenerateBody ?? '{"response":"hello"}';
+  // /api/tags body. local.ts destructures `runCapture` at module load time,
+  // BEFORE the test mutates runner.runCapture — so `getOllamaModelOptions`
+  // (in local.ts) still calls through to the real spawnSync and lands on
+  // this fake curl. Returning a tag matching the bootstrap fallback
+  // (smallest registry entry) keeps the menu deterministic with gpu=null
+  // and ensures the picked model is already-installed (no pull prompt).
+  const tagsBody = '{"models":[{"name":"qwen2.5:7b"}]}';
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
+url=""
+for arg in "$@"; do
+  case "$arg" in
+    http://*|https://*) url="$arg" ;;
+  esac
+done
+case "$url" in
+  *api/generate*)
+    printf '%s' '${generateBody.replace(/'/g, "'\\''")}'
+    exit 0
+    ;;
+  *api/tags*)
+    printf '%s' '${tagsBody.replace(/'/g, "'\\''")}'
+    exit 0
+    ;;
+esac
 body='${toolCallBody}'
 status="200"
 outfile=""
@@ -99,7 +142,7 @@ printf '%s' "$status"
     PATH: `${fakeBin}:${process.env.PATH || ""}`,
     // Pin provider selection so the test deterministically enters the Ollama
     // branch of the wizard regardless of menu ordering changes elsewhere.
-    NEMOCLAW_PROVIDER: "ollama",
+    NEMOCLAW_PROVIDER: opts.providerEnv ?? "ollama",
   };
   if (opts.noAutostartEnv) scenarioEnv.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   if (opts.nonInteractive) scenarioEnv.NEMOCLAW_NON_INTERACTIVE = "1";
@@ -197,12 +240,18 @@ localInference.findReachableOllamaHost = () => (ollamaRunning ? "127.0.0.1" : nu
 // sentinel here bails out of the wizard once it has done everything that
 // matters for the gated-vs-spawn assertions. The fallback branch breaks out
 // of selectionLoop BEFORE this is reached, so Scenarios A and D never see
-// the sentinel — only B and C do.
+// the sentinel — only B and C do. The #4365 scenarios opt out so the wizard
+// can reach selectAndValidateOllamaModel.
 const proxy = require(${proxyPath});
 class OllamaAutostartSentinel extends Error {}
-proxy.startOllamaAuthProxy = () => {
-  throw new OllamaAutostartSentinel("ollama-autostart-test-sentinel");
-};
+const proceedToModelSelection = ${JSON.stringify(opts.proceedToModelSelection === true)};
+if (proceedToModelSelection) {
+  proxy.startOllamaAuthProxy = () => true;
+} else {
+  proxy.startOllamaAuthProxy = () => {
+    throw new OllamaAutostartSentinel("ollama-autostart-test-sentinel");
+  };
+}
 
 // Wrap selectAndValidateOllamaModel to record whether the wizard reached it.
 // Access via the dist module's exported function (it's local in source, but
@@ -276,6 +325,9 @@ process.exit = (code) => {
       NEMOCLAW_MODEL: "",
       NEMOCLAW_YES: "",
     },
+    // Bound the subprocess so a pre-fix runner-crash loop cannot wedge
+    // the test runner. (#4365)
+    timeout: opts.subprocessTimeoutMs ?? OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   });
 
   assert.equal(result.status, 0, `subprocess stderr:\n${result.stderr}\n\nstdout:\n${result.stdout}`);
@@ -483,6 +535,82 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
   );
 
   it(
+    "Scenario G (#4365): pinned-provider runner crash exits instead of looping on Ollama model selection",
+    { timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS },
+    () => {
+      // Reporter's second-step: Ollama responds, user reaches model selection,
+      // but the model runner has unexpectedly stopped. Pre-fix the wizard would
+      // re-prompt for another Ollama model forever (or until the user finds
+      // "back"). With the fix, daemonFailure is detected and the wizard exits
+      // when NEMOCLAW_PROVIDER=ollama is pinned. The bounded subprocess
+      // timeout catches a regression: a pre-fix subprocess would loop until
+      // SIGTERM and result.status would be null.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: false,
+        proceedToModelSelection: true,
+        ollamaGenerateBody: JSON.stringify({
+          error: "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
+        }),
+        subprocessTimeoutMs: 20_000,
+      });
+
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes("model runner has unexpectedly stopped"),
+        ),
+        `expected the runner-crash error in lines; got:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
+        ),
+        `expected the pinned-provider runner-crash abort message; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit on runner crash with pinned provider; lines:\n${payload.lines.join("\n")}`,
+      );
+    },
+  );
+
+  it(
+    "Scenario H (#4365): pinned-provider runner crash also exits when NEMOCLAW_PROVIDER uses a casing variant",
+    { timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS },
+    () => {
+      // NEMOCLAW_PROVIDER=OLLAMA is accepted by getNonInteractiveProvider's
+      // .trim().toLowerCase() normalization. The runner-crash escape must
+      // recognize the same variants — otherwise the wizard would return
+      // `back-to-selection`, re-pin Ollama on the next iteration, and loop.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: true,
+        noAutostartEnv: false,
+        proceedToModelSelection: true,
+        providerEnv: " OLLAMA ",
+        ollamaGenerateBody: JSON.stringify({
+          error: "model runner has unexpectedly stopped",
+        }),
+        subprocessTimeoutMs: 20_000,
+      });
+
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
+        ),
+        `expected the pinned-provider runner-crash abort even with a casing variant; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit on runner crash with casing-variant pinned provider; lines:\n${payload.lines.join("\n")}`,
+      );
+    },
+  );
+
+  it(
     "Scenario E: stopped Ollama + flag NOT set + NEMOCLAW_PROVIDER=ollama + waitForHttp timeout → process.exit, no selectionLoop re-entry",
     { timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS },
     () => {
@@ -504,7 +632,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
       );
       assert.ok(
         payload.lines.some((line) =>
-          line.includes("NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable"),
+          line.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable"),
         ),
         `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
       );

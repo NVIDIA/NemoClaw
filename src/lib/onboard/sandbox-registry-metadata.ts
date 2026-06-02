@@ -86,12 +86,13 @@ export function createSandboxRegistryMetadataHelpers(
     sandboxGpuConfig: SandboxGpuConfig | null = null,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
-    const agentVersionKnown = existingEntry?.agentVersion !== null;
+    const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
-      ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
+      agent: agentFields.agent,
+      agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });
     registry.setDefault(sandboxName);
