@@ -203,7 +203,7 @@ export function isGatewayClusterActiveForGateway(
     ignoreError: true,
     timeout: timeoutMs,
   });
-  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output)) {
+  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output, gatewayName)) {
     return false;
   }
 

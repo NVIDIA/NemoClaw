@@ -1254,6 +1254,11 @@ Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostic
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
 
+If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
+The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to five consecutive polls of about 10 seconds in total.
+Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
+Set it to a higher integer such as `15` (about 30 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+
 ### `pip install` fails with a system-packages error
 
 Recent Ubuntu releases (including DGX Spark's Ubuntu 24.04) mark the system Python install as externally managed, so `pip install` without a virtual environment fails.
