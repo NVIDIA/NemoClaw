@@ -266,12 +266,33 @@ test_sessions_list_json() {
 
 test_sessions_reset_main() {
   section "TC-SESS-03: sessions reset agent:main:main --json"
-  local out
-  out="$(nemoclaw "$SANDBOX_NAME" sessions reset agent:main:main --json 2>&1)" || {
+  local out exit_code attempt=1 max_attempts=5 backoff=4
+  # The first invocation of any new gateway-RPC method (here `sessions.reset`)
+  # can itself trigger a fresh CLI scope-upgrade request that the auto-pair
+  # watcher only approves asynchronously. Retry while approving any pending
+  # requests between attempts, until the gateway accepts the scope or we run
+  # out of attempts.
+  while [ "$attempt" -le "$max_attempts" ]; do
+    set +e
+    out="$(nemoclaw "$SANDBOX_NAME" sessions reset agent:main:main --json 2>&1)"
+    exit_code=$?
+    set -e
+    if [ "$exit_code" -eq 0 ]; then
+      break
+    fi
+    if ! grep -qE "scope upgrade pending|Failed to reach the OpenClaw gateway|pairing required" <<<"$out"; then
+      break
+    fi
+    info "TC-SESS-03: gateway scope still pending (attempt ${attempt}/${max_attempts}); approving and retrying"
+    approve_pending_pairing_requests >/dev/null 2>&1 || true
+    sleep "$backoff"
+    attempt=$((attempt + 1))
+  done
+  if [ "$exit_code" -ne 0 ]; then
     fail "TC-SESS-03: sessions reset exited non-zero"
     info "$out"
     return 1
-  }
+  fi
   if ! is_valid_json "$out"; then
     fail "TC-SESS-03: sessions reset --json did not return parseable JSON"
     info "$out"
@@ -340,15 +361,38 @@ seed_agent_session() {
 test_sessions_delete_non_main() {
   section "TC-SESS-05: sessions delete on a non-main session"
   local key
+  # A session under `--agent <work-agent-id>` is by definition non-main: the
+  # original main session for the primary `main` agent never appears in this
+  # filtered list. Take the first key for the work agent; an earlier filter
+  # that excluded keys ending with `:main` mishandled the canonical case where
+  # the secondary agent's default slot is also `main` (key `agent:work:main`).
   key="$(nemoclaw "$SANDBOX_NAME" sessions list --agent "$TEST_AGENT_ID" --json 2>/dev/null \
-    | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key') and not s['key'].endswith(':main')), ''))" \
+    | python3 -c "import json,sys; sessions=json.loads(sys.stdin.read()); print(next((s['key'] for s in (sessions if isinstance(sessions, list) else sessions.get('sessions', [])) if s.get('key')), ''))" \
       2>/dev/null || true)"
   if [ -z "$key" ]; then
-    fail "TC-SESS-05: no non-main session key found for agent '${TEST_AGENT_ID}'; expected the seeded prompt to create one"
+    fail "TC-SESS-05: no session key found for agent '${TEST_AGENT_ID}'; expected the seeded prompt to create one"
     return 1
   fi
-  if ! nemoclaw "$SANDBOX_NAME" sessions delete "$key" --json 2>&1; then
+  local del_out del_code attempt=1 max_attempts=5 backoff=4
+  while [ "$attempt" -le "$max_attempts" ]; do
+    set +e
+    del_out="$(nemoclaw "$SANDBOX_NAME" sessions delete "$key" --json 2>&1)"
+    del_code=$?
+    set -e
+    if [ "$del_code" -eq 0 ]; then
+      break
+    fi
+    if ! grep -qE "scope upgrade pending|Failed to reach the OpenClaw gateway|pairing required" <<<"$del_out"; then
+      break
+    fi
+    info "TC-SESS-05: gateway scope still pending (attempt ${attempt}/${max_attempts}); approving and retrying"
+    approve_pending_pairing_requests >/dev/null 2>&1 || true
+    sleep "$backoff"
+    attempt=$((attempt + 1))
+  done
+  if [ "$del_code" -ne 0 ]; then
     fail "TC-SESS-05: sessions delete ${key} exited non-zero"
+    info "$del_out"
     return 1
   fi
   # Assert the deleted key really is gone, not just that delete returned 0.
