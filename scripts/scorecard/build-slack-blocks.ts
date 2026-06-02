@@ -7,34 +7,83 @@
  * and exercised by `test/scorecard-blocks.test.ts`.
  */
 
-/**
- * @typedef {Object} ScorecardData
- * @property {string} today             Display date, e.g. "May 25".
- * @property {string} runMode           "Scheduled full nightly" | "Manual full run" | "Selective dispatch".
- * @property {boolean} isSelectiveDispatch
- * @property {string[]} requestedJobs   Populated only when isSelectiveDispatch is true.
- * @property {number} total             Total jobs considered (excludes meta jobs).
- * @property {number} ran               total - skipped.
- * @property {number} success
- * @property {number} failure
- * @property {number} cancelled
- * @property {number} skipped
- * @property {boolean} perfect          ran > 0 && failure === 0 && cancelled === 0.
- * @property {Array<{name: string, url: string|null}>} failedJobs  Sorted failed jobs with optional html_url.
- * @property {string} trendLine         Pre-rendered trend line, prefixed with "Trend: ".
- * @property {string} runUrl            Direct link to the current run.
- */
+type ScorecardRunMode =
+  | "Scheduled full nightly"
+  | "Manual full run"
+  | "Selective dispatch"
+  | (string & {});
+
+type ScorecardData = {
+  /** Display date, e.g. "May 25". */
+  today: string;
+  runMode: ScorecardRunMode;
+  isSelectiveDispatch: boolean;
+  /** Populated only when isSelectiveDispatch is true. */
+  requestedJobs: string[];
+  /** Total jobs considered (excludes meta jobs). */
+  total: number;
+  /** total - skipped. */
+  ran: number;
+  success: number;
+  failure: number;
+  cancelled: number;
+  skipped: number;
+  /** ran > 0 && failure === 0 && cancelled === 0. */
+  perfect: boolean;
+  /** Sorted failed jobs with optional html_url. */
+  failedJobs: { name: string; url: string | null }[];
+  /** Pre-rendered trend line, prefixed with "Trend: ". */
+  trendLine: string;
+  /** Direct link to the current run. */
+  runUrl: string;
+};
+
+type SlackMrkdwnText = {
+  type: "mrkdwn";
+  text: string;
+};
+
+type SlackPlainText = {
+  type: "plain_text";
+  text: string;
+  emoji?: boolean;
+};
+
+type SlackContextBlock = {
+  type: "context";
+  elements: SlackMrkdwnText[];
+};
+
+type SlackSectionBlock = {
+  type: "section";
+  text: SlackMrkdwnText;
+};
+
+type SlackButtonElement = {
+  type: "button";
+  text: SlackPlainText;
+  url: string;
+  style?: "primary" | "danger";
+};
+
+type SlackActionsBlock = {
+  type: "actions";
+  elements: SlackButtonElement[];
+};
+
+type SlackBlock = SlackActionsBlock | SlackContextBlock | SlackSectionBlock;
 
 /**
- * @param {ScorecardData} data
- * @returns {Array<object>} Slack Block Kit blocks
+ * Build Slack Block Kit blocks.
  */
-function buildBlocks(data) {
+function buildBlocks(data: ScorecardData): SlackBlock[] {
   // Title is rendered outside the attachment via buildFallbackText so the
   // attachment stays under Slack's truncation threshold.
-  const blocks = [];
+  const blocks: SlackBlock[] = [];
 
-  const contextElements = [{ type: "mrkdwn", text: `*Run mode:* ${data.runMode}` }];
+  const contextElements: SlackMrkdwnText[] = [
+    { type: "mrkdwn", text: `*Run mode:* ${data.runMode}` },
+  ];
   if (data.isSelectiveDispatch && data.requestedJobs.length > 0) {
     const jobList = data.requestedJobs.map((name) => `\`${name}\``).join(", ");
     contextElements.push({ type: "mrkdwn", text: `*Requested:* ${jobList}` });
@@ -108,28 +157,26 @@ function buildBlocks(data) {
  * Title rendered outside the Slack attachment. Doubles as the fallback
  * text for notification previews and screen readers (required by Slack
  * — missing `text` triggers a warning).
- *
- * @param {ScorecardData} data
- * @returns {string}
  */
-function buildFallbackText(data) {
+function buildFallbackText(data: ScorecardData): string {
   return `🌅 *NemoClaw Nightly Scorecard — ${data.today}*`;
 }
+
+type SlackStatusColor = "danger" | "good" | "warning";
 
 /**
  * Slack attachment color for the left-edge bar:
  *   "good"    → green   (perfect)
  *   "danger"  → red     (any failure)
  *   "warning" → yellow  (incomplete)
- *
- * @param {ScorecardData} data
- * @returns {"good" | "danger" | "warning"}
  */
-function getStatusColor(data) {
+function getStatusColor(data: ScorecardData): SlackStatusColor {
   if (data.failure > 0) return "danger";
   if (data.perfect) return "good";
   return "warning";
 }
+
+type SlackChannel = "ci" | "preview" | "situation-room";
 
 /**
  * Routes the Slack post to a channel based on run mode. Production runs
@@ -140,11 +187,8 @@ function getStatusColor(data) {
  * Selective dispatch returns "preview", reserved for dev testing only.
  *
  * The caller maps the returned tag to a webhook URL secret.
- *
- * @param {ScorecardData} data
- * @returns {"situation-room" | "ci" | "preview"}
  */
-function getSlackChannel(data) {
+function getSlackChannel(data: ScorecardData): SlackChannel {
   if (data.runMode === "Scheduled full nightly") return "situation-room";
   if (data.runMode === "Manual full run") return "ci";
   return "preview";
@@ -153,6 +197,8 @@ function getSlackChannel(data) {
 module.exports = {
   buildBlocks,
   buildFallbackText,
-  getStatusColor,
   getSlackChannel,
+  getStatusColor,
 };
+
+export type { ScorecardData, SlackBlock, SlackChannel, SlackStatusColor };

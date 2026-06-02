@@ -2430,7 +2430,7 @@ jobs:
             core.setOutput('scorecard', scorecard);
 
             // Structured data for the Slack step.
-            // Contract: scripts/scorecard/build-slack-blocks.js
+            // Contract: scripts/scorecard/build-slack-blocks.ts
             core.setOutput('scorecardData', JSON.stringify({
               today,
               runMode,
@@ -2473,7 +2473,7 @@ jobs:
               getStatusColor,
               getSlackChannel,
             } = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.js'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
             );
 
             const data = JSON.parse(process.env.SCORECARD_DATA);
