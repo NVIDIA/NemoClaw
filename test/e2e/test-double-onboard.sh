@@ -94,6 +94,36 @@ registry_has() {
   [ -f "$REGISTRY" ] && grep -q "$sandbox_name" "$REGISTRY"
 }
 
+reconcile_stale_registry_entry() {
+  local sandbox_name="$1"
+  local status_log status_output reconcile_log reconcile_output
+
+  registry_has "$sandbox_name" || return 0
+
+  # Since #4578, status is intentionally non-destructive. It can still recover
+  # the named gateway after Phase 6 stopped it, so run it before the active
+  # reconciliation path below.
+  status_log="$(mktemp)"
+  run_nemoclaw "$sandbox_name" status >"$status_log" 2>&1 || true
+  status_output="$(cat "$status_log")"
+  rm -f "$status_log"
+
+  registry_has "$sandbox_name" || return 0
+
+  reconcile_log="$(mktemp)"
+  run_nemoclaw "$sandbox_name" connect --probe-only >"$reconcile_log" 2>&1 || true
+  reconcile_output="$(cat "$reconcile_log")"
+  rm -f "$reconcile_log"
+
+  if registry_has "$sandbox_name"; then
+    info "Cleanup reconciliation did not remove registry entry for '$sandbox_name'."
+    info "status output:"
+    printf '%s\n' "$status_output" | sed 's/^/    /'
+    info "connect --probe-only output:"
+    printf '%s\n' "$reconcile_output" | sed 's/^/    /'
+  fi
+}
+
 wait_openshell_sandbox_absent() {
   local sandbox_name="$1"
   local timeout="${2:-60}"
@@ -810,19 +840,20 @@ openshell sandbox delete "$SANDBOX_B" 2>/dev/null || true
 if [ -n "$INSTALL_SANDBOX_NAME" ]; then
   openshell sandbox delete "$INSTALL_SANDBOX_NAME" 2>/dev/null || true
 fi
+
+# Force registry reconciliation before tearing down the gateway. When the
+# gateway is degraded, `nemoclaw destroy` may delete the OpenShell sandbox but
+# fail before cleaning NemoClaw's registry. `status` is non-destructive after
+# #4578, so use the explicit active-use path (`connect --probe-only`) here.
+reconcile_stale_registry_entry "$SANDBOX_A"
+reconcile_stale_registry_entry "$SANDBOX_B"
+
 stop_forward_if_set "${port_a:-}"
 stop_forward_if_set "${port_b:-}"
 openshell forward stop 18789 2>/dev/null || true
 stop_gateway_runtime
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true
-
-# Force registry reconciliation: when the gateway is in a degraded state
-# (stopped in Phase 6), `nemoclaw destroy` may delete the sandbox from
-# OpenShell but fail to clean its own registry entry. Running `status` for
-# each sandbox triggers the stale-entry reconciliation path.
-run_nemoclaw "$SANDBOX_A" status 2>/dev/null || true
-run_nemoclaw "$SANDBOX_B" status 2>/dev/null || true
 
 if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
   fail "Sandbox '$SANDBOX_A' still exists after cleanup"
