@@ -717,6 +717,11 @@ else
   fail "Registry was unexpectedly cleaned before status reconciliation"
 fi
 
+# Since fix(status) #4578, `nemoclaw status` is non-destructive and no
+# longer removes stale registry entries.  First verify the non-destructive
+# status output, then trigger reconciliation via `connect --probe-only`
+# which still calls ensureLiveSandboxOrExit.
+
 STATUS_LOG="$(mktemp)"
 run_nemoclaw "$SANDBOX_A" status >"$STATUS_LOG" 2>&1
 status_exit=$?
@@ -729,16 +734,28 @@ else
   fail "Stale sandbox status exited $status_exit (expected 1)"
 fi
 
-if grep -q "Removed stale local registry entry" <<<"$status_output"; then
-  pass "Stale registry entry was reconciled during status"
+if grep -q "No local registry entry was removed" <<<"$status_output"; then
+  pass "Stale sandbox status preserved registry entry (#4578)"
+else
+  fail "Stale sandbox status did not emit non-destructive guidance (#4578)"
+fi
+
+# Trigger actual stale-entry reconciliation via connect --probe-only
+RECONCILE_LOG="$(mktemp)"
+run_nemoclaw "$SANDBOX_A" connect --probe-only >"$RECONCILE_LOG" 2>&1 || true
+reconcile_output="$(cat "$RECONCILE_LOG")"
+rm -f "$RECONCILE_LOG"
+
+if grep -q "Removed stale local registry entry" <<<"$reconcile_output"; then
+  pass "Stale registry entry was reconciled during connect --probe-only"
 else
   fail "Stale registry reconciliation message missing"
 fi
 
 if registry_has "$SANDBOX_A"; then
-  fail "Registry still contains '$SANDBOX_A' after status reconciliation"
+  fail "Registry still contains '$SANDBOX_A' after reconciliation"
 else
-  pass "Registry entry for '$SANDBOX_A' removed after status reconciliation"
+  pass "Registry entry for '$SANDBOX_A' removed after reconciliation"
 fi
 
 # ══════════════════════════════════════════════════════════════════
