@@ -41,14 +41,14 @@ For local Ollama and local vLLM routes, `nemoclaw <name> status` also probes the
 <AgentOnly variant="hermes">
 For local Ollama and local vLLM routes, `nemohermes <name> status` also probes the host-side health endpoint directly.
 </AgentOnly>
-This catches a stopped local backend before you retry `inference.local` from inside the sandbox.
+This check catches a stopped local backend before you retry `inference.local` from inside the sandbox.
 
-Key fields in the output include the following:
+Key output fields include:
 
-- Sandbox details, which show the configured model, provider, GPU mode, and applied policy presets.
-- Gateway and process health, which show whether NemoClaw can still reach the OpenShell gateway and whether the in-sandbox agent process is running.
-- Inference health for local Ollama and local vLLM, which shows `healthy` or `unreachable` together with the probed local URL.
-- NIM status, which shows whether a NIM container is running and healthy when that path is in use.
+- Sandbox details show the configured model, provider, GPU mode, and applied policy presets.
+- Gateway and process health show whether NemoClaw can still reach the OpenShell gateway and whether the in-sandbox agent process is running.
+- Inference health for local Ollama and local vLLM shows `healthy` or `unreachable` together with the probed local URL.
+- NIM status shows whether a NIM container is running and healthy when that path is in use.
 
 <AgentOnly variant="openclaw">
 Run `nemoclaw <name> status` on the host to check sandbox state.

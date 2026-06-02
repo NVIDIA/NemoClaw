@@ -13,7 +13,7 @@ import { AgentOnly } from "../_components/AgentGuide";
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
 You can tune every control, but each change shifts the risk profile.
-This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
+This page documents each configurable control, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
 For background on how the layers fit together, refer to [How It Works](../about/how-it-works).
 
@@ -27,7 +27,7 @@ For the full platform-level controls reference, see [OpenShell Security Best Pra
 ## Protection Layers at a Glance
 
 NemoClaw enforces security at four layers.
-NemoClaw locks some when it creates the sandbox and requires a restart to change them.
+NemoClaw locks some controls when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
 The following diagram shows the default posture immediately after onboarding, before you approve any endpoints or apply any presets.
@@ -111,7 +111,7 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 Each network policy entry restricts which executables can reach the endpoint using the `binaries` field.
 
 OpenShell identifies the calling binary by reading `/proc/<pid>/exe` (the kernel-trusted executable path, not `argv[0]`), walking the process tree for ancestor binaries, and computing a SHA256 hash of each binary on first use.
-If someone replaces a binary while the sandbox runs, the hash mismatch triggers an immediate deny.
+If someone replaces a binary while the sandbox runs, the hash mismatch immediately denies the request.
 
 | Aspect | Detail |
 |---|---|
@@ -145,7 +145,7 @@ The `protocol` field on an endpoint controls whether the proxy also inspects ind
 
 ### Operator Approval Flow
 
-When the agent reaches an unlisted endpoint, OpenShell blocks the request and prompts the operator in the TUI.
+When the agent reaches an unlisted endpoint, OpenShell blocks the request and prompts you in the TUI.
 
 | Aspect | Detail |
 |---|---|
@@ -205,7 +205,7 @@ In root mode, the gateway process still runs as the separate `gateway` user, but
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
-For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and high-risk state entry points cannot be changed by the sandbox user.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config and high-risk state entry points.
 The immutability workflow locks high-risk state directories (`skills`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` with `chmod -R go-w`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
 The same workflow also locks the secret-bearing directories (`credentials`, `identity`, `pairing`) to `root:root 700` with `chmod -R go-rwX`.
@@ -215,7 +215,7 @@ The list is the union of state directories declared by every shipped agent manif
 Two exemption kinds keep runtime data writable.
 The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`; the lock helper never touches those paths.
 Inside a locked tree, the helper restores `agents/<agent-id>/sessions/` to `sandbox:sandbox 2770` after the surrounding `agents/` lock so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
-If any high-risk state-dir root is a symlink when the lock runs, it refuses to proceed and reports "Config not locked: state dir root is a symlink" rather than silently following the link with privileged `chown -R` / `chmod -R`.
+If any high-risk state-dir root is a symlink when the lock runs, the lock helper refuses to proceed and reports "Config not locked: state dir root is a symlink" instead of following the link with privileged `chown -R` / `chmod -R`.
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
@@ -291,7 +291,7 @@ When the entrypoint switches from root to the `sandbox` and `gateway` users, it 
 The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
 During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
-This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
+This behavior is best effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see [Sandbox Hardening](../manage-sandboxes/sandbox-hardening)).
 
@@ -328,7 +328,7 @@ The `no-new-privileges` flag prevents processes from gaining additional privileg
 
 A process limit caps the number of processes the sandbox user can spawn.
 The entrypoint sets both soft and hard limits using `ulimit -u 512`.
-This is best-effort: if the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
+This behavior is best effort: if the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
 
 | Aspect | Detail |
 |---|---|
@@ -522,7 +522,9 @@ Different inference providers have different trust and cost profiles.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start. DGX Spark and DGX Station managed vLLM entries are offered by default, and an already-running vLLM server on `localhost:8000` is offered in the menu without a flag, because selecting either is an explicit user action.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start.
+DGX Spark and DGX Station managed vLLM entries appear by default.
+An already-running vLLM server on `localhost:8000` also appears in the menu without a flag because selecting it is an explicit user action.
 
 | Aspect | Detail |
 |---|---|
