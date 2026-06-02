@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const REPO_ROOT = path.dirname(import.meta.dirname);
 const CHECK_DOCS = path.join(import.meta.dirname, "e2e", "e2e-cloud-experimental", "check-docs.sh");
 
 function runCheckDocs(filePath: string) {
@@ -65,6 +66,7 @@ describe("check-docs link validation", () => {
         "# Guide",
         "",
         "[OpenClaw overview](/user-guide/openclaw/about/overview)",
+        "[OpenClaw hardening](/user-guide/openclaw/manage-sandboxes/sandbox-hardening)",
         '<Card title="Hermes overview" href="/user-guide/hermes/about/overview">',
         "",
       ].join("\n"),
@@ -73,6 +75,21 @@ describe("check-docs link validation", () => {
     const result = runCheckDocs(mdPath);
 
     expect(result.status).toBe(0);
+  });
+
+  it("resolves Fern extensionless and route-relative links from docs pages", () => {
+    const routeRelativePage = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
+    const slugAliasPage = path.join(REPO_ROOT, "docs", "about", "how-it-works.mdx");
+
+    const routeRelativeResult = runCheckDocs(routeRelativePage);
+    const slugAliasResult = runCheckDocs(slugAliasPage);
+
+    expect(`${routeRelativeResult.stdout}${routeRelativeResult.stderr}`).not.toContain("../quickstart");
+    expect(routeRelativeResult.status).toBe(0);
+    expect(`${slugAliasResult.stdout}${slugAliasResult.stderr}`).not.toContain(
+      "../manage-sandboxes/sandbox-hardening",
+    );
+    expect(slugAliasResult.status).toBe(0);
   });
 
   it("ignores broken links inside tilde-fenced code blocks", () => {
