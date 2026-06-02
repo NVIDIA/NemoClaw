@@ -56,6 +56,25 @@ describe("check-docs link validation", () => {
     expect(result.status).toBe(0);
   });
 
+  it("resolves Fern user-guide variant routes in Markdown and MDX hrefs", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-fern-"));
+    const mdPath = path.join(tempDir, "guide.mdx");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "[OpenClaw overview](/user-guide/openclaw/about/overview)",
+        '<Card title="Hermes overview" href="/user-guide/hermes/about/overview">',
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocs(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
   it("ignores broken links inside tilde-fenced code blocks", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tildefence-"));
     const mdPath = path.join(tempDir, "guide.md");
