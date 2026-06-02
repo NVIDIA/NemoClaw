@@ -35,6 +35,7 @@ NODE="${NODE:-node}"
 RUN_LINKS=1
 RUN_CLI=1
 RUN_INSTALL=1
+RUN_TBD=1
 LOCAL_ONLY=0
 EXTRA_FILES=()
 VERBOSE="${CHECK_DOC_LINKS_VERBOSE:-0}"
@@ -43,7 +44,7 @@ WITH_SKILLS=0
 usage() {
   cat <<'EOF'
 Documentation checks: Markdown/MDX links + nemoclaw --help vs commands reference
-+ install.sh --help vs canonical provider list.
++ install.sh --help vs canonical provider list + TBD/editorial-placeholder scan.
 
 Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md/.mdx ...]
 
@@ -52,6 +53,7 @@ Options:
   --only-cli       Run only the CLI help vs docs/reference/commands.mdx check
                    (includes both command-level and flag-level parity).
   --only-install   Run only the install.sh --help vs canonical provider check.
+  --only-tbd       Run only the TBD/editorial-placeholder content scan.
   --local-only     Do not curl http(s) URLs (same as CHECK_DOC_LINKS_REMOTE=0).
   --with-skills    Also scan .agents/skills/**/*.md (link check).
   --verbose        Log each URL while curling (link check).
@@ -67,16 +69,25 @@ while [[ $# -gt 0 ]]; do
     --only-links)
       RUN_CLI=0
       RUN_INSTALL=0
+      RUN_TBD=0
       shift
       ;;
     --only-cli)
       RUN_LINKS=0
       RUN_INSTALL=0
+      RUN_TBD=0
       shift
       ;;
     --only-install)
       RUN_LINKS=0
       RUN_CLI=0
+      RUN_TBD=0
+      shift
+      ;;
+    --only-tbd)
+      RUN_LINKS=0
+      RUN_CLI=0
+      RUN_INSTALL=0
       shift
       ;;
     --local-only)
@@ -112,8 +123,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$RUN_LINKS" -eq 0 && "$RUN_CLI" -eq 0 && "$RUN_INSTALL" -eq 0 ]]; then
-  echo "check-docs: use at least one of default (all), --only-links, --only-cli, or --only-install" >&2
+if [[ "$RUN_LINKS" -eq 0 && "$RUN_CLI" -eq 0 && "$RUN_INSTALL" -eq 0 && "$RUN_TBD" -eq 0 ]]; then
+  echo "check-docs: use at least one of default (all), --only-links, --only-cli, --only-install, or --only-tbd" >&2
   exit 2
 fi
 
@@ -616,6 +627,101 @@ run_install_check() {
   return 0
 }
 
+# --- TBD content scan -----------------------------------------------------------
+#
+# Flags standalone \bTBD\b (case-insensitive) in .md/.mdx files outside of
+# code fences and HTML comments. "TBD" is an editorial placeholder that should
+# never reach published documentation. The check skips fenced code blocks and
+# JSX/MDX comments ({/* … */}) so legitimate code examples are not flagged.
+
+run_tbd_check() {
+  local -a DOC_FILES
+  if [[ ${#EXTRA_FILES[@]} -gt 0 ]]; then
+    DOC_FILES=("${EXTRA_FILES[@]}")
+  else
+    DOC_FILES=()
+    while IFS= read -r _docf || [[ -n "${_docf:-}" ]]; do
+      [[ -z "${_docf:-}" ]] && continue
+      DOC_FILES+=("$_docf")
+    done < <(collect_default_docs | LC_ALL=C sort -u)
+  fi
+
+  if [[ ${#DOC_FILES[@]} -eq 0 ]]; then
+    echo "check-docs: [tbd] no documentation files to scan under $REPO_ROOT" >&2
+    return 1
+  fi
+
+  log "[tbd] scanning ${#DOC_FILES[@]} file(s) for standalone TBD markers"
+
+  local _failures=0
+
+  for md in "${DOC_FILES[@]}"; do
+    if [[ ! -f "$md" ]]; then
+      echo "check-docs: [tbd] missing file: $md" >&2
+      _failures=1
+      continue
+    fi
+
+    # Use perl to scan outside fenced code blocks (``` or ~~~) and outside
+    # HTML comments (<!-- -->) and JSX/MDX comments ({/* */}).
+    # Matches are case-insensitive whole-word \bTBD\b.
+    local _hits
+    _hits="$(LC_ALL=C perl -CS -ne '
+      if ($in_fence) {
+        if (/^\s*(`{3,}|~{3,})(.*)$/) {
+          my $fence = $1;
+          my $rest  = $2;
+          my $char  = substr($fence, 0, 1);
+          my $len   = length($fence);
+          if ($char eq $fch && $len >= $flen && $rest =~ /^\s*$/) {
+            ($in_fence, $fch, $flen) = (0, "", 0);
+          }
+        }
+        next;
+      }
+
+      # Strip fenced-code-block openers
+      if (/^\s*(`{3,}|~{3,})/) {
+        my $fence = $1;
+        ($in_fence, $fch, $flen) = (1, substr($fence,0,1), length($fence));
+        next;
+      }
+
+      my $line = $_;
+
+      # Strip HTML comments <!-- ... -->
+      $line =~ s/<!--.*?-->//g;
+
+      # Strip JSX/MDX block comments {/* ... */}
+      $line =~ s/\{\/\*.*?\*\/\}//g;
+
+      # Strip inline code spans (backtick-delimited) so `TBD` in code is not flagged
+      $line =~ s/`[^`]+`//g;
+
+      if ($line =~ /\bTBD\b/i) {
+        print "$ARGV:$.: $line";
+      }
+    ' -- "$md")"
+
+    if [[ -n "$_hits" ]]; then
+      while IFS= read -r hit || [[ -n "${hit:-}" ]]; do
+        [[ -z "${hit:-}" ]] && continue
+        echo "check-docs: [tbd] found TBD marker in $hit" >&2
+      done <<<"$_hits"
+      _failures=1
+    fi
+  done
+
+  if [[ "$_failures" -ne 0 ]]; then
+    log "[tbd] failed: TBD marker(s) found — replace with final content before publishing"
+    return 1
+  fi
+
+  log "[tbd] OK (no TBD markers in ${#DOC_FILES[@]} file(s))"
+  log "[tbd] done."
+  return 0
+}
+
 # --- Markdown links -------------------------------------------------------------
 
 collect_default_docs() {
@@ -961,6 +1067,7 @@ _planned=()
 [[ "$RUN_CLI" -eq 1 ]] && _planned+=("[cli]")
 [[ "$RUN_INSTALL" -eq 1 ]] && _planned+=("[install]")
 [[ "$RUN_LINKS" -eq 1 ]] && _planned+=("[links]")
+[[ "$RUN_TBD" -eq 1 ]] && _planned+=("[tbd]")
 log "running: ${_planned[*]}"
 unset _planned
 
@@ -978,6 +1085,12 @@ fi
 
 if [[ "$RUN_LINKS" -eq 1 ]]; then
   if ! run_links_check; then
+    exit 1
+  fi
+fi
+
+if [[ "$RUN_TBD" -eq 1 ]]; then
+  if ! run_tbd_check; then
     exit 1
   fi
 fi

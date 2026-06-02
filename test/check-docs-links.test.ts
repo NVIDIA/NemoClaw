@@ -159,3 +159,87 @@ describe("check-docs link validation", () => {
     },
   );
 });
+
+function runCheckDocsTbd(filePath: string) {
+  return spawnSync("bash", [CHECK_DOCS, "--only-tbd", filePath], {
+    encoding: "utf-8",
+  });
+}
+
+describe("check-docs TBD content scan", () => {
+  it("fails when a doc file contains a standalone TBD marker", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(mdPath, ["# Guide", "", "This feature is TBD.", ""].join("\n"));
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("TBD marker");
+  });
+
+  it("fails on case-insensitive TBD variants", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-ci-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(mdPath, ["# Guide", "", "Status: tbd", ""].join("\n"));
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("TBD marker");
+  });
+
+  it("passes when TBD appears only inside a fenced code block", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-fence-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      ["# Guide", "", "```text", "# TBD: not scanned", "```", ""].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("passes when TBD appears only inside a backtick inline code span", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-inline-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(mdPath, ["# Guide", "", "The value `TBD` is a code token.", ""].join("\n"));
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("passes when TBD appears only inside an HTML comment", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-comment-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      ["# Guide", "", "<!-- TBD: fill in later -->", "", "Final content here.", ""].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("passes for docs that use 'placeholder' only in a technical context", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-ph-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "OpenShell replaces credentials with placeholder tokens at egress.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+});
