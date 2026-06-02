@@ -19,6 +19,7 @@ import {
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
   planInferenceRouteReconcile,
+  sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "../../../dist/lib/inference/config";
 
@@ -415,5 +416,21 @@ describe("planInferenceRouteReconcile", () => {
         recorded,
       ),
     ).toEqual({ kind: "repair" });
+  });
+});
+
+describe("sanitizeRouteValueForDisplay", () => {
+  it("strips control characters and escape sequences", () => {
+    expect(sanitizeRouteValueForDisplay("nvidia-prod\u001b[2J")).toBe("nvidia-prod[2J");
+    expect(sanitizeRouteValueForDisplay("a\r\nb")).toBe("ab");
+    expect(sanitizeRouteValueForDisplay(null)).toBe("");
+    expect(sanitizeRouteValueForDisplay(undefined)).toBe("");
+  });
+
+  it("passes normal provider/model ids through unchanged", () => {
+    expect(sanitizeRouteValueForDisplay("nvidia/nemotron-3-super-120b-a12b")).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(sanitizeRouteValueForDisplay("nvidia-prod")).toBe("nvidia-prod");
   });
 });

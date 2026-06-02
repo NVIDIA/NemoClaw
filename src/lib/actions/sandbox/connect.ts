@@ -18,7 +18,11 @@ import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
-import { parseGatewayInference, planInferenceRouteReconcile } from "../../inference/config";
+import {
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+  sanitizeRouteValueForDisplay,
+} from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import {
   ensureOllamaAuthProxy,
@@ -585,18 +589,21 @@ function ensureSandboxInferenceRoute(
       const plan = planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model });
       if (plan.kind !== "aligned") {
         if (plan.kind === "diverged") {
-          // Shared gateway: re-point to the recorded route, but loudly (even
-          // when quiet) — silently reverting the user's route was #3726.
+          // Shared gateway: re-point loudly (even when quiet) — silent revert was
+          // #3726. Values sanitized: registry/gateway strings are untrusted.
+          const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
+          const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
+          const recordedRoute = `${sanitizeRouteValueForDisplay(sb.provider)}/${sanitizeRouteValueForDisplay(sb.model)}`;
           console.error(
-            `  ${YW}Warning: gateway inference route (${plan.live.provider}/${plan.live.model}) ` +
-              `differs from the recorded route for sandbox '${sandboxName}' (${sb.provider}/${sb.model}).${R}`,
+            `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
+              `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
           );
           console.error(
-            `  ${YW}Aligning the gateway to ${sb.provider}/${sb.model}. To keep ` +
-              `${plan.live.provider}/${plan.live.model}, set it the supported way:${R}`,
+            `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
+              `${liveProvider}/${liveModel}, set it the supported way:${R}`,
           );
           console.error(
-            `    ${CLI_NAME} inference set --provider ${plan.live.provider} --model ${plan.live.model} --sandbox ${sandboxName}`,
+            `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
           );
         } else if (!quiet) {
           // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.

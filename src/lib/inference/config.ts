@@ -290,3 +290,8 @@ export function planInferenceRouteReconcile(
   }
   return { kind: "aligned" };
 }
+
+// Strip control chars so untrusted route values can't inject terminal escapes when printed.
+export function sanitizeRouteValueForDisplay(value: string | null | undefined): string {
+  return (value ?? "").replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+}
