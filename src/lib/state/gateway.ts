@@ -85,11 +85,11 @@ export function getSandboxFailurePhase(output: string, sandboxName: string): str
  * Determine whether stale NemoClaw gateway output indicates a previous
  * session that should be cleaned up before the port preflight check.
  */
-export function hasStaleGateway(gwInfoOutput: string): boolean {
+export function hasStaleGateway(gwInfoOutput: string, gatewayName = GATEWAY_NAME): boolean {
   const clean = typeof gwInfoOutput === "string" ? stripAnsi(gwInfoOutput) : "";
   return (
     clean.length > 0 &&
-    clean.includes(`Gateway: ${GATEWAY_NAME}`) &&
+    getReportedGatewayName(clean) === gatewayName &&
     !clean.includes("No gateway metadata found")
   );
 }
@@ -129,20 +129,21 @@ export function isGatewayHealthy(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
+  gatewayName = GATEWAY_NAME,
 ): boolean {
-  const namedGatewayKnown = hasStaleGateway(gwInfoOutput);
+  const namedGatewayKnown = hasStaleGateway(gwInfoOutput, gatewayName);
   const activeGatewayName =
     getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
   const connected = isGatewayConnected(statusOutput);
   const activeInfo = hasActiveGatewayInfo(activeGatewayInfoOutput);
 
   // Primary path: status reports connected and gateway name matches
-  if (connected && activeGatewayName === GATEWAY_NAME) return true;
+  if (connected && activeGatewayName === gatewayName) return true;
 
   // Fallback: status is empty (ARM64/non-TTY) but gateway info confirms
   // the named gateway exists and has an active endpoint
   const statusEmpty = typeof statusOutput === 'string' && stripAnsi(statusOutput).trim().length === 0;
-  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === GATEWAY_NAME) return true;
+  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === gatewayName) return true;
 
   return false;
 }
@@ -151,21 +152,22 @@ export function getGatewayReuseState(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
+  gatewayName = GATEWAY_NAME,
 ): GatewayReuseState {
-  if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput)) {
+  if (isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName)) {
     return "healthy";
   }
   const connected = isGatewayConnected(statusOutput);
   const activeGatewayName =
     getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
   const activeInfo = hasActiveGatewayInfo(activeGatewayInfoOutput);
-  if (connected && activeGatewayName === GATEWAY_NAME) {
+  if (connected && activeGatewayName === gatewayName) {
     return "active-unnamed";
   }
-  if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== GATEWAY_NAME) {
+  if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== gatewayName) {
     return "foreign-active";
   }
-  if (hasStaleGateway(gwInfoOutput)) {
+  if (hasStaleGateway(gwInfoOutput, gatewayName)) {
     return "stale";
   }
   if (activeInfo) {
@@ -178,10 +180,11 @@ export function shouldSelectNamedGatewayForReuse(
   statusOutput = "",
   gwInfoOutput = "",
   activeGatewayInfoOutput = "",
+  gatewayName = GATEWAY_NAME,
 ): boolean {
   return (
-    getGatewayReuseState(statusOutput, gwInfoOutput, activeGatewayInfoOutput) === "foreign-active" &&
-    hasStaleGateway(gwInfoOutput)
+    getGatewayReuseState(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName) ===
+      "foreign-active" && hasStaleGateway(gwInfoOutput, gatewayName)
   );
 }
 

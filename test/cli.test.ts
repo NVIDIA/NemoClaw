@@ -5281,7 +5281,7 @@ describe("CLI dispatch", () => {
     expect(calls).not.toContain("should-not-connect");
   });
 
-  it("removes stale registry entries when connect targets a missing live sandbox", () => {
+  it("preserves the registry entry when connect targets a missing live sandbox (#4497)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-connect-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -5312,8 +5312,9 @@ describe("CLI dispatch", () => {
         "  exit 1",
         "fi",
         // Simulate a healthy, active `nemoclaw` named gateway so the
-        // lifecycle guard confirms healthy_named and the registry removal
-        // path fires. Without this, the guard preserves the entry (#2276).
+        // lifecycle guard confirms healthy_named. Even on this path connect
+        // must now preserve the entry so a follow-up rebuild can recover it
+        // (#4497); it previously removed it here (#2276).
         'if [ "$1" = "status" ]; then',
         "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
         "  exit 0",
@@ -5333,9 +5334,11 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(1);
-    expect(r.out.includes("Removed stale local registry entry")).toBeTruthy();
+    expect(r.out.includes("Removed stale local registry entry")).toBe(false);
+    expect(r.out.includes("registered locally, but is not present")).toBeTruthy();
+    expect(r.out.includes("preserved")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeUndefined();
+    expect(saved.sandboxes.alpha).toBeDefined();
   });
 
   it("recovers a missing registry entry from the last onboard session during list", () => {

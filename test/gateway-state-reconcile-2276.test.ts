@@ -7,6 +7,13 @@
 // other OpenShell gateway is currently active. Covers the Architect's §5
 // scenarios 1-12. (Scenario 13 is a shell-level e2e, skipped.)
 //
+// Updated for issue #4497 — a routine `connect` against a healthy gateway must
+// no longer auto-remove the local registry entry even when the live sandbox is
+// truly gone (Scenario 1, formerly destructive). `status` recommends
+// `rebuild --yes` for stuck/stale sandboxes, so deleting the registry entry in
+// `connect` would race that recommendation and leave `rebuild` with nothing to
+// recover. Intentional purges now go through the explicit `destroy` command.
+//
 // Each test spawns `nemoclaw.js` as a child process with a stub `openshell`
 // binary on the $PATH. The stub is configured per-scenario via a JSON
 // "script" file: it records every invocation and returns canned output
@@ -287,32 +294,37 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ─── Scenario 1 ─── destructive path preserved for `connect` ───────────────
+// ─── Scenario 1 ─── connect is now non-destructive (#4497) ─────────────────
 describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound truly gone", () => {
-  it("removes the registry entry, clears session, and exits 1", { timeout: TIMEOUT_MS }, () => {
-    writeStubOpenshell({
-      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-      gatewaySelect: { output: "", exit: 0 },
-      selectFlipsActive: false,
-    });
+  it(
+    "preserves the registry entry and session, points at rebuild/destroy, and exits 1",
+    { timeout: TIMEOUT_MS },
+    () => {
+      writeStubOpenshell({
+        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+        gatewaySelect: { output: "", exit: 0 },
+        selectFlipsActive: false,
+      });
 
-    const r = runCli("connect");
+      const r = runCli("connect");
 
-    assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
-    assert.equal(
-      registrySandboxPresent(r),
-      false,
-      `expected registry entry removed, got: ${JSON.stringify(r.registry)}`,
-    );
-    assert.equal(
-      r.sessionSandboxName === null || r.sessionSandboxName === undefined,
-      true,
-      `expected session sandboxName cleared, got: ${r.sessionSandboxName}`,
-    );
-    assert.match(r.stderr, /Removed stale local registry entry/);
-  });
+      assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
+      assert.equal(
+        registrySandboxPresent(r),
+        true,
+        `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
+      );
+      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
+      // #4497: no routine command may delete the state `rebuild` needs.
+      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+      assert.match(r.stderr, /registered locally, but is not present/);
+      assert.match(r.stderr, /preserved/);
+      assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} rebuild --yes`));
+      assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} destroy`));
+    },
+  );
 });
 
 // ─── Scenario 2 ─── passive `status` must preserve registry state ─────────
@@ -710,6 +722,88 @@ describe("Scenario 12: skill install — wrong gateway active yields guidance, n
       assert.equal(session.sandboxName, SANDBOX_NAME);
       assert.match(result.stderr, /NOT been removed/);
       assert.match(result.stderr, /openshell gateway select nemoclaw/);
+    },
+  );
+});
+
+// ─── Scenario 14 (#4497) ─── connect preserves enough state for rebuild ─────
+// End-to-end recovery contract: a healthy gateway reports the sandbox as gone,
+// `connect` must NOT delete the registry entry, and a follow-up
+// `rebuild --yes` must still be able to LOCATE the sandbox (it now gets past
+// the dispatcher's "does not exist" guard and into the rebuild flow, where it
+// stops at the credential preflight with the sandbox untouched). Before the
+// fix, `connect` removed the entry and `rebuild` failed with "does not exist".
+describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover", () => {
+  it(
+    "after a non-destructive connect, `rebuild --yes` still finds the sandbox",
+    { timeout: TIMEOUT_MS },
+    () => {
+      writeStubOpenshell({
+        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+        gatewaySelect: { output: "", exit: 0 },
+        selectFlipsActive: false,
+      });
+
+      // Step 3: routine connect must preserve the registry entry.
+      const connect = runCli("connect");
+      assert.equal(connect.status, 1, `connect expected exit 1, got ${connect.status}`);
+      assert.equal(
+        registrySandboxPresent(connect),
+        true,
+        `connect must preserve the registry entry, got: ${JSON.stringify(connect.registry)}`,
+      );
+      assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
+      assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
+
+      // Step 4: the previously-suggested rebuild can still locate the sandbox.
+      // The registry provider is `nvidia-prod`; with NVIDIA_API_KEY unset the
+      // rebuild stops at the credential preflight (before any destructive
+      // backup/delete) — proving it located the entry rather than tripping the
+      // dispatcher's "does not exist" guard.
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const rebuild = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          timeout: TIMEOUT_MS,
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${homeLocalBin}:/usr/bin:/bin`,
+            NO_COLOR: "1",
+            NEMOCLAW_NON_INTERACTIVE: "1",
+            // Force the credential preflight to fail deterministically so the
+            // rebuild halts the moment after it locates the sandbox.
+            NVIDIA_API_KEY: "",
+            NEMOCLAW_PROVIDER_KEY: "",
+          },
+        },
+      );
+      const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
+
+      assert.doesNotMatch(
+        rebuildOut,
+        /does not exist/,
+        `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
+      );
+      assert.match(
+        rebuildOut,
+        new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
+        `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
+      );
+      // Registry entry still intact after the located-but-halted rebuild.
+      const registryPath = path.join(registryDir, "sandboxes.json");
+      const reg = fs.existsSync(registryPath)
+        ? JSON.parse(fs.readFileSync(registryPath, "utf-8"))
+        : null;
+      assert.ok(
+        reg?.sandboxes?.[SANDBOX_NAME],
+        `registry entry must remain after rebuild preflight, got: ${JSON.stringify(reg)}`,
+      );
     },
   );
 });
