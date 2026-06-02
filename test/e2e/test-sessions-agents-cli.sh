@@ -273,12 +273,11 @@ test_sessions_reset_main() {
   # requests between attempts, until the gateway accepts the scope or we run
   # out of attempts.
   while [ "$attempt" -le "$max_attempts" ]; do
-    set +e
-    out="$(nemoclaw "$SANDBOX_NAME" sessions reset agent:main:main --json 2>&1)"
-    exit_code=$?
-    set -e
-    if [ "$exit_code" -eq 0 ]; then
+    if out="$(nemoclaw "$SANDBOX_NAME" sessions reset agent:main:main --json 2>&1)"; then
+      exit_code=0
       break
+    else
+      exit_code=$?
     fi
     if ! grep -qE "scope upgrade pending|Failed to reach the OpenClaw gateway|pairing required" <<<"$out"; then
       break
@@ -375,12 +374,11 @@ test_sessions_delete_non_main() {
   fi
   local del_out del_code attempt=1 max_attempts=5 backoff=4
   while [ "$attempt" -le "$max_attempts" ]; do
-    set +e
-    del_out="$(nemoclaw "$SANDBOX_NAME" sessions delete "$key" --json 2>&1)"
-    del_code=$?
-    set -e
-    if [ "$del_code" -eq 0 ]; then
+    if del_out="$(nemoclaw "$SANDBOX_NAME" sessions delete "$key" --json 2>&1)"; then
+      del_code=0
       break
+    else
+      del_code=$?
     fi
     if ! grep -qE "scope upgrade pending|Failed to reach the OpenClaw gateway|pairing required" <<<"$del_out"; then
       break

@@ -63,13 +63,66 @@ describe("parseGatewayCallEnvelope", () => {
   });
 
   it("returns null when no line carries the envelope contract", () => {
-    // Plain JSON without `result`/`error` keys is not a gateway envelope and
-    // must be rejected rather than coerced into one.
+    // Plain JSON without `result`/`error`/`ok` keys is not a gateway response
+    // shape and must be rejected rather than coerced into one.
     expect(parseGatewayCallEnvelope('{"foo":"bar"}')).toBeNull();
     expect(
       parseGatewayCallEnvelope(
         ['{"level":"info","msg":"starting"}', '{"foo":"bar"}'].join("\n"),
       ),
     ).toBeNull();
+  });
+
+  it("normalises a raw `{ok: true, ...}` payload to a success envelope", () => {
+    // OpenClaw `gateway call --json` emits the handler return value
+    // directly rather than a JSON-RPC envelope. Sessions.reset/delete
+    // success carries `{ok: true, key, entry?}`.
+    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+      '{"ok":true,"key":"agent:main:main","entry":null}',
+    );
+    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
+  });
+
+  it("normalises a raw `{ok: false, error: ...}` payload to a failure envelope", () => {
+    const env = parseGatewayCallEnvelope(
+      '{"ok":false,"error":{"code":"E_LOCKED","message":"session locked"}}',
+    );
+    expect(env?.error).toEqual({ code: "E_LOCKED", message: "session locked" });
+  });
+
+  it("synthesises a failure envelope when `ok: false` carries no `error` object", () => {
+    const env = parseGatewayCallEnvelope('{"ok":false}');
+    expect(env?.error?.code).toBe("unknown");
+    expect(env?.error?.message).toMatch(/ok=false/);
+  });
+
+  it("parses a multi-line pretty-printed raw payload", () => {
+    // The live `openclaw gateway call --json` pretty-prints across multiple
+    // lines on some runtimes. The per-line scan necessarily skips this; the
+    // whole-output JSON.parse fallback must catch it.
+    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+      [
+        "{",
+        '  "ok": true,',
+        '  "key": "agent:main:main",',
+        '  "entry": null',
+        "}",
+      ].join("\n"),
+    );
+    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
+  });
+
+  it("recovers a multi-line raw payload embedded after log noise", () => {
+    const env = parseGatewayCallEnvelope<{ ok: true; key: string }>(
+      [
+        "  Loading config /sandbox/.openclaw/openclaw.json",
+        "  Connecting to gateway ws://127.0.0.1:18789",
+        "{",
+        '  "ok": true,',
+        '  "key": "agent:main:main"',
+        "}",
+      ].join("\n"),
+    );
+    expect(env?.result).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 });
