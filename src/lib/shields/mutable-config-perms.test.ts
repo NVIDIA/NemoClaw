@@ -51,6 +51,20 @@ describe("mutable-config-perms — contract predicates (#4538)", () => {
     expect(dirSatisfiesMutableContract("2750")).toBe(false);
   });
 
+  it("rejects a tightened owner class even when group bits look right", () => {
+    // 2670 = owner rw- (no execute/traverse) — gateway-group bits alone would
+    // wrongly pass a group-only check.
+    expect(dirSatisfiesMutableContract("2670")).toBe(false);
+  });
+
+  it("rejects world-writable widening of the config directory", () => {
+    expect(dirSatisfiesMutableContract("2777")).toBe(false);
+  });
+
+  it("rejects a five-digit (malformed) mode string", () => {
+    expect(dirSatisfiesMutableContract("02770")).toBe(false);
+  });
+
   it("rejects unparsable directory modes", () => {
     expect(dirSatisfiesMutableContract("rwx")).toBe(false);
     expect(dirSatisfiesMutableContract("")).toBe(false);
@@ -67,6 +81,11 @@ describe("mutable-config-perms — contract predicates (#4538)", () => {
 
   it("rejects read-only group files", () => {
     expect(fileSatisfiesMutableContract("640")).toBe(false);
+  });
+
+  it("rejects world-readable/writable widening of the config file", () => {
+    expect(fileSatisfiesMutableContract("666")).toBe(false);
+    expect(fileSatisfiesMutableContract("664")).toBe(false);
   });
 
   it("parses stat mode/owner output, tolerating extra whitespace", () => {

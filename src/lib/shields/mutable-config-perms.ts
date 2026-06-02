@@ -56,24 +56,23 @@ export function parseStatModeOwner(raw: string): { mode: string; owner: string }
 }
 
 // stat %a renders the octal mode, including the setuid/setgid/sticky bits when
-// set (e.g. "2770", "770", "700"). Pad to 4 digits so the special-bit nibble is
-// always index 0 and the group nibble is always index 2.
+// set (e.g. "2770", "770", "700"). Pad to 4 digits and require an exact match
+// against the contract: anything else — a tightened owner class (2670), dropped
+// setgid (770), or widened world bits (2777) — is a drift worth flagging, since
+// `repairMutableConfigPerms` restores exactly 2770/660 anyway. Checking only
+// selected group bits would let owner-broken and world-writable modes pass.
 export function dirSatisfiesMutableContract(mode: string): boolean {
-  if (!/^[0-7]{3,4}$/.test(mode)) return false;
-  const padded = mode.padStart(4, "0");
-  const setgid = (Number.parseInt(padded[0], 8) & 0o2) !== 0;
-  const group = Number.parseInt(padded[2], 8);
-  // The gateway UID needs group read/write/execute to traverse the directory
-  // and create entries; setgid keeps new files owned by the sandbox group.
-  return setgid && group === 0o7;
+  return (
+    /^[0-7]{3,4}$/.test(mode) &&
+    mode.padStart(4, "0") === MUTABLE_OPENCLAW_DIR_MODE.padStart(4, "0")
+  );
 }
 
 export function fileSatisfiesMutableContract(mode: string): boolean {
-  if (!/^[0-7]{3,4}$/.test(mode)) return false;
-  const padded = mode.padStart(4, "0");
-  const group = Number.parseInt(padded[2], 8);
-  // Group read+write so the gateway UID can persist runtime config edits.
-  return (group & 0o6) === 0o6;
+  return (
+    /^[0-7]{3,4}$/.test(mode) &&
+    mode.padStart(4, "0") === MUTABLE_OPENCLAW_FILE_MODE.padStart(4, "0")
+  );
 }
 
 function postureBlocksMutableRepair(

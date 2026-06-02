@@ -33,9 +33,20 @@ export function buildConfigPermsCheck(
   let inspection: MutableConfigPermsInspection;
   try {
     inspection = inspect(sandboxName);
-  } catch {
-    return null;
+  } catch (err) {
+    // The probe itself failed unexpectedly. Surface it rather than dropping the
+    // check, so `doctor` does not report a healthy sandbox when it could not
+    // actually verify the permission contract.
+    return {
+      group: "Sandbox",
+      label: LABEL,
+      status: "warn",
+      detail: `permission probe failed: ${err instanceof Error ? err.message : String(err)}`,
+      hint: `re-run \`${cliName} ${sandboxName} doctor\`, or rebuild with \`${cliName} ${sandboxName} rebuild\``,
+    };
   }
+  // `applies: false` is a deliberate skip (non-OpenClaw agent, shields-up, or
+  // container not running) — not a probe failure — so render nothing.
   if (!inspection.applies) return null;
 
   if (inspection.ok) {
@@ -88,13 +99,19 @@ export function buildConfigPermsCheck(
     after = { applies: false, reason: "re-inspection failed" };
   }
   const fixed = after.applies && after.ok;
+  // Prefer the post-repair issues; otherwise fall back to the repair errors and
+  // finally the re-inspection failure reason so the only actionable signal is
+  // never dropped to a bare "unknown".
+  const incompleteReason = after.applies
+    ? after.issues.join("; ")
+    : repairResult.errors.join("; ") || after.reason || "unknown";
   return {
     group: "Sandbox",
     label: LABEL,
     status: fixed ? "ok" : "fail",
     detail: fixed
       ? `restored mutable contract (was: ${before})`
-      : `repair incomplete: ${after.applies ? after.issues.join("; ") : repairResult.errors.join("; ") || "unknown"}`,
+      : `repair incomplete: ${incompleteReason}`,
     hint: fixed
       ? undefined
       : `inspect permissions manually or rebuild with \`${cliName} ${sandboxName} rebuild\``,

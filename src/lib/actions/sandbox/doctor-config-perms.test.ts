@@ -52,11 +52,14 @@ describe("buildConfigPermsCheck (#4538)", () => {
     expect(buildConfigPermsCheck("alpha", false, deps())).toBeNull();
   });
 
-  it("returns null when inspection throws (defensive)", () => {
+  it("surfaces a warn check (not null) when the inspection probe throws", () => {
     inspect.mockImplementation(() => {
       throw new Error("boom");
     });
-    expect(buildConfigPermsCheck("alpha", false, deps())).toBeNull();
+    const check = buildConfigPermsCheck("alpha", false, deps());
+    expect(check?.status).toBe("warn");
+    expect(check?.detail).toContain("permission probe failed");
+    expect(check?.detail).toContain("boom");
   });
 
   it("reports ok when the mutable contract is intact", () => {
@@ -110,6 +113,19 @@ describe("buildConfigPermsCheck (#4538)", () => {
     expect(check?.status).toBe("warn");
     expect(check?.detail).toContain("repair skipped");
     expect(check?.detail).toContain("locked");
+  });
+
+  it("preserves the re-inspection reason when --fix verifies but re-inspect fails", () => {
+    inspect.mockReturnValueOnce(tightened).mockImplementationOnce(() => {
+      throw new Error("container vanished");
+    });
+    repair.mockReturnValue({ applied: true, verified: true, errors: [] });
+    const check = buildConfigPermsCheck("alpha", true, deps());
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("repair incomplete");
+    // The only actionable signal is the re-inspection failure reason, not "unknown".
+    expect(check?.detail).toContain("re-inspection failed");
+    expect(check?.detail).not.toContain("unknown");
   });
 
   it("fails gracefully when --fix repair throws", () => {

@@ -827,6 +827,10 @@ export async function rebuildSandbox(
   const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
   const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
   const agentDef = rebuiltAgent ? loadAgent(rebuiltAgent.name) : loadAgent("openclaw");
+  // #4538: set when the post-upgrade mutable-config permission repair ran but
+  // could not verify the contract — the rebuilt sandbox may still EACCES on
+  // gateway-side config writes, so the final result is downgraded below.
+  let mutablePermsRepairUnverified = false;
   if (agentDef.name === "openclaw") {
     // openclaw doctor --fix validates and repairs directory structure.
     // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -841,23 +845,6 @@ export async function rebuildSandbox(
     } else {
       console.log(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
-      );
-    }
-
-    // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
-    // layout, which silently tightens NemoClaw's mutable config contract
-    // (setgid + group-writable /sandbox/.openclaw and group-writable
-    // openclaw.json). Restore it immediately so the gateway UID can still
-    // persist config edits after rebuild. No-op for shields-up sandboxes.
-    log("Restoring mutable OpenClaw config permissions after post-upgrade doctor --fix");
-    const permRepair = shields.repairMutableConfigPerms(sandboxName);
-    if (!permRepair.applied) {
-      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
-    } else if (permRepair.verified) {
-      console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
-    } else {
-      console.error(
-        `  ${YW}\u26a0${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
       );
     }
 
@@ -887,6 +874,29 @@ export async function rebuildSandbox(
         `  ${D}WeChat account seed skipped (seed helper returned ${seedWechatResult?.status ?? "null"})${R}`,
       );
     }
+
+    // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
+    // layout, which silently tightens NemoClaw's mutable config contract
+    // (setgid + group-writable /sandbox/.openclaw and group-writable
+    // openclaw.json). Run this LAST in the OpenClaw post-restore sequence —
+    // after doctor --fix and the WeChat seed helper, both of which rewrite
+    // openclaw.json (the seed helper atomically writes it 0600) — so the
+    // restored contract is not immediately undone. No-op for shields-up
+    // sandboxes (config is intentionally root-owned/locked).
+    log("Restoring mutable OpenClaw config permissions after post-restore config writes");
+    const permRepair = shields.repairMutableConfigPerms(sandboxName);
+    if (!permRepair.applied) {
+      // Deliberate no-op (shields up, or unreadable shields state): the config
+      // is intentionally root-owned/locked, not broken — do not downgrade.
+      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+    } else if (permRepair.verified) {
+      console.log(`  ${G}✓${R} Mutable config permissions restored`);
+    } else {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}⚠${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+      );
+    }
   }
   // Hermes: no explicit post-restore step needed. Hermes's SessionDB._init_schema()
   // auto-migrates state.db (SQLite) on first connection via sequential ALTER TABLE
@@ -903,16 +913,25 @@ export async function rebuildSandbox(
   if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
 
   console.log("");
-  if (restore.success) {
+  if (restore.success && !mutablePermsRepairUnverified) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
     if (versionCheck.expectedVersion) {
       console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
     }
   } else {
-    console.log(
-      `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
-    );
-    console.log(`    Backup available at: ${backupManifest.backupPath}`);
+    // At least one post-restore step is incomplete. Surface every applicable
+    // failure (#4538: a failed state restore and an unverified permission
+    // repair are independent \u2014 report both so the operator does not miss the
+    // backup-restore recovery just because permissions also need attention).
+    console.log(`  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but some post-restore steps were incomplete`);
+    if (!restore.success) {
+      console.log(`    State restore was incomplete \u2014 backup available at: ${backupManifest.backupPath}`);
+    }
+    if (mutablePermsRepairUnverified) {
+      console.log(
+        `    Mutable config permissions were not verified \u2014 run \`${CLI_NAME} ${sandboxName} doctor --fix\` to restore the OpenClaw config permission contract`,
+      );
+    }
   }
   } finally {
     if (!rebuildShieldsWindow.relocked) {
