@@ -110,7 +110,7 @@ describe("deleteSandboxSession", () => {
     );
   });
 
-  it("rejects an unexpected payload (missing ok=true) and exits non-zero", async () => {
+  it("rejects an unexpected payload (missing key) and exits non-zero", async () => {
     gatewayMock.mockReturnValue({
       payload: { ok: true, /* key missing */ removedTranscript: true },
       rawOutput: '{"ok":true,"removedTranscript":true}',
@@ -142,7 +142,7 @@ describe("deleteSandboxSession", () => {
     });
   });
 
-  it("canonicalises a key under the requested agent when only --agent is provided", async () => {
+  it("builds the canonical key under the requested agent when only --agent is provided", async () => {
     gatewayMock.mockReturnValue(successResult("agent:research:slot"));
 
     await deleteSandboxSession("sb-1", {

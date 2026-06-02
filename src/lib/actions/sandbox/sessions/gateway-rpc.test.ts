@@ -97,7 +97,7 @@ describe("parseGatewayCallPayload", () => {
     // A debug-log object printed before the real response would otherwise be
     // concatenated with the response if we only sliced first-`{` to last-`}`.
     // The scan must try every (`{` start, `}` end) pairing and accept the
-    // first slice that parses into a recognised response shape.
+    // first slice that parses into a valid response shape.
     const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
       [
         "{",

@@ -320,8 +320,8 @@ test_agents_add_passthrough() {
   section "TC-AGENT-01: agents add ${TEST_AGENT_ID} (passthrough wizard)"
   local add_out
   # OpenClaw's `agents add --non-interactive` mandates --workspace; the wizard
-  # only fills it interactively. We pass the canonical workspace path that the
-  # bake convention (NemoClaw#4560) reserves for secondary agents.
+  # only fills it interactively. Pass the canonical secondary-agent workspace
+  # path reserved by the in-sandbox layout.
   if ! add_out="$(nemoclaw "$SANDBOX_NAME" agents add "$TEST_AGENT_ID" \
     --workspace "/sandbox/.openclaw/workspace-${TEST_AGENT_ID}" \
     --non-interactive 2>&1)"; then

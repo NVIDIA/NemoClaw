@@ -4,13 +4,13 @@
 // Scope boundary for `nemoclaw <name> sessions reset`:
 //
 //   - Invalid state addressed by this code path: a user wants to drop the
-//     current conversation for a given session key (canonicalised as
-//     `agent:<agent>:<slot>`) so the next message starts on a clean entry.
+//     current conversation for a given session key (in canonical
+//     `agent:<agent>:<slot>` form) so the next message starts on a clean entry.
 //   - Source boundary:
-//       * NemoClaw side (this file): validate the requested key/agent,
-//         canonicalise the session key, dispatch the `sessions.reset`
+//       * NemoClaw side (this file): validate the requested key/agent, put
+//         the session key in canonical form, dispatch the `sessions.reset`
 //         JSON-RPC to the in-sandbox OpenClaw gateway, and surface the
-//         envelope to the user.
+//         response to the user.
 //       * OpenClaw side (upstream `openclaw` npm package, pinned at
 //         `agents/openclaw/manifest.yaml` -> `expected_version`): owns the
 //         actual reset semantics — clearing the session entry, releasing
@@ -28,7 +28,7 @@
 //         inside the sandbox, so host-side tests deliberately cover only
 //         the routing/dispatch surface that lives on this side of the
 //         boundary. Concretely: `src/lib/actions/sandbox/sessions/`
-//         covers key canonicalisation, agent-key cross-check, gateway
+//         covers canonical-key construction, agent-key cross-check, gateway
 //         RPC dispatch, envelope parsing, and the adapter wire contract
 //         (method name, params, error envelopes, unexpected payloads,
 //         `--keep-transcript` mapping, `--agent` mismatch refusal) —

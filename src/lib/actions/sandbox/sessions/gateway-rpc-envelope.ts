@@ -12,7 +12,7 @@
 //     gateway debug lines on stderr-merged streams, pretty-printed debug
 //     objects emitted before the payload) and is otherwise format-preserving:
 //     it returns the parsed object directly so callers can match on `ok` and
-//     `error` without an intermediate normalisation step.
+//     `error` without an intermediate rewrite step.
 
 export interface GatewayCallPayload {
   ok?: boolean;

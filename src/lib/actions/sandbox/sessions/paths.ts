@@ -38,6 +38,19 @@ export const DEFAULT_AGENT_ID = "main";
 export function buildCanonicalSessionKey(agentId: string, sessionKey: string): string {
   const agent = validateAgentId(agentId);
   const key = validateSessionKey(sessionKey);
-  if (key.startsWith("agent:")) return key;
+  if (key.startsWith("agent:")) {
+    // Reject malformed canonical-shaped keys before they reach the gateway.
+    // Without this, `agent::slot` or `agent:!@#:slot` would slip past the
+    // `--agent` mismatch guard in reset/delete adapters because their
+    // `parseAgentIdFromSessionKey` cross-check returns null (regex miss),
+    // and a null `keyAgent` skips the mismatch comparison entirely.
+    const parsed = parseAgentIdFromSessionKey(key);
+    if (!parsed) {
+      throw new Error(
+        `Invalid canonical session key '${sessionKey}'. Expected 'agent:<id>:<rest>' with a valid agent id (letters, digits, '.', '_', '-', max 64).`,
+      );
+    }
+    return key;
+  }
   return `agent:${agent}:${key}`;
 }

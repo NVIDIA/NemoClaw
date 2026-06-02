@@ -57,6 +57,22 @@ describe("session path helpers", () => {
     );
   });
 
+  it("rejects a malformed `agent:` prefix that would bypass agent-id validation", () => {
+    // Without this guard, a key like `agent::slot` or `agent:!@#:slot`
+    // would pass through (it already starts with `agent:`) and the
+    // `--agent` mismatch check in reset/delete would skip its comparison
+    // because `parseAgentIdFromSessionKey` returns null for these.
+    expect(() => buildCanonicalSessionKey("main", "agent::slot")).toThrow(
+      /Invalid canonical session key/,
+    );
+    expect(() => buildCanonicalSessionKey("main", "agent:!@#:slot")).toThrow(
+      /Invalid canonical session key/,
+    );
+    expect(() => buildCanonicalSessionKey("main", "agent:.. :slot")).toThrow(
+      /Invalid (?:canonical session key|session key)/,
+    );
+  });
+
   it("exposes a sensible default agent id", () => {
     expect(DEFAULT_AGENT_ID).toBe("main");
   });
