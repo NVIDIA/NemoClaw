@@ -105,8 +105,8 @@ If a plugin calls an external API at runtime, add a policy preset for the requir
 Hermes uses Python for plugin execution, so policy entries usually need to allow the Hermes Python runtime, such as `/opt/hermes/.venv/bin/python`, in addition to any command-line wrapper your plugin starts.
 For package downloads during sandbox runtime, use the `pypi` preset or a custom preset that allows the package hosts you need.
 
-For policy concepts, see [Network Policies](/reference/network-policies).
-For custom preset workflows, see [Customize Network Policy](/network-policy/customize-network-policy).
+For policy concepts, see [Network Policies](../reference/network-policies).
+For custom preset workflows, see [Customize Network Policy](../network-policy/customize-network-policy).
 
 ## Common Mistakes
 
@@ -120,6 +120,6 @@ These are the most common places where Hermes plugin installation gets mixed up 
 
 ## Next Steps
 
-- Review [NemoHermes Command Reference](/reference/commands-nemohermes#nemohermes-onboard-from) for `nemohermes onboard --from` details.
-- Review [Customize Network Policy](/network-policy/customize-network-policy) if the plugin needs runtime network egress.
+- Review [NemoHermes Command Reference](../reference/commands#nemohermes-onboard-from) for `nemohermes onboard --from` details.
+- Review [Customize Network Policy](../network-policy/customize-network-policy) if the plugin needs runtime network egress.
 - Review [Runtime Controls](./runtime-controls) before changing shields or mutability settings for a plugin-enabled sandbox.
