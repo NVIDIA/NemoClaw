@@ -50,8 +50,8 @@ privilege-separation capabilities during the switch from root to the
 For defense-in-depth, also drop all Linux capabilities at the container runtime
 when you launch the image directly:
 
-```console
-$ docker run --rm \
+```bash
+docker run --rm \
     --cap-drop=ALL \
     --ulimit nproc=512:512 \
     nemoclaw-sandbox
@@ -122,8 +122,8 @@ Files outside the writable paths would be inaccessible to the agent regardless o
 
 Operators should verify Landlock availability:
 
-```console
-$ ls /sys/kernel/security/landlock
+```bash
+ls /sys/kernel/security/landlock
 ```
 
 For production deployments, kernel 5.13+ with Landlock enabled is strongly recommended.

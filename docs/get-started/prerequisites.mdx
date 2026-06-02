@@ -54,7 +54,7 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 <Note title="Docker storage driver">
 On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
 No manual setup is required.
-See the [troubleshooting guide](/reference/troubleshooting) for the override knobs and a manual `daemon.json` alternative.
+See the [troubleshooting guide](../reference/troubleshooting) for the override knobs and a manual `daemon.json` alternative.
 </Note>
 
 ## Platforms
@@ -74,6 +74,6 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 
 ## Next Steps
 
-- [Prepare Windows for NemoClaw](/get-started/windows-preparation) if you are using Windows.
-- [Quickstart](/get-started/quickstart) to install NemoClaw and launch your first sandbox.
-- [Agent Skills](/resources/agent-skills) to load NemoClaw guidance into an AI coding assistant before setup.
+- [Prepare Windows for NemoClaw](windows-preparation) if you are using Windows.
+- [Quickstart](quickstart) to install NemoClaw and launch your first sandbox.
+- [Agent Skills](../resources/agent-skills) to load NemoClaw guidance into an AI coding assistant before setup.
