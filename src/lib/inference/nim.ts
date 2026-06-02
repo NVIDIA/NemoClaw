@@ -10,11 +10,13 @@ const {
   dockerForceRm,
   dockerLoginPasswordStdin,
   dockerLogs,
+  dockerManifestInspect,
   dockerPort,
   dockerPull,
   dockerRm,
   dockerRunDetached,
   dockerStop,
+  dockerTag,
 } = require("../adapters/docker");
 const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
@@ -314,6 +316,38 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
+// First model id from a NIM/vLLM `GET /v1/models` body, or null if absent/
+// unparseable. NIM may serve a different id than NemoClaw's catalog name.
+export function parseServedModelId(modelsJson: string): string | null {
+  try {
+    const doc = JSON.parse(modelsJson);
+    const data = Array.isArray(doc?.data) ? doc.data : [];
+    for (const entry of data) {
+      if (typeof entry?.id === "string" && entry.id.length > 0) return entry.id;
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
+// Model id a running local NIM actually serves; null if unreachable/empty.
+export function getServedModelId(port = VLLM_PORT): string | null {
+  const out = runCapture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "5",
+      `http://127.0.0.1:${Number(port)}/v1/models`,
+    ],
+    { ignoreError: true },
+  );
+  return out ? parseServedModelId(out) : null;
+}
+
 export function detectGpu(): GpuDetection | null {
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
@@ -601,6 +635,92 @@ export function dockerLoginNgc(apiKey: string): boolean {
   return result.status === 0;
 }
 
+// Node's process.arch → OCI manifest "architecture" (x64 → amd64; others match).
+export function nodeArchToOci(arch: string): string {
+  if (arch === "x64") return "amd64";
+  return arch;
+}
+
+interface ManifestPlatform {
+  architecture?: string;
+  os?: string;
+}
+interface ManifestIndexEntry {
+  digest?: string;
+  platform?: ManifestPlatform;
+}
+interface ManifestIndexDoc {
+  manifests?: ManifestIndexEntry[];
+}
+
+// Linux image-manifest digest for `ociArch` from `docker manifest inspect` JSON,
+// or null if not a multi-arch index / no match / unparseable. The arch+os match
+// also skips buildkit attestation manifests (platform unknown/unknown). See #3885.
+export function selectPlatformManifestDigest(
+  manifestJson: string,
+  ociArch: string,
+): string | null {
+  let doc: ManifestIndexDoc;
+  try {
+    doc = JSON.parse(manifestJson);
+  } catch {
+    return null;
+  }
+  const manifests = Array.isArray(doc?.manifests) ? doc.manifests : [];
+  for (const entry of manifests) {
+    if (
+      entry?.platform?.architecture === ociArch &&
+      entry?.platform?.os === "linux" &&
+      typeof entry.digest === "string" &&
+      entry.digest.length > 0
+    ) {
+      return entry.digest;
+    }
+  }
+  return null;
+}
+
+// Repository portion of an image ref, dropping `:tag`/`@digest`. Only a colon
+// in the final path segment counts as a tag, so `host:port/repo:tag` is safe.
+export function imageRepository(imageRef: string): string {
+  const lastSlash = imageRef.lastIndexOf("/");
+  const prefix = lastSlash === -1 ? "" : imageRef.slice(0, lastSlash + 1);
+  const lastSegment = lastSlash === -1 ? imageRef : imageRef.slice(lastSlash + 1);
+  const atIdx = lastSegment.indexOf("@");
+  if (atIdx !== -1) return prefix + lastSegment.slice(0, atIdx);
+  const colonIdx = lastSegment.indexOf(":");
+  if (colonIdx !== -1) return prefix + lastSegment.slice(0, colonIdx);
+  return imageRef;
+}
+
+// Pull `image`, avoiding a NIM-on-NGC break: NIM `:latest` is a multi-arch index
+// bundling buildkit attestation manifests (unknown/unknown). Docker's containerd
+// image store (default on 29.x) pulls the arch layers, then fetches the
+// attestation manifest, which nvcr.io rejects ("Incorrect Repository Format") —
+// aborting after all layers, leaving no image. So resolve the index to the
+// host-arch digest and pull that single manifest (no index → no attestation
+// fetch). Fall back to a plain pull when the ref is not a resolvable index. #3885.
+function pullImageResolvingPlatform(image: string): void {
+  let manifestJson = "";
+  try {
+    manifestJson = dockerManifestInspect(image, { ignoreError: true }) || "";
+  } catch {
+    manifestJson = "";
+  }
+  const digest = manifestJson
+    ? selectPlatformManifestDigest(manifestJson, nodeArchToOci(process.arch))
+    : null;
+  if (!digest) {
+    dockerPull(image);
+    return;
+  }
+  const digestRef = `${imageRepository(image)}@${digest}`;
+  console.log(`  Resolved ${nodeArchToOci(process.arch)} manifest: ${digestRef}`);
+  dockerPull(digestRef);
+  // Tag back to the friendly ref so the run path starts the container by `image`.
+  dockerTag(digestRef, image);
+}
+
 export function pullNimImage(model: string): string {
   const image = getImageForModel(model);
   if (!image) {
@@ -608,7 +728,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  dockerPull(image);
+  pullImageResolvingPlatform(image);
   return image;
 }
 

@@ -106,6 +106,209 @@ describe("nim", () => {
     });
   });
 
+  // NIM-style OCI index: per-arch linux images + buildkit attestation manifests
+  // (unknown/unknown) that trip the NGC pull. See #3885.
+  const NIM_INDEX_JSON = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 10203,
+        digest: "sha256:amd64image",
+        platform: { architecture: "amd64", os: "linux" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 566,
+        digest: "sha256:amd64attestation",
+        platform: { architecture: "unknown", os: "unknown" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 10201,
+        digest: "sha256:arm64image",
+        platform: { architecture: "arm64", os: "linux" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 566,
+        digest: "sha256:arm64attestation",
+        platform: { architecture: "unknown", os: "unknown" },
+      },
+    ],
+  });
+  const DIGEST_BY_ARCH: Record<string, string> = {
+    amd64: "sha256:amd64image",
+    arm64: "sha256:arm64image",
+  };
+
+  describe("nodeArchToOci", () => {
+    it("maps x64 to amd64 and passes other arches through", () => {
+      expect(nim.nodeArchToOci("x64")).toBe("amd64");
+      expect(nim.nodeArchToOci("arm64")).toBe("arm64");
+      expect(nim.nodeArchToOci("ppc64le")).toBe("ppc64le");
+    });
+  });
+
+  describe("imageRepository", () => {
+    it("drops :tag and @digest, preserving the registry path", () => {
+      expect(nim.imageRepository("nvcr.io/nim/nvidia/nemotron-3-nano:latest")).toBe(
+        "nvcr.io/nim/nvidia/nemotron-3-nano",
+      );
+      expect(nim.imageRepository("nvcr.io/nim/nvidia/nemotron-3-nano@sha256:abc")).toBe(
+        "nvcr.io/nim/nvidia/nemotron-3-nano",
+      );
+      expect(nim.imageRepository("repo/image")).toBe("repo/image");
+    });
+
+    it("treats a colon only in the final path segment as a tag (registry port)", () => {
+      expect(nim.imageRepository("localhost:5000/team/image:1.0")).toBe(
+        "localhost:5000/team/image",
+      );
+    });
+  });
+
+  describe("selectPlatformManifestDigest", () => {
+    it("returns the linux digest for the requested arch, excluding attestation manifests", () => {
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "arm64")).toBe("sha256:arm64image");
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "amd64")).toBe("sha256:amd64image");
+    });
+
+    it("returns null when no entry matches the arch", () => {
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "ppc64le")).toBeNull();
+    });
+
+    it("returns null for a single-image manifest (no manifests array)", () => {
+      const single = JSON.stringify({
+        schemaVersion: 2,
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        config: {},
+        layers: [],
+      });
+      expect(nim.selectPlatformManifestDigest(single, "amd64")).toBeNull();
+    });
+
+    it("returns null for malformed or empty JSON", () => {
+      expect(nim.selectPlatformManifestDigest("not json", "amd64")).toBeNull();
+      expect(nim.selectPlatformManifestDigest("", "amd64")).toBeNull();
+    });
+  });
+
+  describe("pullNimImage", () => {
+    function findCall(run: Mock, verb: string): string[] | undefined {
+      const found = run.mock.calls.find((c) => {
+        const argv = c[0] as string[];
+        return Array.isArray(argv) && argv[0] === "docker" && argv[1] === verb;
+      });
+      return found ? (found[0] as string[]) : undefined;
+    }
+
+    it("resolves the host-arch manifest digest, pulls by digest, then tags back (#3885)", () => {
+      const run = vi.fn();
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (Array.isArray(cmd) && cmd.includes("manifest") && cmd.includes("inspect")) {
+          return NIM_INDEX_JSON;
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        const image = nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(image).toBe("nvcr.io/nim/nvidia/nemotron-3-nano:latest");
+
+        const ociArch = nimModule.nodeArchToOci(process.arch);
+        const expectedDigest = DIGEST_BY_ARCH[ociArch];
+        expect(expectedDigest).toBeDefined();
+        const expectedRef = `nvcr.io/nim/nvidia/nemotron-3-nano@${expectedDigest}`;
+
+        // Pull the per-arch digest, never the bare :latest index (the index pull
+        // is what triggers the attestation-manifest fetch).
+        expect(findCall(run, "pull")).toEqual(["docker", "pull", expectedRef]);
+        expect(
+          run.mock.calls.some(
+            (c) =>
+              Array.isArray(c[0]) &&
+              (c[0] as string[])[2] === "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+          ),
+        ).toBe(false);
+        // Re-tag so the run path can start the container by its :latest ref.
+        expect(findCall(run, "tag")).toEqual([
+          "docker",
+          "tag",
+          expectedRef,
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+      } finally {
+        restore();
+      }
+    });
+
+    it("falls back to a plain tag pull when manifest inspect yields no index (#3885)", () => {
+      const run = vi.fn();
+      const runCapture = vi.fn(() => ""); // manifest inspect unavailable / not an index
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(findCall(run, "pull")).toEqual([
+          "docker",
+          "pull",
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+        expect(findCall(run, "tag")).toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("parseServedModelId", () => {
+    it("returns the first data[].id from a /v1/models body", () => {
+      const body = JSON.stringify({
+        object: "list",
+        data: [{ id: "nvidia/nemotron-3-nano", object: "model", owned_by: "vllm" }],
+      });
+      expect(nim.parseServedModelId(body)).toBe("nvidia/nemotron-3-nano");
+    });
+
+    it("returns null for empty data, missing data, or malformed JSON", () => {
+      expect(nim.parseServedModelId(JSON.stringify({ object: "list", data: [] }))).toBeNull();
+      expect(nim.parseServedModelId(JSON.stringify({ object: "list" }))).toBeNull();
+      expect(nim.parseServedModelId("not json")).toBeNull();
+      expect(nim.parseServedModelId("")).toBeNull();
+    });
+  });
+
+  describe("getServedModelId", () => {
+    it("curls /v1/models and returns the served id", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (Array.isArray(cmd) && cmd.some((a) => a.includes("/v1/models"))) {
+          return JSON.stringify({ data: [{ id: "nvidia/nemotron-3-nano" }] });
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      try {
+        expect(nimModule.getServedModelId(8000)).toBe("nvidia/nemotron-3-nano");
+        const call = runCapture.mock.calls.find(
+          (c) => Array.isArray(c[0]) && (c[0] as string[]).some((a) => a.includes("/v1/models")),
+        );
+        expect(call?.[0]).toContain("http://127.0.0.1:8000/v1/models");
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns null when the endpoint is unreachable", () => {
+      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""));
+      try {
+        expect(nimModule.getServedModelId(8000)).toBeNull();
+      } finally {
+        restore();
+      }
+    });
+  });
+
   describe("containerName", () => {
     it("prefixes with nemoclaw-nim-", () => {
       expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");

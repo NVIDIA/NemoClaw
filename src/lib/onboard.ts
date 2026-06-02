@@ -4825,6 +4825,14 @@ async function setupNim(
               console.error("  Local NVIDIA NIM base URL could not be determined.");
               process.exit(1);
             }
+            // NIM serves the id from its image config, which may differ from the
+            // catalog name; validating/routing with the catalog id 404s. Adopt the
+            // served id for validation, route, and OpenClaw config.
+            const servedModelId = nim.getServedModelId();
+            if (servedModelId && servedModelId !== model) {
+              console.log(`  NIM serves "${servedModelId}" (catalog "${model}"); using served id.`);
+              model = servedModelId;
+            }
             const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
