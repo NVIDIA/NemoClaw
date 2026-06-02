@@ -38,6 +38,7 @@ const runtime = D("adapters/openshell/runtime.js");
 const gatewayRuntime = D("gateway-runtime-action.js");
 const defs = D("agent/defs.js");
 const rebuild = D("actions/sandbox/rebuild.js");
+const processRecovery = D("actions/sandbox/process-recovery.js");
 const onboardSession = D("state/onboard-session.js");
 const slackValidation = D("actions/sandbox/slack-channel-validation.js");
 const policy = D("policy/index.js");
@@ -140,6 +141,15 @@ beforeEach(() => {
 
   // Downstream rebuild is not under test.
   vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+
+  // After a successful interactive add, verifyChannelBridgeAfterRebuild probes
+  // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
+  // -> process.exit(1) when the openshell binary is absent (e.g. the CI
+  // unit-test runner; locally it is installed, so this only bites in CI). Stub
+  // the exec seam so the post-add verification never shells out and never trips
+  // the exit spy. The bridge verification is downstream and not under test here.
+  vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
+  vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
 
   // Slack add runs a credential validation (auth.test-style) before the
   // conflict check; that is its own concern and would otherwise probe Slack.
