@@ -2750,12 +2750,16 @@ describe("CLI dispatch", () => {
     ]);
     // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
     writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
-    // Make `docker inspect` fail like an absent legacy container would; the
-    // doctor must not even attempt it, so this should never produce a failure.
+    // Record docker argv and make `docker inspect` fail like an absent legacy
+    // container would. The doctor must not even attempt the inspect, so this
+    // should never produce a failure — and we assert the call was skipped, not
+    // merely that its failure was tolerated.
+    const dockerCalls = path.join(setup.home, "docker-calls");
     fs.writeFileSync(
       path.join(setup.localBin, "docker"),
       [
         "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(dockerCalls)}`,
         'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
         'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
         "exit 0",
@@ -2778,6 +2782,12 @@ describe("CLI dispatch", () => {
       checks: Array<{ group: string; label: string; status: string; detail: string }>;
     };
     expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+    // Core contract: the legacy k3s container inspect must be skipped entirely,
+    // not attempted-and-ignored.
+    const recordedDockerCalls = fs.existsSync(dockerCalls)
+      ? fs.readFileSync(dockerCalls, "utf8")
+      : "";
+    expect(recordedDockerCalls).not.toMatch(/\binspect\b/);
     const openshellStatus = report.checks.find((check) => check.label === "OpenShell status");
     expect(openshellStatus).toEqual(
       expect.objectContaining({ group: "Gateway", status: "ok", detail: "connected to nemoclaw" }),
