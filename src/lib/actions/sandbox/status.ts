@@ -14,7 +14,6 @@ import {
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -24,16 +23,19 @@ import {
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
-import { parseSandboxPhase } from "../../state/gateway";
-import type { Session } from "../../state/onboard-session";
-import * as onboardSession from "../../state/onboard-session";
+import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import { getSandboxDockerHealth } from "./docker-health";
-import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
+import { getSandboxDockerRuntime } from "./docker-health";
+import {
+  classifyGatewayFailure,
+  getLayerHeader,
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
@@ -82,7 +84,7 @@ export interface SandboxStatusReport {
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
-  rpcIssue: { kind: "image_drift" | "protobuf_mismatch" } | null;
+  rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
@@ -90,6 +92,13 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  /**
+   * Whether the resolved docker-driver sandbox container is paused
+   * (`docker pause`). `false` for non-docker-driver sandboxes or when no
+   * container is found. A paused container can report `Phase: Error`
+   * upstream while the sandbox is intact — see #4495.
+   */
+  dockerPaused: boolean;
 }
 
 interface SandboxStatusSnapshot {
@@ -172,6 +181,8 @@ export async function getSandboxStatusReport(
 ): Promise<SandboxStatusReport> {
   const snapshot = await collectSandboxStatusSnapshot(sandboxName);
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
+  const dockerRuntime =
+    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase =
     lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const sandboxGpuEnabled = sb
@@ -198,6 +209,7 @@ export async function getSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    dockerPaused: !!dockerRuntime?.paused,
   };
 }
 
@@ -249,6 +261,29 @@ async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void
   console.log(`  ${getLayerHeader(failure.layer)}`);
 }
 
+function printMissingLiveSandboxStatusGuidance(
+  sandboxName: string,
+  lookup: SandboxGatewayState,
+): void {
+  console.log("");
+  console.log(
+    `  Sandbox '${sandboxName}' is registered locally, but is not present in the live OpenShell gateway.`,
+  );
+  if (lookup.recoveredGateway) {
+    const via = lookup.recoveryVia ? ` via ${lookup.recoveryVia}` : "";
+    console.log(
+      `  The ${CLI_DISPLAY_NAME} gateway was just recovered${via}; it may still be reconciling post-restart sandbox state.`,
+    );
+  }
+  console.log("  No local registry entry was removed by this status check.");
+  console.log(
+    `  Retry \`${CLI_NAME} ${sandboxName} status\` after the gateway finishes reconnecting.`,
+  );
+  console.log(
+    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} list\` to inspect the remaining sandboxes or \`${CLI_NAME} onboard\` to create a new one.`,
+  );
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
@@ -258,6 +293,10 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName);
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
+  // Resolve the docker-driver container once: reused for the paused-container
+  // recovery hint (#4495) and the Docker health line below (#3975).
+  const dockerRuntime =
+    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   maybeEnsureHermesToolGatewayBroker(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {
@@ -363,15 +402,48 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(lookup.output);
     const phase = parseSandboxPhase(lookup.output || "");
     if (phase && phase !== "Ready") {
-      console.log("");
-      console.log(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
-      console.log(
-        "  This usually happens when a process crash inside the sandbox prevented clean startup.",
-      );
-      console.log("");
-      console.log(
-        `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
-      );
+      // A non-ready, non-terminal phase can mean two very different things. If
+      // the Docker daemon is down, OpenShell can still return a present-but-
+      // Provisioning sandbox (cached/transitional state); steering the user
+      // toward rebuild is wrong because the sandbox is fine and rebuild cannot
+      // succeed until Docker is back. Reclassify as a runtime outage first
+      // (#4428). Terminal phases (Failed/Error/...) are settled sandbox
+      // failures and keep the existing rebuild guidance even when Docker is
+      // down, so a genuine failure is never masked.
+      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
+        console.log("");
+        printDockerRuntimeDownGuidance(sandboxName, { writer: console.log });
+        process.exit(1);
+      }
+      // A paused Docker-driver container can surface upstream as `Phase: Error`
+      // (e.g. GPU passthrough on Ubuntu 24.04) even though the sandbox is
+      // otherwise intact. We do not rewrite OpenShell's authoritative phase
+      // (printed verbatim above); we add a paused-container recovery hint so
+      // the failure mode is actionable, and skip the misleading rebuild
+      // suggestion since unpausing — not recreating — is the fix. See #4495.
+      // `Error` is terminal, so the #4428 runtime-down reclassification above
+      // does not intercept this branch.
+      if (phase === "Error" && dockerRuntime?.paused && dockerRuntime.containerName) {
+        console.log("");
+        console.log(
+          `  The Docker-driver container for '${sandboxName}' is paused: ${dockerRuntime.containerName}`,
+        );
+        console.log(
+          "  A paused container can report 'Phase: Error' even though the sandbox is intact.",
+        );
+        console.log("  Resume it to restore the running phase:");
+        console.log(`    ${D}docker unpause ${dockerRuntime.containerName}${R}`);
+      } else {
+        console.log("");
+        console.log(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
+        console.log(
+          "  This usually happens when a process crash inside the sandbox prevented clean startup.",
+        );
+        console.log("");
+        console.log(
+          `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+        );
+      }
     }
   } else if (lookup.state === "wrong_gateway_active") {
     const activeGateway =
@@ -385,31 +457,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(lookup.output);
     process.exit(1);
   } else if (lookup.state === "missing") {
-    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
-    // is demonstrably the healthy active gateway. Guards against regressions
-    // in the reconciler.
-    const guard = getNamedGatewayLifecycleState();
-    if (guard.state !== "healthy_named") {
-      console.log("");
-      if (guard.state === "connected_other") {
-        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
-      } else {
-        await printGatewayFailureLayerHeader(sandboxName);
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
-      }
-    } else {
-      registry.removeSandbox(sandboxName);
-      const session = onboardSession.loadSession();
-      if (session && session.sandboxName === sandboxName) {
-        onboardSession.updateSession((s: Session) => {
-          s.sandboxName = null;
-          return s;
-        });
-      }
-      console.log("");
-      console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-      console.log("  Removed stale local registry entry.");
-    }
+    printMissingLiveSandboxStatusGuidance(sandboxName, lookup);
     process.exit(1);
   } else if (lookup.state === "identity_drift") {
     console.log("");
@@ -505,12 +553,12 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // automatically: the in-sandbox `isSandboxGatewayRunningForStatus`
   // probe uses the same 127.0.0.1 endpoint Docker checks, so it cannot
   // independently confirm that Docker's reading is stale. (#3975)
-  if (lookup.state === "present") {
-    const dockerHealth = getSandboxDockerHealth(sandboxName);
-    if (dockerHealth.state !== "none" && dockerHealth.state !== "unknown") {
-      if (dockerHealth.state === "healthy") {
+  if (lookup.state === "present" && dockerRuntime) {
+    const dockerHealth = dockerRuntime;
+    if (dockerHealth.health !== "none" && dockerHealth.health !== "unknown") {
+      if (dockerHealth.health === "healthy") {
         console.log(`    Docker health: ${G}healthy${R}`);
-      } else if (dockerHealth.state === "starting") {
+      } else if (dockerHealth.health === "starting") {
         console.log(`    Docker health: ${D}starting${R}`);
       } else {
         console.log(`    Docker health: ${RD}unhealthy${R}`);

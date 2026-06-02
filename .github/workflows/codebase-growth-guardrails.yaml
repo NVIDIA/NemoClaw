@@ -20,6 +20,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Block newly added JavaScript files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | select((.filename | test("\\.(js|cjs|mjs)$")) and (.status == "added" or (.status == "renamed" and ((.previous_filename // "") | test("\\.(js|cjs|mjs)$") | not)))) | [.status, .filename, (.previous_filename // "")] | @tsv')"
+
+          if [ -z "$rows" ]; then
+            echo "PASS: no newly added .js, .cjs, or .mjs files."
+            exit 0
+          fi
+
+          cat <<'EOF'
+          FAIL: this PR adds JavaScript source files.
+
+          NemoClaw is standardizing on TypeScript for new Node.js code. Please
+          use .ts for new source, test, and script files instead of .js, .cjs,
+          or .mjs. Existing JavaScript files may still be modified or deleted.
+
+          Blocked files:
+          EOF
+          while IFS=$'\t' read -r file_status file_path previous_path; do
+            if [ -n "$previous_path" ]; then
+              echo "          - ${file_path} (${file_status} from ${previous_path})"
+            else
+              echo "          - ${file_path} (${file_status})"
+            fi
+          done <<< "$rows"
+          exit 1
+
       - name: Require src/lib/onboard.ts to be net-neutral or smaller
         env:
           GH_TOKEN: ${{ github.token }}

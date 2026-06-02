@@ -8,6 +8,7 @@ import type { OnboardMachineEventType, OnboardMachineState } from "./machine/typ
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   maybeForceE2eStepFailure(stepName: string): void;
+  createRuntime?(): OnboardRuntime;
 }
 
 export class OnboardRuntimeBoundary {
@@ -16,7 +17,7 @@ export class OnboardRuntimeBoundary {
   constructor(private readonly options: OnboardRuntimeBoundaryOptions) {}
 
   reset(): void {
-    this.runtime = new OnboardRuntime();
+    this.runtime = this.options.createRuntime?.() ?? new OnboardRuntime();
   }
 
   clear(): void {
@@ -24,12 +25,13 @@ export class OnboardRuntimeBoundary {
   }
 
   getRuntime(): OnboardRuntime {
-    if (!this.runtime) this.runtime = new OnboardRuntime();
+    if (!this.runtime) this.runtime = this.options.createRuntime?.() ?? new OnboardRuntime();
     return this.runtime;
   }
 
   recorders() {
     return {
+      recordOnboardStarted: this.recordOnboardStarted.bind(this),
       startRecordedStep: this.startRecordedStep.bind(this),
       recordStepComplete: this.recordStepComplete.bind(this),
       recordStepSkipped: this.recordStepSkipped.bind(this),
@@ -39,6 +41,10 @@ export class OnboardRuntimeBoundary {
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
     };
+  }
+
+  async recordOnboardStarted(resumed: boolean): Promise<Session> {
+    return this.getRuntime().start({ resumed });
   }
 
   async startRecordedStep(

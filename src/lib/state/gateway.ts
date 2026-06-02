@@ -58,6 +58,30 @@ export function isSandboxReady(output: string, sandboxName: string): boolean {
 }
 
 /**
+ * Terminal failure phases reported by `openshell sandbox list`/`get` for a
+ * sandbox whose underlying container is dead or unrecoverable. We treat these
+ * as short-circuit signals during readiness waits so onboarding fails fast
+ * with a clear phase rather than waiting out the full timeout window
+ * (NemoClaw issue #4316 — Docker GPU patch leaves the sandbox in Error).
+ */
+const TERMINAL_SANDBOX_FAILURE_PHASES = new Set([
+  "Error",
+  "Failed",
+  "CrashLoopBackOff",
+]);
+
+/**
+ * Return the failure phase token from `openshell sandbox list` if the row
+ * is in a terminal failure phase, otherwise null. Useful for distinguishing
+ * "Error" from "Failed"/"CrashLoopBackOff" in user-facing diagnostics.
+ */
+export function getSandboxFailurePhase(output: string, sandboxName: string): string | null {
+  const cols = parseSandboxRow(output, sandboxName);
+  if (!cols) return null;
+  return cols.find((col) => TERMINAL_SANDBOX_FAILURE_PHASES.has(col)) ?? null;
+}
+
+/**
  * Determine whether stale NemoClaw gateway output indicates a previous
  * session that should be cleaned up before the port preflight check.
  */
@@ -166,6 +190,24 @@ export function parseSandboxPhase(getOutput: string): string | null {
   const clean = stripAnsi(getOutput);
   const match = clean.match(/^\s*Phase:\s+(\S+)/m);
   return match ? match[1] : null;
+}
+
+// Phases that represent a settled, non-transitional failure rather than a
+// sandbox still coming up. OpenShell only reports these when it has real
+// state, so a Docker-outage reclassification must NOT hide them — the user
+// needs the genuine failure/rebuild guidance even during a daemon blip
+// (#4428). Mirrors the terminal set used by the connect readiness loop.
+export const TERMINAL_SANDBOX_PHASES = new Set<string>([
+  "Failed",
+  "Error",
+  "CrashLoopBackOff",
+  "ImagePullBackOff",
+  "Unknown",
+  "Evicted",
+]);
+
+export function isTerminalSandboxPhase(phase: string | null | undefined): boolean {
+  return !!phase && TERMINAL_SANDBOX_PHASES.has(phase);
 }
 
 export function getSandboxStateFromOutputs(

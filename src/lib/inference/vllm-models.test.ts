@@ -99,6 +99,45 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--tool-call-parser hermes");
     expect(cmd).not.toContain("--reasoning-parser qwen3");
   });
+
+  it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
+    const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+    expect(qwen35b).toBeDefined();
+    expect(qwen35b!.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(qwen35b!.gated).toBe(false);
+  });
+
+  it("builds the NVFP4 serve command with env exports, the fastsafetensors install, and additive model flags", () => {
+    const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+    const cmd = buildVllmServeCommand(qwen35b!);
+    // Env exports are prefixed before serve.
+    expect(cmd).toContain("export VLLM_USE_FLASHINFER_MOE_FP4=0");
+    expect(cmd).toContain("export VLLM_FP8_MOE_BACKEND=flashinfer_cutlass");
+    expect(cmd).toContain("export FLASHINFER_DISABLE_VERSION_CHECK=1");
+    expect(cmd).toContain("export CUTE_DSL_ARCH=sm_121a");
+    // fastsafetensors is always installed and used.
+    expect(cmd).toContain("pip install vllm[fastsafetensors]");
+    expect(cmd).toContain("--load-format fastsafetensors");
+    // Model-specific flags appended on top of the shared serving defaults.
+    expect(cmd).toContain("vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(cmd).toContain("--quantization modelopt");
+    expect(cmd).toContain("--kv-cache-dtype fp8");
+    expect(cmd).toContain("--attention-backend flashinfer");
+    expect(cmd).toContain("--moe-backend marlin");
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).toContain("--reasoning-parser qwen3");
+    expect(cmd).toContain("--max-model-len 65536");
+    expect(cmd).toContain(
+      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
+    );
+    // Shared defaults are kept: 0.7 utilization and the single-node parallel
+    // flags (harmless on Spark), not a model-specific 0.85 override.
+    expect(cmd).toContain("--gpu-memory-utilization 0.7");
+    expect(cmd).toContain("--pipeline-parallel-size 1");
+    expect(cmd).toContain("--data-parallel-size 1");
+    expect(cmd).not.toContain("--gpu-memory-utilization 0.85");
+  });
 });
 
 describe("preflightVllmModelEnv", () => {
