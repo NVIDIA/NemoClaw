@@ -1111,14 +1111,10 @@ In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
-Configuring an inference provider with a base URL like
-`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
-service from inside the OpenShell sandbox.
-OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
-not a portable host-service route. Depending on the platform, it may fail DNS
-resolution or resolve to an internal gateway/bridge address where the host's
-port `11434` is not forwarded. The sandbox then sees a DNS failure or
-`connection refused`:
+Configuring an inference provider with a base URL like `http://host.docker.internal:11434/v1` does not reliably reach a host Ollama service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is not a portable host-service route.
+Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
+The sandbox then sees a DNS failure or `connection refused`:
 
 ```console
 $ getent hosts host.docker.internal
@@ -1429,3 +1425,121 @@ $ nemoclaw <name> rebuild
 ```
 
 After the rebuild completes, return to the Skills page to confirm the skill is ready.
+
+## Hermes
+
+The Hermes agent is experimental.
+The issues below are common problems operators encounter when running Hermes through `nemohermes`.
+For setup, refer to Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+
+### Port 8642 in a browser shows a blank page or `Cannot GET /`
+
+`nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
+
+Confirm the agent is healthy with the API health endpoint instead:
+
+```console
+$ curl -sf http://127.0.0.1:8642/health
+{"status":"ok","platform":"hermes-agent"}
+```
+
+Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions.
+For terminal use, run `nemohermes <name> connect` and then `hermes` inside the sandbox.
+
+### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
+
+Each sandbox name maps to exactly one agent type.
+If a sandbox named `X` was created with the default OpenClaw agent, a later `nemohermes onboard` for the same name exits with:
+
+```text
+Sandbox 'X' already exists as OpenClaw.
+nemohermes is onboarding Hermes for this sandbox name.
+Side-by-side agents are supported, but each sandbox name has one agent type.
+```
+
+Pick a distinct sandbox name (the Hermes default is `hermes`; a common pattern is `my-hermes`) so Hermes and OpenClaw sandboxes can coexist on the same host.
+To convert an existing sandbox to Hermes instead, destroy and re-onboard:
+
+```console
+$ nemoclaw <name> destroy
+$ NEMOCLAW_AGENT=hermes nemohermes onboard
+```
+
+### `nemohermes: command not found` immediately after install
+
+`nemohermes` is a thin shim installed alongside `nemoclaw` that pre-selects the Hermes agent.
+The installer drops the shim in the same directory as `nemoclaw`; if `nemoclaw` is on `PATH` but `nemohermes` is not, the shim symlink was skipped.
+
+Verify the install:
+
+```console
+$ command -v nemoclaw
+$ command -v nemohermes
+```
+
+If only `nemoclaw` resolves, re-run the installer with `NEMOCLAW_AGENT=hermes` set so the shim is published:
+
+```console
+$ export NEMOCLAW_AGENT=hermes
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Equivalently, every `nemohermes <cmd>` invocation is `NEMOCLAW_AGENT=hermes nemoclaw <cmd>`.
+
+### Choosing between OAuth and API key for the Hermes Provider
+
+The Hermes Provider supports two authentication paths during onboarding.
+Pick OAuth when you have a Nous Portal account and an interactive terminal; pick API key when you have a long-lived `NOUS_API_KEY` and want a non-interactive flow.
+
+Set the method explicitly so the wizard skips the prompt:
+
+```console
+$ # OAuth (default; interactive)
+$ export NEMOCLAW_HERMES_AUTH_METHOD=oauth
+$ nemohermes onboard
+
+$ # API key (non-interactive)
+$ export NEMOCLAW_HERMES_AUTH_METHOD=api-key
+$ export NOUS_API_KEY=nous_...
+$ nemohermes onboard --non-interactive
+```
+
+`NEMOCLAW_HERMES_AUTH_METHOD` accepts `oauth`, `nous-portal-oauth`, `api-key`, and `nous-api-key`.
+The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-compatible aliases.
+
+If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
+Copy them to a browser on any other machine to complete the flow.
+
+### API client returns `401 Unauthorized` against port 8642
+
+Hermes uses bearer-token header authentication for client requests, not an OpenClaw-style URL fragment.
+A request without an `Authorization: Bearer <token>` header (or with an OpenClaw `#token=` fragment appended to the URL) is rejected with `401`.
+
+Configure your OpenAI-compatible client to pass the Hermes API key in the `Authorization` header.
+Stored credentials (including `NOUS_API_KEY` and `OPENAI_API_KEY`) are listed by:
+
+```console
+$ nemohermes credentials list
+```
+
+Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
+
+### `Brave Search` policy preset has no effect under Hermes
+
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) and Network Policies (use the `nemoclaw-user-reference` skill)).
+If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
+Configure Hermes web search from the agent's own configuration inside the sandbox.
+
+### Re-onboarding asks every messaging prompt again
+
+`nemohermes onboard --resume` against a Hermes sandbox that was originally onboarded with Telegram, Discord, and Slack credentials re-prompts for each channel's bot token and per-channel settings rather than reusing the stored values.
+This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
+For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
+
+```console
+$ export TELEGRAM_BOT_TOKEN=...
+$ export DISCORD_BOT_TOKEN=...
+$ export SLACK_BOT_TOKEN=...
+$ nemohermes onboard --resume --non-interactive
+```
