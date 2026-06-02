@@ -103,7 +103,7 @@ export function createSandboxRegistryMetadataHelpers(
     sandboxGpuConfig: SandboxGpuConfig | null = null,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
-    const agentVersionKnown = existingEntry?.agentVersion !== null;
+    const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
     // Migrate legacy reused entries that predate per-sandbox gateway tracking
     // by recording the port-resolved gateway name on first reuse. When existing
@@ -121,7 +121,8 @@ export function createSandboxRegistryMetadataHelpers(
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
-      ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
+      agent: agentFields.agent,
+      agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
       ...gatewayMigration,
     });

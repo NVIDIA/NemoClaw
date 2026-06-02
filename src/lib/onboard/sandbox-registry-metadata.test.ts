@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentDefinition } from "../agent/defs";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 // Use a temp HOME so tests do not touch the real ~/.nemoclaw registry. Both
@@ -27,10 +28,16 @@ const regFile = path.join(tmpHome, ".nemoclaw", "sandboxes.json");
 
 const ORIGINAL_PLATFORM = Object.getOwnPropertyDescriptor(process, "platform");
 
+/**
+ * Overrides process.platform for runtime-driver metadata tests.
+ */
 function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
 }
 
+/**
+ * Restores the original process.platform descriptor after each platform-specific assertion.
+ */
 function restorePlatform(): void {
   if (ORIGINAL_PLATFORM) {
     Object.defineProperty(process, "platform", ORIGINAL_PLATFORM);
@@ -46,6 +53,16 @@ function makeHelpers(opts: { dockerDriverEnabled: boolean; activeGatewayName?: s
   });
 }
 
+/**
+ * Creates a minimal OpenClaw agent definition for metadata preservation tests.
+ */
+function openclawAgent(expectedVersion: string): AgentDefinition {
+  return {
+    name: "openclaw",
+    expectedVersion,
+  } as AgentDefinition;
+}
+
 const GPU_OFF: SandboxGpuConfig = {
   hostGpuDetected: false,
   hostGpuPlatform: null,
@@ -59,6 +76,61 @@ afterAll(() => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
   fs.rmSync(tmpHome, { recursive: true, force: true });
+});
+
+describe("sandbox registry metadata", () => {
+  beforeEach(() => {
+    if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
+  });
+
+  it("preserves the recorded agent version when reusing an existing sandbox", () => {
+    // The reused-sandbox path must not clobber an existing recorded agent
+    // version. Seed a legacy entry that already carries an agentVersion, run
+    // updateReusedSandboxMetadata with a different expected version, and
+    // assert the persisted record keeps the original.
+    const configDir = path.join(tmpHome, ".nemoclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "old-model",
+            provider: "old-provider",
+            agentVersion: "2026.5.18",
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+    );
+
+    const readSandbox = () => JSON.parse(fs.readFileSync(regFile, "utf8")).sandboxes.alpha;
+
+    expect(readSandbox()).toEqual({
+      name: "alpha",
+      model: "old-model",
+      provider: "old-provider",
+      agentVersion: "2026.5.18",
+    });
+
+    const helpers = makeHelpers({ dockerDriverEnabled: true });
+    helpers.updateReusedSandboxMetadata(
+      "alpha",
+      openclawAgent("2026.5.22"),
+      "new-model",
+      "nvidia-prod",
+      18789,
+    );
+
+    expect(readSandbox()).toEqual(
+      expect.objectContaining({
+        model: "new-model",
+        provider: "nvidia-prod",
+        agentVersion: "2026.5.18",
+      }),
+    );
+  });
 });
 
 describe("getSandboxRuntimeRegistryFields openshellDriver", () => {

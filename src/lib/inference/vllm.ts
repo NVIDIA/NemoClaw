@@ -5,10 +5,14 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-const { runCapture, runShell } = require("../runner");
-const { dockerCapture, dockerSpawn } = require("../adapters/docker");
-const { VLLM_PORT } = require("../core/ports");
-const { getGpuIndicesByName } = require("./nim");
+import {
+  dockerCapture,
+  dockerPullWithProgressWatchdog,
+  dockerSpawn,
+} from "../adapters/docker";
+import { VLLM_PORT } from "../core/ports";
+import { runCapture, runShell } from "../runner";
+import { getGpuIndicesByName } from "./nim";
 import {
   DEFAULT_VLLM_MODEL,
   VLLM_MODELS,
@@ -21,7 +25,7 @@ import {
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
-interface VllmProfile {
+export interface VllmProfile {
   name: string;            // human label, e.g. "DGX Spark"
   image: string;           // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
@@ -39,7 +43,9 @@ interface VllmProfile {
   buildDockerRunFlags?: () => string[];
   // Approximate first-run time shown in the confirmation prompt.
   estimatedMinutes: string;
-  // Image-pull deadline. First run on a slow link can be several minutes.
+  // Maximum wall-clock safety budget for image pulls. The Docker adapter uses
+  // a shorter progress watchdog for stalls, so slow-but-moving pulls can keep
+  // going until this last-ditch cap.
   pullTimeoutSec: number;
   // Marker emitter sees container output line by line. The patterns below
   // map a line to a user-visible "==> ..." progress marker. Order matters:
@@ -53,9 +59,20 @@ interface VllmProfile {
   loadTimeoutSec: number;
 }
 
+// vllm 0.21.1rc1.dev323+g1fc2cee50
+const UPSTREAM_VLLM_IMAGE =
+  "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712";
+const NGC_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.03.post1-py3";
+
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
   if (!match) throw new Error("vllm-models registry is missing the nemotron-3-nano-4b entry");
+  return match;
+}
+
+function qwen35bNvfp4Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
   return match;
 }
 
@@ -105,8 +122,8 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: "nvcr.io/nvidia/vllm:26.03.post1-py3",
-  defaultModel: DEFAULT_VLLM_MODEL,
+  image: UPSTREAM_VLLM_IMAGE,
+  defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
     "--gpus",
@@ -118,7 +135,7 @@ const SPARK_PROFILE: VllmProfile = {
     "HF_HOME=/root/.cache/huggingface",
   ],
   estimatedMinutes: "10–30 minutes",
-  pullTimeoutSec: 900,
+  pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
   progressMarkers: [
     {
@@ -142,8 +159,8 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: SPARK_PROFILE.image,
-  defaultModel: SPARK_PROFILE.defaultModel,
+  image: NGC_VLLM_IMAGE,
+  defaultModel: DEFAULT_VLLM_MODEL,
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -176,7 +193,7 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: SPARK_PROFILE.image,
+  image: NGC_VLLM_IMAGE,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -219,19 +236,22 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-function pullImage(profile: VllmProfile): { ok: boolean; reason?: string } {
+export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
-  // GNU `timeout` enforces the pull deadline. macOS BSD coreutils omits it;
-  // fall back to a plain `docker pull` there.
-  const hasTimeout = !!runCapture(["sh", "-c", "command -v timeout"], {
-    ignoreError: true,
-  }).trim();
-  const prefix = hasTimeout ? `timeout ${String(profile.pullTimeoutSec)} ` : "";
-  const result = runShell(`${prefix}docker pull ${profile.image}`, {
-    ignoreError: true,
-    suppressOutput: true,
+  const result = await dockerPullWithProgressWatchdog(profile.image, {
+    maxTimeoutMs: profile.pullTimeoutSec * 1000,
+    logLine: emit,
   });
   if (result.status !== 0) {
+    if (result.timeoutKind === "stall") {
+      return { ok: false, reason: "docker pull stalled with no progress" };
+    }
+    if (result.timeoutKind === "max") {
+      return {
+        ok: false,
+        reason: `docker pull exceeded ${String(profile.pullTimeoutSec)}s safety budget`,
+      };
+    }
     return { ok: false, reason: `docker pull failed (exit ${String(result.status)})` };
   }
   return { ok: true };
@@ -248,13 +268,14 @@ function downloadModel(
       [
         "run",
         "--rm",
+        "--entrypoint",
+        "hf",
         "-v",
         `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
         "-e",
         "HF_HOME=/root/.cache/huggingface",
         ...buildHfTokenDockerArgs(),
         profile.image,
-        "hf",
         "download",
         model.id,
       ],
@@ -291,8 +312,8 @@ function downloadModel(
       }
     }
 
-    proc.stdout.on("data", onChunk);
-    proc.stderr.on("data", onChunk);
+    proc.stdout?.on("data", onChunk);
+    proc.stderr?.on("data", onChunk);
 
     proc.on("error", (err: Error) => {
       resolve({ ok: false, reason: `spawn error: ${err.message}` });
@@ -338,7 +359,7 @@ function startContainer(
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
   const cmd =
     `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} ${profile.image} bash -c ${JSON.stringify(buildVllmServeCommand(model))}`;
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,
@@ -409,10 +430,10 @@ function streamLogsUntilReady(
 
     let stdoutBuffer = "";
     let stderrBuffer = "";
-    proc.stdout.on("data", (raw: Buffer) => {
+    proc.stdout?.on("data", (raw: Buffer) => {
       stdoutBuffer = consumeChunk(stdoutBuffer, raw);
     });
-    proc.stderr.on("data", (raw: Buffer) => {
+    proc.stderr?.on("data", (raw: Buffer) => {
       stderrBuffer = consumeChunk(stderrBuffer, raw);
     });
 
@@ -461,7 +482,8 @@ export async function installVllm(
 ): Promise<{ ok: boolean }> {
   // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
   // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Spark/Station to Qwen3.6-27B.
+  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
+  // Qwen3.6-35B-A3B NVFP4 checkpoint.
   // Validate gated-model access (HF_TOKEN required for models like
   // DeepSeek-R1 Distill 70B) before touching docker so the user does not
   // burn a multi-minute pull on a 401.
@@ -498,7 +520,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const pull = pullImage(profile);
+  const pull = await pullImage(profile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
     return { ok: false };
