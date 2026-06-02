@@ -3117,6 +3117,27 @@ GATEWAY_LOG_TAIL_PID=$!
 start_persistent_gateway_log_mirror || exit 1
 
 start_auto_pair
+
+# Re-register non-bundled plugins after the gateway's first policy-changed
+# regen. Under GPU sandbox onboard, OpenClaw rebuilds plugins[] from bundled
+# extensions only and drops path/npm-origin entries like the NemoClaw plugin
+# and the WeChat plugin. Their installRecords survive on disk, but the runtime
+# registry forgets them — so `/nemoclaw` is unreachable in the TUI and
+# `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
+# A `plugins registry --refresh` repopulates plugins[] from installRecords.
+# Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
+# This is a temporary workaround; root fix is upstream (openclaw/openclaw#89606).
+(
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if "$OPENCLAW" gateway status >/dev/null 2>&1; then break; fi
+    sleep 1
+  done
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox \
+    "$OPENCLAW" plugins registry --refresh \
+    >/tmp/nemoclaw-plugin-refresh.log 2>&1 || true
+) &
+PLUGIN_REFRESH_PID=$!
+
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -3124,6 +3145,7 @@ SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
 [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
 [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
 [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
+[ -n "${PLUGIN_REFRESH_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$PLUGIN_REFRESH_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT
