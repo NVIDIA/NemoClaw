@@ -4,10 +4,43 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_SCOPE,
+  isNousInvokeAccessToken,
   mintAgentKeyWithAccessToken,
   pollForToken,
+  requestDeviceCode,
   refreshAccessTokenWithRefreshToken,
 } from "../../dist/lib/oauth-device-code";
+
+function jwtWithClaims(claims: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode(claims)}.sig`;
+}
+
+describe("requestDeviceCode", () => {
+  it("requests both invoke JWT and legacy agent-key scopes by default", async () => {
+    const calls: Array<{ body: string }> = [];
+    await requestDeviceCode({
+      fetch: (async (_url, init) => {
+        calls.push({ body: String(init?.body ?? "") });
+        return new Response(
+          JSON.stringify({
+            device_code: "device-1",
+            user_code: "USER-1",
+            verification_uri: "https://portal.example/verify",
+            expires_in: 900,
+            interval: 1,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as typeof fetch,
+    });
+
+    expect(DEFAULT_SCOPE).toBe("inference:invoke inference:mint_agent_key");
+    expect(new URLSearchParams(calls[0]?.body).get("scope")).toBe(DEFAULT_SCOPE);
+  });
+});
 
 describe("pollForToken", () => {
   it("rejects successful token responses missing an access token", async () => {
@@ -38,6 +71,18 @@ describe("pollForToken", () => {
       name: "OAuthError",
       code: "token_response_missing_tokens",
     });
+  });
+});
+
+describe("isNousInvokeAccessToken", () => {
+  it("accepts unexpired JWTs with inference invoke scope", () => {
+    const token = jwtWithClaims({
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      scope: "inference:invoke inference:mint_agent_key",
+    });
+
+    expect(isNousInvokeAccessToken(token)).toBe(true);
+    expect(isNousInvokeAccessToken("opaque-access-token")).toBe(false);
   });
 });
 

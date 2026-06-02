@@ -47,6 +47,19 @@ function loadAuthWithBrokerStub(brokerStub: Record<string, any>): Record<string,
   return require(DIST_AUTH);
 }
 
+function jwtWithClaims(claims: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode(claims)}.sig`;
+}
+
+function invokeJwt(seconds = 3600): string {
+  return jwtWithClaims({
+    exp: Math.floor(Date.now() / 1000) + seconds,
+    scope: "inference:invoke inference:mint_agent_key",
+  });
+}
+
 afterEach(() => {
   clearDistModule(DIST_AUTH);
   clearDistModule(DIST_BROKER);
@@ -84,12 +97,13 @@ describe("Hermes provider OpenShell credential handoff", () => {
     }
   });
 
-  it("uses OAuth only as an in-memory minting step before OpenShell registration", async () => {
+  it("uses OAuth invoke JWTs directly for OpenShell registration", async () => {
     const originalHome = process.env.HOME;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-oauth-"));
     try {
       process.env.HOME = tmp;
       const auth = loadAuth();
+      const token = invokeJwt();
       const fetchCalls: Array<{ url: string; auth: string | null; body: string }> = [];
       const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
       const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
@@ -116,23 +130,16 @@ describe("Hermes provider OpenShell credential handoff", () => {
           if (String(url).endsWith("/api/oauth/token")) {
             return new Response(
               JSON.stringify({
-                access_token: "access-2",
+                access_token: token,
                 refresh_token: "refresh-2",
                 expires_in: 900,
+                inference_base_url: "https://staging.nous.example/v1",
                 token_type: "Bearer",
               }),
               { status: 200, headers: { "Content-Type": "application/json" } },
             );
           }
-          return new Response(
-            JSON.stringify({
-              api_key: "agent-key-1",
-              key_id: "agent-key-id",
-              expires_in: 1800,
-              inference_base_url: "https://staging.nous.example/v1",
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
+          throw new Error(`unexpected fetch ${url}`);
         }) as typeof fetch,
         log: () => {},
         noBrowser: true,
@@ -148,9 +155,12 @@ describe("Hermes provider OpenShell credential handoff", () => {
       expect(state.auth_method).toBe("oauth");
       expect(state.credential_env).toBe("OPENAI_API_KEY");
       expect(state.inference_base_url).toBe("https://staging.nous.example/v1");
-      expect(fetchCalls.some((call) => call.auth === "Bearer access-2")).toBe(true);
+      expect(state.auth_path).toBe("invoke_jwt");
+      expect(new URLSearchParams(fetchCalls[0]?.body).get("scope")).toBe(
+        "inference:invoke inference:mint_agent_key",
+      );
       expect(
-        providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1"),
+        providerCalls.some((call) => call.env?.OPENAI_API_KEY === token),
       ).toBe(true);
       expect(
         providerCalls.some((call) =>
@@ -163,6 +173,64 @@ describe("Hermes provider OpenShell credential handoff", () => {
       else process.env.HOME = originalHome;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("falls back to legacy agent-key minting when OAuth returns a non-invoke token", async () => {
+    const auth = loadAuth();
+    const fetchCalls: Array<{ url: string; auth: string | null }> = [];
+    const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+    const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
+      allowInteractiveLogin: true,
+      fetch: (async (url, init) => {
+        const headers = new Headers(init?.headers);
+        fetchCalls.push({ url: String(url), auth: headers.get("authorization") });
+        if (String(url).endsWith("/api/oauth/device/code")) {
+          return new Response(
+            JSON.stringify({
+              device_code: "device-1",
+              user_code: "USER-1",
+              verification_uri: "https://portal.example/verify",
+              expires_in: 900,
+              interval: 1,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (String(url).endsWith("/api/oauth/token")) {
+          return new Response(
+            JSON.stringify({
+              access_token: "opaque-access",
+              refresh_token: "refresh-2",
+              expires_in: 900,
+              token_type: "Bearer",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            api_key: "agent-key-1",
+            key_id: "agent-key-id",
+            expires_in: 1800,
+            inference_base_url: "https://staging.nous.example/v1",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }) as typeof fetch,
+      log: () => {},
+      noBrowser: true,
+      runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
+        providerCalls.push({ args, env: opts.env });
+        if (args[0] === "provider" && args[1] === "get") {
+          return { status: 1, stdout: "", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(state.auth_path).toBe("legacy_agent_key");
+    expect(fetchCalls.some((call) => call.auth === "Bearer opaque-access")).toBe(true);
+    expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1")).toBe(true);
   });
 
   it("registers a separate managed-tool refresh provider without writing raw OAuth state", async () => {
@@ -185,6 +253,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
         },
       });
       const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+      const token = invokeJwt();
       const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
         allowInteractiveLogin: true,
         fetch: (async (url, init) => {
@@ -203,7 +272,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
           if (String(url).endsWith("/api/oauth/token")) {
             return new Response(
               JSON.stringify({
-                access_token: "access-3",
+                access_token: token,
                 refresh_token: "refresh-3",
                 expires_in: 900,
                 token_type: "Bearer",
@@ -211,16 +280,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
               { status: 200, headers: { "Content-Type": "application/json" } },
             );
           }
-          const headers = new Headers(init?.headers);
-          expect(headers.get("authorization")).toBe("Bearer access-3");
-          return new Response(
-            JSON.stringify({
-              api_key: "agent-key-3",
-              key_id: "agent-key-id",
-              expires_in: 1800,
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          );
+          throw new Error(`unexpected fetch ${url}`);
         }) as typeof fetch,
         log: () => {},
         noBrowser: true,
@@ -235,7 +295,8 @@ describe("Hermes provider OpenShell credential handoff", () => {
       });
 
       expect(state.auth_method).toBe("oauth");
-      expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-3")).toBe(true);
+      expect(state.auth_path).toBe("invoke_jwt");
+      expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === token)).toBe(true);
       expect(brokerCalls).toEqual([{ sandboxName: "my-assistant", refreshToken: "refresh-3" }]);
       expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
     } finally {

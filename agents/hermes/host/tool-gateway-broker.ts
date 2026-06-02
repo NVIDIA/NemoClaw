@@ -64,6 +64,8 @@ const UPSTREAM_REQUEST_TIMEOUT_MS = readPositiveIntEnv(
 );
 const DEFAULT_INFERENCE_BASE_URL = "https://inference-api.nousresearch.com/v1";
 const TRUSTED_INFERENCE_BASE_URLS = new Set([DEFAULT_INFERENCE_BASE_URL]);
+const NOUS_INFERENCE_INVOKE_SCOPE = "inference:invoke";
+const INFERENCE_CREDENTIAL_REFRESH_SKEW_MS = 120_000;
 
 if (!STATE_DIR) {
   console.error("HERMES_TOOL_GATEWAY_STATE_DIR required");
@@ -238,6 +240,68 @@ function timestampExpiresSoon(isoTimestamp, skewMs = 300_000) {
   return ms - Date.now() < skewMs;
 }
 
+function decodeBase64UrlJson(value) {
+  try {
+    const base64 = String(value || "")
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const parsed = JSON.parse(Buffer.from(base64, "base64").toString("utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodeJwtClaims(token) {
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  return decodeBase64UrlJson(parts[1]);
+}
+
+function jwtScopes(claims) {
+  const scopes = new Set();
+  const scope = claims?.scope;
+  if (typeof scope === "string") {
+    for (const value of scope.split(/\s+/)) {
+      if (value) scopes.add(value);
+    }
+  }
+  const scp = claims?.scp;
+  if (typeof scp === "string") {
+    for (const value of scp.split(/\s+/)) {
+      if (value) scopes.add(value);
+    }
+  } else if (Array.isArray(scp)) {
+    for (const value of scp) {
+      if (typeof value === "string" && value) scopes.add(value);
+    }
+  }
+  return scopes;
+}
+
+function jwtExpiresAtIso(token) {
+  const exp = decodeJwtClaims(token)?.exp;
+  const seconds =
+    typeof exp === "number" ? exp : typeof exp === "string" && exp.trim() ? Number(exp) : NaN;
+  if (!Number.isFinite(seconds)) return null;
+  return new Date(seconds * 1000).toISOString();
+}
+
+function isUsableInvokeJwt(token) {
+  const claims = decodeJwtClaims(token);
+  if (!claims || !jwtScopes(claims).has(NOUS_INFERENCE_INVOKE_SCOPE)) return false;
+  const expiresAt = jwtExpiresAtIso(token);
+  return Boolean(expiresAt && !timestampExpiresSoon(expiresAt, INFERENCE_CREDENTIAL_REFRESH_SKEW_MS));
+}
+
+function inferenceCredentialExpiresSoon(state) {
+  return timestampExpiresSoon(
+    state?.inference_credential_expires_at || state?.inference_agent_key_expires_at,
+    INFERENCE_CREDENTIAL_REFRESH_SKEW_MS,
+  );
+}
+
 function atomicWriteJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = path.join(
@@ -396,21 +460,35 @@ async function mintAgentKey(accessToken) {
   return payload;
 }
 
-async function ensureInferenceAgentKey(loaded, refreshToken, options = {}) {
-  if (!options.force && !timestampExpiresSoon(loaded?.state?.inference_agent_key_expires_at)) {
+async function ensureInferenceCredential(loaded, refreshToken, options = {}) {
+  if (!options.force && !inferenceCredentialExpiresSoon(loaded?.state)) {
     return false;
   }
   const accessToken = await refreshAccessToken(refreshToken, loaded);
-  const agentKey = await mintAgentKey(accessToken);
-  const inferenceBaseUrl = trustedInferenceBaseUrl(agentKey.inference_base_url);
-  updateOpenshellInferenceProvider(agentKey.api_key, inferenceBaseUrl);
+  let credential = accessToken;
+  let inferenceBaseUrl = DEFAULT_INFERENCE_BASE_URL;
+  let authPath = "invoke_jwt";
+  let credentialExpiresAt = jwtExpiresAtIso(accessToken);
+
+  if (!isUsableInvokeJwt(accessToken)) {
+    const agentKey = await mintAgentKey(accessToken);
+    credential = agentKey.api_key;
+    inferenceBaseUrl = trustedInferenceBaseUrl(agentKey.inference_base_url);
+    authPath = "legacy_agent_key";
+    credentialExpiresAt = agentKeyExpiresAt();
+  }
+
+  updateOpenshellInferenceProvider(credential, inferenceBaseUrl);
   const nextState = {
     ...loaded.state,
     inference_provider_name: HERMES_INFERENCE_PROVIDER_NAME,
     inference_credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
     inference_base_url: inferenceBaseUrl,
-    inference_agent_key_expires_at: agentKeyExpiresAt(),
-    inference_agent_key_rotated_at: new Date().toISOString(),
+    inference_auth_path: authPath,
+    inference_credential_expires_at: credentialExpiresAt,
+    inference_agent_key_expires_at:
+      authPath === "legacy_agent_key" ? credentialExpiresAt : null,
+    inference_credential_rotated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   atomicWriteJson(loaded.file, nextState);
@@ -425,9 +503,9 @@ async function refreshManagedInferenceForRuntimeCredentials(options = {}) {
     const refreshToken = resolveRuntimeRefreshToken(loaded);
     if (!refreshToken) continue;
     try {
-      await ensureInferenceAgentKey(loaded, refreshToken, options);
+      await ensureInferenceCredential(loaded, refreshToken, options);
     } catch (err) {
-      const code = errorCode(err) || "agent_key_refresh_failed";
+      const code = errorCode(err) || "inference_credential_refresh_failed";
       console.error(`Hermes inference provider refresh failed: ${code}`);
     }
   }
@@ -538,8 +616,8 @@ async function handleProxy(req, res, route) {
   let accessToken;
   try {
     accessToken = await refreshAccessToken(refreshToken, loaded);
-    ensureInferenceAgentKey(loaded, refreshToken).catch((err) => {
-      const code = errorCode(err) || "agent_key_refresh_failed";
+    ensureInferenceCredential(loaded, refreshToken).catch((err) => {
+      const code = errorCode(err) || "inference_credential_refresh_failed";
       console.error(`Hermes inference provider refresh failed: ${code}`);
     });
   } catch (err) {

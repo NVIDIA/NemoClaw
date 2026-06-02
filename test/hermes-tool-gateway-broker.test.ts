@@ -37,6 +37,19 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function jwtWithClaims(claims: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode(claims)}.sig`;
+}
+
+function invokeJwt(seconds = 3600): string {
+  return jwtWithClaims({
+    exp: Math.floor(Date.now() / 1000) + seconds,
+    scope: "inference:invoke inference:mint_agent_key",
+  });
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -123,7 +136,7 @@ describe("Hermes managed-tool gateway broker", () => {
     ).toBe(true);
   });
 
-  it("refreshes via header, replaces upstream auth, normalizes responses, and rotates OpenShell storage", async () => {
+  it("refreshes via header, registers invoke JWTs, normalizes responses, and rotates OpenShell storage", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tool-broker-"));
     const stateDir = path.join(tmp, "state");
     const binDir = path.join(tmp, "bin");
@@ -163,6 +176,7 @@ describe("Hermes managed-tool gateway broker", () => {
       { mode: 0o600 },
     );
 
+    const accessToken = invokeJwt();
     const tokenRequests: Array<{ body: string; refreshHeader?: string }> = [];
     const agentKeyRequests: Array<{ body: string; authorization?: string }> = [];
     const portal = http.createServer((req, res) => {
@@ -191,7 +205,7 @@ describe("Hermes managed-tool gateway broker", () => {
         });
         res.end(
           JSON.stringify({
-            access_token: "access-2",
+            access_token: accessToken,
             refresh_token: "refresh-2",
             expires_in: 900,
             token_type: "Bearer",
@@ -303,14 +317,10 @@ describe("Hermes managed-tool gateway broker", () => {
       expect(tokenRequests[0]?.refreshHeader).toBe("refresh-1");
       expect(new URLSearchParams(tokenRequests[0]?.body).get("refresh_token")).toBeNull();
       expect(new URLSearchParams(tokenRequests[0]?.body).get("grant_type")).toBe("refresh_token");
-      expect(agentKeyRequests).toHaveLength(1);
-      expect(agentKeyRequests[0]?.authorization).toBe("Bearer access-2");
-      expect(JSON.parse(agentKeyRequests[0]?.body || "{}")).toEqual({
-        min_ttl_seconds: 1800,
-      });
+      expect(agentKeyRequests).toHaveLength(0);
       expect(upstreamRequests[0]).toMatchObject({
         url: "/v1/scrape?debug=1",
-        authorization: "Bearer access-2",
+        authorization: `Bearer ${accessToken}`,
         acceptEncoding: "identity",
       });
       expect(upstreamRequests[0]?.apiKey).toBeUndefined();
@@ -325,10 +335,12 @@ describe("Hermes managed-tool gateway broker", () => {
       expect(openshellOutput).toContain(
         "provider update hermes-provider --credential OPENAI_API_KEY --config OPENAI_BASE_URL=https://inference-api.nousresearch.com/v1",
       );
-      expect(openshellOutput).toContain("openai=agent-key-2");
+      expect(openshellOutput).toContain(`openai=${accessToken}`);
       expect(rotatedState.inference_provider_name).toBe("hermes-provider");
       expect(rotatedState.inference_credential_env).toBe("OPENAI_API_KEY");
-      expect(rotatedState.inference_agent_key_expires_at).toBeTruthy();
+      expect(rotatedState.inference_auth_path).toBe("invoke_jwt");
+      expect(rotatedState.inference_credential_expires_at).toBeTruthy();
+      expect(rotatedState.inference_agent_key_expires_at).toBeNull();
 
       const checks = [
         ["/browser-use/browsers", { "X-Browser-Use-API-Key": "broker-1" }, "browser"],
@@ -346,26 +358,26 @@ describe("Hermes managed-tool gateway broker", () => {
       }
       expect(upstreamRequests[1]).toMatchObject({
         url: "/browsers",
-        browserUseApiKey: "access-2",
+        browserUseApiKey: accessToken,
       });
       expect(upstreamRequests[1]?.authorization).toBeUndefined();
       expect(upstreamRequests[2]).toMatchObject({
         url: "/fal-ai/test",
-        authorization: "Key access-2",
+        authorization: `Key ${accessToken}`,
       });
       expect(upstreamRequests[3]).toMatchObject({
         url: "/v1/audio/speech",
-        authorization: "Bearer access-2",
+        authorization: `Bearer ${accessToken}`,
       });
       expect(upstreamRequests[4]).toMatchObject({
         url: "/sandboxes",
-        authorization: "Bearer access-2",
+        authorization: `Bearer ${accessToken}`,
       });
       expect(tokenRequests).toHaveLength(1);
-      expect(agentKeyRequests).toHaveLength(1);
+      expect(agentKeyRequests).toHaveLength(0);
       expect(output).not.toContain("refresh-1");
       expect(output).not.toContain("refresh-2");
-      expect(output).not.toContain("access-2");
+      expect(output).not.toContain(accessToken);
       expect(output).not.toContain("sandbox-secret");
       expect(output).not.toContain("agent-key-2");
     } finally {

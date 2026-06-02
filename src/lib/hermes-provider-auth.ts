@@ -66,6 +66,8 @@ export type HermesProviderCredentialState = {
   provider: typeof HERMES_PROVIDER_NAME;
   credential_env: string;
   inference_base_url: string;
+  auth_path?: "invoke_jwt" | "legacy_agent_key";
+  credential_expires_at?: string | null;
   agent_key_expires_at?: string | null;
 };
 
@@ -137,16 +139,28 @@ export async function ensureHermesProviderOAuthCredentials(
   }
 
   const tokens = await oauth.runDeviceCodeFlow({ fetch, log, noBrowser });
-  const minted = await oauth.mintAgentKeyWithAccessToken(tokens.access_token, {
-    fetch,
-    minTtlSeconds: AGENT_KEY_MIN_TTL_SECONDS,
-  });
-  const inferenceBaseUrl = minted.inference_base_url || baseUrl;
+  const inferenceBaseUrl = tokens.inference_base_url || baseUrl;
+  const useInvokeJwt = oauth.isNousInvokeAccessToken(tokens.access_token);
+  const minted = useInvokeJwt
+    ? null
+    : await oauth.mintAgentKeyWithAccessToken(tokens.access_token, {
+        fetch,
+        minTtlSeconds: AGENT_KEY_MIN_TTL_SECONDS,
+      });
+  const credential = useInvokeJwt ? tokens.access_token : minted?.api_key;
+  if (!credential) {
+    throw new Error("Hermes Provider credential is empty");
+  }
+  const credentialExpiresAt = useInvokeJwt
+    ? oauth.jwtExpiresAt(tokens.access_token)
+    : minted
+      ? agentKeyExpiresAt(minted)
+      : null;
   registerHermesInferenceProvider(
-    minted.api_key,
+    credential,
     runOpenshell,
     HERMES_INFERENCE_CREDENTIAL_ENV,
-    inferenceBaseUrl,
+    minted?.inference_base_url || inferenceBaseUrl,
   );
   if (Array.isArray(toolGatewayPresets) && toolGatewayPresets.length > 0) {
     const hermesToolGateway = getHermesToolGatewayBroker();
@@ -163,8 +177,10 @@ export async function ensureHermesProviderOAuthCredentials(
     auth_method: "oauth",
     provider: HERMES_PROVIDER_NAME,
     credential_env: HERMES_INFERENCE_CREDENTIAL_ENV,
-    inference_base_url: inferenceBaseUrl,
-    agent_key_expires_at: agentKeyExpiresAt(minted),
+    inference_base_url: minted?.inference_base_url || inferenceBaseUrl,
+    auth_path: useInvokeJwt ? "invoke_jwt" : "legacy_agent_key",
+    credential_expires_at: credentialExpiresAt,
+    agent_key_expires_at: useInvokeJwt ? null : credentialExpiresAt,
   };
 }
 

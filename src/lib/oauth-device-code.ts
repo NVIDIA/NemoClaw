@@ -12,12 +12,15 @@
  */
 
 import { spawn } from "node:child_process";
+import { Buffer } from "node:buffer";
 
 export const DEFAULT_PORTAL_BASE_URL = "https://portal.nousresearch.com";
 export const DEFAULT_INFERENCE_BASE_URL =
   "https://inference-api.nousresearch.com/v1";
 export const DEFAULT_CLIENT_ID = "hermes-cli";
-export const DEFAULT_SCOPE = "inference:mint_agent_key";
+export const NOUS_LEGACY_AGENT_KEY_SCOPE = "inference:mint_agent_key";
+export const NOUS_INFERENCE_INVOKE_SCOPE = "inference:invoke";
+export const DEFAULT_SCOPE = `${NOUS_INFERENCE_INVOKE_SCOPE} ${NOUS_LEGACY_AGENT_KEY_SCOPE}`;
 
 const POLL_INTERVAL_MIN_SECONDS = 1;
 const POLL_INTERVAL_MAX_SECONDS = 30;
@@ -39,6 +42,7 @@ export interface TokenResponse {
   expires_in: number;
   token_type: string;
   scope?: string;
+  inference_base_url?: string;
   iat?: number;
   exp?: number;
 }
@@ -136,6 +140,83 @@ function createRequestTimeout(timeoutMs: number | undefined): {
     signal: controller.signal,
     clear: () => clearTimeout(timer),
   };
+}
+
+function decodeBase64UrlJson(value: string): Record<string, unknown> | null {
+  try {
+    const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    const parsed = JSON.parse(json) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function decodeJwtClaims(token: unknown): Record<string, unknown> | null {
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  return decodeBase64UrlJson(parts[1] || "");
+}
+
+function jwtScopeSet(claims: Record<string, unknown>): Set<string> {
+  const scopes = new Set<string>();
+  const scope = claims.scope;
+  if (typeof scope === "string") {
+    for (const value of scope.split(/\s+/)) {
+      if (value) scopes.add(value);
+    }
+  }
+  const scp = claims.scp;
+  if (typeof scp === "string") {
+    for (const value of scp.split(/\s+/)) {
+      if (value) scopes.add(value);
+    }
+  } else if (Array.isArray(scp)) {
+    for (const value of scp) {
+      if (typeof value === "string" && value) scopes.add(value);
+    }
+  }
+  return scopes;
+}
+
+export function accessTokenHasScope(token: unknown, scope: string): boolean {
+  const claims = decodeJwtClaims(token);
+  return Boolean(claims && jwtScopeSet(claims).has(scope));
+}
+
+export function jwtExpiresAt(token: unknown): string | null {
+  const claims = decodeJwtClaims(token);
+  const exp = claims?.exp;
+  const seconds =
+    typeof exp === "number"
+      ? exp
+      : typeof exp === "string" && exp.trim()
+        ? Number(exp)
+        : NaN;
+  if (!Number.isFinite(seconds)) return null;
+  return new Date(seconds * 1000).toISOString();
+}
+
+export function isNousInvokeAccessToken(
+  token: unknown,
+  minTtlSeconds = 120,
+): boolean {
+  const claims = decodeJwtClaims(token);
+  if (!claims || !jwtScopeSet(claims).has(NOUS_INFERENCE_INVOKE_SCOPE)) {
+    return false;
+  }
+  const exp = claims.exp;
+  const seconds =
+    typeof exp === "number"
+      ? exp
+      : typeof exp === "string" && exp.trim()
+        ? Number(exp)
+        : NaN;
+  return Number.isFinite(seconds) && seconds * 1000 - Date.now() > minTtlSeconds * 1000;
 }
 
 async function postForm(
@@ -403,9 +484,15 @@ module.exports = {
   DEFAULT_PORTAL_BASE_URL,
   DEFAULT_INFERENCE_BASE_URL,
   DEFAULT_CLIENT_ID,
+  NOUS_LEGACY_AGENT_KEY_SCOPE,
+  NOUS_INFERENCE_INVOKE_SCOPE,
   DEFAULT_SCOPE,
   OAuthError,
   OAuthTimeoutError,
+  decodeJwtClaims,
+  accessTokenHasScope,
+  jwtExpiresAt,
+  isNousInvokeAccessToken,
   requestDeviceCode,
   pollForToken,
   refreshAccessTokenWithRefreshToken,
