@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release latest tag
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Semver release tag to promote as latest, for example v0.0.57"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-latest-tag
+  cancel-in-progress: false
+
+jobs:
+  update-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move latest to the release tag commit
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Refusing to promote non-semver tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main --tags --force
+          release_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          main_commit="$(git rev-parse origin/main)"
+
+          if ! git merge-base --is-ancestor "$release_commit" origin/main; then
+            echo "Refusing to promote $RELEASE_TAG: $release_commit is not reachable from origin/main ($main_commit)." >&2
+            exit 1
+          fi
+
+          git tag -fa latest "$release_commit" -m "latest -> $RELEASE_TAG"
+          git push origin refs/tags/latest --force
+
+          {
+            echo "## Release latest tag"
+            echo
+            echo "- Release tag: \`$RELEASE_TAG\`"
+            echo "- Release commit: \`$release_commit\`"
+            echo "- origin/main: \`$main_commit\`"
+            echo "- Updated: \`latest\`"
+            echo "- Not touched: \`lkg\`"
+          } >> "$GITHUB_STEP_SUMMARY"

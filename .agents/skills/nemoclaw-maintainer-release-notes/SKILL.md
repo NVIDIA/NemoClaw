@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-release-notes
-description: Draft and publish NemoClaw release notes from live GitHub tag and compare data. Produces the repo's narrative release-note style with three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to write/post a release announcement. Trigger keywords - release note, release notes, announcement, discussion post, changelog, v0.0.x is out, Carl Sagan.
+description: Drafts NemoClaw release notes from live GitHub tag and compare data. Produces the repo's narrative release-note style with three lead paragraphs, categorized shipped changes, why-it-matters bullets, and external-only contributor thanks. Use after cutting a release tag or when asked to draft release notes, prepare an announcement, write a changelog, or summarize v0.0.x.
 user_invocable: true
 ---
 
@@ -9,7 +9,7 @@ user_invocable: true
 
 # NemoClaw Maintainer Release Notes
 
-Draft and publish NemoClaw release notes from live release data. The house style is:
+Draft NemoClaw release notes from live release data. The house style is:
 
 - three narrative lead paragraphs,
 - a categorized list of shipped changes,
@@ -17,7 +17,7 @@ Draft and publish NemoClaw release notes from live release data. The house style
 - external-only contributor thanks,
 - visible `#NNNN` GitHub links.
 
-Default to a local draft and HTML preview first. Do not create or update a GitHub Discussion until the user explicitly approves posting.
+Create a local Markdown draft and HTML preview. Do not create or update a GitHub Discussion; the maintainer posts the announcement manually.
 
 ## Prerequisites
 
@@ -150,7 +150,7 @@ Create a Markdown draft and an HTML preview. By default, place these outside the
 ../nemoclaw-<current-version>-release-note-draft.html
 ```
 
-The Markdown body is the source that will be posted to GitHub Discussions. The HTML file is just a browser preview for review.
+The Markdown body is the source the maintainer can paste into GitHub Discussions. The HTML file is just a browser preview for review.
 
 After writing the files, open the HTML preview with the platform's default file opener:
 
@@ -165,70 +165,7 @@ Windows (PowerShell):
 Start-Process ../nemoclaw-<current-version>-release-note-draft.html
 ```
 
-Stop here unless the user approves posting.
-
-## Step 8: Publish to GitHub Discussions After Approval
-
-When the user says to post the release note, publish the reviewed Markdown body as a Discussion in `Announcements`.
-
-Resolve repository and category IDs live:
-
-```bash
-gh api graphql -f owner=NVIDIA -f name=NemoClaw -f query='
-query($owner:String!,$name:String!){
-  repository(owner:$owner,name:$name){
-    id
-    discussionCategories(first:20){ nodes{ id name slug } }
-  }
-}'
-```
-
-Check for an existing discussion for the same version before creating a new one:
-
-```bash
-gh api graphql -f owner=NVIDIA -f name=NemoClaw -f query='
-query($owner:String!,$name:String!){
-  repository(owner:$owner,name:$name){
-    discussions(first:20, orderBy:{field:CREATED_AT,direction:DESC}){
-      nodes{ number title url createdAt category{ name } }
-    }
-  }
-}' --jq '.data.repository.discussions.nodes | map(select(.title|test("<current-version>"; "i")))'
-```
-
-Create the discussion:
-
-```bash
-gh api graphql \
-  -f repositoryId='<repo-id>' \
-  -f categoryId='<announcements-category-id>' \
-  -f title='NemoClaw <current-version> is out' \
-  -F body=@../nemoclaw-<current-version>-release-note-draft.md \
-  -f query='mutation($repositoryId:ID!,$categoryId:ID!,$title:String!,$body:String!){
-    createDiscussion(input:{repositoryId:$repositoryId,categoryId:$categoryId,title:$title,body:$body}){
-      discussion{ number title url category{ name } body }
-    }
-  }'
-```
-
-Verify the live result:
-
-```bash
-gh api graphql -F number=<discussion-number> -f owner=NVIDIA -f name=NemoClaw -f query='
-query($owner:String!,$name:String!,$number:Int!){
-  repository(owner:$owner,name:$name){
-    discussion(number:$number){ number title url category{ name } body createdAt }
-  }
-}'
-```
-
-Confirm:
-
-- category is `Announcements`,
-- title is `NemoClaw <current-version> is out`,
-- body starts with the reviewed draft,
-- external thanks are present if expected,
-- no affiliation text appears unless the user requested it.
+Stop here. The maintainer creates the GitHub Discussion and shares the announcement link.
 
 ## Output
 
@@ -238,15 +175,11 @@ For a draft-only run, return:
 - HTML preview path,
 - a short note about the compare range and any excluded revert/test-cleanup items.
 
-For a posted run, return:
-
-- Discussion URL,
-- discussion number,
-- verification summary.
+Also return the suggested discussion title: `NemoClaw <current-version> is out`.
 
 ## Hard Rules
 
-- Never publish a Discussion before the user approves the local draft.
+- Never create or update a GitHub Discussion from this skill.
 - Never draft from memory alone; use live `gh api compare` and PR metadata.
 - Never mention contributor affiliation unless the user explicitly asks.
 - Never thank internal contributors by default; keep thanks external-only.

@@ -1,231 +1,173 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Cut a new semver release — bump all version strings via bump-version.ts, open a release PR, and after merge tag main and push. Use when cutting a release, tagging a version, shipping a build, or preparing a deployment. Trigger keywords - cut tag, release tag, new tag, cut release, tag version, ship it.
+description: Creates deterministic NemoClaw semver release tags on origin/main and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Cut Release Tag
 
-Bump all version strings, open a release PR, and after merge create annotated semver + `latest` tags on `origin/main`.
-Do not update `lkg` in this automated release flow; release admins promote `lkg` manually after validation.
+Create one annotated semver tag on an already-merged `origin/main` commit. The tag is the release. Do not bump version files, open a release PR, push `latest`, or touch `lkg` from this skill.
 
-This skill delegates the version-bump work to `scripts/bump-version.ts` (invoked via `npm run bump:version`). That script updates package.json (root + plugin), blueprint.yaml, installer defaults, docs config, and versioned doc links — then runs the build and tests before opening a PR.
+A GitHub workflow moves `latest` after the semver tag is pushed. Release admins promote `lkg` manually after validation.
 
-## Prerequisites
+## Hard Rules
 
-- You must be in the NemoClaw git repository.
-- You must have push access to `origin` (NVIDIA/NemoClaw).
-- The nightly E2E suite should have passed before tagging. Check with the user if unsure.
+- Tag only commits reachable from `origin/main`.
+- Ask the maintainer to confirm the exact commit before creating or pushing a tag.
+- Create annotated tags (`git tag -a`), never lightweight tags.
+- Push only the semver tag (`vX.Y.Z`). Never push `latest` or `lkg`.
+- If a remote semver tag already exists, stop. Do not move, delete, or force-push it unless the maintainer explicitly starts a remediation flow.
+- Draft release notes locally after tagging. Do not create the GitHub Discussion; the maintainer does that.
 
-## Step 1: Determine the Current Version
+## Workflow
 
-Fetch all tags and find the latest semver tag:
+Copy this checklist and update it as you proceed:
 
-```bash
-git fetch origin --tags
-git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+```text
+Release Progress:
+- [ ] Step 1: Verify repository and remote state
+- [ ] Step 2: Choose the next semver tag
+- [ ] Step 3: Confirm the exact origin/main commit with the maintainer
+- [ ] Step 4: Create and push the annotated semver tag
+- [ ] Step 5: Verify the semver tag and workflow-managed latest tag
+- [ ] Step 6: Draft release notes for maintainer review
+- [ ] Step 7: Hand off announcement and sharing steps
 ```
 
-Parse the major, minor, and patch components from this tag.
+### Step 1: Verify Repository and Remote State
 
-## Step 2: Ask the User Which Bump
+```bash
+git rev-parse --show-toplevel
+git remote get-url origin
+git status --short
+git fetch origin main --tags --force
+```
 
-Present the options with the **patch bump as default**:
+Continue only if:
 
-- **Patch** (default): `vX.Y.(Z+1)` — bug fixes, small changes
-- **Minor**: `vX.(Y+1).0` — new features, larger changes
-- **Major**: `v(X+1).0.0` — breaking changes
+- the repo is `NVIDIA/NemoClaw`,
+- the worktree is clean,
+- `origin/main` is fetched.
 
-Show the concrete version strings. Example prompt:
+Find the latest remote semver tag from the remote, not local tag state:
 
-> Current tag: `v0.0.2`
->
-> Which version bump?
->
-> 1. **Patch** → `v0.0.3` (default)
-> 2. **Minor** → `v0.1.0`
-> 3. **Major** → `v1.0.0`
+```bash
+git ls-remote --tags origin 'v*' \
+  | awk '{print $2}' \
+  | sed 's#refs/tags/##; s#\^{}##' \
+  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+  | sort -Vr \
+  | head -1
+```
 
-Wait for the user to confirm before proceeding. If they just say "yes", "go", "do it", or similar, use the patch default.
+### Step 2: Choose the Next Semver Tag
 
-## Step 3: Show What's Being Tagged
+Present patch/minor/major choices with patch as default. Example:
 
-Show the user the commit that will be tagged and the changelog since the last tag:
+```text
+Current release: v0.0.56
+
+Which version bump?
+1. Patch → v0.0.57 (default)
+2. Minor → v0.1.0
+3. Major → v1.0.0
+```
+
+If the maintainer says "yes", "go", or similar without choosing, use the patch default.
+
+Before continuing, verify the remote tag does not already exist:
+
+```bash
+if git ls-remote --exit-code --tags origin <new-version> >/dev/null; then
+  echo "Tag already exists: <new-version>" >&2
+  exit 1
+fi
+```
+
+### Step 3: Confirm the Exact Commit
+
+Show the target commit and changelog:
 
 ```bash
 git log --oneline origin/main -1
-git log --oneline <previous-tag>..origin/main
+git log --oneline <previous-version>..origin/main
 ```
 
-Ask for confirmation before proceeding.
+Ask:
 
-## Step 4: Run the Version Bump Script
+```text
+Confirm: create annotated tag <new-version> pointing at origin/main commit <sha>?
+```
 
-First, preview the plan with `--dry-run`:
+Do not tag until the maintainer confirms the exact commit.
+
+### Step 4: Create and Push the Semver Tag
+
+Use the confirmed commit SHA, not a branch name that can move:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix> --dry-run
+target=<confirmed-origin-main-sha>
+tag=<new-version>
+
+git fetch origin main --tags --force
+git cat-file -e "${target}^{commit}"
+git merge-base --is-ancestor "$target" origin/main
+
+git tag -a "$tag" "$target" -m "$tag"
+git push origin "refs/tags/$tag"
 ```
 
-Show the dry-run output to the user. After confirmation, ask the user which mode they want:
+If any command fails, stop and report the failure. Do not push `latest`.
 
-### Option A: PR mode (default, recommended)
+### Step 5: Verify Tags
+
+Verify the semver tag immediately:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix>
+git ls-remote --tags origin <new-version> 'refs/tags/<new-version>^{}'
 ```
 
-This will:
-
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Create a `release/<version>` branch and open a release PR against `main`
-
-In PR mode, tagging is deferred — proceed to Step 5 after the PR merges.
-
-### Option B: Direct mode (no PR)
+Then wait for the GitHub workflow that updates `latest`, and verify both tags peel to the confirmed commit:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix> --no-create-pr --push
+git ls-remote --tags origin \
+  <new-version> 'refs/tags/<new-version>^{}' \
+  latest 'refs/tags/latest^{}'
 ```
 
-This will:
+Use `gh run list --workflow release-latest-tag.yaml --limit 3` if you need the workflow status.
 
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Commit directly on `main`
-4. Create annotated `v<version>` and `latest` tags
-5. Push the commit and both tags to origin
+If `latest` does not update, report the workflow URL/status and stop. Do not move `latest` manually from this skill.
 
-In direct mode, tagging and pushing are handled by the script — skip to Step 6.
+### Step 6: Draft Release Notes
 
-If the user wants to skip tests (e.g., they already ran them), add `--skip-tests` to either mode.
+Draft release notes from live GitHub data using the release range `<previous-version>...<new-version>`. Save local drafts outside the checkout root, for example:
 
-## Step 5: Create and Push Tags (PR mode only, after PR merge)
-
-Skip this step if you used direct mode in Step 4 — the script already tagged and pushed.
-
-Once the release PR is merged into `main`, create the annotated tag, move `latest`, and push:
-
-```bash
-git fetch origin main --tags
-git tag -a <new-version> origin/main -m "<new-version>"
-
-# Move the latest tag (delete old, create new)
-git tag -d latest 2>/dev/null || true
-git tag -a latest origin/main -m "latest"
-
-# Push both tags (force-push latest since it moves)
-git push origin <new-version>
-git push origin latest --force
+```text
+../nemoclaw-<new-version>-release-note-draft.md
+../nemoclaw-<new-version>-release-note-draft.html
 ```
 
-Do not move or push `lkg` in this step.
-The public installer defaults to `lkg`, but that tag is the admin-promoted known-good pointer and may intentionally lag `latest`.
+Follow the release-note style from `nemoclaw-maintainer-release-notes`, but stop after producing the local draft and preview. Do not create or update a GitHub Discussion.
 
-## Step 6: Verify
+### Step 7: Hand Off Announcement
 
-```bash
-git ls-remote --tags origin | grep -E '(<new-version>|latest)'
-```
+Return:
 
-Confirm both tags point to the same commit on the remote.
+- release tag,
+- confirmed release commit,
+- `latest` verification status,
+- Markdown draft path,
+- HTML preview path,
+- suggested discussion title: `NemoClaw <new-version> is out`,
+- reminder: maintainer creates the Announcement discussion and shares its link in external channels.
 
-## Step 7: Conditionally Sweep Stale-Issue Verification Labels
+## Recovery
 
-Strip `fixed-on-latest` from open issues only when the verification has actually gone stale or a regression risk appeared since we verified — never blanket-sweep. A blanket sweep on every release re-verifies labels that were freshly applied yesterday, wasting Brev cost and creating noise. The skill's by-design path uses the existing repo `status: wont-fix` label, which is **not** swept (also applied for non-skill triage reasons, so clearing it would erase human work). `verify-inconclusive` is also kept on the same conditional cascade as `fixed-on-latest`.
-
-**Decision cascade per labeled-and-open issue:**
-
-| Order | Check | Action |
-|---|---|---|
-| 1 | Project [NVIDIA/199](https://github.com/orgs/NVIDIA/projects/199) status == **Done** | **Skip clear** — maintainer already accepted the verification; label can stay until the issue closes. |
-| 2 | More than 14 days since the skill marker comment AND status != Done | **Clear** — verification is stale; reporter never confirmed in the review window. Re-verify on next skill run. |
-| 3 | A PR merged since the marker date touches the paths the comment cited in `Relevant changes since v0.0.X` | **Clear** — regression risk; what was "fixed" may have been re-broken. |
-| — | else | **Skip clear** — verification still holds; skill won't re-run on this issue (still excluded by Step 3 marker-TTL plus the live label). |
-
-Closed issues are not iterated (the `--state open` filter on the listing excludes them implicitly).
-
-Requires the `project` scope on the maintainer's gh CLI for the Project 199 status lookup. If missing, run `gh auth refresh -h github.com -s project` in a real terminal once (OAuth device-code flow). With the scope absent, the sweep falls back to the **time + regression** logic alone (skips check #1) and logs a warning.
-
-```bash
-PROJECT_NUMBER=199
-TODAY_TS=$(date -u +%s)
-HAVE_PROJECT_SCOPE=0
-gh auth status 2>&1 | grep -q "'project'" && HAVE_PROJECT_SCOPE=1 || \
-  echo "[release-sweep] WARN gh missing 'project' scope — Done-state check disabled this run"
-
-for label in fixed-on-latest verify-inconclusive; do
-  for n in $(gh issue list --repo NVIDIA/NemoClaw --state open --label "$label" --json number -q '.[].number'); do
-
-    # 1. Project Done-state check (only if we have project scope)
-    if [ "$HAVE_PROJECT_SCOPE" = "1" ]; then
-      STATUS=$(gh api graphql -F num="$n" -f query='
-        query($num: Int!) {
-          repository(owner: "NVIDIA", name: "NemoClaw") {
-            issue(number: $num) {
-              projectItems(first: 100) {
-                nodes {
-                  project { number }
-                  fieldValueByName(name: "Status") {
-                    ... on ProjectV2ItemFieldSingleSelectValue { name }
-                  }
-                }
-              }
-            }
-          }
-        }' --jq '.data.repository.issue.projectItems.nodes[] | select(.project.number == 199) | .fieldValueByName.name' 2>/dev/null | head -1)
-      if [ "$STATUS" = "Done" ]; then
-        echo "[release-sweep] kept #$n ($label) — Project 199 status is Done"
-        continue
-      fi
-    fi
-
-    # 2. Find the most recent skill marker comment date
-    MARKER_DATE=$(gh issue view "$n" --repo NVIDIA/NemoClaw --json comments \
-      --jq '.comments | map(select(.body | test("nemoclaw-verify-stale v\\d+ \\d{4}-\\d{2}-\\d{2}"))) | last | .body | (capture("nemoclaw-verify-stale v\\d+ (?<d>\\d{4}-\\d{2}-\\d{2})") // {}) | .d // empty')
-    if [ -z "$MARKER_DATE" ]; then
-      # Label exists but no skill marker — applied manually; leave alone.
-      echo "[release-sweep] kept #$n ($label) — no skill marker, label applied manually"
-      continue
-    fi
-
-    AGE_DAYS=$(( (TODAY_TS - $(date -u -j -f "%Y-%m-%d" "$MARKER_DATE" +%s 2>/dev/null || date -u -d "$MARKER_DATE" +%s)) / 86400 ))
-    if [ "$AGE_DAYS" -ge 14 ]; then
-      gh issue edit "$n" --repo NVIDIA/NemoClaw --remove-label "$label"
-      echo "[release-sweep] cleared #$n ($label) — stale (verified ${AGE_DAYS}d ago, reporter not confirmed)"
-      continue
-    fi
-
-    # 3. Regression check — any PR-merge commit since MARKER_DATE touch the paths the
-    # comment's `Relevant changes since v0.0.X` block cited?
-    PATHS=$(gh issue view "$n" --repo NVIDIA/NemoClaw --json comments \
-      --jq '.comments | map(select(.body | test("nemoclaw-verify-stale v\\d+"))) | last | .body' \
-      | grep -oE '`[a-zA-Z0-9_/.-]+\.(ts|js|sh|py|yaml|yml|md)`' | tr -d '`' | sort -u)
-    if [ -n "$PATHS" ]; then
-      # Run from the current directory — Step 1's prerequisite already requires the maintainer
-      # to be inside the NemoClaw repo, and hardcoding ~/NemoClaw breaks anyone with a non-default
-      # checkout location.
-      REGRESSED=$(git log --since="$MARKER_DATE" origin/main --name-only --format=oneline -- $PATHS 2>/dev/null | head -1)
-      if [ -n "$REGRESSED" ]; then
-        gh issue edit "$n" --repo NVIDIA/NemoClaw --remove-label "$label"
-        echo "[release-sweep] cleared #$n ($label) — regression risk (commits since ${MARKER_DATE} touch implicated paths)"
-        continue
-      fi
-    fi
-
-    echo "[release-sweep] kept #$n ($label) — verified ${AGE_DAYS}d ago, no Done state, no regression touch"
-  done
-done
-```
-
-The verification record itself stays in each issue's comment history — only the labels are reset, and only when the cascade above fires.
-
-## Important Notes
-
-- NEVER tag without explicit user confirmation of the version.
-- NEVER tag a branch other than `origin/main`.
-- Always use annotated tags (`-a`), not lightweight tags.
-- The `latest` tag is a floating tag that always points to the most recent release — it requires `--force` to push.
-- The `lkg` tag is a manually promoted known-good tag for public installer defaults. Do not update it from the automated release flow.
-- The version string passed to `npm run bump:version` should NOT have a `v` prefix (e.g., `0.0.3`, not `v0.0.3`). The script adds the `v` prefix for tags internally.
+- Remote semver tag already exists: stop. Do not retag unless the maintainer explicitly asks for protected-tag remediation.
+- Semver tag pushed but `latest` workflow fails: report the failed workflow. Do not manually update `latest`.
+- Confirmed commit is not reachable from `origin/main`: stop; ask the maintainer for the correct commit.
+- Wrong tag was pushed: stop; protected-tag remediation requires explicit maintainer/admin instruction.
