@@ -129,6 +129,7 @@ export const migrationInventory = {
     targeted("baseline-onboarding/01-sandbox-state.sh", "assertion step:baseline.sandbox-state"),
     targeted("baseline-onboarding/02-route-and-smoke.sh", "assertion step:baseline.route-and-smoke"),
     targeted("hermes/00-hermes-health.sh", "assertion step:runtime.hermes.health"),
+    targeted("hermes/01-history-writable.sh", "assertion step:runtime.hermes.history-writable"),
     targeted("inference/cloud/00-models-health.sh", "assertion step:runtime.inference.models-health"),
     targeted("inference/cloud/01-chat-completion.sh", "assertion step:runtime.inference.chat-completion"),
     targeted("inference/cloud/02-inference-local-from-sandbox.sh", "assertion step:runtime.inference.sandbox-local"),

@@ -365,6 +365,29 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_history_file() {
+  local file="$1"
+  local mode="$2"
+
+  if [ -L "$file" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${file} is a symlink" >&2
+    return 1
+  fi
+  if [ -e "$file" ] && [ ! -f "$file" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${file} is not a regular file" >&2
+    return 1
+  fi
+
+  if [ ! -e "$file" ]; then
+    : >"$file" || return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$file"
+  fi
+  chmod "$mode" "$file"
+}
+
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
     echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
@@ -377,6 +400,7 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
 }
 
 cleanup_stale_hermes_gateway_runtime() {
