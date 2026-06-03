@@ -17,9 +17,22 @@ import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
 import {
+  buildNvidiaCdiRefreshCommands,
+  buildNvidiaCdiRepairCommands,
+  buildStaleCdiWarnCommands,
+  explainNvidiaCdiRepairReason,
+  explainStaleCdiReason,
+  extractCdiMismatchFilePath,
+  findCdiDeviceNodeMismatch,
+  getNvidiaCdiSpecPath,
+  hasNvidiaCdiSpec,
+  parseDockerCdiSpecDirs,
+} from "./docker-cdi";
+import {
   isWslDockerDesktopRuntime,
   wslDockerDesktopGpuCompatibilityAction,
 } from "./wsl-docker-desktop-gpu";
+export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
@@ -162,23 +175,6 @@ export interface AssessHostOpts {
   gpuProbeImpl?: () => boolean;
 }
 
-type DeviceNumbers = { major: number; minor: number };
-
-type CdiDeviceNode = DeviceNumbers & {
-  filePath: string;
-  path: string;
-};
-
-type EffectiveNvidiaCdiSpec = {
-  filePath: string;
-  parsed: unknown;
-};
-
-const NVIDIA_CDI_KIND_YAML_RE =
-  /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
-const NVIDIA_CDI_KIND_JSON_RE = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
-const NVIDIA_CDI_REFRESH_SPEC_PATH = "/var/run/cdi/nvidia.yaml";
-
 function buildCommandVArgv(commandName: string): readonly string[] {
   return ["sh", "-c", 'command -v "$1"', "--", commandName];
 }
@@ -308,196 +304,6 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
-}
-
-// Parses the Docker daemon's configured CDI spec directories from `docker
-// info --format '{{json .}}'` output. Docker 25+ surfaces these as
-// `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` whenever the daemon is built
-// with CDI support and `features.cdi=true` (the default on recent installs).
-// An empty list means CDI device injection is not enabled, so OpenShell will
-// fall back to the legacy `nvidia` runtime path and there is no spec gap to
-// worry about.
-export function parseDockerCdiSpecDirs(info = ""): string[] {
-  const match = info.match(/"CDISpecDirs"\s*:\s*\[([^\]]*)\]/);
-  if (!match) return [];
-  return Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1]).filter(Boolean);
-}
-
-function normalizeCdiSpecDir(specDir: string | undefined): string {
-  const trimmed = String(specDir || "/etc/cdi")
-    .trim()
-    .replace(/\/+$/, "");
-  return trimmed || "/etc/cdi";
-}
-
-export function getNvidiaCdiSpecPath(
-  assessment: Pick<HostAssessment, "dockerCdiSpecDirs">,
-): string {
-  return path.join(normalizeCdiSpecDir(assessment.dockerCdiSpecDirs[0]), "nvidia.yaml");
-}
-
-// True when at least one CDI spec under the configured directories declares
-// `kind: nvidia.com/gpu` (the device class OpenShell injects with `--gpu`).
-// Specs are typically YAML, but the JSON shape is also accepted because
-// `nvidia-ctk cdi generate --format=json` is supported. Errors reading any
-// individual file or directory are tolerated — a missing dir is the same
-// shape as "no spec found there".
-function hasNvidiaCdiSpec(
-  specDirs: readonly string[],
-  readdirImpl: (dir: string) => string[],
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): boolean {
-  // YAML keys are unquoted; JSON quotes the kind value. Anchor both patterns
-  // to the *exact* device-class string `nvidia.com/gpu` and require a value
-  // terminator (end of line, whitespace + comment, or whitespace + EOL) so a
-  // sibling spec like `nvidia.com/gpu-extra` does not silently satisfy the
-  // check and suppress the preflight warning. A comment that merely mentions
-  // `nvidia.com/gpu` is also rejected because `kindRe` only matches when the
-  // *whole* scalar value is the device class.
-  for (const dir of specDirs) {
-    let entries: string[];
-    try {
-      entries = readdirImpl(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
-      let raw: string;
-      try {
-        raw = readFileImpl(path.join(dir, entry), "utf-8");
-      } catch {
-        continue;
-      }
-      if (NVIDIA_CDI_KIND_YAML_RE.test(raw) || NVIDIA_CDI_KIND_JSON_RE.test(raw)) return true;
-    }
-  }
-  return false;
-}
-
-function parseIntegerLike(value: unknown): number | null {
-  if (typeof value === "number") {
-    return Number.isInteger(value) && value >= 0 ? value : null;
-  }
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const base = /^0x/i.test(trimmed) ? 16 : 10;
-  const parsed = Number.parseInt(trimmed, base);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function parseLinuxStatDeviceNumbers(output: string | null | undefined): DeviceNumbers | null {
-  const parts = String(output || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length < 2) return null;
-  const major = Number.parseInt(parts[0], 16);
-  const minor = Number.parseInt(parts[1], 16);
-  if (!Number.isInteger(major) || !Number.isInteger(minor) || major < 0 || minor < 0) {
-    return null;
-  }
-  return { major, minor };
-}
-
-function readLiveLinuxDeviceNumbers(
-  devicePath: string,
-  runCaptureImpl: RunCaptureFn,
-): DeviceNumbers | null {
-  try {
-    return parseLinuxStatDeviceNumbers(
-      runCaptureImpl(["stat", "-c", "%t %T", devicePath], { ignoreError: true }),
-    );
-  } catch {
-    return null;
-  }
-}
-
-function parseCdiSpec(raw: string, filePath: string): unknown {
-  if (/\.json$/i.test(filePath)) return JSON.parse(raw);
-  const YAML = require("yaml");
-  return YAML.parse(raw);
-}
-
-function findEffectiveNvidiaCdiSpec(
-  specDirs: readonly string[],
-  readdirImpl: (dir: string) => string[],
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): EffectiveNvidiaCdiSpec | null {
-  // Docker CDI precedence is highest in the last configured directory.
-  for (const dir of [...specDirs].reverse()) {
-    let entries: string[];
-    try {
-      entries = readdirImpl(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
-      const filePath = path.join(dir, entry);
-      let raw: string;
-      try {
-        raw = readFileImpl(filePath, "utf-8");
-      } catch {
-        continue;
-      }
-      if (!NVIDIA_CDI_KIND_YAML_RE.test(raw) && !NVIDIA_CDI_KIND_JSON_RE.test(raw)) {
-        continue;
-      }
-      try {
-        return { filePath, parsed: parseCdiSpec(raw, filePath) };
-      } catch {
-        continue;
-      }
-    }
-  }
-  return null;
-}
-
-function collectCdiDeviceNodes(value: unknown, filePath: string): CdiDeviceNode[] {
-  const nodes: CdiDeviceNode[] = [];
-  const stack: unknown[] = [value];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push(item);
-      continue;
-    }
-    if (!current || typeof current !== "object") continue;
-    const obj = current as Record<string, unknown>;
-    // We stat the host device, so prefer CDI's host-side path when present.
-    const nodePath =
-      (typeof obj.hostPath === "string" && obj.hostPath) ||
-      (typeof obj.path === "string" && obj.path) ||
-      "";
-    const major = parseIntegerLike(obj.major);
-    if (nodePath.startsWith("/dev/") && major !== null) {
-      const minor = obj.minor === undefined ? 0 : parseIntegerLike(obj.minor);
-      if (minor !== null) nodes.push({ filePath, path: nodePath, major, minor });
-    }
-    for (const child of Object.values(obj)) stack.push(child);
-  }
-
-  return nodes;
-}
-
-function findCdiDeviceNodeMismatch(
-  specDirs: readonly string[],
-  readdirImpl: (dir: string) => string[],
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-  runCaptureImpl: RunCaptureFn,
-): string | null {
-  const effective = findEffectiveNvidiaCdiSpec(specDirs, readdirImpl, readFileImpl);
-  if (!effective) return null;
-  for (const node of collectCdiDeviceNodes(effective.parsed, effective.filePath)) {
-    const liveDevice = readLiveLinuxDeviceNumbers(node.path, runCaptureImpl);
-    if (!liveDevice) continue;
-    if (node.major === liveDevice.major && node.minor === liveDevice.minor) continue;
-    return `${node.filePath} ${node.path}=${node.major}:${node.minor}, live=${liveDevice.major}:${liveDevice.minor}`;
-  }
-  return null;
 }
 
 function parseSystemctlFailedState(value = ""): boolean | null {
@@ -651,107 +457,6 @@ export function buildContainerToolkitBootstrapCommands(
     `# Install nvidia-container-toolkit per NVIDIA's install guide: ${installGuide}`,
     ...generateCommands,
   ];
-}
-
-function buildNvidiaCdiRepairCommands(assessment: HostAssessment, specPath: string): string[] {
-  const specDir = path.dirname(specPath);
-  const commands = [`sudo mkdir -p ${specDir}`];
-  if (assessment.systemctlAvailable !== false) {
-    commands.push(
-      "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
-      "sudo systemctl start nvidia-cdi-refresh.service",
-      "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-    );
-  }
-  commands.push(
-    `sudo nvidia-ctk cdi generate --output=${specPath}   # fallback if the refresh service does not repair the spec`,
-    "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-    "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
-  );
-  return commands;
-}
-
-function buildNvidiaCdiRefreshCommands(): string[] {
-  return [
-    "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
-    "sudo systemctl start nvidia-cdi-refresh.service",
-    "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-  ];
-}
-
-function extractCdiMismatchFilePath(mismatch: string | undefined): string {
-  const trimmed = String(mismatch || "").trim();
-  if (!trimmed) return "";
-  const firstWhitespace = trimmed.search(/\s/);
-  return firstWhitespace > 0 ? trimmed.slice(0, firstWhitespace) : trimmed;
-}
-
-function buildStaleCdiAutoFixCommands(): string[] {
-  return [
-    "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
-    "sudo systemctl start nvidia-cdi-refresh.service",
-  ];
-}
-
-function buildStaleCdiWarnCommands(flaggedFilePath: string): string[] {
-  const commands = buildStaleCdiAutoFixCommands();
-  if (flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH) {
-    commands.push(
-      `sudo rm -f ${flaggedFilePath}   # optional: remove the stale leftover (the service owns ${NVIDIA_CDI_REFRESH_SPEC_PATH})`,
-    );
-  }
-  commands.push(
-    "nemoclaw onboard      # re-run to confirm the stale-spec warning clears (or --no-gpu to skip GPU)",
-  );
-  return commands;
-}
-
-function explainStaleCdiReason(mismatch: string | undefined): string {
-  const detail = mismatch || "unknown device-node mismatch";
-  const flaggedFilePath = extractCdiMismatchFilePath(mismatch);
-  const isLeftover = flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH;
-  return (
-    `An NVIDIA CDI device node no longer matches the live device (${detail}). ` +
-    "OpenShell's `gateway start --gpu` injects devices from the CDI spec, so a stale " +
-    "device number points the container at the wrong device and CUDA init fails " +
-    "(`CUDA unknown error`). The nvidia-cdi-refresh service keeps " +
-    `${NVIDIA_CDI_REFRESH_SPEC_PATH} current on driver/toolkit changes` +
-    (isLeftover
-      ? `; the flagged ${flaggedFilePath} is a stale leftover that the refreshed ` +
-        `${NVIDIA_CDI_REFRESH_SPEC_PATH} overrides.`
-      : "; re-enable and run it to regenerate the spec.")
-  );
-}
-
-function explainNvidiaCdiRepairReason(assessment: HostAssessment): string {
-  const reasons: string[] = [];
-  if (assessment.cdiNvidiaGpuSpecMissing) {
-    reasons.push(
-      "Docker is configured for CDI device injection (CDISpecDirs is set) but no nvidia.com/gpu CDI spec is present on the host.",
-    );
-  }
-  if (assessment.cdiNvidiaGpuSpecStale) {
-    const detail = assessment.cdiNvidiaGpuSpecMismatch
-      ? ` (${assessment.cdiNvidiaGpuSpecMismatch})`
-      : "";
-    reasons.push(
-      `The NVIDIA CDI spec appears stale because a declared device node does not match the live device${detail}.`,
-    );
-  }
-  if (assessment.cdiNvidiaGpuRefreshUnhealthy) {
-    const unitDetails: string[] = [];
-    if (assessment.nvidiaCdiRefreshPathEnabled === false) unitDetails.push("path disabled");
-    if (assessment.nvidiaCdiRefreshPathActive === false) unitDetails.push("path inactive");
-    if (assessment.nvidiaCdiRefreshServiceFailed === true) unitDetails.push("service failed");
-    const suffix = unitDetails.length > 0 ? ` (${unitDetails.join(", ")})` : "";
-    reasons.push(
-      `NVIDIA's CDI refresh units are not healthy${suffix}, so Docker may keep using stale GPU device numbers after driver changes.`,
-    );
-  }
-  reasons.push(
-    "OpenShell's `gateway start --gpu` can fail until the CDI spec is refreshed and verified.",
-  );
-  return reasons.join(" ");
 }
 
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
