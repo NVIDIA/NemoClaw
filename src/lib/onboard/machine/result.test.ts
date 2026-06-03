@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   advanceTo,
@@ -10,7 +10,9 @@ import {
   failOnboardMachine,
   retryTo,
   transitionTo,
+  type OnboardStateResultTransitionKind,
 } from "./result";
+import type { OnboardNonTerminalMachineState } from "./types";
 
 describe("onboard state result helpers", () => {
   it("builds transition results with optional updates and metadata", () => {
@@ -26,6 +28,13 @@ describe("onboard state result helpers", () => {
       updates: { sandboxName: "my-assistant" },
       metadata: { reason: "test" },
     });
+  });
+
+  it("restricts transition results to non-terminal transition paths", () => {
+    expectTypeOf(transitionTo).parameter(0).toEqualTypeOf<OnboardNonTerminalMachineState>();
+    expectTypeOf<OnboardStateResultTransitionKind>().toEqualTypeOf<
+      "advance" | "retry" | "branch"
+    >();
   });
 
   it("labels advance, retry, and branch transitions", () => {
