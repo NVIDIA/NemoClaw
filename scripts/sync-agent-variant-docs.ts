@@ -1,16 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
+const lifecyclePath = path.join(repoRoot, "docs/manage-sandboxes/lifecycle.mdx");
+const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
+const agentVariants = ["openclaw", "hermes"] as const;
+
+type AgentVariant = (typeof agentVariants)[number];
+type RenderedFile = {
+  path: string;
+  contents: string;
+};
+type RenderAgentVariantOptions = {
+  outputPath?: string;
+  sourcePath?: string;
+};
 
 const GENERATED_NOTICE =
   "{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
+const GENERATED_VARIANT_NOTICE =
+  "{/* This file is generated from a shared agent-variant source by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
+const CLI_SENTINEL = "$$nemoclaw";
 
 const checkOnly = process.argv.includes("--check");
 
@@ -18,6 +34,7 @@ function main(): void {
   const source = readFileSync(sourcePath, "utf8");
   const rendered = renderHermesCommandsReference(source);
   const existing = readOptionalTarget();
+  const generatedVariantPages = renderGeneratedAgentVariantPages();
 
   if (checkOnly) {
     if (existing !== rendered) {
@@ -26,6 +43,7 @@ function main(): void {
       );
       process.exit(1);
     }
+    writeGeneratedFiles(generatedVariantPages);
     return;
   }
 
@@ -35,6 +53,7 @@ function main(): void {
   } else {
     console.log(`${path.relative(repoRoot, targetPath)} is already up to date`);
   }
+  writeGeneratedFiles(generatedVariantPages);
 }
 
 export function renderHermesCommandsReference(source: string): string {
@@ -91,13 +110,106 @@ function replaceFrontmatterLine(frontmatter: string, key: string, value: string)
 }
 
 function stripAgentOnlyBlocks(body: string): string {
+  return stripAgentOnlyBlocksForVariant(body, "hermes");
+}
+
+function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVariant): string {
   return body.replace(
     /\n?<AgentOnly variant="(openclaw|hermes)">\n([\s\S]*?)\n<\/AgentOnly>\n?/g,
     (_match, variant: string, content: string) => {
-      if (variant !== "hermes") return "\n";
+      if (variant !== activeVariant) return "\n";
       return `\n${content.trim()}\n`;
     },
   );
+}
+
+export function renderAgentVariantPage(
+  source: string,
+  variant: AgentVariant,
+  options: RenderAgentVariantOptions = {},
+): string {
+  const { frontmatter, body } = splitFrontmatter(source);
+  let renderedBody = stripAgentOnlyBlocksForVariant(
+    body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
+    variant,
+  )
+    .replaceAll(CLI_SENTINEL, variant === "hermes" ? "nemohermes" : "nemoclaw")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimStart();
+
+  if (options.sourcePath && options.outputPath) {
+    renderedBody = rewriteRelativeMarkdownLinks(
+      renderedBody,
+      path.dirname(options.sourcePath),
+      path.dirname(options.outputPath),
+    );
+  }
+
+  return `${frontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(/\s*$/, "\n");
+}
+
+function renderGeneratedAgentVariantPages(): RenderedFile[] {
+  const source = readFileSync(lifecyclePath, "utf8");
+  const basename = path.basename(lifecyclePath, ".mdx");
+  const relativeSourceDirectory = path.relative(
+    path.join(repoRoot, "docs"),
+    path.dirname(lifecyclePath),
+  );
+  return agentVariants.map((variant) => {
+    const outputPath = path.join(
+      generatedDocsRoot,
+      relativeSourceDirectory,
+      `${basename}.${variant}.generated.mdx`,
+    );
+    return {
+      path: outputPath,
+      contents: renderAgentVariantPage(source, variant, {
+        outputPath,
+        sourcePath: lifecyclePath,
+      }),
+    };
+  });
+}
+
+function rewriteRelativeMarkdownLinks(
+  body: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  return body.replace(/(!?\[[^\]]+\]\()([^)]+)(\))/g, (_match, prefix, target, suffix) => {
+    if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
+    return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
+  });
+}
+
+function shouldKeepLinkTarget(target: string): boolean {
+  return target.startsWith("#") || target.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(target);
+}
+
+function rewriteRelativeLinkTarget(
+  target: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  const match = target.match(/^([^?#]*)([?#].*)?$/);
+  if (!match || !match[1]) return target;
+
+  const absoluteTarget = path.resolve(sourceDirectory, match[1]);
+  const relativeTarget = path.relative(outputDirectory, absoluteTarget).replaceAll(path.sep, "/");
+  const normalizedTarget = relativeTarget.startsWith(".") ? relativeTarget : `./${relativeTarget}`;
+  return `${normalizedTarget}${match[2] ?? ""}`;
+}
+
+function writeGeneratedFiles(files: RenderedFile[]): void {
+  for (const file of files) {
+    if (readOptionalFile(file.path) === file.contents) {
+      console.log(`${path.relative(repoRoot, file.path)} is already up to date`);
+      continue;
+    }
+    mkdirSync(path.dirname(file.path), { recursive: true });
+    writeFileSync(file.path, file.contents);
+    console.log(`Wrote ${path.relative(repoRoot, file.path)}`);
+  }
 }
 
 function transformNemoclawCliInvocations(body: string): string {
@@ -137,8 +249,12 @@ function restoreProtectedLiterals(body: string): string {
 }
 
 function readOptionalTarget(): string | null {
+  return readOptionalFile(targetPath);
+}
+
+function readOptionalFile(filePath: string): string | null {
   try {
-    return readFileSync(targetPath, "utf8");
+    return readFileSync(filePath, "utf8");
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return null;
     throw error;

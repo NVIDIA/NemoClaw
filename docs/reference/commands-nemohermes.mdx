@@ -1521,6 +1521,10 @@ Set them before running `nemohermes onboard`.
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export through the `diagnostics-otel` plugin. Disabled by default. |
+| `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT` | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to `http://host.openshell.internal:4318` when `NEMOCLAW_OPENCLAW_OTEL=1`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME` | service name | Sets the OTEL `service.name` for OpenClaw gateway spans. Defaults to `openclaw-gateway`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE` | `0.0` to `1.0` | Sets OpenClaw's root-span sample rate for conversation diagnostics. Defaults to `1.0`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
@@ -1593,6 +1597,29 @@ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json nemohermes onboard
 Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
 
+### OpenClaw Conversation OTEL Diagnostics
+
+Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to enable runtime conversation traces through OpenClaw's `diagnostics-otel` plugin.
+This is separate from `NEMOCLAW_TRACE`, which records NemoClaw onboarding phases to a local JSON file.
+NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metrics and logs are disabled, and prompt/tool content capture is not enabled.
+
+For a local Jaeger collector:
+
+```bash
+docker run --rm --name nemoclaw-jaeger \
+    -e COLLECTOR_OTLP_ENABLED=true \
+    -p 16686:16686 \
+    -p 4318:4318 \
+    jaegertracing/all-in-one:1.57
+NEMOCLAW_OPENCLAW_OTEL=1 nemohermes onboard
+```
+
+Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `nemohermes <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
+
+Then open `http://localhost:16686` and select the `openclaw-gateway` service.
+The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
+For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
+
 ### Probe Timeouts
 
 These tune how long internal probes wait before giving up.
@@ -1633,6 +1660,19 @@ These flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemohermes <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemohermes <name> connect` and `nemohermes <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
+
+### Remote Deployment
+
+These variables seed defaults for `nemohermes deploy` and `nemohermes onboard --remote`, which provision a sandbox on a Brev instance.
+Each has a flag equivalent on `deploy`; the env var lets non-interactive runs skip the prompt.
+For narrative how-to coverage of `NEMOCLAW_BREV_PROVIDER` and `NEMOCLAW_GPU`, see [Deploy to Remote GPU](../deployment/deploy-to-remote-gpu.md).
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `NEMOCLAW_BREV_PROVIDER` | `gcp` | Cloud provider for Brev instance creation. |
+| `NEMOCLAW_GPU` | `a2-highgpu-1g:nvidia-tesla-a100:1` | GPU specification (instance type and GPU model) for the Brev instance. |
+| `NEMOCLAW_DEPLOY_NO_CONNECT` | unset | When set to `1`, skips the automatic `connect` step after the remote deploy completes. |
+| `NEMOCLAW_DEPLOY_NO_START_SERVICES` | unset | When set to `1`, skips starting services automatically after the remote deploy. |
 
 ### Legacy `nemohermes setup`
 
