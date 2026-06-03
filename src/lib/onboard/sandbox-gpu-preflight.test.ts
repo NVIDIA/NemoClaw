@@ -84,6 +84,8 @@ describe("sandbox GPU preflight", () => {
       validateSandboxGpuPreflight(sandboxGpuConfig(), {
         platform: "linux",
         env: {},
+        release: "6.8.0-generic",
+        procVersion: "Linux version 6.8.0-generic",
         dockerInfoFormat: dockerInfo,
         getDockerCdiSpecDirs,
         findReadableNvidiaCdiSpecFiles,

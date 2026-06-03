@@ -2,30 +2,50 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Credential Storage
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 NemoClaw does not persist provider credentials to host disk.
 The OpenShell gateway is the only system of record for stored credentials.
 
-When you provide a provider credential — interactively during `nemoclaw onboard` or via an environment variable — NemoClaw holds the value in memory only long enough to register it with the OpenShell gateway through `openshell provider create` or `openshell provider update`.
+<AgentOnly variant="openclaw">
+When you provide a provider credential, either interactively during `nemoclaw onboard` or through an environment variable, NemoClaw holds the value in memory only long enough to register it with the OpenShell gateway through `openshell provider create` or `openshell provider update`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+When you provide a provider credential, either interactively during `nemohermes onboard` or through an environment variable, NemoClaw holds the value in memory only long enough to register it with the OpenShell gateway through `openshell provider create` or `openshell provider update`.
+</AgentOnly>
 The gateway stores the credential and the OpenShell L7 proxy substitutes it into outbound requests at egress, so sandboxed agents see placeholders instead of the raw secret.
 
+<AgentOnly variant="openclaw">
 The sandbox-side OpenClaw gateway token is generated at container startup and is not rotated through provider credential commands.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Hermes API credentials and provider credentials are managed through the same OpenShell provider boundary; generated Hermes runtime files are recreated during rebuilds.
+</AgentOnly>
 
 ## Where Credentials Live
 
 Provider credentials live in the OpenShell gateway store.
 List what is registered with:
 
-```console
-$ openshell provider list
+```bash
+openshell provider list
 ```
 
 Or, equivalently, through NemoClaw:
 
-```console
-$ nemoclaw credentials list
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw credentials list
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes credentials list
+```
+</AgentOnly>
 
-Both surface the provider names that the gateway holds credentials for. The values themselves cannot be read back from the CLI; this is a deliberate property of OpenShell.
+Both commands show the provider names registered with the gateway.
+The values themselves cannot be read back from the CLI; this is a deliberate property of OpenShell.
 
 NemoClaw still keeps non-secret operational state under `~/.nemoclaw/` (such as the sandbox registry).
 That directory is created with mode `0700` and contains no credential material.
@@ -35,17 +55,28 @@ That directory is created with mode `0700` and contains no credential material.
 When a NemoClaw command needs a credential value during a single run (for example to forward it to an `openshell provider` registration), it reads from `process.env` first.
 This means you can:
 
+<AgentOnly variant="openclaw">
+
 - Prefix any command with the credential to override the gateway-stored value: `NVIDIA_API_KEY=nvapi-... nemoclaw onboard`
 - Use short-lived or rotated credentials in CI by exporting them once per pipeline run
 - Avoid registering credentials in the gateway entirely if your environment supplies them
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Prefix any command with the credential to override the gateway-stored value: `NVIDIA_API_KEY=nvapi-... nemohermes onboard`
+- Use short-lived or rotated credentials in CI by exporting them once per pipeline run
+- Avoid registering credentials in the gateway entirely if your environment supplies them
+
+</AgentOnly>
 
 ## Deploy Reads from Environment Only
 
 `nemoclaw deploy` (which provisions a remote Brev box) cannot read secrets back from the gateway, so it requires every credential to be present in the host environment at invocation time.
 A typical deploy invocation looks like:
 
-```console
-$ NVIDIA_API_KEY=nvapi-... \
+```bash
+NVIDIA_API_KEY=nvapi-... \
     HF_TOKEN=hf_... \
     TELEGRAM_BOT_TOKEN=... \
     nemoclaw deploy my-instance
@@ -61,7 +92,8 @@ When a private repo requires authentication NemoClaw runs `gh auth token`, which
 
 The GitHub CLI prefers an OS keychain when one is reachable: macOS Keychain on macOS, Windows Credential Manager on Windows, and Linux Secret Service (libsecret + a running D-Bus session) on Linux.
 On hosts where no keychain is reachable (CI runners, headless launches, WSL without a session bus, macOS contexts where Keychain access is blocked, etc.) `gh auth login` falls back to a `gh`-managed file under `~/.config/gh/` with mode `0600`.
-NemoClaw treats both backends identically: `gh auth token` returns the value, and NemoClaw stages it in `process.env` for the current run only.
+NemoClaw treats both backends identically.
+`gh auth token` returns the value, and NemoClaw stages it in `process.env` for the current run only.
 
 If `gh` is not installed or not logged in, NemoClaw prompts for a personal access token for that single run; the prompted value is held in process memory and is not written to host disk.
 Run `gh auth login` if you want a persistent backing store (whichever one applies on your host) so future runs do not prompt.
@@ -69,7 +101,12 @@ Run `gh auth login` if you want a persistent backing store (whichever one applie
 ## Migration From Earlier Releases
 
 Earlier NemoClaw releases stored credentials as plaintext JSON in `~/.nemoclaw/credentials.json` with mode `0600`.
+<AgentOnly variant="openclaw">
 On first `nemoclaw onboard` after upgrading, NemoClaw automatically:
+</AgentOnly>
+<AgentOnly variant="hermes">
+On first `nemohermes onboard` after upgrading, NemoClaw automatically:
+</AgentOnly>
 
 1. Reads the legacy file.
 2. Stages allowlisted credential values into `process.env` for the rest of the run.
@@ -78,23 +115,47 @@ On first `nemoclaw onboard` after upgrading, NemoClaw automatically:
 
 You will see a one-line stderr notice the first time this happens.
 Credential lookup paths such as rebuild also stage allowlisted legacy values so interrupted upgrades can keep working, but those staging-only paths do not delete the plaintext file because they cannot prove every legacy value was registered with the gateway.
+<AgentOnly variant="openclaw">
 If `~/.nemoclaw/credentials.json` remains after a rebuild or other credential lookup, run `nemoclaw onboard` to complete the verified gateway migration and cleanup.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If `~/.nemoclaw/credentials.json` remains after a rebuild or other credential lookup, run `nemohermes onboard` to complete the verified gateway migration and cleanup.
+</AgentOnly>
 
 ## Rotate or Remove a Stored Credential
 
 The simplest way to replace a stored value is to rerun onboarding with the new value in your environment:
 
-```console
-$ NVIDIA_API_KEY=nvapi-new-value nemoclaw onboard
+<AgentOnly variant="openclaw">
+```bash
+NVIDIA_API_KEY=nvapi-new-value nemoclaw onboard
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+NVIDIA_API_KEY=nvapi-new-value nemohermes onboard
+```
+</AgentOnly>
 
 To remove a credential from the gateway entirely:
 
-```console
-$ nemoclaw credentials reset <PROVIDER_NAME>
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw credentials reset <PROVIDER_NAME>
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes credentials reset <PROVIDER_NAME>
+```
+</AgentOnly>
 
+<AgentOnly variant="openclaw">
 `<PROVIDER_NAME>` is the OpenShell provider name (run `nemoclaw credentials list` first if you are not sure).
+</AgentOnly>
+<AgentOnly variant="hermes">
+`<PROVIDER_NAME>` is the OpenShell provider name (run `nemohermes credentials list` first if you are not sure).
+</AgentOnly>
 On the next run NemoClaw prompts again unless the credential is supplied through the environment.
 
 ## Security Recommendations
