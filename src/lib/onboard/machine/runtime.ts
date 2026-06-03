@@ -4,6 +4,7 @@
 import type { JsonObject } from "../../core/json-types";
 import * as onboardSession from "../../state/onboard-session";
 import type { Session, SessionUpdates } from "../../state/onboard-session";
+import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -34,6 +35,11 @@ export interface OnboardRuntimeDeps {
 export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
+
+function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+  if (conflict.field === "fromDockerfile" && value) return "<path>";
+  return value;
+}
 
 export type OnboardRuntimeUpdateOptions = {
   state?: OnboardMachineState | null;
@@ -243,20 +249,14 @@ export class OnboardRuntime {
     return session;
   }
 
-  async emitResumeConflict(options: {
-    field: string;
-    recorded?: unknown;
-    requested?: unknown;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<Session> {
+  async emitResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     const session = this.ensureSession();
     this.emit("resume.conflict", session, {
       state: session.machine.state,
       metadata: {
-        ...eventMetadata(options.metadata),
-        field: options.field,
-        recorded: options.recorded ?? null,
-        requested: options.requested ?? null,
+        field: conflict.field,
+        recorded: safeResumeConflictValue(conflict, conflict.recorded),
+        requested: safeResumeConflictValue(conflict, conflict.requested),
       },
     });
     return session;

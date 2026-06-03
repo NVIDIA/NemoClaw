@@ -213,16 +213,15 @@ describe("OnboardRuntime", () => {
     const { runtime, events, getSession } = createHarness(sessionInState("provider_selection"));
 
     await runtime.emitResumeConflict({
-      field: "fromDockerfile",
-      recorded: "/workspace/Dockerfile",
-      requested: "/tmp/Dockerfile",
-      metadata: { endpoint: "https://alice:secret@example.com/v1?token=super-secret" },
+      field: "provider",
+      recorded: "nvidia",
+      requested: "https://alice:secret@example.com/v1?token=super-secret",
     });
 
     expect(getSession().machine.state).toBe("provider_selection");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: "resume.conflict", state: "provider_selection" });
-    expect(events[0].metadata.field).toBe("fromDockerfile");
+    expect(events[0].metadata.field).toBe("provider");
     expect(JSON.stringify(events)).not.toContain("super-secret");
     expect(JSON.stringify(events)).not.toContain("alice:secret");
   });

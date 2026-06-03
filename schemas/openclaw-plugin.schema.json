@@ -4,7 +4,15 @@
   "title": "NemoClaw OpenClaw Plugin Manifest",
   "description": "Schema for nemoclaw/openclaw.plugin.json — the OpenClaw plugin manifest that declares the plugin identity and its configuration schema.",
   "type": "object",
-  "required": ["id", "name", "version", "description", "configSchema"],
+  "required": [
+    "id",
+    "name",
+    "version",
+    "description",
+    "commandAliases",
+    "activation",
+    "configSchema"
+  ],
   "additionalProperties": false,
   "properties": {
     "id": {
@@ -26,6 +34,39 @@
       "type": "string",
       "minLength": 1,
       "description": "Short description of the plugin."
+    },
+    "commandAliases": {
+      "type": "array",
+      "description": "Runtime command names that resolve to this plugin's handlers, such as chat slash commands.",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Command name that belongs to this plugin."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["runtime-slash"],
+            "description": "Marks the alias as a chat slash command rather than a root CLI command."
+          }
+        }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "description": "OpenClaw activation planner metadata. Use onStartup=true when plugin registration must run during Gateway startup.",
+      "required": ["onStartup"],
+      "additionalProperties": false,
+      "properties": {
+        "onStartup": {
+          "type": "boolean",
+          "description": "Whether OpenClaw should import the plugin during Gateway startup."
+        }
+      }
     },
     "configSchema": {
       "type": "object",

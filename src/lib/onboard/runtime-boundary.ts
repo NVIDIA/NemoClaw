@@ -3,6 +3,7 @@
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
 import { OnboardRuntime } from "./machine/runtime";
+import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 
 export interface OnboardRuntimeBoundaryOptions {
@@ -84,12 +85,7 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().markSkipped(state, metadata);
   }
 
-  async recordResumeConflict(conflict: {
-    field: string;
-    recorded?: unknown;
-    requested?: unknown;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<Session> {
+  async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     return this.getRuntime().emitResumeConflict(conflict);
   }
 
