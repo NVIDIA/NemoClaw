@@ -2,9 +2,21 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Inference Options
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 NemoClaw supports multiple inference providers.
-During onboarding, the `nemoclaw onboard` wizard presents a numbered list of providers to choose from.
-Your selection determines where the agent's inference traffic is routed.
+During onboarding, the NemoClaw onboarding wizard presents a numbered list of providers to choose from.
+Your selection determines where NemoClaw routes the agent's inference traffic.
+
+<AgentOnly variant="openclaw">
+For OpenClaw onboarding, use `nemoclaw onboard`.
+The provider flow is the same, with the NVIDIA Endpoints route available for OpenClaw Agent.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+For Hermes onboarding, use `nemohermes onboard`.
+The provider flow is the same, with the Hermes Provider route available for Hermes Agent.
+</AgentOnly>
 
 ## How Inference Routing Works
 
@@ -37,7 +49,7 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 
 The onboard wizard presents the following provider options by default.
 The first six are always available.
-Ollama appears when it is installed or running on the host.
+Ollama appears when you have installed or started it on the host.
 Local vLLM appears when NemoClaw detects a running vLLM server.
 The managed install/start vLLM entry appears by default on DGX Spark and DGX Station, and appears on generic Linux NVIDIA GPU hosts after opt-in.
 
@@ -57,7 +69,7 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 
 NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported deployment surface, so two onboarding options can route to Nemotron.
 
-| Where Nemotron is hosted | Onboard wizard option | Why |
+| Nemotron Host | Onboard Wizard Option | Why |
 |---|---|---|
 | `build.nvidia.com` (NVIDIA-hosted) | **Option 1: NVIDIA Endpoints** | NemoClaw sets the base URL to `https://integrate.api.nvidia.com/v1` for you and validates the model against the build catalog. |
 | Self-hosted NIM container | **Option 3: Other OpenAI-compatible endpoint** | NIM exposes an OpenAI-compatible `/v1/chat/completions` route. Point the base URL at your NIM service and enter the Nemotron model ID. |
@@ -116,11 +128,19 @@ The sandbox never sees raw API keys.
 
 To use the router in scripted setup, set:
 
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+<AgentOnly variant="openclaw">
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
+</AgentOnly>
 
-### Host Python requirement
+<AgentOnly variant="hermes">
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemohermes onboard --non-interactive
+```
+</AgentOnly>
+
+### Host Python Requirement
 
 The Model Router runs in a host-side virtual environment that NemoClaw creates during onboarding.
 NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, and adopts the first interpreter that satisfies both of:
@@ -131,20 +151,34 @@ NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare
 If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
 This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
 
+<AgentOnly variant="openclaw">
 To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
+</AgentOnly>
+<AgentOnly variant="hermes">
+To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemohermes onboard`:
+</AgentOnly>
 
-```console
-$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+<AgentOnly variant="openclaw">
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
 ```
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemohermes onboard
+```
+</AgentOnly>
 
 The pin is strict.
 NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
-Relative command names such as `python3.12` are rejected; use `command -v python3.12` to find the absolute path.
+NemoClaw rejects relative command names such as `python3.12`.
+Use `command -v python3.12` to find the absolute path.
 If `python -m venv` itself fails for a probe-clean interpreter (for example, a corrupt ensurepip seed), NemoClaw retries with the next healthy candidate when no pin is set; with a pin set, the failure stops onboarding so you can fix or repoint the pinned python.
 
 ## Caveated Local Options
 
-The following local inference options are caveated.
+The following local inference options have caveats.
 Local NIM and generic Linux managed vLLM install/start require `NEMOCLAW_EXPERIMENTAL=1`; DGX Spark and DGX Station managed vLLM entries appear by default.
 An already-running vLLM server appears directly in the onboarding selection list.
 
@@ -159,20 +193,20 @@ For setup instructions, refer to [Use a Local Inference Server](../SKILL.md).
 
 NemoClaw validates the selected provider and model before creating the sandbox.
 If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
-Transient upstream validation failures are retried before the wizard reports a provider failure.
+The wizard retries transient upstream validation failures before it reports a provider failure.
 The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
 Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 
 | Provider type | Validation method |
 |---|---|
 | OpenAI | Tries `/responses` first, then `/chat/completions`. |
-| NVIDIA Endpoints | Validates via `/v1/chat/completions` only; the `/v1/responses` probe is skipped because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
-| Google Gemini | Validates via Gemini's OpenAI-compatible chat-completions path only; the `/v1/responses` probe is skipped because Gemini does not support the Responses API. |
+| NVIDIA Endpoints | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
+| Google Gemini | Validates through Gemini's OpenAI-compatible chat-completions path only; NemoClaw skips the `/v1/responses` probe because Gemini does not support the Responses API. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` first with a tool-calling probe; falls back to `/v1/chat/completions`. Selected runtime API defaults to `/v1/chat/completions`; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Anthropic-compatible | Tries `/v1/messages`. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
-| Local NVIDIA NIM | Validates via `/v1/chat/completions` only; the `/v1/responses` probe is skipped (same as NVIDIA Endpoints). |
+| Local NVIDIA NIM | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe (same as NVIDIA Endpoints). |
 
 ## Next Steps
 

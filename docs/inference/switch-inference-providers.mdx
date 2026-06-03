@@ -97,6 +97,7 @@ nemohermes inference set --provider gemini-api --model gemini-2.5-flash
 If you onboarded a custom compatible endpoint, switch models with the provider created for that endpoint:
 
 <AgentOnly variant="openclaw">
+
 ```bash
 nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
@@ -104,8 +105,10 @@ nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```bash
 nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
+
 </AgentOnly>
 <AgentOnly variant="hermes">
+
 ```bash
 nemohermes inference set --provider compatible-endpoint --model <model-name>
 ```
@@ -113,6 +116,7 @@ nemohermes inference set --provider compatible-endpoint --model <model-name>
 ```bash
 nemohermes inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
+
 </AgentOnly>
 
 <AgentOnly variant="hermes">
@@ -181,6 +185,7 @@ The command updates both the gateway route and the OpenClaw provider namespace i
 ```bash
 nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
 ```
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) also uses `nemohermes inference set`.
@@ -189,6 +194,7 @@ The command updates both the gateway route and `/sandbox/.hermes/config.yaml`.
 ```bash
 nemohermes inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
 ```
+
 </AgentOnly>
 
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
@@ -281,14 +287,18 @@ These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
 
 <AgentOnly variant="openclaw">
+
 ```bash
 nemoclaw onboard --resume --recreate-sandbox
 ```
+
 </AgentOnly>
 <AgentOnly variant="hermes">
+
 ```bash
 nemohermes onboard --resume --recreate-sandbox
 ```
+
 </AgentOnly>
 
 ## Verify the Active Model
@@ -312,6 +322,7 @@ $ nemoclaw inference get --json
   "model": "nvidia/nemotron-3-super-120b-a12b"
 }
 ```
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 Use `nemohermes inference get` to print the provider and model the gateway is currently routing to.
@@ -332,6 +343,7 @@ $ nemohermes inference get --json
   "model": "nvidia/nemotron-3-super-120b-a12b"
 }
 ```
+
 </AgentOnly>
 
 The command exits non-zero with `OpenShell inference route is not configured.` when the gateway has no registered inference route.
