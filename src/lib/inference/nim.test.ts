@@ -453,6 +453,99 @@ describe("nim", () => {
       }
     });
 
+    // #4565: a real Windows-ARM N1X + WSL2 + Docker Desktop host reports the
+    // same `JMJWOA-Generic-*` placeholder as the Snapdragon shim, but it can
+    // pass a bounded Docker `--gpus` CUDA proof. When the injected prover
+    // confirms the proof, the denylisted name is accepted and the detection is
+    // tagged so the sandbox preflight reaches the Docker Desktop WSL branch.
+    it("accepts a denylisted ARM64 GPU when the bounded Docker GPU proof passes (#4565)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+        passed: true,
+        timedOut: false,
+        exitCode: 0,
+        diagnostic: "",
+      }));
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          const result = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
+          expect(result).toMatchObject({
+            type: "nvidia",
+            name: "JMJWOA-Generic-GPU",
+            count: 1,
+            totalMemoryMB: 65471,
+            wslDockerDesktopGpuProofPassed: true,
+          });
+          expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith(["JMJWOA-Generic-GPU"]);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Snapdragon WoA fail-closed: the same placeholder name, but the bounded
+    // CUDA proof fails because there is no usable NVIDIA device. The detection
+    // must stay null so #3988/#4424 is not reopened.
+    it("keeps rejecting a denylisted ARM64 GPU when the Docker GPU proof fails (#4565/#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const failingProver = vi.fn(() => ({
+        passed: false,
+        timedOut: false,
+        exitCode: 1,
+        diagnostic: "no CUDA-capable device is detected",
+      }));
+      const notCandidateProver = vi.fn(() => null);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: failingProver })).toBeNull();
+          // A host that is not an ARM64 WSL Docker Desktop candidate returns
+          // null from the prover and must also fail closed (no proof attempted).
+          expect(
+            nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: notCandidateProver }),
+          ).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // When no prover is wired (deps explicitly null), the denylist stays
+    // fail-closed exactly as before the #4565 accept-path existed.
+    it("rejects a denylisted ARM64 GPU when no Docker GPU prover is provided", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
     // Trust-tier gate: on ARM64 Linux with generic firmware, the absence of
     // `/proc/driver/nvidia/` is the Windows-on-ARM WSL shim profile and must
     // be rejected even when the nvidia-smi probe returns a plausible-looking

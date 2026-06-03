@@ -27,8 +27,8 @@ import {
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import {
   getSandboxStatusPreflight,
-  withoutTerminalPhasePreflight,
   type SandboxStatusFailureLayer,
+  withoutTerminalPhasePreflight,
 } from "./status-preflight";
 
 type ProbeProviderHealth = (
@@ -85,6 +85,9 @@ export interface SandboxStatusReport {
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
   sandboxGpuDevice: string | null;
+  // Last recorded CUDA-usability proof so `status` can distinguish a configured
+  // GPU from a proven-usable one instead of reporting any GPU as healthy (#4231).
+  sandboxGpuProof: registry.SandboxGpuProofResult | null;
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
@@ -248,6 +251,7 @@ async function buildSandboxStatusReport(
     sandboxGpuEnabled,
     sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
     sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
+    sandboxGpuProof: (sb && sb.sandboxGpuProof) || null,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
