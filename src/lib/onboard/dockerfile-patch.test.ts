@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   encodeDockerJsonArg,
@@ -16,6 +16,13 @@ import {
 } from "../../../dist/lib/onboard/dockerfile-patch";
 
 const tmpRoots: string[] = [];
+
+beforeEach(() => {
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+});
 
 function dockerfileWith(content: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-patch-test-"));
@@ -31,6 +38,10 @@ afterEach(() => {
   }
   delete process.env.NEMOCLAW_PROXY_HOST;
   delete process.env.NEMOCLAW_PROXY_PORT;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
 });
 
 describe("dockerfile patch helpers", () => {
@@ -52,9 +63,57 @@ describe("dockerfile patch helpers", () => {
     expect(isValidProxyPort("70000")).toBe(false);
   });
 
+  it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+        "ARG NEMOCLAW_PROXY_HOST=old",
+        "ARG NEMOCLAW_PROXY_PORT=old",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_OPENCLAW_OTEL=0",
+        "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+      ].join("\n"),
+    );
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "https://chat.example",
+        "build-1",
+        "compatible-endpoint",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+        {},
+        {},
+        false,
+        null,
+        [],
+        {},
+      ),
+    ).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
+  });
+
   it("patches base image, inference, proxy, and messaging args", () => {
     process.env.NEMOCLAW_PROXY_HOST = "host.docker.internal";
     process.env.NEMOCLAW_PROXY_PORT = "3128";
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = "nemoclaw-local";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = "0.5";
     const dockerfilePath = dockerfileWith(
       [
         "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
@@ -70,6 +129,10 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_PROXY_HOST=old",
         "ARG NEMOCLAW_PROXY_PORT=old",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_OPENCLAW_OTEL=0",
+        "ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=old",
+        "ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=old",
+        "ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=old",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
         "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=old",
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=old",
@@ -111,6 +174,12 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_PROXY_HOST=host.docker.internal");
     expect(patched).toContain("ARG NEMOCLAW_PROXY_PORT=3128");
     expect(patched).toContain("ARG NEMOCLAW_WEB_SEARCH_ENABLED=1");
+    expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL=1");
+    expect(patched).toContain(
+      "ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318",
+    );
+    expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
+    expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
     expect(patched).not.toContain("ARG NEMOCLAW_MESSAGING_CHANNELS_B64=old");
     expect(patched).not.toContain("ARG NEMOCLAW_TELEGRAM_CONFIG_B64=old");

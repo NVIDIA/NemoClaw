@@ -322,6 +322,14 @@ hermes_config_root_is_locked() {
     && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
+apply_shields_up_runtime_env() {
+  hermes_config_root_is_locked || return 0
+  if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
+  fi
+}
+
 ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
@@ -365,9 +373,56 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_history_file() {
+  local file="$1"
+  local mode="$2"
+  local nlinks
+
+  if [ -L "$file" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${file} is a symlink" >&2
+    return 1
+  fi
+  if [ -e "$file" ] && [ ! -f "$file" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${file} is not a regular file" >&2
+    return 1
+  fi
+
+  # Reject hard-linked targets. An attacker who controls the sandbox user
+  # before shields-up can pre-create .hermes_history as a hard link to
+  # config.yaml or .env. Both -L and -f pass, so without this guard the
+  # subsequent chown sandbox:sandbox + chmod 660 would walk the shared
+  # inode and silently undo the shields-up root:root 0444 lock on the
+  # config file after verify_config_integrity has already passed.
+  if [ -e "$file" ]; then
+    nlinks="$(stat -c '%h' "$file" 2>/dev/null || stat -f '%l' "$file" 2>/dev/null || true)"
+    if [ "${nlinks:-}" != "1" ]; then
+      echo "[SECURITY] Refusing Hermes layout repair because ${file} has hard-link count ${nlinks:-unknown}" >&2
+      return 1
+    fi
+  fi
+
+  if [ ! -e "$file" ]; then
+    : >"$file" || return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$file"
+  fi
+  chmod "$mode" "$file"
+}
+
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    # The locked-root posture seals config.yaml/.env, not the dir, so we can
+    # still bring a missing prompt_toolkit history file into existence as a
+    # sandbox-owned regular file. Sandboxes built before the precreate landed
+    # would otherwise stay broken until the next `shields down` cycle.
+    # Refusal (symlink, non-regular, create failure) is a hard stop: starting
+    # the gateway with an unsafe .hermes_history under a locked root would
+    # either let the TUI clobber an attacker-pointed path or repeat the
+    # original keypress traceback.
+    echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
     return 0
   fi
 
@@ -377,6 +432,7 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
 }
 
 cleanup_stale_hermes_gateway_runtime() {
@@ -839,6 +895,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_shields_up_runtime_env
   refresh_hermes_provider_placeholders
   configure_messaging_channels
 
@@ -887,6 +944,7 @@ fi
 
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+apply_shields_up_runtime_env
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 

@@ -20,7 +20,9 @@
 //   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
-//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED.
+//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
+//   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
 
 import {
   chmodSync,
@@ -47,6 +49,8 @@ const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
@@ -108,6 +112,52 @@ function truthyEnvDefault(env: Env, name: string, defaultValue: boolean): boolea
     return defaultValue;
   }
   return !FALSE_VALUES.has(raw.trim().toLowerCase());
+}
+
+function parseOpenClawOtelSampleRate(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0.0 || value > 1.0) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE must be between 0.0 and 1.0");
+  }
+  return value;
+}
+
+function buildOpenClawOtelConfig(env: Env): JsonObject | undefined {
+  if (!truthyEnvDefault(env, "NEMOCLAW_OPENCLAW_OTEL", false)) {
+    return undefined;
+  }
+
+  const endpoint = (env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT || DEFAULT_OPENCLAW_OTEL_ENDPOINT).trim();
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (!["http:", "https:"].includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (parsedEndpoint.username || parsedEndpoint.password) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  }
+
+  const serviceName = (env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME).trim();
+  if (!serviceName) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME must not be empty");
+  }
+
+  return {
+    enabled: true,
+    endpoint,
+    protocol: "http/protobuf",
+    serviceName,
+    traces: true,
+    metrics: false,
+    logs: false,
+    sampleRate: parseOpenClawOtelSampleRate(
+      (env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE || "1.0").trim(),
+    ),
+  };
 }
 
 function validateDashboardPort(raw: string, envName: string): number {
@@ -958,6 +1008,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
       pluginEntries[pluginId] = { enabled: false };
     }
   }
+  const openclawOtel = buildOpenClawOtelConfig(env);
+  if (openclawOtel) {
+    pluginEntries["diagnostics-otel"] = { enabled: true };
+  }
 
   const plugins: JsonObject = { entries: pluginEntries };
   const pluginLoadPaths: string[] = [];
@@ -1004,6 +1058,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
       enabled: true,
       proxyUrl,
       loopbackMode: "gateway-only",
+    };
+  }
+  if (openclawOtel) {
+    config.diagnostics = {
+      enabled: true,
+      otel: openclawOtel,
     };
   }
 
