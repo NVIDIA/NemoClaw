@@ -48,9 +48,9 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
-  it("rewrites relative imports for generated build output", () => {
+  it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
-      `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n`,
+      `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
       "hermes",
       {
         outputPath:
@@ -62,7 +62,8 @@ describe("agent variant docs", () => {
     expect(rendered).toContain(
       'import { AgentCli, AgentOnly } from "../../../_components/AgentGuide";',
     );
-    expect(rendered).toContain("[Commands](../../../reference/commands#nemohermes-list)");
-    expect(rendered).toContain("[Backup](../../../manage-sandboxes/backup-restore)");
+    expect(rendered).toContain("[Commands](../reference/commands#nemohermes-list)");
+    expect(rendered).toContain("[Backup](backup-restore)");
+    expect(rendered).toContain("![Diagram](../../../manage-sandboxes/images/diagram.png)");
   });
 });

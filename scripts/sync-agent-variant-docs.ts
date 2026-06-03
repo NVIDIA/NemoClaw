@@ -287,18 +287,18 @@ function rewriteRelativePaths(body: string, sourcePath: string, outputPath: stri
   const sourceDirectory = path.dirname(sourcePath);
   const outputDirectory = path.dirname(outputPath);
   return rewriteRelativeImports(
-    rewriteRelativeMarkdownLinks(body, sourceDirectory, outputDirectory),
+    rewriteRelativeImageLinks(body, sourceDirectory, outputDirectory),
     sourceDirectory,
     outputDirectory,
   );
 }
 
-function rewriteRelativeMarkdownLinks(
+function rewriteRelativeImageLinks(
   body: string,
   sourceDirectory: string,
   outputDirectory: string,
 ): string {
-  return body.replace(/(!?\[[^\]]+\]\()([^)]+)(\))/g, (_match, prefix, target, suffix) => {
+  return body.replace(/(!\[[^\]]*\]\()([^)]+)(\))/g, (_match, prefix, target, suffix) => {
     if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
     return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
   });

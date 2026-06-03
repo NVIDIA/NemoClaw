@@ -158,6 +158,18 @@ Run `npm run docs:sync-agent-variants` after editing shared variant source pages
 Run `npm run docs` before opening a PR to verify the generated pages, rewritten relative links, and Fern navigation.
 If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
 
+## Route-Style Links
+
+Fern links between docs pages should use route-style paths, not filesystem paths.
+Route-style paths omit the `.mdx` extension and follow the page slugs declared in `docs/index.yml`.
+For example, a source page under `docs/get-started/` should link to the OpenClaw quickstart as `../quickstart`, not `quickstart.mdx`.
+The published route comes from the navigation hierarchy and page `slug`, not directly from the file path.
+
+This matters for generated agent variants because shared source pages may not appear directly in `docs/index.yml`.
+The navigation can point Fern at generated pages under `docs/_build/agent-variants/`, while the source MDX remains in its normal folder.
+The link checker maps those generated nav entries back to their source paths when validating route-style links.
+Do not convert route-style links to `.mdx` file links just to satisfy a local filesystem check.
+
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.

@@ -742,7 +742,16 @@ function maybeEmit(item) {
   if (!item || item.emitted || !variant || !item.path || !item.slug || item.indent <= 6) return;
   const route = ["user-guide", variant, ...item.parent, item.slug].join("/");
   rows.push(`${item.path}\t${route}`);
+  const sourcePath = agentVariantSourcePath(item.path);
+  if (sourcePath && sourcePath !== item.path) {
+    rows.push(`${sourcePath}\t${route}`);
+  }
   item.emitted = true;
+}
+
+function agentVariantSourcePath(navPath) {
+  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/);
+  return match ? `${match[1]}.mdx` : null;
 }
 
 function maybePushSection(item) {
@@ -812,6 +821,8 @@ normalize_fern_route_path() {
     nemoclaw/*) input="${input#nemoclaw/}" ;;
     latest/*) input="${input#latest/}" ;;
   esac
+  input="${input%.mdx}"
+  input="${input%.md}"
 
   local -a parts=() out=()
   local IFS='/'
