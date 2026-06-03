@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import * as policies from "../policy";
 import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
+import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type InitialSandboxPolicy = {
@@ -227,6 +228,7 @@ export function prepareInitialSandboxCreatePolicy(
     ...new Set(
       [
         ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+        ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
         ...(options.additionalPresets || []),
       ],
     ),

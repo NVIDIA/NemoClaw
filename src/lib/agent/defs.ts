@@ -6,9 +6,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ROOT } from "../runner";
 import { DASHBOARD_PORT } from "../core/ports";
+import { ROOT } from "../runner";
+import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -84,6 +84,7 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
@@ -340,6 +341,7 @@ export function loadAgent(name: string): AgentDefinition {
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
+  const dashboardUi = readDashboardUi(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -393,6 +395,10 @@ export function loadAgent(name: string): AgentDefinition {
         label: normalizedLabel || defaultLabel,
         path,
       };
+    },
+
+    get dashboardUi(): AgentDashboardUi | null {
+      return dashboardUi;
     },
 
     get configPaths(): AgentConfigPaths {

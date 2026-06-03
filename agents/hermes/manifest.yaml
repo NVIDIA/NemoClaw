@@ -40,6 +40,13 @@ dashboard:
   kind: api                    # "ui" or "api"
   label: "OpenAI-compatible API"
   path: "/v1"                  # appended to the base URL when displayed
+dashboard_ui:
+  label: "Web dashboard"
+  port: 9119
+  path: "/"
+  enable_env: NEMOCLAW_HERMES_DASHBOARD
+  port_env: NEMOCLAW_HERMES_DASHBOARD_PORT
+  tui_env: NEMOCLAW_HERMES_DASHBOARD_TUI
 forward_ports:
   - 8642
 
@@ -82,8 +89,13 @@ state_dirs:
 # exposes compatibility symlinks such as .hermes/state.db -> runtime/state.db.
 # The SQLite database is captured with SQLite's online backup API; WAL/SHM
 # files are intentionally omitted because the backup produces a consistent DB.
+# .hermes_history is user runtime history: prompt_toolkit appends to it on
+# every TUI keypress, so NemoClaw intentionally keeps it sandbox-writable even
+# when shields-up locks the parent config dir. It can be removed from this
+# contract if upstream Hermes supports redirecting or disabling FileHistory.
 state_files:
   - path: SOUL.md
+  - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
 
