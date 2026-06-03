@@ -214,8 +214,13 @@ lock_config_after_write() {
 #   cap_kill — sandbox user signals gateway-user processes via the UID
 #     separation enforced by the entrypoint (see test 13 in
 #     e2e-gateway-isolation.sh).
+# When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
+# missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
+# to make that case fail-closed instead — see enforce_cap_drop_if_required.
+#
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/797
 #      https://github.com/NVIDIA/NemoClaw/issues/3280
+#      https://github.com/NVIDIA/OpenShell/issues/1452 (connect-shell scope)
 #
 # Usage:
 #   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
@@ -235,11 +240,57 @@ drop_capabilities() {
         --drop=cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
         -- -c "exec $entrypoint \"\$@\"" -- "$@"
     else
-      report_residual_capabilities
+      report_residual_capabilities || true
+      enforce_cap_drop_if_required "CAP_SETPCAP unavailable"
     fi
   elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
     echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
+    enforce_cap_drop_if_required "capsh not available"
   fi
+}
+
+# Optional fail-closed enforcement for the residual-capability fall-throughs
+# (issue #3280). Reaching either fall-through means the bounding-set drop did
+# NOT happen, so the sandbox would boot with a weaker posture than the security
+# model assumes.
+#
+# DEFAULT IS WARN-AND-CONTINUE — no host loses the ability to boot. This is the
+# lesson of #4266/#4341: a default-fail-closed drop broke EVERY host that does
+# not grant CAP_SETPCAP (GitHub runners, Brev shadecloud, Colossus Ubuntu
+# 24.04, Docker Desktop, WSL) and was reverted within hours. Inverting the
+# default to opt-in keeps that regression off by default.
+#
+# Operators who require the hardened posture — and accept that the sandbox will
+# refuse to start on a host that cannot drop the bounding set — opt in with:
+#   NEMOCLAW_REQUIRE_CAP_DROP=1
+#
+# Note on scope: this enforces the AGENT process tree only. A `nemoclaw connect`
+# shell is spawned by the container runtime outside that tree and inherits the
+# container's OCI bounding set; tightening that requires cap_drop at sandbox
+# create, tracked upstream in NVIDIA/OpenShell#1452.
+enforce_cap_drop_if_required() {
+  local reason="$1"
+  [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ] || return 0
+  cat >&2 <<EOF
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed.    ║
+║                                                                               ║
+║ Reason: ${reason}
+║                                                                               ║
+║ NEMOCLAW_REQUIRE_CAP_DROP=1 is set, so NemoClaw will not start a sandbox that ║
+║ retains dangerous bounding-set capabilities (cap_sys_admin, cap_sys_ptrace,   ║
+║ cap_net_raw, cap_dac_override, cap_net_bind_service, ...). This host cannot   ║
+║ drop them at runtime (no CAP_SETPCAP), so the drop was skipped.               ║
+║                                                                               ║
+║ To run anyway with the weaker (warn-only) posture, unset the variable:        ║
+║   unset NEMOCLAW_REQUIRE_CAP_DROP                                             ║
+║                                                                               ║
+║ Tracking: https://github.com/NVIDIA/NemoClaw/issues/3280                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+EOF
+  exit 1
 }
 
 # Emit a loud diagnostic when capsh-based dropping is unavailable so that
