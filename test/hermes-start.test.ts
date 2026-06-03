@@ -465,6 +465,107 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   });
 });
 
+function runShieldsUpRuntimeEnv(opts: {
+  locked: boolean;
+  presetValue?: string;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shields-env-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  if (opts.locked) {
+    fs.chmodSync(hermesHome, 0o755);
+    fs.writeFileSync(path.join(hermesHome, "config.yaml"), "model: test\n");
+    fs.writeFileSync(path.join(hermesHome, ".env"), "HERMES_TEST=1\n");
+  }
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const statMock = opts.locked
+    ? [
+        "stat() {",
+        '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+        '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+        '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+        '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+        '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
+        '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
+        '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
+        '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
+        '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
+        '    ;;',
+        '  esac',
+        '  command stat "$@"',
+        "}",
+      ].join("\n")
+    : "";
+  const presetLine =
+    opts.presetValue === undefined
+      ? "unset HERMES_KANBAN_DISPATCH_IN_GATEWAY"
+      : `export HERMES_KANBAN_DISPATCH_IN_GATEWAY=${shellQuote(opts.presetValue)}`;
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -uo pipefail",
+      extractShellFunctionFromSource(src, "hermes_config_path_is_locked"),
+      extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
+      extractShellFunctionFromSource(src, "apply_shields_up_runtime_env"),
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      statMock,
+      presetLine,
+      "apply_shields_up_runtime_env",
+      'printf "KANBAN=%s\\n" "${HERMES_KANBAN_DISPATCH_IN_GATEWAY-<unset>}"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    const match = result.stdout.match(/KANBAN=(.*)/);
+    return {
+      result,
+      kanbanValue: match ? match[1] : "",
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
+  it("disables the embedded Hermes kanban dispatcher when the config root is locked", () => {
+    const run = runShieldsUpRuntimeEnv({ locked: true });
+
+    expect(run.result.status).toBe(0);
+    expect(run.kanbanValue).toBe("0");
+    expect(run.result.stderr).toContain(
+      "Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0",
+    );
+    expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
+  });
+
+  it("leaves the Hermes kanban dispatcher untouched when shields are down", () => {
+    const run = runShieldsUpRuntimeEnv({ locked: false });
+
+    expect(run.result.status).toBe(0);
+    expect(run.kanbanValue).toBe("<unset>");
+    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY");
+  });
+
+  it("preserves a caller-supplied HERMES_KANBAN_DISPATCH_IN_GATEWAY value under shields-up", () => {
+    const run = runShieldsUpRuntimeEnv({ locked: true, presetValue: "1" });
+
+    expect(run.result.status).toBe(0);
+    expect(run.kanbanValue).toBe("1");
+    expect(run.result.stderr).not.toContain("HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
+  });
+});
+
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
   it("removes a retryable download_failed marker so Hermes runtime fallback can retry", () => {
     const run = runTirithMarkerBootstrap({ markerReason: "download_failed" });

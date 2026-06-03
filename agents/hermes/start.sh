@@ -322,6 +322,14 @@ hermes_config_root_is_locked() {
     && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
+apply_shields_up_runtime_env() {
+  hermes_config_root_is_locked || return 0
+  if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
+  fi
+}
+
 ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
@@ -839,6 +847,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_shields_up_runtime_env
   refresh_hermes_provider_placeholders
   configure_messaging_channels
 
@@ -887,6 +896,7 @@ fi
 
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+apply_shields_up_runtime_env
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 
