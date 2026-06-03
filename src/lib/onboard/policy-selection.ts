@@ -14,6 +14,7 @@ import {
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
 import {
+  isOpenclawOtelEndpointLocal,
   isOpenclawOtelEnabled,
   mergeRequiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
@@ -46,6 +47,7 @@ export type SetupPresetSuggestionOptions = {
   knownPresetNames?: string[] | null;
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
+  env?: NodeJS.ProcessEnv;
 };
 
 export type SetupPolicySelectionOptions = {
@@ -139,6 +141,7 @@ export function computeSetupPresetSuggestions(
     policies: PoliciesApi;
     tiers: TiersApi;
     localInferenceProviders: readonly string[];
+    env?: NodeJS.ProcessEnv;
   },
   tierName: string,
   options: SetupPresetSuggestionOptions = {},
@@ -148,6 +151,7 @@ export function computeSetupPresetSuggestions(
     webSearchConfig = null,
     provider = null,
     agent = null,
+    env = process.env,
   } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
@@ -167,7 +171,9 @@ export function computeSetupPresetSuggestions(
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
   if (agent === "openclaw") {
     add("openclaw-pricing");
-    if (isOpenclawOtelEnabled()) add("openclaw-diagnostics-otel-local");
+    if (isOpenclawOtelEnabled(env) && isOpenclawOtelEndpointLocal(env)) {
+      add("openclaw-diagnostics-otel-local");
+    }
   }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
@@ -361,6 +367,7 @@ async function setupPoliciesWithSelectionInner(
       knownPresetNames: allPresets.map((preset) => preset.name),
       webSearchSupported: options.webSearchSupported,
       hermesToolGateways,
+      env: deps.env,
     }),
   );
 

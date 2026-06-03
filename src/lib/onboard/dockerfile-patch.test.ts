@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   encodeDockerJsonArg,
@@ -16,6 +16,13 @@ import {
 } from "../../../dist/lib/onboard/dockerfile-patch";
 
 const tmpRoots: string[] = [];
+
+beforeEach(() => {
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+});
 
 function dockerfileWith(content: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-patch-test-"));
@@ -54,6 +61,50 @@ describe("dockerfile patch helpers", () => {
     expect(isValidProxyPort("65535")).toBe(true);
     expect(isValidProxyPort("0")).toBe(false);
     expect(isValidProxyPort("70000")).toBe(false);
+  });
+
+  it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+        "ARG NEMOCLAW_PROXY_HOST=old",
+        "ARG NEMOCLAW_PROXY_PORT=old",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_OPENCLAW_OTEL=0",
+        "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+      ].join("\n"),
+    );
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "https://chat.example",
+        "build-1",
+        "compatible-endpoint",
+        null,
+        null,
+        [],
+        {},
+        {},
+        null,
+        {},
+        {},
+        false,
+        null,
+        [],
+        {},
+      ),
+    ).toThrow(/Dockerfile is missing ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT/);
   });
 
   it("patches base image, inference, proxy, and messaging args", () => {

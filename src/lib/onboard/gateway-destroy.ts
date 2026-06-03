@@ -46,6 +46,7 @@ export function destroyGatewayWithVolumeCleanup({
         });
         if (removeResult.status === 0) return true;
         // Pre-0.0.44 builds exposed `gateway destroy` instead of `gateway remove`.
+        if (!lifecycleCommands) return false;
         return (
           runOpenshell(["gateway", "destroy", "-g", gatewayName], { ignoreError: true })
             .status === 0

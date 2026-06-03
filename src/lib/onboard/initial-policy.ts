@@ -228,7 +228,7 @@ export function prepareInitialSandboxCreatePolicy(
     ...new Set(
       [
         ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
-        ...requiredOpenclawOtelPolicyPresets(options.agentName),
+        ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
         ...(options.additionalPresets || []),
       ],
     ),

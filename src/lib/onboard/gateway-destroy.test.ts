@@ -51,6 +51,20 @@ describe("destroyGatewayWithVolumeCleanup", () => {
     });
   });
 
+  it("does not fall back to gateway destroy when lifecycle commands are unavailable", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 1 });
+    const d = deps({
+      hasLifecycleCommands: vi.fn(() => false),
+      runOpenshell,
+    });
+
+    expect(destroyGatewayWithVolumeCleanup(d)).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+    });
+  });
+
   it("stops Docker-driver gateways, unregisters them, and removes cluster volumes", () => {
     const d = deps({
       hasLifecycleCommands: vi.fn(() => false),

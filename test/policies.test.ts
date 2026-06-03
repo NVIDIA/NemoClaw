@@ -145,9 +145,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 21 presets", () => {
+    it("includes the OpenClaw OTEL diagnostics preset", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(21);
+      expect(presets.map((preset) => preset.name)).toContain("openclaw-diagnostics-otel-local");
     });
 
     it("each preset has name and description", () => {

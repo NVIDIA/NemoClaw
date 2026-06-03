@@ -17,6 +17,7 @@ const {
       agent?: string | null;
       webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
       webSearchSupported?: boolean | null;
+      env?: NodeJS.ProcessEnv;
     },
   ) => string[];
   filterSetupPolicyPresets: <T extends { name: string }>(
@@ -27,6 +28,7 @@ const {
     enabledChannels?: string[] | null;
     provider?: string | null;
     agent?: string | null;
+    env?: NodeJS.ProcessEnv;
   }) => string[];
 };
 
@@ -114,8 +116,10 @@ describe("onboard policy preset suggestions", () => {
 
   it("suggests local OTEL policy only when OpenClaw OTEL is enabled", () => {
     const original = process.env.NEMOCLAW_OPENCLAW_OTEL;
+    const originalEndpoint = process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
     try {
       delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+      delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
       expect(getSuggestedPolicyPresets({ agent: "openclaw" })).not.toContain(
         "openclaw-diagnostics-otel-local",
       );
@@ -127,9 +131,16 @@ describe("onboard policy preset suggestions", () => {
       expect(getSuggestedPolicyPresets({ agent: "hermes" })).not.toContain(
         "openclaw-diagnostics-otel-local",
       );
+
+      process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "https://otel.example.com:4318";
+      expect(getSuggestedPolicyPresets({ agent: "openclaw" })).not.toContain(
+        "openclaw-diagnostics-otel-local",
+      );
     } finally {
       if (original === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
       else process.env.NEMOCLAW_OPENCLAW_OTEL = original;
+      if (originalEndpoint === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+      else process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = originalEndpoint;
     }
   });
 
@@ -168,28 +179,33 @@ describe("onboard policy preset suggestions", () => {
   });
 
   it("adds local OTEL policy to tier suggestions only when OpenClaw OTEL is enabled", () => {
-    const original = process.env.NEMOCLAW_OPENCLAW_OTEL;
     const knownWithOtel = [...known, "openclaw-pricing", "openclaw-diagnostics-otel-local"];
-    try {
-      process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
-      const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
-        enabledChannels: [],
-        knownPresetNames: knownWithOtel,
-        agent: "openclaw",
-      });
-      expect(openclawSuggestions).toContain("openclaw-diagnostics-otel-local");
+    const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithOtel,
+      agent: "openclaw",
+      env: { NEMOCLAW_OPENCLAW_OTEL: "1" },
+    });
+    expect(openclawSuggestions).toContain("openclaw-diagnostics-otel-local");
 
-      process.env.NEMOCLAW_OPENCLAW_OTEL = "0";
-      const disabledSuggestions = computeSetupPresetSuggestions("balanced", {
-        enabledChannels: [],
-        knownPresetNames: knownWithOtel,
-        agent: "openclaw",
-      });
-      expect(disabledSuggestions).not.toContain("openclaw-diagnostics-otel-local");
-    } finally {
-      if (original === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
-      else process.env.NEMOCLAW_OPENCLAW_OTEL = original;
-    }
+    const remoteSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithOtel,
+      agent: "openclaw",
+      env: {
+        NEMOCLAW_OPENCLAW_OTEL: "1",
+        NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "https://otel.example.com:4318",
+      },
+    });
+    expect(remoteSuggestions).not.toContain("openclaw-diagnostics-otel-local");
+
+    const disabledSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithOtel,
+      agent: "openclaw",
+      env: { NEMOCLAW_OPENCLAW_OTEL: "0" },
+    });
+    expect(disabledSuggestions).not.toContain("openclaw-diagnostics-otel-local");
   });
 
   it("returns balanced tier defaults without messaging presets when no channels enabled", () => {

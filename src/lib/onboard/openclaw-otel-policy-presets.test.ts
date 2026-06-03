@@ -27,10 +27,13 @@ import {
 
 describe("openclaw-otel-policy-presets", () => {
   const originalOtel = process.env.NEMOCLAW_OPENCLAW_OTEL;
+  const originalEndpoint = process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
 
   afterEach(() => {
     if (originalOtel === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
     else process.env.NEMOCLAW_OPENCLAW_OTEL = originalOtel;
+    if (originalEndpoint === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+    else process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = originalEndpoint;
   });
 
   it("requires the local OTEL preset only for OpenClaw when OTEL is enabled", () => {
@@ -39,6 +42,7 @@ describe("openclaw-otel-policy-presets", () => {
     expect(requiredOpenclawOtelPolicyPresets("hermes")).toEqual([]);
 
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
     expect(requiredOpenclawOtelPolicyPresets("openclaw")).toEqual([
       OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
     ]);
@@ -46,8 +50,16 @@ describe("openclaw-otel-policy-presets", () => {
     expect(requiredOpenclawOtelPolicyPresets("hermes")).toEqual([]);
   });
 
+  it("does not require the local OTEL preset for remote collectors", () => {
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "https://otel.example.com:4318";
+
+    expect(requiredOpenclawOtelPolicyPresets("openclaw")).toEqual([]);
+  });
+
   it("mergeRequiredOpenclawOtelPolicyPresets appends the preset when missing", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
     const known = new Set(["npm", OPENCLAW_OTEL_LOCAL_POLICY_PRESET]);
 
     expect(
@@ -60,6 +72,7 @@ describe("openclaw-otel-policy-presets", () => {
 
   it("mergeRequiredSetupPolicyPresets includes OTEL for OpenClaw sandboxes", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
     const known = new Set(["npm", OPENCLAW_OTEL_LOCAL_POLICY_PRESET]);
 
     expect(

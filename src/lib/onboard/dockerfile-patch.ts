@@ -206,10 +206,11 @@ export function patchStagedDockerfile(
   ]) {
     const rawValue = process.env[envKey];
     if (rawValue !== undefined && rawValue.trim() !== "") {
-      dockerfile = dockerfile.replace(
-        new RegExp(`^ARG ${envKey}=.*$`, "m"),
-        `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`,
-      );
+      const argPattern = new RegExp(`^ARG ${envKey}=.*$`, "m");
+      if (!argPattern.test(dockerfile)) {
+        throw new Error(`Dockerfile is missing ARG ${envKey}; cannot apply value ${rawValue}`);
+      }
+      dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
     }
   }
   // Onboard flow expects immediate dashboard access without device pairing,

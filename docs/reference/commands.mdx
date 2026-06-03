@@ -1857,13 +1857,13 @@ NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metr
 
 For a local Jaeger collector:
 
-```console
-$ docker run --rm --name nemoclaw-jaeger \
+```bash
+docker run --rm --name nemoclaw-jaeger \
     -e COLLECTOR_OTLP_ENABLED=true \
     -p 16686:16686 \
     -p 4318:4318 \
     jaegertracing/all-in-one:1.57
-$ NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
+NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
 ```
 
 Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
