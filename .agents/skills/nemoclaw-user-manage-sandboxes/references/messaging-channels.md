@@ -2,40 +2,78 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Messaging Channels
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 Telegram, Discord, Slack, WeChat, and WhatsApp reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.
 For token-based channels, NemoClaw registers credentials with OpenShell providers.
 WeChat captures a token through a host-side QR scan during onboarding.
-WhatsApp pairs inside the sandbox via QR scan and intentionally stores mutable session state there.
+WhatsApp pairs inside the sandbox through a QR scan and intentionally stores mutable session state there.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 **Experimental Channels:**
 
 WeChat and WhatsApp are experimental.
 Both rely on QR-based pairing flows that are more fragile than token-based bots, and the upstream client libraries can change behavior without notice.
-Interfaces, defaults, and supported features may change, and these channels are not recommended for production use.
+Interfaces, defaults, and supported features can change, and NVIDIA does not recommend these channels for production use.
 
+<AgentOnly variant="openclaw">
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.
-Do not run agent-specific channel mutation commands such as `openclaw channels add` or `openclaw channels remove` inside the sandbox because NemoClaw generates `/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes at image build time, and changes inside the running container do not persist across rebuilds.
+Do not run agent-specific channel mutation commands such as `openclaw channels add` or `openclaw channels remove` inside the sandbox because NemoClaw generates `/sandbox/.openclaw/openclaw.json` at image build time, and changes inside the running container do not persist across rebuilds.
+</AgentOnly>
+<AgentOnly variant="hermes">
+You can enable channels during `nemohermes onboard` or add them later with host-side `nemohermes <sandbox> channels` commands.
+Do not mutate messaging configuration directly inside the sandbox because NemoClaw generates `/sandbox/.hermes/.env` and Hermes config at image build time, and changes inside the running container do not persist across rebuilds.
+</AgentOnly>
 
+<AgentOnly variant="openclaw">
 `nemoclaw tunnel start` does not start Telegram, Discord, Slack, or other chat bridges.
 It only starts optional host services such as the cloudflared tunnel when that binary is present. (`nemoclaw start` is kept as a deprecated alias.)
+</AgentOnly>
+<AgentOnly variant="hermes">
+`nemohermes tunnel start` does not start Telegram, Discord, Slack, or other chat bridges.
+It only starts optional host services such as the cloudflared tunnel when that binary is present.
+</AgentOnly>
 For details, refer to Commands (use the `nemoclaw-user-reference` skill).
 
 ## Prerequisites
 
+<AgentOnly variant="openclaw">
+
 - A machine where you can run `nemoclaw onboard` (local or remote host that runs the gateway and sandbox).
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- A machine where you can run `nemohermes onboard` (local or remote host that runs the gateway and sandbox).
+
+</AgentOnly>
 - A token for each token-based messaging platform you want to enable, a personal WeChat account on your phone for the host-side QR scan during onboarding, or a phone you can use to scan the QR code for WhatsApp pairing.
 - A network policy preset for each enabled channel, or equivalent custom egress rules.
 
 ## Channel Requirements
+
+<AgentOnly variant="openclaw">
 
 | Channel | Required tokens | Optional settings |
 |---------|-----------------|-------------------|
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
-| WeChat (experimental) | None. Captured via host-side QR scan during `nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
-| WhatsApp (experimental) | None. Pair via QR after rebuild | None |
+| WeChat (experimental) | None. Captured through host-side QR scan during `nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
+| WhatsApp (experimental) | None. Pair through QR after rebuild | None |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+| Channel | Required tokens | Optional settings |
+|---------|-----------------|-------------------|
+| Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
+| Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
+| WeChat (experimental) | None. Captured through host-side QR scan during `nemohermes onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
+| WhatsApp (experimental) | None. Pair through QR after rebuild | None |
+
+</AgentOnly>
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -61,18 +99,23 @@ Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict ch
 When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
 Channel messages still require an explicit bot mention.
 
-WeChat (experimental) delivers messages over Tencent's iLink gateway via the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
+WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
 WeChat Official Account and WeCom/Enterprise WeChat are not wired up.
 
+<AgentOnly variant="openclaw">
 Because the bot token only exists after a successful iLink QR handshake, NemoClaw runs the QR login on the host during `nemoclaw onboard`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Because the bot token only exists after a successful iLink QR handshake, NemoClaw runs the QR login on the host during `nemohermes onboard`.
+</AgentOnly>
 You scan the QR with WeChat on your phone (Discover → Scan), confirm the login, and NemoClaw captures the token, `accountId`, `baseUrl`, and `userId` from the iLink response.
 NemoClaw registers the token as the `<sandbox>-wechat-bridge` OpenShell provider and substitutes the `openshell:resolve:env:WECHAT_BOT_TOKEN` placeholder for it inside the sandbox, so the token never lands in the image or on disk inside the running container.
-The non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) is baked into the sandbox image so the in-sandbox bridge can pre-seed the per-account context tokens without re-running the QR handshake.
+NemoClaw bakes the non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) into the sandbox image so the in-sandbox bridge can pre-seed the per-account context tokens without re-running the QR handshake.
 
 WeChat is DM-only (`allowIdsMode: "dm"`).
 NemoClaw adds the operator who scanned the QR to `WECHAT_ALLOWED_IDS` automatically, and you can append more comma-separated WeChat user IDs through the same env var.
-You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` once the flow is stable in your environment.
+You can silence the host-side `[wechat]` diagnostic lines (poll status, IDC redirects, swallowed gateway errors) by exporting `NEMOCLAW_WECHAT_QUIET=1` after the flow is stable in your environment.
 
 Tencent's iLink gateway is a third-party service.
 Review your organization's terms-of-service, compliance, and data-residency constraints before enabling WeChat.
@@ -82,15 +125,15 @@ NemoClaw advertises WhatsApp for both OpenClaw and Hermes sandboxes, and each ag
 Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
 Connect to the sandbox and then use the agent-specific pairing command to render the QR code in the terminal:
 
-```console
-$ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
-$ hermes whatsapp                             # Hermes sandboxes
+```bash
+openclaw channels login --channel whatsapp  # OpenClaw sandboxes
+hermes whatsapp                             # Hermes sandboxes
 ```
 
 For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
-If pairing exits with a gateway close such as `1008`, rerun the login command once and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
 
-Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
+The sandbox generates and stores session credentials inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
 Pair only one sandbox per WhatsApp account at a time.
@@ -99,7 +142,7 @@ Pair only one sandbox per WhatsApp account at a time.
 
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it on or off, then press **Enter** when done.
-If no channels are selected, pressing **Enter** skips messaging setup.
+If you select no channels, pressing **Enter** skips messaging setup.
 If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
 
 If you enable WeChat (experimental), the wizard does not prompt for a paste token.
@@ -113,25 +156,37 @@ NemoClaw also selects the matching network policy preset during policy setup so 
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
 
-```console
-$ export TELEGRAM_BOT_TOKEN=<your-bot-token>
-$ export TELEGRAM_REQUIRE_MENTION=1
-$ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
-$ export DISCORD_SERVER_ID=<your-discord-server-id>
-$ export SLACK_BOT_TOKEN=<your-slack-bot-token>
-$ export SLACK_APP_TOKEN=<your-slack-app-token>
-$ export SLACK_ALLOWED_USERS=<your-slack-member-id>
-$ export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
+```bash
+export TELEGRAM_BOT_TOKEN=<your-bot-token>
+export TELEGRAM_REQUIRE_MENTION=1
+export DISCORD_BOT_TOKEN=<your-discord-bot-token>
+export DISCORD_SERVER_ID=<your-discord-server-id>
+export SLACK_BOT_TOKEN=<your-slack-bot-token>
+export SLACK_APP_TOKEN=<your-slack-app-token>
+export SLACK_ALLOWED_USERS=<your-slack-member-id>
+export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
 ```
 
 This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
+<AgentOnly variant="openclaw">
 Run `nemoclaw onboard` interactively when you want to enable WeChat.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Run `nemohermes onboard` interactively when you want to enable WeChat.
+</AgentOnly>
 
 Then run onboarding:
 
-```console
-$ nemoclaw onboard
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw onboard
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes onboard
+```
+</AgentOnly>
 
 Complete the rest of the wizard so the blueprint can create OpenShell providers where needed (for example `<sandbox>-telegram-bridge` or `<sandbox>-wechat-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
 
@@ -140,26 +195,55 @@ Complete the rest of the wizard so the blueprint can create OpenShell providers 
 Run channel commands from the host, not from inside the sandbox.
 Use `channels list` to see the supported channel names:
 
-```console
-$ nemoclaw my-assistant channels list
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw my-assistant channels list
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes my-assistant channels list
+```
+</AgentOnly>
 
 Add the channel you want:
 
-```console
-$ nemoclaw my-assistant channels add telegram
-$ nemoclaw my-assistant channels add discord
-$ nemoclaw my-assistant channels add slack
-$ nemoclaw my-assistant channels add wechat
-$ nemoclaw my-assistant channels add whatsapp
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw my-assistant channels add telegram
+nemoclaw my-assistant channels add discord
+nemoclaw my-assistant channels add slack
+nemoclaw my-assistant channels add wechat
+nemoclaw my-assistant channels add whatsapp
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes my-assistant channels add telegram
+nemohermes my-assistant channels add discord
+nemohermes my-assistant channels add slack
+nemohermes my-assistant channels add wechat
+nemohermes my-assistant channels add whatsapp
+```
+</AgentOnly>
 
 `channels add` collects whatever each channel needs.
 It prompts for Telegram, Discord, and Slack tokens, runs an interactive host-side QR scan for WeChat, and collects nothing for WhatsApp because pairing happens in-sandbox after rebuild.
-It registers bridge providers with the OpenShell gateway when tokens were captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
+It registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
-If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API.
-If applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
+`channels add` requires the matching built-in network policy preset YAML to be present.
+A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
+With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
+When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
+When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers.
+It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
+Verify the gateway bridge before relying on the channel.
+<AgentOnly variant="openclaw">
+Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Restore the preset YAML and re-run `nemohermes <sandbox> channels add <channel>`.
+</AgentOnly>
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.
@@ -167,43 +251,76 @@ Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to te
 For a repeatable live Telegram reply check, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
 If you defer the rebuild, apply the change later:
 
-```console
-$ nemoclaw my-assistant rebuild
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw my-assistant rebuild
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes my-assistant rebuild
+```
+</AgentOnly>
 
 In non-interactive mode, set the required environment variables before running `channels add`.
 Missing credentials fail fast, and the command queues the change for a manual rebuild:
 
-```console
-$ NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
+<AgentOnly variant="openclaw">
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
   nemoclaw my-assistant channels add telegram
-$ nemoclaw my-assistant rebuild
+nemoclaw my-assistant rebuild
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<your-bot-token> \
+  nemohermes my-assistant channels add telegram
+nemohermes my-assistant rebuild
+```
+</AgentOnly>
 
 For Discord server access after onboarding, include the server settings when you add the channel and rebuild:
 
-```console
-$ DISCORD_BOT_TOKEN=<your-discord-bot-token> \
+<AgentOnly variant="openclaw">
+```bash
+DISCORD_BOT_TOKEN=<your-discord-bot-token> \
   DISCORD_SERVER_ID=<your-discord-server-id> \
   DISCORD_REQUIRE_MENTION=1 \
   nemoclaw my-assistant channels add discord
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+DISCORD_BOT_TOKEN=<your-discord-bot-token> \
+  DISCORD_SERVER_ID=<your-discord-server-id> \
+  DISCORD_REQUIRE_MENTION=1 \
+  nemohermes my-assistant channels add discord
+```
+</AgentOnly>
 
 ### `channels add wechat`
 
 `channels add wechat` (experimental) follows the same shape as the other channels with two differences driven by the iLink QR handshake.
 
 First, the command does not prompt for a paste token.
-Instead, it renders a QR code in your terminal, polls Tencent's iLink gateway, and captures both the bot token and the per-account metadata (`accountId`, `baseUrl`, `userId`) once you scan the QR with WeChat on your phone (Discover → Scan).
+Instead, it renders a QR code in your terminal, polls Tencent's iLink gateway, and captures both the bot token and the per-account metadata (`accountId`, `baseUrl`, `userId`) after you scan the QR with WeChat on your phone (**Discover** > **Scan**).
 The login has an eight-minute deadline and refreshes the QR up to three times on expiry.
 Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
 
 Second, the command requires an interactive terminal.
 Non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`) fails fast with a clear error because the QR handshake needs a paired phone.
 
-```console
-$ nemoclaw my-assistant channels add wechat
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw my-assistant channels add wechat
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes my-assistant channels add wechat
+```
+</AgentOnly>
 
 If `WECHAT_BOT_TOKEN` is already cached for this sandbox (the operator onboarded with WeChat earlier), `channels add wechat` reuses the cached token and skips the QR scan to keep the upstream plugin's existing iLink session intact.
 Re-running QR would invalidate that session.
@@ -218,10 +335,18 @@ Rebuild the sandbox after the update so the image reflects the current channel s
 
 To remove a channel and clear its stored credentials, run:
 
-```console
-$ nemoclaw my-assistant channels remove telegram
-$ nemoclaw my-assistant channels remove wechat
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw my-assistant channels remove telegram
+nemoclaw my-assistant channels remove wechat
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes my-assistant channels remove telegram
+nemohermes my-assistant channels remove wechat
+```
+</AgentOnly>
 
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` OpenShell provider, and drops `wechat` from the sandbox's enabled-channel set.
 The next rebuild produces an image without the WeChat channel block in `openclaw.json` and without the per-account state files under `/sandbox/.openclaw/openclaw-weixin/`.
@@ -232,21 +357,42 @@ The cleanup tries `openshell sandbox exec` and falls back to SSH if that does no
 If neither transport can reach a running sandbox for a QR-paired channel, the command exits non-zero and asks you to start the sandbox and re-run.
 NemoClaw deliberately leaves the registry, policy preset, and `session.policyPresets` unchanged on that failure path, so a follow-up re-run completes the removal cleanly.
 
-`channels remove whatsapp` clears the client-side Baileys session inside the sandbox; it cannot deregister the linked device with WhatsApp's servers because that requires an active Baileys connection to issue the logout RPC, which we no longer have once the session files are gone.
+`channels remove whatsapp` clears the client-side Baileys session inside the sandbox.
+It cannot deregister the linked device with WhatsApp's servers because that requires an active Baileys connection to issue the logout RPC, and the command no longer has that connection after it removes the session files.
 The phone account will continue to list the sandbox as a Linked Device until you remove it manually from your phone (Settings → Linked Devices → tap the entry → Log out) or until WhatsApp's 14-day inactivity timeout expires.
-Removing the entry from the phone is recommended if you plan to re-pair the same phone with a different sandbox.
+Remove the entry from the phone if you plan to re-pair the same phone with a different sandbox.
 
 Use `channels stop` when you want to pause a bridge without deleting credentials:
 
-```console
-$ nemoclaw my-assistant channels stop telegram
-$ nemoclaw my-assistant channels start telegram
+<AgentOnly variant="openclaw">
 
-$ nemoclaw my-assistant channels stop wechat
-$ nemoclaw my-assistant channels start wechat
+```bash
+nemoclaw my-assistant channels stop telegram
+nemoclaw my-assistant channels start telegram
+
+nemoclaw my-assistant channels stop wechat
+nemoclaw my-assistant channels start wechat
 ```
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+nemohermes my-assistant channels stop telegram
+nemohermes my-assistant channels start telegram
+
+nemohermes my-assistant channels stop wechat
+nemohermes my-assistant channels start wechat
+```
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
 For WeChat specifically, `channels stop wechat` followed by a rebuild keeps the per-account state files under `/sandbox/.openclaw/openclaw-weixin/accounts/` intact even though the bridge is no longer wired up in `openclaw.json`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+For WeChat specifically, `channels stop wechat` followed by a rebuild keeps the per-account state files under `/sandbox/.hermes/` intact even though the bridge is no longer wired up in Hermes config.
+</AgentOnly>
 A subsequent `channels start wechat` plus rebuild revives the bridge against the same iLink account without a fresh QR scan.
 The bot token is held by the OpenShell provider across the stop/start cycle.
 
@@ -258,12 +404,22 @@ Running two sandboxes against the same WeChat account causes one of them to lose
 If you enable a messaging channel and another sandbox already uses the same token, onboarding prompts you to confirm before continuing in interactive mode and exits non-zero in non-interactive mode.
 If NemoClaw only has legacy channel metadata and cannot compare credential hashes, it keeps the conservative warning.
 Re-run `channels add <channel>` with the intended token to refresh the stored non-secret hash.
+<AgentOnly variant="openclaw">
 `nemoclaw status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
+</AgentOnly>
+<AgentOnly variant="hermes">
+`nemohermes status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
+</AgentOnly>
 
 ## Stop Messaging Delivery
 
 Use `channels stop` when you want to pause one bridge and keep the sandbox running.
+<AgentOnly variant="openclaw">
 Use `nemoclaw tunnel stop` or its deprecated alias `nemoclaw stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use `nemohermes tunnel stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the Hermes gateway inside the selected sandbox.
+</AgentOnly>
 Stopping the in-sandbox gateway stops Telegram, Discord, Slack, WeChat, and WhatsApp polling for that sandbox until you restart the sandbox or gateway.
 
 ## Confirm Delivery
@@ -274,14 +430,31 @@ Use the matching policy preset (`telegram`, `discord`, `slack`, `wechat`, or `wh
 
 ## Tunnel Command
 
+<AgentOnly variant="openclaw">
 When the host has `cloudflared`, `nemoclaw tunnel start` starts a cloudflared tunnel that can expose the dashboard with a public URL.
+</AgentOnly>
+<AgentOnly variant="hermes">
+When the host has `cloudflared`, `nemohermes tunnel start` starts a cloudflared tunnel that can expose the forwarded Hermes endpoint with a public URL.
+</AgentOnly>
 Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
+<AgentOnly variant="openclaw">
 `nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 The older `nemoclaw start` still works as a deprecated alias.
+</AgentOnly>
+<AgentOnly variant="hermes">
+`nemohermes tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+</AgentOnly>
 
-```console
-$ nemoclaw tunnel start
+<AgentOnly variant="openclaw">
+```bash
+nemoclaw tunnel start
 ```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+nemohermes tunnel start
+```
+</AgentOnly>
 
 ## Related Topics
 
