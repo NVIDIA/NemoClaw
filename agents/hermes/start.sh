@@ -394,8 +394,12 @@ repair_hermes_startup_layout() {
     # still bring a missing prompt_toolkit history file into existence as a
     # sandbox-owned regular file. Sandboxes built before the precreate landed
     # would otherwise stay broken until the next `shields down` cycle.
+    # Refusal (symlink, non-regular, create failure) is a hard stop: starting
+    # the gateway with an unsafe .hermes_history under a locked root would
+    # either let the TUI clobber an attacker-pointed path or repeat the
+    # original keypress traceback.
     echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
-    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || true
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
     return 0
   fi
 

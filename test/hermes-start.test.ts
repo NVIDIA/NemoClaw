@@ -517,6 +517,35 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     );
   });
 
+  it("fails Hermes startup when the locked-root history path is a symlink and does not write through", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      lockedConfigRoot: true,
+      preExistingHistory: "symlink",
+    });
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyKind).toBe("symlink");
+    expect(run.symlinkTargetContent).toBe("attacker\n");
+    expect(run.result.stderr).toContain(
+      "Refusing Hermes layout repair because",
+    );
+    expect(run.result.stderr).toContain(".hermes_history is a symlink");
+  });
+
+  it("fails Hermes startup when the locked-root history path is a directory", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      lockedConfigRoot: true,
+      preExistingHistory: "directory",
+    });
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyKind).toBe("directory");
+    expect(run.result.stderr).toContain(
+      "Refusing Hermes layout repair because",
+    );
+    expect(run.result.stderr).toContain(".hermes_history is not a regular file");
+  });
+
   it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
     const run = runHermesGatewayRuntimeCleanup({ orphanSocat: true, staleLock: false, stalePid: false });
 
