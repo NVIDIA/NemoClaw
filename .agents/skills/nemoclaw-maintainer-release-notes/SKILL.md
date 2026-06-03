@@ -17,7 +17,7 @@ Draft NemoClaw release notes from live release data. The house style is:
 - external-only contributor thanks,
 - visible `#NNNN` GitHub links.
 
-Create a local Markdown draft and HTML preview. Do not create or update a GitHub Discussion; the maintainer posts the announcement manually.
+Create a local Markdown draft. Do not create or update a GitHub Discussion; the maintainer posts the announcement manually.
 
 ## Prerequisites
 
@@ -141,29 +141,15 @@ Suggested structure:
 
 Keep the prose warm and polished, but concrete. Tie the narrative to actual PRs in the release range.
 
-## Step 7: Write Local Drafts First
+## Step 7: Write a Local Draft First
 
-Create a Markdown draft and an HTML preview. By default, place these outside the checkout root so the repo stays clean, for example:
+Create a Markdown draft outside the checkout root so the repo stays clean, for example:
 
 ```bash
 ../nemoclaw-<current-version>-release-note-draft.md
-../nemoclaw-<current-version>-release-note-draft.html
 ```
 
-The Markdown body is the source the maintainer can paste into GitHub Discussions. The HTML file is just a browser preview for review.
-
-After writing the files, open the HTML preview with the platform's default file opener:
-
-```text
-macOS:
-open ../nemoclaw-<current-version>-release-note-draft.html
-
-Linux:
-xdg-open ../nemoclaw-<current-version>-release-note-draft.html
-
-Windows (PowerShell):
-Start-Process ../nemoclaw-<current-version>-release-note-draft.html
-```
+The Markdown body is the source the maintainer can paste into GitHub Discussions.
 
 Stop here. The maintainer creates the GitHub Discussion and shares the announcement link.
 
@@ -172,7 +158,6 @@ Stop here. The maintainer creates the GitHub Discussion and shares the announcem
 For a draft-only run, return:
 
 - Markdown draft path,
-- HTML preview path,
 - a short note about the compare range and any excluded revert/test-cleanup items.
 
 Also return the suggested discussion title: `NemoClaw <current-version> is out`.

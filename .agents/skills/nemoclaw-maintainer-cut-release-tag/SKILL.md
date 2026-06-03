@@ -120,7 +120,7 @@ git tag -a "$tag" "$target" -m "$tag"
 git push origin "refs/tags/$tag"
 ```
 
-If any command fails, stop and report the failure. Do not push `latest`.
+If any command fails, stop and report the failure.
 
 ### Step 5: Verify Tags
 
@@ -144,14 +144,13 @@ If `latest` does not update, report the workflow URL/status and stop. Do not mov
 
 ### Step 6: Draft Release Notes
 
-Draft release notes from live GitHub data using the release range `<previous-version>...<new-version>`. Save local drafts outside the checkout root, for example:
+Draft release notes from live GitHub data using the release range `<previous-version>...<new-version>`. Save the local draft outside the checkout root, for example:
 
 ```text
 ../nemoclaw-<new-version>-release-note-draft.md
-../nemoclaw-<new-version>-release-note-draft.html
 ```
 
-Follow the release-note style from `nemoclaw-maintainer-release-notes`, but stop after producing the local draft and preview. Do not create or update a GitHub Discussion.
+Follow the release-note style from `nemoclaw-maintainer-release-notes`, but stop after producing the local draft. Do not create or update a GitHub Discussion.
 
 ### Step 7: Hand Off Announcement
 
@@ -161,7 +160,6 @@ Return:
 - confirmed release commit,
 - `latest` verification status,
 - Markdown draft path,
-- HTML preview path,
 - suggested discussion title: `NemoClaw <new-version> is out`,
 - reminder: maintainer creates the Announcement discussion and shares its link in external channels.
 
