@@ -3,7 +3,7 @@
 
 /**
  * Doc-drift gate: every NEMOCLAW_* env var read in src/ (or bin/) must be
- * either documented in docs/reference/commands.md or explicitly allowlisted
+ * either documented in docs/reference/commands.mdx or explicitly allowlisted
  * in ci/env-var-doc-allowlist.json with a real reason.
  *
  * See #3184. Modeled on scripts/check-direct-credential-env.ts.
@@ -132,7 +132,9 @@ export function auditEnvVarDocs(opts: AuditOptions): AuditResult {
       continue;
     }
     if (documented.has(entry.name)) {
-      invalidAllowlist.push(`${entry.name}: documented in commands.md AND in allowlist — pick one`);
+      invalidAllowlist.push(
+        `${entry.name}: documented in commands.mdx AND in allowlist — pick one`,
+      );
     }
   }
 
@@ -295,7 +297,7 @@ function scriptKindForPath(filePath: string): ts.ScriptKind {
 function main(): void {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const sourceRoots = [path.join(repoRoot, "src"), path.join(repoRoot, "bin")];
-  const commandsMdPath = path.join(repoRoot, "docs", "reference", "commands.md");
+  const commandsMdPath = path.join(repoRoot, "docs", "reference", "commands.mdx");
   const allowlistPath = path.join(repoRoot, "ci", "env-var-doc-allowlist.json");
 
   const sourceFiles = walkSourceFiles(sourceRoots);
@@ -308,13 +310,13 @@ function main(): void {
   if (result.undocumented.length > 0) {
     failed = true;
     console.error(
-      "\nNEMOCLAW_* env vars read in src/ but missing from docs/reference/commands.md " +
+      "\nNEMOCLAW_* env vars read in src/ but missing from docs/reference/commands.mdx " +
         "and not in ci/env-var-doc-allowlist.json:",
     );
     for (const name of result.undocumented) console.error(`  - ${name}`);
     console.error(
       "\nFix one of:\n" +
-        "  1. Add an entry for the variable in docs/reference/commands.md (Environment Variables section).\n" +
+        "  1. Add an entry for the variable in docs/reference/commands.mdx (Environment Variables section).\n" +
         "  2. If the variable is internal/test-only and never user-set, add it to ci/env-var-doc-allowlist.json with a real reason.\n",
     );
   }

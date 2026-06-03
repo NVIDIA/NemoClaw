@@ -35,16 +35,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 
 # Minimum version required for native messaging credential rewrite:
 # WebSocket text frames plus provider-shaped aliases and REST request bodies.
-MIN_VERSION="0.0.39"
+MIN_VERSION="0.0.44"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.39"
+MAX_VERSION="0.0.44"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.39"
+DEV_MIN_VERSION="0.0.44"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -337,12 +337,21 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 download_with_curl() {
   local name
+  local -a curl_progress
+  # Show a live progress bar on a terminal so the (often slow) release download
+  # is not a silent gap; stay quiet (errors only) when non-interactive. (#4431)
+  if [ -t 1 ] || [ -t 2 ]; then
+    curl_progress=(--progress-bar)
+  else
+    curl_progress=(-sS)
+  fi
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
-    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
+    curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
       -o "$tmpdir/$name"
   done
 }
 
+info "Downloading OpenShell release assets (this may take a minute)..."
 if command -v gh >/dev/null 2>&1; then
   gh_ok=1
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
@@ -364,10 +373,17 @@ else
 fi
 
 info "Verifying SHA-256 checksum..."
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  SHA_CMD="shasum -a 256"
+else
+  fail "No SHA-256 tool available (sha256sum/shasum)"
+fi
 for i in "${!ASSETS[@]}"; do
   asset_name="${ASSETS[$i]}"
   checksum_file="${CHECKSUM_FILES[$i]}"
-  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
+  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
 done
 

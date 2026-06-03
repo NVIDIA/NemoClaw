@@ -200,7 +200,7 @@ describe("auditEnvVarDocs", () => {
       commandsMdText: "`NEMOCLAW_FOO` documented.",
       allowlist: [{ name: "NEMOCLAW_FOO", reason: "should not be allowlisted because documented" }],
     });
-    expect(result.invalidAllowlist[0]).toMatch(/documented in commands.md AND in allowlist/);
+    expect(result.invalidAllowlist[0]).toMatch(/documented in commands.mdx AND in allowlist/);
   });
 
   it("rejects allowlist entries that don't match the env name pattern", () => {

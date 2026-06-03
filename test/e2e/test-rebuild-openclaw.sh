@@ -13,8 +13,9 @@
 #   6. Run `nemoclaw <name> rebuild --yes`
 #   7. Verify marker files survived the rebuild
 #   8. Verify the sandbox now reports the CURRENT version
-#   9. Verify no credentials leaked into the local backup
-#   10. Verify policy presets survived the rebuild (#1952)
+#   9. Verify the OpenClaw gateway auth token rotated (#4517)
+#   10. Verify no credentials leaked into the local backup
+#   11. Verify policy presets survived the rebuild (#1952)
 #
 # Prerequisites:
 #   - Docker running
@@ -36,6 +37,7 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 OLD_OPENCLAW_VERSION="2026.3.11"
 MARKER_FILE="/sandbox/.openclaw/workspace/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_OC_E2E_$(date +%s)"
+PRE_REBUILD_GATEWAY_TOKEN="nemoclaw-e2e-old-gateway-token-${MARKER_CONTENT}"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 
@@ -58,6 +60,21 @@ fail() {
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 diag() { echo -e "${YELLOW}[DIAG]${NC} $1"; }
+
+read_sandbox_gateway_token() {
+  openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+    python3 -c 'import json; cfg = json.load(open("/sandbox/.openclaw/openclaw.json")); print(cfg.get("gateway", {}).get("auth", {}).get("token", ""), end="")'
+}
+
+read_sandbox_runtime_gateway_token() {
+  # shellcheck disable=SC2016 # OPENCLAW_GATEWAY_TOKEN must expand inside the sandbox.
+  openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+    bash -lc '. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || exit 1; printf "%s" "${OPENCLAW_GATEWAY_TOKEN:-}"'
+}
+
+read_sandbox_config_hash() {
+  openshell sandbox exec --name "${SANDBOX_NAME}" -- cat /sandbox/.openclaw/.config-hash
+}
 
 # Enable verbose logging in rebuild command
 export NEMOCLAW_REBUILD_VERBOSE=1
@@ -170,6 +187,27 @@ info "Phase 4: Writing markers and registering sandbox..."
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   sh -c "mkdir -p /sandbox/.openclaw/workspace && echo '${MARKER_CONTENT}' > ${MARKER_FILE}" \
   || fail "Failed to write marker file"
+
+# Seed an existing gateway token so the rebuild path must rotate it.
+openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  env "PRE_REBUILD_GATEWAY_TOKEN=${PRE_REBUILD_GATEWAY_TOKEN}" \
+  python3 -c 'import json, os; path = "/sandbox/.openclaw/openclaw.json"; cfg = json.load(open(path)); cfg.setdefault("gateway", {}).setdefault("auth", {})["token"] = os.environ["PRE_REBUILD_GATEWAY_TOKEN"]; f = open(path, "w"); json.dump(cfg, f, indent=2); f.write("\n"); f.close()' \
+  || fail "Failed to seed old gateway token"
+openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  sh -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash" \
+  || fail "Failed to write pre-rebuild config hash"
+PRE_REBUILD_CONFIG_HASH="$(read_sandbox_config_hash 2>/dev/null || true)"
+SEEDED_GATEWAY_TOKEN="$(read_sandbox_gateway_token 2>/dev/null || true)"
+if [ "${SEEDED_GATEWAY_TOKEN}" = "${PRE_REBUILD_GATEWAY_TOKEN}" ]; then
+  pass "Old gateway token seeded before rebuild"
+else
+  fail "Failed to verify seeded gateway token before rebuild"
+fi
+if [ -n "${PRE_REBUILD_CONFIG_HASH}" ] && echo "${PRE_REBUILD_CONFIG_HASH}" | grep -q "openclaw.json"; then
+  pass "Pre-rebuild config hash recorded"
+else
+  fail "Pre-rebuild config hash missing openclaw.json"
+fi
 
 # Verify
 VERIFY=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- cat "${MARKER_FILE}" 2>/dev/null || true)
@@ -358,6 +396,44 @@ else
   fail "Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_OPENCLAW_VERSION}'"
 fi
 
+# Gateway token rotated and runtime env matches (#4517)
+POST_REBUILD_GATEWAY_TOKEN="$(read_sandbox_gateway_token 2>/dev/null || true)"
+if [ -n "${POST_REBUILD_GATEWAY_TOKEN}" ]; then
+  pass "Gateway auth token present after rebuild"
+else
+  fail "Gateway auth token missing after rebuild — issue #4517"
+fi
+if [ "${POST_REBUILD_GATEWAY_TOKEN}" != "${PRE_REBUILD_GATEWAY_TOKEN}" ]; then
+  pass "Gateway auth token rotated after rebuild"
+else
+  fail "Gateway auth token did not rotate after rebuild — issue #4517"
+fi
+RUNTIME_GATEWAY_TOKEN="$(read_sandbox_runtime_gateway_token 2>/dev/null || true)"
+if [ "${RUNTIME_GATEWAY_TOKEN}" = "${POST_REBUILD_GATEWAY_TOKEN}" ]; then
+  pass "Runtime proxy env exports the rotated gateway token"
+elif [ "${RUNTIME_GATEWAY_TOKEN}" = "${PRE_REBUILD_GATEWAY_TOKEN}" ]; then
+  fail "Runtime proxy env still exports the old gateway token — issue #4517"
+else
+  fail "Runtime proxy env gateway token does not match openclaw.json — issue #4517"
+fi
+POST_REBUILD_CONFIG_HASH="$(read_sandbox_config_hash 2>/dev/null || true)"
+if [ -n "${POST_REBUILD_CONFIG_HASH}" ] && echo "${POST_REBUILD_CONFIG_HASH}" | grep -q "openclaw.json"; then
+  pass "Post-rebuild config hash references openclaw.json"
+else
+  fail "Post-rebuild config hash missing openclaw.json — issue #4517"
+fi
+if [ "${POST_REBUILD_CONFIG_HASH}" != "${PRE_REBUILD_CONFIG_HASH}" ]; then
+  pass "Config hash changed after gateway token rotation"
+else
+  fail "Config hash did not change after gateway token rotation — issue #4517"
+fi
+if openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+  sh -c "cd /sandbox/.openclaw && sha256sum -c .config-hash --status" 2>/dev/null; then
+  pass "Config hash validates after gateway token rotation"
+else
+  fail "Config hash does not validate after gateway token rotation — issue #4517"
+fi
+
 # Inference works after rebuild (proves credential chain is intact)
 info "Verifying inference after rebuild..."
 INFERENCE_RESPONSE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
@@ -375,11 +451,23 @@ fi
 # No credentials in backup
 BACKUP_DIR="$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}"
 if [ -d "$BACKUP_DIR" ]; then
-  CRED_LEAKS=$(find "$BACKUP_DIR" \( -name "*.json" -o -name "*.env" -o -name ".env" \) -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
+  # Dependency lockfiles can contain public package metadata matching coarse
+  # token patterns; the product snapshot filter excludes them too.
+  CRED_LEAKS=$(find "$BACKUP_DIR" \
+    \( -name "package-lock.json" -o -name "npm-shrinkwrap.json" -o -name "yarn.lock" -o -name "pnpm-lock.yaml" -o -name "pnpm-lock.yml" \) -prune -o \
+    \( -name "*.json" -o -name "*.env" -o -name ".env" \) -type f \
+    -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
   if [ -z "$CRED_LEAKS" ]; then
     pass "No credentials in backup"
   else
     fail "Credentials found: $CRED_LEAKS"
+  fi
+  GATEWAY_TOKEN_LEAKS=$(find "$BACKUP_DIR" -type f \
+    -exec grep -F -l "${PRE_REBUILD_GATEWAY_TOKEN}" {} \; 2>/dev/null || true)
+  if [ -z "${GATEWAY_TOKEN_LEAKS}" ]; then
+    pass "Old gateway token absent from backup"
+  else
+    fail "Old gateway token found in backup: ${GATEWAY_TOKEN_LEAKS}"
   fi
 else
   fail "Backup directory missing: $BACKUP_DIR"

@@ -3,50 +3,42 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  parseCustomPolicySource,
-  parsePolicyAddArgs,
-  shouldSkipPolicyConfirmation,
-} from "./policy-channel";
+import { parsePolicyAddOptions } from "./policy-channel";
 
 describe("policy channel helpers", () => {
-  it("parses custom policy source flags", () => {
-    expect(parseCustomPolicySource([])).toEqual({ kind: "none" });
-    expect(parseCustomPolicySource(["--from-file", "preset.yaml"])).toEqual({
-      kind: "file",
-      path: "preset.yaml",
-    });
-    expect(parseCustomPolicySource(["--from-dir", "presets"])).toEqual({
-      kind: "dir",
-      path: "presets",
-    });
-  });
-
-  it("reports custom policy source errors", () => {
-    expect(parseCustomPolicySource(["--from-file"])).toEqual({
-      kind: "error",
-      message: "--from-file requires a path argument.",
-    });
-    expect(parseCustomPolicySource(["--from-file", "a.yaml", "--from-dir", "dir"])).toEqual({
-      kind: "error",
-      message: "--from-file and --from-dir are mutually exclusive.",
-    });
-  });
-
-  it("detects policy confirmation bypass flags", () => {
-    expect(shouldSkipPolicyConfirmation(["--yes"])).toBe(true);
-    expect(shouldSkipPolicyConfirmation(["-y"])).toBe(true);
-    expect(shouldSkipPolicyConfirmation(["--force"])).toBe(true);
-    expect(shouldSkipPolicyConfirmation([], { NEMOCLAW_NON_INTERACTIVE: "1" })).toBe(true);
-    expect(shouldSkipPolicyConfirmation([], {})).toBe(false);
-  });
-
-  it("parses policy add args", () => {
-    expect(parsePolicyAddArgs(["github", "--dry-run", "--yes"], {})).toEqual({
+  it("parses policy add options without reconstructing CLI argv", () => {
+    expect(
+      parsePolicyAddOptions(
+        { preset: "github", dryRun: true, yes: true, fromFile: "preset.yaml" },
+        {},
+      ),
+    ).toEqual({
       dryRun: true,
       skipConfirm: true,
-      source: { kind: "none" },
+      source: { kind: "file", path: "preset.yaml" },
       presetArg: "github",
     });
+  });
+
+  it("parses policy add option errors", () => {
+    expect(parsePolicyAddOptions({ fromFile: "a.yaml", fromDir: "dir" }, {})).toEqual({
+      dryRun: false,
+      skipConfirm: false,
+      source: { kind: "error", message: "--from-file and --from-dir are mutually exclusive." },
+      presetArg: null,
+    });
+    expect(parsePolicyAddOptions({ fromFile: "" }, {})).toEqual({
+      dryRun: false,
+      skipConfirm: false,
+      source: { kind: "error", message: "--from-file requires a path argument." },
+      presetArg: null,
+    });
+  });
+
+  it("detects policy confirmation bypass options", () => {
+    expect(parsePolicyAddOptions({ yes: true }, {}).skipConfirm).toBe(true);
+    expect(parsePolicyAddOptions({ force: true }, {}).skipConfirm).toBe(true);
+    expect(parsePolicyAddOptions({}, { NEMOCLAW_NON_INTERACTIVE: "1" }).skipConfirm).toBe(true);
+    expect(parsePolicyAddOptions({}, {}).skipConfirm).toBe(false);
   });
 });

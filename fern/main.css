@@ -25,6 +25,33 @@
   text-decoration-color: var(--accent);
 }
 
+.badge-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  line-height: 0;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.badge-links a {
+  display: inline-flex;
+  align-items: center;
+}
+
+.badge-links img {
+  display: block;
+  margin: 0 !important;
+}
+
+.badge-links .fern-mdx-link svg {
+  display: none;
+}
+
+.badge-links + p {
+  margin-top: 0 !important;
+}
+
 .explore-cards {
   margin-top: 1rem;
 }

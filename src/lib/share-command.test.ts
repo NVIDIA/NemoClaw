@@ -19,6 +19,7 @@ import {
   resolveLinuxUnmount,
   runShareMount,
   runShareStatus,
+  ShareCommandError,
 } from "./share-command";
 import type { ShareCommandDeps } from "./share-command-deps";
 
@@ -35,12 +36,6 @@ function makeDeps(overrides: Partial<ShareCommandDeps> = {}): ShareCommandDeps {
     cliName: "nemoclaw",
     ...overrides,
   };
-}
-
-function installExitThrow(): ReturnType<typeof vi.spyOn> {
-  return vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-    throw new Error(`process.exit:${String(code)}`);
-  }) as never);
 }
 
 function mountedAt(dir: string): string {
@@ -129,20 +124,14 @@ describe("share-command helpers", () => {
 });
 
 describe("ShareCommand mount/status actions", () => {
-  let exitSpy: ReturnType<typeof installExitThrow>;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     spawnSyncMock.mockReset();
-    exitSpy = installExitThrow();
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    exitSpy.mockRestore();
-    errorSpy.mockRestore();
     logSpy.mockRestore();
     vi.restoreAllMocks();
   });
@@ -200,12 +189,12 @@ describe("ShareCommand mount/status actions", () => {
     });
 
     await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(
-      "process.exit:1",
+      ShareCommandError,
     );
 
     expect(deps.ensureLive).not.toHaveBeenCalled();
-    expect(errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n")).toContain(
-      "sshfs is not installed",
+    await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(
+      /sshfs is not installed/,
     );
   });
 
@@ -224,12 +213,14 @@ describe("ShareCommand mount/status actions", () => {
 
       await expect(
         runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
-      ).rejects.toThrow("process.exit:1");
+      ).rejects.toThrow(/SSHFS mount failed/);
 
-      const stderr = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-      expect(stderr).toContain("SSHFS mount failed");
-      expect(stderr).toContain("openssh-sftp-server");
-      expect(stderr).toContain("nemoclaw alpha rebuild --yes");
+      await expect(
+        runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
+      ).rejects.toThrow(/openssh-sftp-server/);
+      await expect(
+        runShareMount({ sandboxName: "alpha", remotePath: "/sandbox", localMount }, deps),
+      ).rejects.toThrow(/nemoclaw alpha rebuild --yes/);
     } finally {
       fs.rmSync(localMount, { recursive: true, force: true });
     }

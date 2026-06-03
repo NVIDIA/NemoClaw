@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
-vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(),
-  execFile: vi.fn(),
-}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: vi.fn(actual.readFileSync),
+  };
+});
 
 vi.mock("./onboard/config.js", () => ({
   loadOnboardConfig: vi.fn(),
@@ -15,12 +18,30 @@ vi.mock("./onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(() => "NVIDIA Endpoint API"),
 }));
 
-import { execFileSync } from "node:child_process";
+vi.mock("./runtime-context.js", () => ({
+  registerRuntimeContext: vi.fn((api: OpenClawPluginApi) => {
+    api.on("before_prompt_build", () => undefined);
+  }),
+}));
+
+import { readFileSync } from "node:fs";
 import register, { getPluginConfig } from "./index.js";
 import { loadOnboardConfig } from "./onboard/config.js";
 
-const mockedExecFileSync = vi.mocked(execFileSync);
+const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
+const originalReadFileSync = (await vi.importActual<typeof import("node:fs")>("node:fs"))
+  .readFileSync;
+
+function mockMissingOpenClawConfig(): void {
+  mockedReadFileSync.mockReset();
+  mockedReadFileSync.mockImplementation(((path, ...args) => {
+    if (String(path).includes("openclaw.json")) {
+      throw Object.assign(new Error("openclaw config unavailable"), { code: "ENOENT" });
+    }
+    return originalReadFileSync(path, ...args);
+  }) as typeof readFileSync);
+}
 
 function createMockApi(): OpenClawPluginApi {
   return {
@@ -46,7 +67,7 @@ function createMockApi(): OpenClawPluginApi {
 describe("plugin registration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedExecFileSync.mockReset();
+    mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
   });
 
@@ -59,7 +80,12 @@ describe("plugin registration", () => {
   it("registers an inference provider", () => {
     const api = createMockApi();
     register(api);
-    expect(api.registerProvider).toHaveBeenCalledWith(expect.objectContaining({ id: "inference" }));
+    expect(api.registerProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "inference",
+        auth: [expect.objectContaining({ id: "bearer", type: "bearer" })],
+      }),
+    );
   });
 
   it("continues registration when the runtime context hook is unsupported", () => {
@@ -84,7 +110,41 @@ describe("plugin registration", () => {
     expect("registerCli" in api).toBe(false);
   });
 
-  it("registers custom model when onboard config has a model", () => {
+  it("prefers the live primary model from openclaw.json over stale onboard config", () => {
+    mockedLoadOnboardConfig.mockReturnValue({
+      endpointType: "build",
+      endpointUrl: "https://api.build.nvidia.com/v1",
+      ncpPartner: null,
+      model: "nvidia/stale-model",
+      profile: "default",
+      credentialEnv: "NVIDIA_API_KEY",
+      onboardedAt: "2026-03-01T00:00:00.000Z",
+    });
+    mockedReadFileSync.mockReset();
+    mockedReadFileSync.mockReturnValue(
+      JSON.stringify({
+        agents: {
+          defaults: {
+            model: {
+              primary: "inference/nvidia/live-model",
+            },
+          },
+        },
+      }),
+    );
+
+    const api = createMockApi();
+    register(api);
+
+    const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
+    expect(providerArg.models?.chat).toEqual([
+      expect.objectContaining({ id: "inference/nvidia/live-model", label: "nvidia/live-model" }),
+    ]);
+    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
+    expect(logLines.some((line) => line.includes("Model:     nvidia/live-model"))).toBe(true);
+  });
+
+  it("falls back to onboard config when openclaw.json has no primary model", () => {
     mockedLoadOnboardConfig.mockReturnValue({
       endpointType: "build",
       endpointUrl: "https://api.build.nvidia.com/v1",
@@ -94,94 +154,43 @@ describe("plugin registration", () => {
       credentialEnv: "NVIDIA_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     });
+    mockedReadFileSync.mockReset();
+    mockedReadFileSync.mockReturnValue(JSON.stringify({ agents: { defaults: { model: {} } } }));
+
     const api = createMockApi();
     register(api);
+
     const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
     expect(providerArg.models?.chat).toEqual([
       expect.objectContaining({ id: "inference/nvidia/custom-model" }),
     ]);
   });
 
-  it("uses probed OpenShell provider and model when onboard config is unavailable", () => {
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "Ollama",
-        endpoint: "http://host.docker.internal:11434/v1",
-        model: "llama3.2:latest",
-      }),
-    );
-
+  it("falls back to hardcoded defaults when onboard config is unavailable", () => {
     const api = createMockApi();
     register(api);
 
     const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
     expect(providerArg.models?.chat).toEqual([
-      expect.objectContaining({
-        id: "inference/llama3.2:latest",
-        label: "llama3.2:latest",
-      }),
+      expect.objectContaining({ id: "nvidia/nemotron-3-super-120b-a12b" }),
+      expect.objectContaining({ id: "nvidia/llama-3.1-nemotron-ultra-253b-v1" }),
+      expect.objectContaining({ id: "nvidia/llama-3.3-nemotron-super-49b-v1.5" }),
+      expect.objectContaining({ id: "nvidia/nemotron-3-nano-30b-a3b" }),
     ]);
-
-    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
-    expect(
-      logLines.some((line) => line.includes("Endpoint:  http://host.docker.internal:11434/v1")),
-    ).toBe(true);
-    expect(logLines.some((line) => line.includes("Provider:  Ollama"))).toBe(true);
-    expect(logLines.some((line) => line.includes("Model:     llama3.2:latest"))).toBe(true);
-  });
-
-  it("prefers live gateway model over stale onboard config model after runtime switch (#2608)", () => {
-    mockedLoadOnboardConfig.mockReturnValue({
-      endpointType: "build",
-      endpointUrl: "https://api.build.nvidia.com/v1",
-      ncpPartner: null,
-      model: "nvidia/nemotron-3-super-120b-a12b",
-      profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
-      onboardedAt: "2026-03-01T00:00:00.000Z",
-    });
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "NVIDIA",
-        endpoint: "https://api.build.nvidia.com/v1",
-        model: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-      }),
-    );
-
-    const api = createMockApi();
-    register(api);
-
-    const providerArg = vi.mocked(api.registerProvider).mock.calls[0][0];
-    expect(providerArg.models?.chat).toEqual([
-      expect.objectContaining({ id: "inference/nvidia/llama-3.3-nemotron-super-49b-v1.5" }),
-    ]);
-
-    const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
-    expect(
-      logLines.some((line) => line.includes("Model:     nvidia/llama-3.3-nemotron-super-49b-v1.5")),
-    ).toBe(true);
-  });
-
-  it("does not treat the provider name as a fallback endpoint", () => {
-    mockedExecFileSync.mockReturnValue(
-      JSON.stringify({
-        provider: "Ollama",
-        model: "llama3.2:latest",
-      }),
-    );
-
-    const api = createMockApi();
-    register(api);
 
     const logLines = vi.mocked(api.logger.info).mock.calls.map(([message]) => message);
     expect(logLines.some((line) => line.includes("Endpoint:  build.nvidia.com"))).toBe(true);
-    expect(logLines.some((line) => line.includes("Endpoint:  Ollama"))).toBe(false);
+    expect(logLines.some((line) => line.includes("Provider:  NVIDIA Endpoints"))).toBe(true);
+    expect(
+      logLines.some((line) => line.includes("Model:     nvidia/nemotron-3-super-120b-a12b")),
+    ).toBe(true);
   });
 });
 
 describe("before_tool_call secret scanner hook (#1233)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMissingOpenClawConfig();
     mockedLoadOnboardConfig.mockReturnValue(null);
   });
 
@@ -317,6 +326,64 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("[SECURITY] Blocked memory write"),
     );
+  });
+
+  it("does not throw when the host resolver returns undefined", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    expect(() =>
+      handler({
+        toolName: "write",
+        params: {
+          file_path: "IDENTITY.md",
+          content: "# IDENTITY.md - Who Am I?\nhello",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("blocks a relative workspace basename when the host resolver is unavailable", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "IDENTITY.md",
+        content: `api key: ${fakeKey}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks normalized relative memory paths when the host resolver is unavailable", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+
+    for (const path of [
+      "./memory/2026-05-29.md",
+      "foo/../memory/2026-05-29.md",
+      "workspace-main/memory/2026-05-29.md",
+    ]) {
+      const result = handler({
+        toolName: "write",
+        params: {
+          path,
+          content: `api key: ${fakeKey}`,
+        },
+      });
+      expect(result).toMatchObject({ block: true });
+    }
   });
 });
 

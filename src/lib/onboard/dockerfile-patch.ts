@@ -50,6 +50,8 @@ export function patchStagedDockerfile(
   wechatConfig: LooseObject = {},
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
+  hermesToolGateways: string[] = [],
+  slackConfig: LooseObject = {},
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -196,6 +198,21 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(webSearchConfig ? "1" : "0")}`,
   );
+  for (const envKey of [
+    "NEMOCLAW_OPENCLAW_OTEL",
+    "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+    "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
+    "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
+  ]) {
+    const rawValue = process.env[envKey];
+    if (rawValue !== undefined && rawValue.trim() !== "") {
+      const argPattern = new RegExp(`^ARG ${envKey}=.*$`, "m");
+      if (!argPattern.test(dockerfile)) {
+        throw new Error(`Dockerfile is missing ARG ${envKey}; cannot apply value ${rawValue}`);
+      }
+      dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
+    }
+  }
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
   dockerfile = dockerfile.replace(
@@ -230,6 +247,40 @@ export function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
+    );
+  }
+  if (slackConfig && Object.keys(slackConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_SLACK_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_SLACK_CONFIG_B64=${encodeSanitizedDockerJsonArg(slackConfig)}`,
+    );
+  }
+  if (hermesToolGateways.length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=.*$/m,
+      "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
+    );
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=.*$/m,
+      `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
+    );
+  }
+  // NEMOCLAW_EXTRA_AGENTS_JSON — bake secondary OpenClaw agents into
+  // agents.list[] alongside the canonical "main" entry. Pass the raw operator
+  // payload through to the build-time validator in
+  // scripts/generate-openclaw-config.mts. The host-side encode does not
+  // parse or shape-check the JSON: that would duplicate validation logic and
+  // could silently drop a malformed payload here while the docs/contract
+  // promise an image-build failure. Encoding the raw bytes makes the build
+  // the single source of truth for validation errors.
+  const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
+  if (extraAgentsRaw && extraAgentsRaw.trim()) {
+    const encoded = sanitizeDockerArg(
+      Buffer.from(extraAgentsRaw, "utf8").toString("base64"),
+    );
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=.*$/m,
+      `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);

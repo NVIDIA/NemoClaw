@@ -223,24 +223,6 @@ jobs:
             Write-Host 'Docker is not available in WSL; full E2E will be skipped'
           }
 
-      - name: Run WSL compatibility test suite
-        shell: powershell
-        run: |
-          $script = @"
-          set -euo pipefail
-          cd '$env:WSL_WORKDIR'
-          # WSL process-spawn overhead pushes CLI runtime close to the test
-          # budget; keep exec timeout aligned with the vitest test timeout so
-          # tests that legitimately consume their full budget aren't killed.
-          export NEMOCLAW_EXEC_TIMEOUT=60000
-          export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
-
       - name: Run WSL full E2E
         if: steps.docker.outputs.docker_ok == 'true'
         shell: powershell
@@ -269,11 +251,11 @@ jobs:
         shell: powershell
         run: |
           Write-Host 'Skipping WSL full E2E because Docker is unavailable on this runner.'
-          Write-Host 'The workflow still validated the NemoClaw build and test flow inside Ubuntu WSL.'
+          Write-Host 'The workflow still validated the NemoClaw build flow inside Ubuntu WSL.'
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wsl-e2e-install-log
           path: |

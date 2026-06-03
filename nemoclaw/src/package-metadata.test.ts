@@ -20,8 +20,8 @@ const packageJson = JSON.parse(
 
 describe("OpenClaw package metadata", () => {
   it("declares the required external plugin compatibility fields", () => {
-    expect(packageJson.openclaw?.compat?.pluginApi).toBe(">=2026.5.10-beta.1");
-    expect(packageJson.openclaw?.compat?.minGatewayVersion).toBe("2026.5.10-beta.1");
-    expect(packageJson.openclaw?.build?.openclawVersion).toBe("2026.5.10-beta.1");
+    expect(packageJson.openclaw?.compat?.pluginApi).toBe(">=2026.5.22");
+    expect(packageJson.openclaw?.compat?.minGatewayVersion).toBe("2026.5.22");
+    expect(packageJson.openclaw?.build?.openclawVersion).toBe("2026.5.22");
   });
 });

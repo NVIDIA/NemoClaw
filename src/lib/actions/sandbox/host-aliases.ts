@@ -5,9 +5,17 @@ import { isIP } from "node:net";
 
 import { dockerExecFileSync } from "../../adapters/docker";
 import { CLI_NAME } from "../../cli/branding";
+import * as registry from "../../state/registry";
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 const HOST_ALIAS_KUBECTL_TIMEOUT_MS = 10_000;
+
+// Drivers that run a per-sandbox direct container (openshell-<sandbox>...)
+// instead of the legacy k3s gateway. They have no openshell-cluster-nemoclaw
+// container and no Kubernetes `Sandbox` custom resource, so the kubectl-based
+// host-alias backend below cannot target them. See src/lib/sandbox/privileged-exec.ts
+// for the direct-container resolution these drivers use elsewhere.
+const DIRECT_CONTAINER_DRIVERS = new Set(["docker", "vm"]);
 
 type HostAlias = {
   ip: string;
@@ -29,6 +37,61 @@ type SandboxResource = {
 
 type BuildHostAliases = (resource: SandboxResource) => HostAlias[];
 
+export type AddSandboxHostAliasOptions = {
+  hostname?: string;
+  ip?: string;
+  dryRun?: boolean;
+};
+
+export type RemoveSandboxHostAliasOptions = {
+  hostname?: string;
+  dryRun?: boolean;
+};
+
+export class HostAliasesCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "HostAliasesCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function hostAliasesFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new HostAliasesCommandError(lines, exitCode);
+}
+
+function normalizeDriver(driver: unknown): string | null {
+  return typeof driver === "string" && driver.trim()
+    ? driver.trim().toLowerCase()
+    : null;
+}
+
+// Host aliases are persisted on the legacy Kubernetes gateway `Sandbox`
+// custom resource and applied by `docker exec openshell-cluster-nemoclaw
+// kubectl ...`. The docker and vm drivers run per-sandbox direct containers
+// with no gateway cluster container and no `Sandbox` CR, so this k3s
+// control-plane path cannot work for them. Fail fast with an actionable
+// message instead of targeting a container that does not exist (#4516) — and
+// without pretending a one-time /etc/hosts edit inside the direct container
+// would survive a sandbox restart or rebuild.
+function assertLegacyGatewayHostAliasSupport(sandboxName: string): void {
+  const driver = normalizeDriver(registry.getSandbox(sandboxName)?.openshellDriver);
+  if (driver && DIRECT_CONTAINER_DRIVERS.has(driver)) {
+    hostAliasesFail([
+      `  Host aliases are not supported on the '${driver}' driver sandbox '${sandboxName}'.`,
+      "  This command edits aliases on the legacy Kubernetes gateway sandbox resource,",
+      `  which the ${driver} driver does not run (there is no openshell-cluster-nemoclaw container).`,
+      "  OpenShell does not yet expose a persistent host-alias API for this driver, and a",
+      "  one-time /etc/hosts edit would not survive a sandbox restart or rebuild.",
+    ]);
+  }
+}
+
 function validateHostAliasHostname(hostname: string): boolean {
   if (!hostname || hostname.length > 253) return false;
   return hostname.split(".").every((label) => {
@@ -41,17 +104,19 @@ function normalizeHostAliasHostname(hostname: string): string {
 }
 
 function runKubectlInClusterRaw(args: string[]): string {
-  return dockerExecFileSync([K3S_CONTAINER, "kubectl", "-n", "openshell", ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
-  });
+  return dockerExecFileSync(
+    ["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
+    },
+  );
 }
 
 function throwKubectlError(action: string, error: unknown): never {
   const err = error as { stderr?: unknown; stdout?: unknown; message?: unknown; status?: number };
   const detail = String(err?.stderr || err?.stdout || err?.message || "").trim();
-  console.error(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`);
-  process.exit(err?.status || 1);
+  hostAliasesFail(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`, err?.status || 1);
 }
 
 function runKubectlInCluster(args: string[], action: string): string {
@@ -68,8 +133,7 @@ function getSandboxResource(sandboxName: string): SandboxResource {
     return JSON.parse(raw) as SandboxResource;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`  Failed to parse sandbox resource: ${message}`);
-    process.exit(1);
+    hostAliasesFail(`  Failed to parse sandbox resource: ${message}`);
   }
 }
 
@@ -157,6 +221,7 @@ function patchHostAliasesWithRetry(
 }
 
 export function listSandboxHostAliases(sandboxName: string): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
   const aliases = getHostAliases(getSandboxResource(sandboxName));
   if (aliases.length === 0) {
     console.log(`  No host aliases configured for '${sandboxName}'.`);
@@ -174,30 +239,29 @@ export function listSandboxHostAliases(sandboxName: string): void {
   }
 }
 
-export function addSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname, ip] = values;
-  if (!rawHostname || !ip || values.length !== 2) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
-    process.exit(1);
+export function addSandboxHostAlias(
+  sandboxName: string,
+  options: AddSandboxHostAliasOptions = {},
+): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname, ip } = options;
+  if (!rawHostname || !ip) {
+    hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);
   if (!validateHostAliasHostname(hostname)) {
-    console.error(`  Invalid hostname '${hostname}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid hostname '${hostname}'.`);
   }
   if (isIP(ip) === 0) {
-    console.error(`  Invalid IP address '${ip}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid IP address '${ip}'.`);
   }
 
   const resource = getSandboxResource(sandboxName);
   const buildAliases: BuildHostAliases = (currentResource) => {
     const aliases = normalizeHostAliases(currentResource);
     if (aliases.some((alias) => alias.hostnames.includes(hostname))) {
-      console.error(`  Host alias '${hostname}' already exists.`);
-      process.exit(1);
+      hostAliasesFail(`  Host alias '${hostname}' already exists.`);
     }
 
     const existing = aliases.find((alias) => alias.ip === ip);
@@ -218,18 +282,19 @@ export function addSandboxHostAlias(sandboxName: string, args: string[] = []): v
   console.log(`  Added host alias ${hostname} -> ${ip}`);
 }
 
-export function removeSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname] = values;
-  if (!rawHostname || values.length !== 1) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);
-    process.exit(1);
+export function removeSandboxHostAlias(
+  sandboxName: string,
+  options: RemoveSandboxHostAliasOptions = {},
+): void {
+  assertLegacyGatewayHostAliasSupport(sandboxName);
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname } = options;
+  if (!rawHostname) {
+    hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);
   if (!validateHostAliasHostname(hostname)) {
-    console.error(`  Invalid hostname '${hostname}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid hostname '${hostname}'.`);
   }
 
   const resource = getSandboxResource(sandboxName);
@@ -246,8 +311,7 @@ export function removeSandboxHostAlias(sandboxName: string, args: string[] = [])
 
     const existed = original.some((alias) => alias.hostnames.includes(hostname));
     if (!existed) {
-      console.error(`  Host alias '${hostname}' is not configured.`);
-      process.exit(1);
+      hostAliasesFail(`  Host alias '${hostname}' is not configured.`);
     }
     return aliases;
   };

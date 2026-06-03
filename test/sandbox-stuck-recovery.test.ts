@@ -95,7 +95,20 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, sandboxName };
+  // Healthy `docker info` stub so these stuck-phase tests exercise the genuine
+  // "Docker up, sandbox wedged" path rather than the #4428 Docker-outage
+  // reclassification (which fires when `docker info` fails). Lives next to the
+  // fake openshell; runCli puts this dir on PATH.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "docker"),
+    `#!${process.execPath}
+if (process.argv[2] === "info") { process.stdout.write("24.0.0\\n"); process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  return { tmpDir, sandboxName, homeLocalBin };
 }
 
 function runCli(
@@ -105,6 +118,9 @@ function runCli(
   extraEnv: Record<string, string> = {},
 ) {
   const repoRoot = path.join(import.meta.dirname, "..");
+  // Put the fixture bin (with the healthy docker stub) first so the #4428
+  // Docker preflight sees a reachable daemon regardless of the host runner.
+  const homeLocalBin = path.join(tmpDir, ".local", "bin");
   return spawnSync(
     process.execPath,
     [path.join(repoRoot, "bin", "nemoclaw.js"), sandboxName, subcommand],
@@ -114,7 +130,7 @@ function runCli(
       env: {
         ...process.env,
         HOME: tmpDir,
-        PATH: "/usr/bin:/bin",
+        PATH: `${homeLocalBin}:/usr/bin:/bin`,
         NEMOCLAW_NO_CONNECT_HINT: "1",
         ...extraEnv,
       },

@@ -2,18 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Cross-validate E2E test recommendations in .coderabbit.yaml against the
- * actual nightly-e2e.yaml workflow.
+ * Validate that nightly-e2e.yaml remains internally consistent.
  *
  * Catches:
- * - Stale job names in CodeRabbit instructions (job renamed or removed)
- * - Stale file path globs in CodeRabbit instructions (file renamed or deleted)
- * - Nightly E2E jobs with no CodeRabbit path_instructions coverage (new job
- *   added but no mapping created)
  * - Nightly E2E jobs missing the selective dispatch guard in their `if:` condition
+ * - Aggregate reporting/notification jobs missing real E2E jobs in their `needs` lists
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
@@ -65,151 +61,43 @@ function getJobIf(job: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Extract all E2E job names referenced inside CodeRabbit path_instructions
- * that are part of the E2E recommendation block (contain "-e2e").
- */
-function getReferencedJobNames(coderabbit: Record<string, unknown>): Set<string> {
-  const reviews = coderabbit.reviews as Record<string, unknown> | undefined;
-  if (!reviews) return new Set();
-
-  const pathInstructions = reviews.path_instructions as
-    | Array<{ path: string; instructions: string }>
-    | undefined;
-  if (!pathInstructions) return new Set();
-
-  const jobNames = new Set<string>();
-  // Match job names inside backticks: `cloud-e2e`, `sandbox-survival-e2e`
-  // or in the gh workflow run -f jobs= argument.
-  // This avoids false positives from prose like "nightly-e2e.yaml" or
-  // "forward-proxy-e2e exists".
-  const backtickPattern = /`([a-z][-a-z]*-e2e)`/g;
-  const jobsArgPattern = /-f jobs=([a-z][-a-z,]*-e2e)/g;
-
-  for (const entry of pathInstructions) {
-    const instructions =
-      typeof entry.instructions === "string" ? entry.instructions : "";
-    for (const match of instructions.matchAll(backtickPattern)) {
-      jobNames.add(match[1]);
-    }
-    for (const match of instructions.matchAll(jobsArgPattern)) {
-      for (const name of match[1].split(",")) {
-        jobNames.add(name);
-      }
-    }
-  }
-  return jobNames;
+function getJobStep(job: unknown, stepName: string): Record<string, unknown> | undefined {
+  if (typeof job !== "object" || job === null) return undefined;
+  const steps = (job as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return undefined;
+  return steps.find(
+    (step): step is Record<string, unknown> =>
+      typeof step === "object" &&
+      step !== null &&
+      (step as Record<string, unknown>).name === stepName,
+  );
 }
 
-/**
- * Extract E2E path_instructions entries (those containing "-e2e" in instructions).
- * Returns the path globs.
- */
-function getE2ePathGlobs(coderabbit: Record<string, unknown>): string[] {
-  const reviews = coderabbit.reviews as Record<string, unknown> | undefined;
-  if (!reviews) return [];
-
-  const pathInstructions = reviews.path_instructions as
-    | Array<{ path: string; instructions: string }>
-    | undefined;
-  if (!pathInstructions) return [];
-
-  return pathInstructions
-    .filter((entry) => {
-      const instructions =
-        typeof entry.instructions === "string" ? entry.instructions : "";
-      return instructions.includes("-e2e");
-    })
-    .map((entry) => entry.path);
+function getStepEnv(job: unknown, stepName: string): Record<string, unknown> | undefined {
+  const step = getJobStep(job, stepName);
+  if (!step || typeof step.env !== "object" || step.env === null) return undefined;
+  return step.env as Record<string, unknown>;
 }
 
-/**
- * Check if a path glob matches at least one file in the repo.
- * Handles exact paths, directory patterns (agents/hermes/**), and
- * simple wildcards (src/lib/shields*.ts).
- *
- * Not a full glob implementation — covers the patterns we actually use.
- */
-function globMatchesAnyFile(glob: string): boolean {
-  // Exact file path
-  if (!glob.includes("*")) {
-    return existsSync(repoPath(glob));
-  }
-
-  // Directory wildcard: "agents/hermes/**" or "nemoclaw-blueprint/policies/**"
-  if (glob.endsWith("/**")) {
-    const dir = glob.slice(0, -3);
-    const fullDir = repoPath(dir);
-    return existsSync(fullDir) && statSync(fullDir).isDirectory();
-  }
-
-  // Simple wildcard in filename: "src/lib/shields*.ts"
-  const lastSlash = glob.lastIndexOf("/");
-  const dir = glob.substring(0, lastSlash);
-  const pattern = glob.substring(lastSlash + 1);
-
-  const fullDir = repoPath(dir);
-  if (!existsSync(fullDir) || !statSync(fullDir).isDirectory()) return false;
-
-  // Convert simple glob to regex: "shields*.ts" -> /^shields.*\.ts$/
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*");
-  const regex = new RegExp(`^${escaped}$`);
-
-  const files = readdirSync(fullDir);
-  return files.some((f) => regex.test(f));
+function getCheckoutStep(job: unknown): Record<string, unknown> | undefined {
+  if (typeof job !== "object" || job === null) return undefined;
+  const steps = (job as Record<string, unknown>).steps;
+  if (!Array.isArray(steps)) return undefined;
+  return steps.find((step): step is Record<string, unknown> => {
+    if (typeof step !== "object" || step === null) return false;
+    const uses = (step as Record<string, unknown>).uses;
+    return typeof uses === "string" && uses.startsWith("actions/checkout");
+  });
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-describe("E2E coverage cross-validation", () => {
-  const coderabbit = loadYaml(".coderabbit.yaml");
+describe("nightly E2E workflow validation", () => {
   const workflow = loadYaml(".github/workflows/nightly-e2e.yaml");
+  const reusableRunner = loadYaml(".github/workflows/e2e-script.yaml");
 
   const nightlyJobs = getNightlyJobNames(workflow);
-  const referencedJobs = getReferencedJobNames(coderabbit);
-  const e2ePathGlobs = getE2ePathGlobs(coderabbit);
   const aggregateJobs = ["notify-on-failure", "report-to-pr", "scorecard"];
-
-  it("every job name in CodeRabbit instructions exists in nightly-e2e.yaml", () => {
-    const stale = [...referencedJobs].filter(
-      (name) => !nightlyJobs.includes(name),
-    );
-    expect(
-      stale,
-      `Stale E2E job names in .coderabbit.yaml path_instructions ` +
-        `(not found in nightly-e2e.yaml): ${stale.join(", ")}. ` +
-        `Update or remove these from the CodeRabbit E2E recommendations.`,
-    ).toEqual([]);
-  });
-
-  it("every E2E path glob in CodeRabbit instructions matches at least one file", () => {
-    const stale = e2ePathGlobs.filter((glob) => !globMatchesAnyFile(glob));
-    expect(
-      stale,
-      `Stale file path globs in .coderabbit.yaml E2E path_instructions ` +
-        `(no matching files): ${stale.join(", ")}. ` +
-        `The referenced files may have been renamed or deleted.`,
-    ).toEqual([]);
-  });
-
-  it("every nightly E2E job has at least one CodeRabbit path_instructions entry", () => {
-    const uncovered = nightlyJobs.filter((name) => !referencedJobs.has(name));
-    // This is a warning-level check: some jobs (e.g., diagnostics-e2e,
-    // upgrade-stale-sandbox-e2e) may intentionally lack path-based
-    // recommendations. We still flag them so maintainers can decide.
-    if (uncovered.length > 0) {
-      console.warn(
-        `⚠️  Nightly E2E jobs with no CodeRabbit path_instructions coverage: ` +
-          `${uncovered.join(", ")}. ` +
-          `Consider adding path_instructions entries in .coderabbit.yaml ` +
-          `for the source files these jobs exercise.`,
-      );
-    }
-    // Intentionally does not fail — this is advisory.
-    expect(true).toBe(true);
-  });
 
   it("every nightly E2E job has the selective dispatch guard in its if: condition", () => {
     const jobs = workflow.jobs as Record<string, unknown>;
@@ -266,6 +154,145 @@ describe("E2E coverage cross-validation", () => {
       `Nightly E2E aggregate jobs missing real E2E jobs in needs: ` +
         `${missing.join(", ")}. Update notify-on-failure, report-to-pr, ` +
         `and scorecard so their needs lists include every nightly E2E job.`,
+    ).toEqual([]);
+  });
+
+  it("public installer E2Es install the resolved checkout ref", () => {
+    const jobs = workflow.jobs as Record<string, unknown>;
+    const expectedCheckoutRef = "${{ inputs.target_ref || github.ref }}";
+    const expectedInstallRef = "${{ steps.public_install_ref.outputs.ref }}";
+    const publicInstallerJobs: Array<[string, string]> = [
+      ["cloud-onboard-e2e", "Run cloud onboard E2E test"],
+      ["openclaw-tui-chat-correlation-e2e", "Run OpenClaw TUI chat correlation E2E test"],
+    ];
+    const invalid: string[] = [];
+
+    const runnerJobs = reusableRunner.jobs as Record<string, unknown>;
+    const reusableRefExporter = getJobStep(
+      runnerJobs.run,
+      "Export checked-out ref environment",
+    );
+    if (
+      typeof reusableRefExporter?.run !== "string" ||
+      !reusableRefExporter.run.includes("git -C repo rev-parse HEAD")
+    ) {
+      invalid.push("reusable runner missing checked-out ref exporter");
+    }
+
+    for (const [jobName, stepName] of publicInstallerJobs) {
+      const job = jobs[jobName] as Record<string, unknown> | undefined;
+      const jobWith = job?.with as Record<string, unknown> | undefined;
+
+      if (job?.uses === "./.github/workflows/e2e-script.yaml") {
+        if (jobWith?.ref !== expectedCheckoutRef) {
+          invalid.push(`${jobName} with.ref=${String(jobWith?.ref)}`);
+        }
+        if (jobWith?.checked_out_ref_env !== "NEMOCLAW_PUBLIC_INSTALL_REF") {
+          invalid.push(
+            `${jobName} checked_out_ref_env=${String(jobWith?.checked_out_ref_env)}`,
+          );
+        }
+        if (typeof jobWith?.env_json === "string") {
+          const env = JSON.parse(jobWith.env_json) as Record<string, unknown>;
+          if (env.NEMOCLAW_PUBLIC_INSTALL_REF !== undefined) {
+            invalid.push(`${jobName} hard-codes NEMOCLAW_PUBLIC_INSTALL_REF in env_json`);
+          }
+          if (env.NEMOCLAW_INSTALL_REF === "${{ github.ref_name }}") {
+            invalid.push(`${jobName} still pins public install to github.ref_name`);
+          }
+        }
+        continue;
+      }
+
+      const checkoutWith = getCheckoutStep(job)?.with as Record<string, unknown> | undefined;
+      if (checkoutWith?.ref !== expectedCheckoutRef) {
+        invalid.push(`${jobName} checkout.ref=${String(checkoutWith?.ref)}`);
+      }
+
+      const resolver = getJobStep(job, "Resolve public install ref");
+      if (!resolver) {
+        invalid.push(`${jobName} missing resolved-ref step`);
+      } else {
+        if (resolver.id !== "public_install_ref") {
+          invalid.push(`${jobName} resolved-ref id=${String(resolver.id)}`);
+        }
+        if (typeof resolver.run !== "string" || !resolver.run.includes("git rev-parse HEAD")) {
+          invalid.push(`${jobName} resolved-ref step does not use git rev-parse HEAD`);
+        }
+      }
+
+      const env = getStepEnv(job, stepName);
+      if (!env) {
+        invalid.push(`${jobName} (${stepName} missing env)`);
+        continue;
+      }
+      if (env.NEMOCLAW_PUBLIC_INSTALL_REF !== expectedInstallRef) {
+        invalid.push(
+          `${jobName} NEMOCLAW_PUBLIC_INSTALL_REF=${String(env.NEMOCLAW_PUBLIC_INSTALL_REF)}`,
+        );
+      }
+      if (env.NEMOCLAW_INSTALL_REF === "${{ github.ref_name }}") {
+        invalid.push(`${jobName} still pins public install to github.ref_name`);
+      }
+    }
+
+    expect(
+      invalid,
+      `Public installer E2Es must resolve the checked-out ref once and pass that SHA ` +
+        `through to the curl-install path; otherwise trusted dispatch can check out one ` +
+        `commit but install another. ` +
+        `Invalid jobs: ${invalid.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("messaging providers nightly can receive optional live message secrets", () => {
+    const expectedSecretNames = [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ];
+
+    const missing: string[] = [];
+    const reusableSecrets =
+      ((reusableRunner.on as Record<string, unknown> | undefined)?.workflow_call as
+        | Record<string, unknown>
+        | undefined) ?? {};
+    const reusableSecretDefs =
+      (reusableSecrets.secrets as Record<string, unknown> | undefined) ?? {};
+    const runnerJobs = (reusableRunner.jobs as Record<string, unknown> | undefined) ?? {};
+    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
+    const jobs = (workflow.jobs as Record<string, unknown> | undefined) ?? {};
+    const messagingJob = jobs["messaging-providers-e2e"] as
+      | Record<string, unknown>
+      | undefined;
+    if (!messagingJob) {
+      missing.push("nightly job messaging-providers-e2e");
+    }
+    const messagingSecrets =
+      (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
+
+    for (const name of expectedSecretNames) {
+      if (!reusableSecretDefs[name]) {
+        missing.push(`workflow_call.secrets.${name}`);
+      }
+      if (runStepEnv[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`e2e-script Run E2E script env.${name}`);
+      }
+      if (messagingSecrets[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`nightly messaging-providers-e2e secrets.${name}`);
+      }
+    }
+
+    expect(
+      missing,
+      `messaging-providers-e2e must pass optional live-message credentials and ` +
+        `targets through the reusable runner so Phase 6 can exercise ` +
+        `openclaw message send when repository secrets are configured. ` +
+        `Missing: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 });

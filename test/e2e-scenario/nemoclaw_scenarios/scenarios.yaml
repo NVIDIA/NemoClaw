@@ -1,0 +1,689 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+platforms:
+  ubuntu-local:
+    os: ubuntu
+    execution_target: local
+  macos-local:
+    os: macos
+    execution_target: local
+  wsl-local:
+    os: wsl
+    execution_target: local
+  gpu-runner:
+    os: ubuntu
+    execution_target: local
+    gpu: nvidia
+  brev-launchable:
+    os: ubuntu
+    execution_target: remote
+    provider: brev
+  dgx-spark:
+    os: ubuntu
+    execution_target: local
+    hardware: dgx-spark
+installs:
+  repo-current:
+    method: repo-checkout
+    source: current-branch
+  public-curl:
+    method: curl-install-script
+    source: public-installer
+  launchable:
+    method: brev-launchable
+    source: launchable-image
+  release:
+    method: release-tarball
+    source: github-release
+  upgrade-from-version:
+    method: upgrade-in-place
+    source: prior-release
+runtimes:
+  docker-running:
+    container_engine: docker
+    container_daemon: running
+  gpu-docker-cdi:
+    container_engine: docker
+    container_daemon: running
+    gpu_runtime: cdi
+  docker-missing:
+    container_engine: docker
+    container_daemon: missing
+  macos-docker-optional:
+    container_engine: docker
+    container_daemon: optional
+    note: docker-unavailable-on-github-hosted-macos
+onboarding:
+  cloud-openclaw: &id001
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+  cloud-openclaw-custom-policies:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    model: nvidia/nemotron-3-super-120b-a12b
+    policy_presets:
+    - npm
+    - pypi
+  cloud-openclaw-invalid-nvidia-key:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    invalid_api_key: not-a-nvidia-key
+  cloud-openclaw-gateway-port-conflict:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    gateway_port: 18080
+  cloud-hermes: &id002
+    path: cloud
+    agent: hermes
+    provider: nvidia
+    inference_route: inference-local
+  local-ollama-openclaw: &id003
+    path: local
+    agent: openclaw
+    provider: ollama
+    inference_route: inference-local
+  openai-compatible-openclaw: &id004
+    path: cloud
+    agent: openclaw
+    provider: openai-compatible
+    inference_route: inference-local
+setup_scenarios:
+  ubuntu-repo-cloud-openclaw:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - inference
+    - credentials
+    - baseline-onboarding
+  ubuntu-repo-cloud-hermes:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-hermes
+    expected_state: cloud-hermes-ready
+    suites:
+    - smoke
+    - inference
+    - hermes-specific
+    - baseline-onboarding
+  gpu-repo-local-ollama-openclaw:
+    alias_for_plan: gpu-repo-docker-cdi__local-ollama-openclaw
+    dimensions:
+      platform: gpu-runner
+      install: repo-current
+      runtime: gpu-docker-cdi
+      onboarding: local-ollama-openclaw
+    expected_state: local-ollama-openclaw-ready
+    suites:
+    - smoke
+    - local-ollama-inference
+    - ollama-proxy
+    runner_requirements:
+    - self-hosted-gpu
+    - docker-cdi
+  macos-repo-cloud-openclaw:
+    alias_for_plan: macos-repo-docker__cloud-nvidia-openclaw
+    dimensions:
+      platform: macos-local
+      install: repo-current
+      runtime: macos-docker-optional
+      onboarding: cloud-openclaw
+    expected_state: macos-cli-ready-docker-optional
+    suites:
+    - platform-macos
+    runner_requirements:
+    - macos-latest
+    skipped_capabilities:
+    - id: macos-docker-dependent-suites
+      reason: GitHub-hosted macOS runners do not provide a reachable Docker daemon; gateway/sandbox/inference suites are reported as skipped instead of failing this scenario.
+      suites:
+      - smoke
+      - inference
+      - credentials
+  wsl-repo-cloud-openclaw:
+    alias_for_plan: wsl-repo-docker__cloud-nvidia-openclaw
+    dimensions:
+      platform: wsl-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - platform-wsl
+    runner_requirements:
+    - windows-latest
+    - wsl2
+  brev-launchable-cloud-openclaw:
+    alias_for_plan: brev-launchable-remote__cloud-nvidia-openclaw
+    dimensions:
+      platform: brev-launchable
+      install: launchable
+      runtime: docker-running
+      onboarding: cloud-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - inference
+    - baseline-onboarding
+    runner_requirements:
+    - ubuntu-latest
+    - brev-api-token
+    - launchable-image
+    overrides:
+      onboarding:
+        gateway:
+          bind_address: 0.0.0.0
+  ubuntu-no-docker-preflight-negative:
+    alias_for_plan: ubuntu-repo-no-docker__cloud-nvidia-openclaw
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-missing
+      onboarding: cloud-openclaw
+    expected_state: preflight-failure-no-sandbox
+    suites: []
+  ubuntu-repo-cloud-openclaw-custom-policies:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-custom-policies
+    expected_state: cloud-openclaw-custom-policies-ready
+    suites:
+    - smoke
+    - inference
+    - credentials
+    - onboarding-state
+    - baseline-onboarding
+  ubuntu-repo-openai-compatible-openclaw:
+    alias_for_plan: ubuntu-repo-docker__openai-compatible-openclaw
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: openai-compatible-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-brave:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-brave
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-brave
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-telegram:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-telegram
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-telegram
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-telegram
+  ubuntu-repo-cloud-openclaw-discord:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-discord
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-discord
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-cloud-openclaw-slack:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-slack
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-slack
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-cloud-hermes-discord:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes-discord
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-hermes-discord
+    expected_state: cloud-hermes-ready
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-cloud-hermes-slack:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes-slack
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-hermes-slack
+    expected_state: cloud-hermes-ready
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-cloud-openclaw-resume:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-resume-after-interrupt
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-repair:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-repair-existing-config
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-repair-existing-config
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-double-same-provider:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-double-same-provider
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-double-same-provider
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-double-provider-switch:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-double-provider-switch
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-double-provider-switch
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-token-rotation:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-token-rotation
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-token-rotation
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-token-rotation
+  ubuntu-invalid-nvidia-key-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-invalid-nvidia-key
+    expected_state: onboarding-failure-invalid-nvidia-key
+    suites: []
+  ubuntu-gateway-port-conflict-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-gateway-port-conflict
+    expected_state: onboarding-failure-gateway-port-conflict
+    suites: []
+base_scenarios:
+  ubuntu-repo-docker:
+    platform: ubuntu-local
+    install: repo-current
+    runtime: docker-running
+  gpu-repo-docker-cdi:
+    platform: gpu-runner
+    install: repo-current
+    runtime: gpu-docker-cdi
+    runner_requirements:
+    - self-hosted-gpu
+    - docker-cdi
+  macos-repo-docker:
+    platform: macos-local
+    install: repo-current
+    runtime: macos-docker-optional
+    runner_requirements:
+    - macos-latest
+    skipped_capabilities:
+    - id: macos-docker-dependent-suites
+      reason: GitHub-hosted macOS runners do not provide a reachable Docker daemon; gateway/sandbox/inference suites are reported as skipped instead of failing this scenario.
+      suites:
+      - smoke
+      - inference
+      - credentials
+  wsl-repo-docker:
+    platform: wsl-local
+    install: repo-current
+    runtime: docker-running
+    runner_requirements:
+    - windows-latest
+    - wsl2
+  brev-launchable-remote:
+    platform: brev-launchable
+    install: launchable
+    runtime: docker-running
+    runner_requirements:
+    - ubuntu-latest
+    - brev-api-token
+    - launchable-image
+  ubuntu-repo-no-docker:
+    platform: ubuntu-local
+    install: repo-current
+    runtime: docker-missing
+    expected_failure:
+      phase: preflight
+      error_class: docker-missing
+      forbidden_side_effects:
+      - gateway-started
+      - sandbox-created
+onboarding_profiles:
+  cloud-nvidia-openclaw: *id001
+  cloud-nvidia-hermes: *id002
+  local-ollama-openclaw: *id003
+  openai-compatible-openclaw: *id004
+  cloud-nvidia-openclaw-brave:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    features:
+      web_search: brave
+    required_secrets:
+    - BRAVE_API_KEY
+  cloud-nvidia-openclaw-telegram:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    messaging: telegram
+  cloud-nvidia-openclaw-discord:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    messaging: discord
+  cloud-nvidia-openclaw-slack:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    messaging: slack
+  cloud-nvidia-hermes-discord:
+    path: cloud
+    agent: hermes
+    provider: nvidia
+    inference_route: inference-local
+    messaging: discord
+  cloud-nvidia-hermes-slack:
+    path: cloud
+    agent: hermes
+    provider: nvidia
+    inference_route: inference-local
+    messaging: slack
+  cloud-nvidia-openclaw-resume-after-interrupt:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    lifecycle: resume-after-interrupt
+  cloud-nvidia-openclaw-repair-existing-config:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    lifecycle: repair-existing-config
+  cloud-nvidia-openclaw-double-same-provider:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    lifecycle: double-same-provider
+  cloud-nvidia-openclaw-double-provider-switch:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    lifecycle: double-provider-switch
+  cloud-nvidia-openclaw-token-rotation:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    lifecycle: token-rotation
+test_plans:
+  ubuntu-repo-docker__cloud-nvidia-openclaw:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - inference
+    - credentials
+  ubuntu-repo-docker__cloud-nvidia-hermes:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-hermes
+    expected_state: cloud-hermes-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - inference
+    - hermes-specific
+  gpu-repo-docker-cdi__local-ollama-openclaw:
+    base: gpu-repo-docker-cdi
+    onboarding: local-ollama-openclaw
+    expected_state: local-ollama-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - local-ollama-inference
+    - ollama-proxy
+  macos-repo-docker__cloud-nvidia-openclaw:
+    base: macos-repo-docker
+    onboarding: cloud-nvidia-openclaw
+    expected_state: macos-cli-ready-docker-optional
+    onboarding_assertions:
+    - base-installed
+    suites:
+    - platform-macos
+    skipped_capabilities:
+    - id: macos-docker-dependent-suites
+      reason: GitHub-hosted macOS runners do not provide a reachable Docker daemon; gateway/sandbox/inference suites are reported as skipped instead of failing this scenario.
+      suites:
+      - smoke
+      - inference
+      - credentials
+  wsl-repo-docker__cloud-nvidia-openclaw:
+    base: wsl-repo-docker
+    onboarding: cloud-nvidia-openclaw
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - platform-wsl
+  brev-launchable-remote__cloud-nvidia-openclaw:
+    base: brev-launchable-remote
+    onboarding: cloud-nvidia-openclaw
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - inference
+    overrides:
+      onboarding:
+        gateway:
+          bind_address: 0.0.0.0
+  ubuntu-repo-no-docker__cloud-nvidia-openclaw:
+    base: ubuntu-repo-no-docker
+    onboarding: cloud-nvidia-openclaw
+    expected_state: preflight-failure-no-sandbox
+    onboarding_assertions:
+    - base-installed
+    - preflight-expected-failed
+    suites: []
+  ubuntu-repo-docker__openai-compatible-openclaw:
+    base: ubuntu-repo-docker
+    onboarding: openai-compatible-openclaw
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-brave:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-brave
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-telegram
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-telegram
+  ubuntu-repo-docker__cloud-nvidia-openclaw-discord:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-discord
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-docker__cloud-nvidia-openclaw-slack:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-slack
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-docker__cloud-nvidia-hermes-discord:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-hermes-discord
+    expected_state: cloud-hermes-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-docker__cloud-nvidia-hermes-slack:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-hermes-slack
+    expected_state: cloud-hermes-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-resume-after-interrupt
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-repair-existing-config:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-repair-existing-config
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-double-same-provider:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-double-same-provider
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-double-provider-switch:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-double-provider-switch
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+  ubuntu-repo-docker__cloud-nvidia-openclaw-token-rotation:
+    base: ubuntu-repo-docker
+    onboarding: cloud-nvidia-openclaw-token-rotation
+    expected_state: cloud-openclaw-ready
+    onboarding_assertions:
+    - base-installed
+    - preflight-passed
+    suites:
+    - smoke
+    - messaging-token-rotation
+onboarding_assertions:
+  base-installed:
+    stage: base
+    script: onboarding_assertions/base/00-cli-installed.sh
+    assertion_id: onboarding.base.cli-installed
+  preflight-passed:
+    stage: onboarding
+    script: onboarding_assertions/preflight/00-preflight-passed.sh
+    assertion_id: onboarding.preflight.passed
+  preflight-expected-failed:
+    stage: onboarding
+    script: onboarding_assertions/preflight/00-preflight-expected-failed.sh
+    assertion_id: onboarding.preflight.expected-failed

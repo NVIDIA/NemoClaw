@@ -3,31 +3,57 @@
 
 import { deleteCredential, saveCredential } from "../credentials/store";
 
-export interface ChannelDef {
-  envKey?: string;
+export interface ChannelBase {
   description: string;
   help: string;
   label: string;
-  appTokenEnvKey?: string;
-  appTokenHelp?: string;
-  appTokenLabel?: string;
+  setupNotes?: readonly string[];
   userIdEnvKey?: string;
   userIdHelp?: string;
   userIdLabel?: string;
   allowIdsMode?: "dm" | "guild";
+  channelIdEnvKey?: string;
+  channelIdHelp?: string;
+  channelIdLabel?: string;
   serverIdEnvKey?: string;
   serverIdHelp?: string;
   serverIdLabel?: string;
   requireMentionEnvKey?: string;
   requireMentionHelp?: string;
+}
+
+export interface CredentialBackedChannelDef extends ChannelBase {
+  envKey?: string;
+  appTokenEnvKey?: string;
+  appTokenHelp?: string;
+  appTokenLabel?: string;
   tokenFormat?: RegExp;
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
-  // "host-qr" channels capture the token via a host-side QR handshake instead
-  // of a paste prompt. Defaults to "token-paste" when omitted.
+  // "host-qr" channels capture a static token via a host-side QR handshake
+  // (e.g. wechat/iLink). Defaults to "token-paste" when omitted.
   loginMethod?: "token-paste" | "host-qr";
 }
+
+export interface InSandboxQrChannelDef extends ChannelBase {
+  // In-sandbox QR channels intentionally let the bot library own mutable
+  // session state inside the sandbox after the operator pairs the account.
+  // That is the runtime tradeoff of enabling the channel without a host bridge;
+  // NemoClaw must still not declare host-side token env keys or OpenShell
+  // provider credentials for these channels.
+  loginMethod: "in-sandbox-qr";
+  envKey?: never;
+  appTokenEnvKey?: never;
+  appTokenHelp?: never;
+  appTokenLabel?: never;
+  tokenFormat?: never;
+  tokenFormatHint?: never;
+  appTokenFormat?: never;
+  appTokenFormatHint?: never;
+}
+
+export type ChannelDef = CredentialBackedChannelDef | InSandboxQrChannelDef;
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   telegram: {
@@ -35,6 +61,10 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "Telegram bot messaging",
     help: "Create a bot via @BotFather on Telegram, then copy the token.",
     label: "Telegram Bot Token",
+    setupNotes: [
+      "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
+      "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
+    ],
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
@@ -91,6 +121,19 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
+    channelIdEnvKey: "SLACK_ALLOWED_CHANNELS",
+    channelIdHelp:
+      "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+    channelIdLabel: "Slack Channel IDs (comma-separated allowlist)",
+  },
+  whatsapp: {
+    description: "WhatsApp Web messaging (QR pairing)",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, connect to it (e.g. `openshell sandbox connect <sandbox>`) and run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes. NemoClaw renders the OpenClaw QR in compact (scan-friendly) form and validates the gateway before pairing, so a gateway close (e.g. `1008`) is reported separately from the QR (issue #4522).",
+    label: "WhatsApp",
+    loginMethod: "in-sandbox-qr",
+    setupNotes: [
+      "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp` to confirm the bridge is delivering inbound messages — pairing alone does not guarantee inbound delivery (issue #4386).",
+    ],
   },
 };
 
@@ -111,13 +154,13 @@ export function getChannelTokenKeys(channel: ChannelDef): string[] {
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
 }
 
-export function channelUsesQrPairing(channel: ChannelDef): boolean {
-  return !channel.envKey;
+export function channelUsesInSandboxQrPairing(channel: ChannelDef): boolean {
+  return channel.loginMethod === "in-sandbox-qr";
 }
 
 export function channelHasStaticToken(
   channel: ChannelDef,
-): channel is ChannelDef & { envKey: string } {
+): channel is CredentialBackedChannelDef & { envKey: string } {
   return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 

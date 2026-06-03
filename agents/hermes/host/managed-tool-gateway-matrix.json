@@ -1,0 +1,116 @@
+{
+  "nous-web": {
+    "service": "firecrawl",
+    "description": "Nous Portal managed web search and crawl gateway",
+    "config": {
+      "web": {
+        "backend": "firecrawl",
+        "use_gateway": true
+      }
+    },
+    "envKey": "FIRECRAWL_GATEWAY_URL",
+    "envValue": "http://host.openshell.internal:11436/firecrawl",
+    "brokerPath": "/firecrawl",
+    "upstream": "https://firecrawl-gateway.nousresearch.com",
+    "sandboxAuthHeaders": ["Authorization: Bearer", "x-firecrawl-api-key", "x-api-key"],
+    "upstreamAuthHeader": "Authorization: Bearer",
+    "policyPreset": "nous-web",
+    "tools": ["web_search", "web_extract"]
+  },
+  "nous-audio": {
+    "service": "openai-audio",
+    "description": "Nous Portal managed audio generation and transcription gateway",
+    "config": {
+      "tts": {
+        "provider": "openai",
+        "use_gateway": true
+      },
+      "stt": {
+        "provider": "openai",
+        "use_gateway": true
+      }
+    },
+    "envKey": "OPENAI_AUDIO_GATEWAY_URL",
+    "envValue": "http://host.openshell.internal:11436/openai-audio",
+    "brokerPath": "/openai-audio",
+    "upstream": "https://openai-audio-gateway.nousresearch.com",
+    "sandboxAuthHeaders": ["Authorization: Bearer", "openai-api-key", "x-api-key"],
+    "upstreamAuthHeader": "Authorization: Bearer",
+    "policyPreset": "nous-audio",
+    "tools": ["text_to_speech", "transcribe_audio"]
+  },
+  "nous-browser": {
+    "service": "browser-use",
+    "description": "Nous Portal managed browser automation gateway",
+    "config": {
+      "browser": {
+        "cloud_provider": "browser-use",
+        "use_gateway": true
+      }
+    },
+    "envKey": "BROWSER_USE_GATEWAY_URL",
+    "envValue": "http://host.openshell.internal:11436/browser-use",
+    "brokerPath": "/browser-use",
+    "upstream": "https://browser-use-gateway.nousresearch.com",
+    "sandboxAuthHeaders": ["X-Browser-Use-API-Key", "x-api-key"],
+    "upstreamAuthHeader": "X-Browser-Use-API-Key",
+    "policyPreset": "nous-browser",
+    "tools": [
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_click",
+      "browser_type",
+      "browser_scroll",
+      "browser_back",
+      "browser_press"
+    ],
+    "transportExceptions": [
+      "*.cdp1.browser-use.com",
+      "*.cdp2.browser-use.com",
+      "*.cdp3.browser-use.com",
+      "*.cdp4.browser-use.com",
+      "*.cdp5.browser-use.com",
+      "*.cdp6.browser-use.com",
+      "*.cdp7.browser-use.com",
+      "*.cdp8.browser-use.com",
+      "*.cdp9.browser-use.com",
+      "*.cdp10.browser-use.com"
+    ]
+  },
+  "nous-image": {
+    "service": "fal-queue",
+    "description": "Nous Portal managed image generation gateway",
+    "config": {
+      "image_gen": {
+        "use_gateway": true
+      }
+    },
+    "envKey": "FAL_QUEUE_GATEWAY_URL",
+    "envValue": "http://host.openshell.internal:11436/fal-queue",
+    "brokerPath": "/fal-queue",
+    "upstream": "https://fal-queue-gateway.nousresearch.com",
+    "sandboxAuthHeaders": ["Authorization: Key", "x-fal-key", "x-api-key"],
+    "upstreamAuthHeader": "Authorization: Key",
+    "policyPreset": "nous-image",
+    "tools": ["image_generate"]
+  },
+  "nous-code": {
+    "service": "modal",
+    "description": "Nous Portal managed sandboxed code execution gateway",
+    "config": {
+      "terminal": {
+        "backend": "modal",
+        "modal_mode": "managed",
+        "timeout": 180
+      }
+    },
+    "envKey": "MODAL_GATEWAY_URL",
+    "envValue": "http://host.openshell.internal:11436/modal",
+    "brokerPath": "/modal",
+    "upstream": "https://modal-gateway.nousresearch.com",
+    "sandboxAuthHeaders": ["Authorization: Bearer", "x-api-key"],
+    "upstreamAuthHeader": "Authorization: Bearer",
+    "policyPreset": "nous-code",
+    "tools": ["terminal"]
+  }
+}

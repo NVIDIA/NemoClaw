@@ -16,7 +16,7 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "2026.4.23"
+expected_version: "2026.5.16"
 gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -40,6 +40,13 @@ dashboard:
   kind: api                    # "ui" or "api"
   label: "OpenAI-compatible API"
   path: "/v1"                  # appended to the base URL when displayed
+dashboard_ui:
+  label: "Web dashboard"
+  port: 9119
+  path: "/"
+  enable_env: NEMOCLAW_HERMES_DASHBOARD
+  port_env: NEMOCLAW_HERMES_DASHBOARD_PORT
+  tui_env: NEMOCLAW_HERMES_DASHBOARD_TUI
 forward_ports:
   - 8642
 
@@ -67,6 +74,10 @@ state_dirs:
   - profiles
   - cache
   - pairing
+  # Hermes' WhatsApp bridge stores QR-paired session credentials under
+  # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
+  # keep the in-sandbox pairing state without re-scanning.
+  - platforms
   # Hermes' iLink WeChat adapter persists per-account context tokens under
   # ~/.hermes/weixin/accounts/<id>.context-tokens.json so the long-poll
   # cursor survives a rebuild. The bot token itself comes from .env via
@@ -78,8 +89,13 @@ state_dirs:
 # exposes compatibility symlinks such as .hermes/state.db -> runtime/state.db.
 # The SQLite database is captured with SQLite's online backup API; WAL/SHM
 # files are intentionally omitted because the backup produces a consistent DB.
+# .hermes_history is user runtime history: prompt_toolkit appends to it on
+# every TUI keypress, so NemoClaw intentionally keeps it sandbox-writable even
+# when shields-up locks the parent config dir. It can be removed from this
+# contract if upstream Hermes supports redirecting or disabling FileHistory.
 state_files:
   - path: SOUL.md
+  - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
 
@@ -92,18 +108,21 @@ web_auth_method: bearer_token
 web_auth_env: API_SERVER_KEY
 
 # ── Messaging platforms ─────────────────────────────────────────
-# Hermes natively supports 14 platforms. We start with the 4 that
-# OpenShell already has L7 proxy support for. WeChat uses the iLink
+# Hermes natively supports 14 platforms. We enable the platforms with
+# OpenShell policy and NemoClaw config support. WeChat uses the iLink
 # gateway (host-side QR login during onboard); the in-sandbox Hermes
 # adapter reads WEIXIN_TOKEN + WEIXIN_ACCOUNT_ID per
 # https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
+# WhatsApp pairs in the sandbox via `hermes whatsapp`; the selected channel
+# bakes WHATSAPP_ENABLED/WHATSAPP_MODE into .env and preserves session state.
 messaging_platforms:
   supported:
     - telegram
     - discord
     - slack
     - wechat
-  # Future: whatsapp, signal, matrix, mattermost, email, etc.
+    - whatsapp
+  # Future: signal, matrix, mattermost, email, etc.
   # Each needs a network policy entry before enabling.
 
 # ── Inference ───────────────────────────────────────────────────

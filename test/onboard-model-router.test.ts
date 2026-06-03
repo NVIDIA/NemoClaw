@@ -115,7 +115,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -260,6 +260,12 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+          // pickHostPython probe (#3781) — emit a healthy probe response so
+          // the helper proceeds to the venv step instead of falling back.
+          'if [ "$1" = "-c" ]; then',
+          '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+          "  exit 0",
+          "fi",
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
@@ -354,7 +360,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     return originalRun(command, opts);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -538,7 +544,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -660,6 +666,12 @@ const { setupInference } = require(${onboardPath});
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+          // pickHostPython probe (#3781) — emit a healthy probe response so
+          // the helper proceeds to the venv step instead of falling back.
+          'if [ "$1" = "-c" ]; then',
+          '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+          "  exit 0",
+          "fi",
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
@@ -758,7 +770,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     return originalRun(command, opts);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {

@@ -24,6 +24,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+source "${SCRIPT_DIR_TIMEOUT}/lib/openclaw-json.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_A="test-sbx-a"
@@ -347,61 +349,48 @@ test_sbx_01_list_sandboxes() {
 #
 #   1. Uses `openclaw agent --json`, which calls routeLogsToStderr() in
 #      openclaw/src/commands/agent-via-gateway.ts:57 so stdout is a clean
-#      JSON envelope. Stderr is dropped (2>/dev/null) so any prompt-echo
-#      or wrapped error there cannot satisfy the assertion.
+#      JSON envelope. Merged stdout/stderr is preserved for failure
+#      diagnostics, but assertions only read JSON payload text.
 #   2. The expected token (the integer 42) is not a literal substring of
 #      the prompt, so an error path that quoted the prompt back cannot
 #      false-positive the grep — which is what masked the openclaw 4.9
 #      SSRF regression from the prior `Say exactly: HELLO_E2E` assertion.
-#   3. Asserts on `result.payloads[].text` from the JSON envelope, not on
-#      merged stdout/stderr.
-#   4. Pins `--thinking off` so the first-turn smoke contract is not delayed
-#      by model-catalog inferred reasoning defaults.
+#   3. Asserts on parsed model reply text from the JSON envelope, not on
+#      merged stdout/stderr or a single brittle envelope shape.
+#   4. Relies on generated `thinkingDefault: off` config so the first-turn
+#      smoke contract is not delayed by model-catalog inferred reasoning
+#      defaults without depending on transient CLI flags.
 test_sbx_02_connect_chat() {
   log "=== TC-SBX-02: Connect & Chat ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-02" || return
 
   log "  Sending one-shot message to agent via SSH (openclaw agent --json)..."
-  local session_id raw ssh_cfg
+  local session_id raw ssh_cfg rc
   session_id="e2e-sbx-02-$(date +%s)-$$"
-  # Use a direct ssh invocation rather than sandbox_exec(): sandbox_exec_for
-  # merges stderr into stdout via 2>&1 so it can log non-zero exits, which
-  # would pollute the JSON document we need to parse below. Drop stderr at
-  # the source so node deprecation warnings (UNDICI-EHPA, etc.) and
-  # progress-bar bytes from openclaw cannot trip up json.load().
+  # Use a direct ssh invocation rather than sandbox_exec() so the JSON envelope
+  # is easy to parse while still preserving stderr in failure output.
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_A" >"$ssh_cfg" 2>/dev/null; then
     rm -f "$ssh_cfg"
     fail "TC-SBX-02: Connect & Chat" "Failed to fetch SSH config for '$SANDBOX_A'"
     return
   fi
+  rc=0
   raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_A}" \
-    "openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
-    2>/dev/null) || true
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>&1) || rc=$?
   rm -f "$ssh_cfg"
 
   local reply
-  reply=$(echo "$raw" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
-  if [[ -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
+  if [[ $rc -eq 0 && -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
     pass "TC-SBX-02: Agent computed 6×7=42 through openclaw → inference.local"
   else
-    fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply; reply='${reply:0:200}'; raw stdout='${raw:0:200}'"
+    fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply (rc=$rc); reply='${reply:0:200}'; raw output='${raw:0:200}'"
   fi
 }
 
@@ -460,6 +449,50 @@ test_sbx_04_log_streaming() {
     else
       pass "TC-SBX-04: Log --follow exited cleanly after kill"
     fi
+  fi
+}
+
+# ── TC-SBX-09: Tmux Session Flow ────────────────────────────────────────────
+# OpenClaw's bundled tmux-session flow shells out to `tmux` inside the sandbox.
+# The sandbox image must ship tmux (issue #4513) or that flow fails with
+# `tmux: command not found`. Assert the binary is present and can drive a full
+# detached session lifecycle (new-session → list → kill), which is the exact
+# shape the bundled flow exercises.
+test_sbx_09_tmux_session_flow() {
+  log "=== TC-SBX-09: Tmux Session Flow ==="
+  require_sandbox "$SANDBOX_A" "TC-SBX-09" || return
+
+  local which_out
+  which_out=$(sandbox_exec "command -v tmux || echo TMUX_MISSING" 2>&1) || true
+  if echo "$which_out" | grep -q "TMUX_MISSING"; then
+    fail "TC-SBX-09: Tmux Session Flow" "tmux not found inside sandbox (issue #4513)"
+    return
+  fi
+  pass "TC-SBX-09: tmux is installed in the sandbox ($(echo "$which_out" | head -1))"
+
+  # Drive a detached session lifecycle the way the bundled flow does. tmux needs
+  # a writable socket dir; /tmp is on the sandbox write set.
+  local sess="nemoclaw-e2e-tmux-$$"
+  local flow_out
+  flow_out=$(sandbox_exec "TMUX_TMPDIR=/tmp tmux new-session -d -s '${sess}' 'sleep 30' \
+    && TMUX_TMPDIR=/tmp tmux list-sessions \
+    && TMUX_TMPDIR=/tmp tmux kill-session -t '${sess}' \
+    && echo TMUX_FLOW_OK" 2>&1) || true
+
+  if echo "$flow_out" | grep -q "TMUX_FLOW_OK" && echo "$flow_out" | grep -q "${sess}"; then
+    pass "TC-SBX-09: tmux new/list/kill session lifecycle works"
+  elif echo "$flow_out" | grep -qE "fork failed: (Permission denied|Resource temporarily unavailable|Operation not permitted)"; then
+    # Sandbox hardening (seccomp + no-new-privileges + nproc cap) can refuse
+    # tmux's fork-to-spawn child window under the e2e SSH session account.
+    # The binary-presence assertion above already covers the install surface;
+    # the lifecycle drive depends on runtime capabilities that are
+    # environment-dependent and not in scope of this case.
+    sandbox_exec "TMUX_TMPDIR=/tmp tmux kill-session -t '${sess}' 2>/dev/null || true" >/dev/null 2>&1 || true
+    skip "TC-SBX-09" "tmux lifecycle drive blocked by sandbox fork policy: $(echo "$flow_out" | head -3)"
+  else
+    # Best-effort cleanup in case kill-session never ran.
+    sandbox_exec "TMUX_TMPDIR=/tmp tmux kill-session -t '${sess}' 2>/dev/null || true" >/dev/null 2>&1 || true
+    fail "TC-SBX-09: Tmux Session Flow" "Session lifecycle failed: $(echo "$flow_out" | head -5)"
   fi
 }
 
@@ -803,6 +836,7 @@ main() {
   test_sbx_02_connect_chat
   test_sbx_03_status_fields
   test_sbx_04_log_streaming
+  test_sbx_09_tmux_session_flow
 
   # Phase 2: Non-destructive recovery (sandbox A stays alive)
   test_sbx_07_registry_rebuild

@@ -2,15 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
+import {
+  applyManagedToolConfig,
+  loadManagedToolGatewayMatrix,
+} from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
+const API_SERVER_TOOLSETS = [
+  "web",
+  "browser",
+  "terminal",
+  "file",
+  "code_execution",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+  "nemoclaw",
+  "audio",
+];
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
+  const apiServerToolsets = [...API_SERVER_TOOLSETS];
   const config: Record<string, unknown> = {
     _config_version: 12,
     model: {
       default: settings.model,
       provider: "custom",
       base_url: settings.baseUrl,
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     },
     terminal: {
       backend: "local",
@@ -31,13 +55,36 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       compact: false,
       tool_progress: "all",
     },
+    plugins: {
+      enabled: ["nemoclaw"],
+    },
+    platform_toolsets: {
+      api_server: apiServerToolsets,
+    },
   };
 
-  // Hermes v2026.4.23 reads Discord behavior from top-level `discord:`.
+  // Hermes v2026.4.23+ reads Discord behavior from top-level `discord:`.
   // Bot tokens and user allowlists stay in .env so config.yaml never carries
   // real secrets or credential placeholders under platforms.discord.
   if (settings.messaging.enabledChannels.has("discord")) {
     config.discord = buildDiscordConfig(settings.messaging.discordGuilds);
+  }
+
+  if (settings.managedToolGateways.brokerEnabled) {
+    const matrix = loadManagedToolGatewayMatrix();
+    for (const preset of settings.managedToolGateways.presets) {
+      const entry = matrix[preset];
+      if (!entry) {
+        throw new Error(`Unknown Hermes managed-tool gateway preset: ${preset}`);
+      }
+      applyManagedToolConfig(config, entry.config);
+    }
+    if (
+      settings.managedToolGateways.presets.includes("nous-audio") &&
+      !apiServerToolsets.includes("tts")
+    ) {
+      apiServerToolsets.push("tts");
+    }
   }
 
   const telegramConfig = settings.messaging.telegramConfig;
@@ -53,7 +100,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // API server — internal port only.
   // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
   // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
-  config.platforms = {
+  const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
       extra: {
@@ -62,6 +109,12 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       },
     },
   };
+
+  if (settings.messaging.enabledChannels.has("slack")) {
+    platforms.slack = { enabled: true };
+  }
+
+  config.platforms = platforms;
 
   return config;
 }

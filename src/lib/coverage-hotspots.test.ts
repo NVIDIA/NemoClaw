@@ -27,27 +27,25 @@ describe("small CLI helper coverage", () => {
 
     const output: string[] = [];
     const warnings: string[] = [];
-    expect(
-      runGatewayTokenCommand(
-        "alpha",
-        { quiet: false },
-        {
-          fetchToken: () => "token-123",
-          log: (message) => output.push(message),
-          error: (message) => warnings.push(message),
-        },
-      ),
-    ).toBe(0);
+    runGatewayTokenCommand(
+      "alpha",
+      { quiet: false },
+      {
+        fetchToken: () => "token-123",
+        log: (message) => output.push(message),
+        error: (message) => warnings.push(message),
+      },
+    );
     expect(output).toEqual(["token-123"]);
     expect(warnings.join("\n")).toContain("Treat this token like a password");
 
-    expect(
+    expect(() =>
       runGatewayTokenCommand(
         "alpha",
         {},
         { fetchToken: () => null, log: () => undefined, error: (message) => warnings.push(message) },
       ),
-    ).toBe(1);
+    ).toThrow(/Could not retrieve/);
   });
 
   it("resolves service command sandbox names", async () => {

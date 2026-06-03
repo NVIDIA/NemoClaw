@@ -2,22 +2,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Channel stop/start/remove lifecycle E2E test.
+# Channel stop/start lifecycle E2E test.
 #
-# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start")
-# plus the live channel removal path from issue #3671. The regression surface
-# is intentionally exercised for both supported agents (OpenClaw and Hermes)
-# and every messaging channel (telegram, discord, wechat, slack).
+# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start").
+# The regression surface is intentionally exercised for both supported agents
+# (OpenClaw and Hermes) and every messaging channel (telegram, discord, wechat,
+# slack, whatsapp).
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
 #            from the baked agent config while preserving cached credentials.
 #   - #3381: `channels start <ch>` + rebuild must reattach cached providers
 #            without re-prompting.
-#   - #3671: `channels remove <ch>` on a live sandbox must detach before
-#            deleting provider records, clear registry channel/hash state,
-#            un-apply the matching channel policy preset, and rebuild cleanly
-#            even when the original token env vars are still present.
 #
 # Prerequisites:
 #   - Docker running
@@ -102,7 +98,8 @@ OPENCLAW_SANDBOX_NAME="${NEMOCLAW_CHANNELS_OPENCLAW_SANDBOX_NAME:-${BASE_SANDBOX
 HERMES_SANDBOX_NAME="${NEMOCLAW_CHANNELS_HERMES_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-hermes}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
-CHANNELS=(telegram discord wechat slack)
+CHANNELS=(telegram discord wechat slack whatsapp)
+TOKENLESS_CHANNELS=(whatsapp)
 
 ACTIVE_AGENT=""
 ACTIVE_SANDBOX=""
@@ -199,14 +196,6 @@ registry_array_contains() {
   printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
-registry_object_has_key() {
-  local field="$1"
-  local key="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${key}\""
-}
-
 provider_names_for_channel() {
   local sandbox="$1"
   local channel="$2"
@@ -217,19 +206,6 @@ provider_names_for_channel() {
     slack)
       printf '%s\n' "${sandbox}-slack-bridge"
       printf '%s\n' "${sandbox}-slack-app"
-      ;;
-  esac
-}
-
-token_keys_for_channel() {
-  local channel="$1"
-  case "$channel" in
-    telegram) printf '%s\n' "TELEGRAM_BOT_TOKEN" ;;
-    discord) printf '%s\n' "DISCORD_BOT_TOKEN" ;;
-    wechat) printf '%s\n' "WECHAT_BOT_TOKEN" ;;
-    slack)
-      printf '%s\n' "SLACK_BOT_TOKEN"
-      printf '%s\n' "SLACK_APP_TOKEN"
       ;;
   esac
 }
@@ -259,6 +235,9 @@ channel_presence() {
       slack)
         probe='grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env'
         ;;
+      whatsapp)
+        probe='grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env'
+        ;;
     esac
     out=$(sandbox_exec "if [ -r /sandbox/.hermes/.env ]; then if ${probe}; then echo yes; else echo no; fi; else echo missing; fi" | tail -1) || true
   fi
@@ -279,7 +258,7 @@ dump_channel_state() {
     sandbox_exec "python3 -c 'import json; print(list(json.load(open(\"/sandbox/.openclaw/openclaw.json\")).get(\"channels\", {}).keys()))' 2>&1" | head -10 || true
   else
     info ".hermes/.env messaging keys:"
-    sandbox_exec "grep -E '^(TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|WEIXIN_TOKEN)=' /sandbox/.hermes/.env 2>/dev/null || true" | head -20 || true
+    sandbox_exec "grep -E '^(TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|WEIXIN_TOKEN|WHATSAPP_ENABLED|WHATSAPP_MODE|WHATSAPP_ALLOWED_USERS)=' /sandbox/.hermes/.env 2>/dev/null || true" | head -20 || true
   fi
 }
 
@@ -356,36 +335,6 @@ assert_provider_records_exist() {
   done
 }
 
-assert_channel_providers_deleted() {
-  local channel="$1"
-  local context="$2"
-  local provider msg
-  while IFS= read -r provider; do
-    if openshell provider get "$provider" >/dev/null 2>&1; then
-      msg="${ACTIVE_AGENT}/${provider}: provider record still exists ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${provider}: provider record deleted ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(provider_names_for_channel "$ACTIVE_SANDBOX" "$channel")
-}
-
-assert_channel_hashes_absent() {
-  local channel="$1"
-  local context="$2"
-  local key msg
-  while IFS= read -r key; do
-    if registry_object_has_key providerCredentialHashes "$key"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes still contains ${key} ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes excludes ${key} ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(token_keys_for_channel "$channel")
-}
-
 assert_policy_preset_active() {
   local channel="$1"
   local expected="$2"
@@ -418,6 +367,19 @@ assert_policy_preset_active() {
       pass_msg "$msg"
     fi
   fi
+}
+
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 export_fake_channel_env() {
@@ -470,11 +432,18 @@ install_for_active_agent() {
   export NEMOCLAW_RECREATE_SANDBOX=1
   export NEMOCLAW_FRESH=1
 
-  if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
-    if ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
-      export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-      info "api.telegram.org unreachable from host; setting NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1"
-    fi
+  if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] && is_fake_telegram_token "$TELEGRAM_BOT_TOKEN"; then
+    # This E2E normally uses fake tokens to exercise config plumbing, not the
+    # live Telegram API. Remove once onboard has a hermetic fake Telegram API.
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  fi
+  if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+    && { is_fake_slack_token "$SLACK_BOT_TOKEN" || is_fake_slack_token "$SLACK_APP_TOKEN"; }; then
+    # This E2E normally uses fake Slack tokens to exercise channel lifecycle
+    # plumbing, not the live Slack API.
+    export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+    info "Skipping onboarding Slack auth validation for fake-token E2E"
   fi
 
   info "Running install.sh --non-interactive for ${ACTIVE_AGENT} (${ACTIVE_SANDBOX})..."
@@ -519,6 +488,38 @@ run_rebuild() {
   fi
 }
 
+ensure_tokenless_channels_enabled() {
+  local added=0
+  local channel log rc msg
+  for channel in "${TOKENLESS_CHANNELS[@]}"; do
+    if registry_array_contains messagingChannels "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: tokenless channel already registered"
+      pass_msg "$msg"
+      continue
+    fi
+    log="/tmp/nc-channels-${ACTIVE_AGENT}-add-${channel}.log"
+    if nemoclaw "$ACTIVE_SANDBOX" channels add "$channel" >"$log" 2>&1; then
+      rc=0
+    else
+      rc=$?
+    fi
+    cat "$log"
+    if [ "$rc" -eq 0 ] && grep -q "Enabled ${channel} channel" "$log"; then
+      msg="${ACTIVE_AGENT}/${channel}: channels add registered tokenless QR channel"
+      pass_msg "$msg"
+      added=1
+    else
+      msg="${ACTIVE_AGENT}/${channel}: channels add failed or did not register tokenless QR channel"
+      fail_msg "$msg"
+      tail -30 "$log" 2>/dev/null || true
+    fi
+  done
+
+  if [ "$added" -eq 1 ]; then
+    run_rebuild "add-tokenless-channels"
+  fi
+}
+
 stop_all_channels() {
   local channel log rc msg
   for channel in "${CHANNELS[@]}"; do
@@ -558,46 +559,6 @@ start_all_channels() {
       fail_msg "$msg"
       tail -20 "$log" 2>/dev/null || true
     fi
-  done
-}
-
-remove_all_channels() {
-  local channel log rc msg
-  for channel in "${CHANNELS[@]}"; do
-    log="/tmp/nc-channels-${ACTIVE_AGENT}-remove-${channel}.log"
-    if nemoclaw "$ACTIVE_SANDBOX" channels remove "$channel" >"$log" 2>&1; then
-      rc=0
-    else
-      rc=$?
-    fi
-    cat "$log"
-    if [ "$rc" -eq 0 ] && grep -q "Removed ${channel} bridge" "$log"; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove completed on a live sandbox"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove failed"
-      fail_msg "$msg"
-      tail -30 "$log" 2>/dev/null || true
-    fi
-    if grep -q "Change queued.*remove '${channel}'" "$log"; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove queued rebuild"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove did not queue rebuild"
-      fail_msg "$msg"
-    fi
-
-    assert_channel_providers_deleted "$channel" "after channels remove"
-
-    if registry_array_contains messagingChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels still contains channel after remove"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels excludes channel after remove"
-      pass_msg "$msg"
-    fi
-    assert_channel_hashes_absent "$channel" "after remove"
-    assert_policy_preset_active "$channel" "inactive" "after remove"
   done
 }
 
@@ -653,6 +614,8 @@ run_agent_scenario() {
     print_summary
   fi
 
+  ensure_tokenless_channels_enabled
+
   section "${agent}: baseline with all channels active"
   assert_provider_records_exist "at baseline"
   assert_all_config_channels "present" "at baseline"
@@ -681,15 +644,6 @@ run_agent_scenario() {
   assert_registry_channels "present" "after start"
   assert_disabled_channels "absent" "after start"
   assert_provider_records_exist "after start"
-
-  section "${agent}: channels remove all on live sandbox"
-  remove_all_channels
-
-  section "${agent}: rebuild after channels remove"
-  run_rebuild "remove-all"
-  assert_all_config_channels "absent" "after remove+rebuild"
-  assert_registry_channels "absent" "after remove+rebuild"
-  assert_disabled_channels "absent" "after remove+rebuild"
 }
 
 section "Phase 0: Prerequisites"

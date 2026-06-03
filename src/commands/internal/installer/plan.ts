@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { buildInstallerPlan } from "../../../lib/actions/installer/plan";
@@ -14,7 +15,7 @@ export default class InternalInstallerPlanCommand extends NemoClawCommand {
   static usage = ["internal installer plan [--json]"];
   static examples = ["<%= config.bin %> internal installer plan --json --provider nim --install-ref v0.1.0"];
   static flags = {
-    json: Flags.boolean({ description: "Print the installer plan as JSON" }),
+    json: jsonFlag("Print the installer plan as JSON"),
     "install-ref": Flags.string({ description: "Install ref override" }),
     "install-tag": Flags.string({ description: "Install tag fallback" }),
     "git-describe-version": Flags.string({ description: "git describe version fallback", hidden: true }),

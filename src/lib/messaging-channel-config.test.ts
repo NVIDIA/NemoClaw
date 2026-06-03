@@ -20,6 +20,7 @@ describe("messaging channel config", () => {
       "DISCORD_REQUIRE_MENTION",
       "WECHAT_ALLOWED_IDS",
       "SLACK_ALLOWED_USERS",
+      "SLACK_ALLOWED_CHANNELS",
     ]);
   });
 
@@ -27,10 +28,12 @@ describe("messaging channel config", () => {
     expect(
       sanitizeMessagingChannelConfig({
         TELEGRAM_ALLOWED_IDS: "  123,456  ",
+        TELEGRAM_AUTHORIZED_CHAT_IDS: "ignored-because-canonical-wins",
         TELEGRAM_REQUIRE_MENTION: "yes",
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "0",
         SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
+        SLACK_ALLOWED_CHANNELS: "  C012AB3CD, C987ZY6XW  ",
         NVIDIA_API_KEY: "not-channel-config",
       }),
     ).toEqual({
@@ -38,6 +41,25 @@ describe("messaging channel config", () => {
       DISCORD_SERVER_ID: "1491590992753590594",
       DISCORD_REQUIRE_MENTION: "0",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3, U04GHI5JKL6",
+      SLACK_ALLOWED_CHANNELS: "C012AB3CD, C987ZY6XW",
+    });
+  });
+
+  it("canonicalizes Telegram allowlist aliases from env and persisted config", () => {
+    expect(
+      sanitizeMessagingChannelConfig({
+        TELEGRAM_AUTHORIZED_CHAT_IDS: "  123, 456  ",
+      }),
+    ).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123, 456",
+    });
+
+    expect(
+      readMessagingChannelConfigFromEnv({
+        TELEGRAM_CHAT_ID: "8388960805",
+      }),
+    ).toEqual({
+      TELEGRAM_ALLOWED_IDS: "8388960805",
     });
   });
 
@@ -62,6 +84,17 @@ describe("messaging channel config", () => {
     expect(env.TELEGRAM_ALLOWED_IDS).toBe("env-user");
     expect(env.TELEGRAM_REQUIRE_MENTION).toBe("1");
     expect(env.DISCORD_REQUIRE_MENTION).toBeUndefined();
+  });
+
+  it("hydrates Telegram aliases into the canonical env key for downstream build code", () => {
+    const env: NodeJS.ProcessEnv = {
+      TELEGRAM_AUTHORIZED_CHAT_IDS: "alias-user",
+    };
+
+    expect(hydrateMessagingChannelConfig(null, env)).toEqual({
+      TELEGRAM_ALLOWED_IDS: "alias-user",
+    });
+    expect(env.TELEGRAM_ALLOWED_IDS).toBe("alias-user");
   });
 
   it("reads effective config from env", () => {

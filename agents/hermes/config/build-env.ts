@@ -28,17 +28,26 @@ export type WechatConfig = {
   userId?: string;
 };
 
+export type SlackConfig = {
+  allowedChannels?: string[];
+};
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
   providerKey: string;
   inferenceApi: string;
+  managedToolGateways: {
+    brokerEnabled: boolean;
+    presets: string[];
+  };
   messaging: {
     enabledChannels: Set<string>;
     allowedIds: MessagingAllowedIds;
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
     wechatConfig: WechatConfig;
+    slackConfig: SlackConfig;
   };
 };
 
@@ -51,6 +60,14 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     baseUrl,
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
+    managedToolGateways: {
+      brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
+      presets: readBase64Json<string[]>(
+        env,
+        "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64",
+        "W10=",
+      ),
+    },
     messaging: {
       enabledChannels: new Set(
         readBase64Json<string[]>(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", "W10="),
@@ -67,6 +84,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         "e30=",
       ),
       wechatConfig: readBase64Json<WechatConfig>(env, "NEMOCLAW_WECHAT_CONFIG_B64", "e30="),
+      slackConfig: readBase64Json<SlackConfig>(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30="),
     },
   };
 }

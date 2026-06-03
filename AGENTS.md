@@ -5,9 +5,9 @@
 
 ## Project Overview
 
-NVIDIA NemoClaw is an open-source reference stack for running [OpenClaw](https://openclaw.ai) always-on assistants inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes more safely. It provides CLI tooling, a blueprint for sandbox orchestration, and security hardening.
+NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents such as [OpenClaw](https://openclaw.ai) and [Hermes](https://get-hermes.ai/) inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes more safely. It provides CLI tooling, a blueprint for sandbox orchestration, and security hardening.
 
-**Status:** Alpha (March 2026+). Interfaces may change without notice.
+Status: Active development. Interfaces may change without notice.
 
 ## Agent Skills
 
@@ -44,8 +44,8 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | Run all hooks manually | `npx prek run --all-files` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Auto-format | `make format` |
-| Build docs | `make docs` |
-| Serve docs locally | `make docs-live` |
+| Build docs | `npm run docs` |
+| Serve docs locally | `npm run docs:live` |
 
 ## Key Architecture Decisions
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { normalizeInstallerEnv } from "../../../lib/actions/installer/plan";
@@ -14,7 +15,7 @@ export default class InternalInstallerNormalizeEnvCommand extends NemoClawComman
   static usage = ["internal installer normalize-env [--json]"];
   static examples = ["<%= config.bin %> internal installer normalize-env --provider cloud --json"];
   static flags = {
-    json: Flags.boolean({ description: "Print normalized values as JSON" }),
+    json: jsonFlag("Print normalized values as JSON"),
     "install-ref": Flags.string({ description: "NEMOCLAW_INSTALL_REF value" }),
     "install-tag": Flags.string({ description: "NEMOCLAW_INSTALL_TAG value" }),
     provider: Flags.string({ description: "NEMOCLAW_PROVIDER value" }),

@@ -1,6 +1,38 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to NVIDIA NemoClaw
 
 Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
+
+All participants are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Types of Contributions
+
+We welcome many types of contributions:
+
+| Contribution type | Description |
+|---|---|
+| **Bug reports** | Confirmed bugs with reproduction steps — see [Before You Open an Issue](#before-you-open-an-issue) |
+| **Documentation fixes** | Typos, clarifications, and missing information in `docs/` |
+| **Tests** | New or improved test coverage in `test/` or `nemoclaw/test/` |
+| **Feature proposals** | Design-first proposals opened as issues before any implementation |
+| **Integrations** | Support for new inference backends, providers, or tools |
+| **Examples** | Worked usage examples added under `docs/` |
+
+Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
+
+## Where to Start
+
+New contributors should start with issues labeled [`good first issue`](https://github.com/NVIDIA/NemoClaw/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22). These are scoped tasks with clear acceptance criteria that do not require deep project knowledge.
+
+Before starting larger work:
+
+- Search open issues and pull requests to avoid duplicates.
+- Open an issue to discuss your approach before writing code for significant changes.
+- For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
 
 ## Before You Open an Issue
 
@@ -76,8 +108,10 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
 | `npm test` | Run root-level tests (`test/*.test.js`) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
-| `make docs` | Validate Fern documentation |
-| `make docs-live` | Serve Fern docs locally with auto-rebuild |
+| `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
+| `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
+| `npm run docs:preview:watch` | Publish branch-based Fern previews when docs files change |
+| `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
 ### Git hooks (prek)
@@ -106,7 +140,7 @@ Run the docs and hook checks instead:
 
 ```bash
 npx prek run --all-files
-make docs
+npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -144,9 +178,12 @@ During release prep, run that skill first, make any doc version bumps, regenerat
 To build and preview docs locally:
 
 ```console
-$ make docs       # validate the Fern docs
-$ make docs-live  # serve Fern docs locally with auto-rebuild
+$ npm run docs                 # validate Fern docs with the pinned Fern CLI version
+$ npm run docs:live            # serve Fern docs locally with auto-rebuild
+$ npm run docs:preview:watch   # publish branch-based Fern previews on file changes
 ```
+
+Use these npm scripts when validating docs for a PR.
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
@@ -156,7 +193,19 @@ For user-skill definitions, docs-to-skills validation, release-prep regeneration
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires maintainer review. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+We welcome contributions. Every PR requires maintainer review before merge. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+
+Maintainers review all incoming PRs on a best-effort basis. Straightforward fixes typically receive initial feedback sooner than large or complex changes. If a PR has not received a response after two weeks, a polite comment asking for an update is welcome.
+
+### DCO Sign-Off
+
+This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off on every commit. Add the following trailer to each commit message:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Use `git commit -s` to add the sign-off automatically. CI will reject commits that are missing it.
 
 > [!WARNING]
 > Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
@@ -177,7 +226,7 @@ Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
-3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `make docs`.
+3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `npm run docs`.
 4. Open a PR.
 
 ### Commit Messages
