@@ -62,6 +62,10 @@ on:
         required: false
       BRAVE_API_KEY:
         required: false
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
       TELEGRAM_BOT_TOKEN_REAL:
         required: false
       TELEGRAM_CHAT_ID_E2E:
@@ -159,6 +163,20 @@ jobs:
               else:
                 out.write(f"{name}={rendered}\n")
           PY
+
+      - name: Authenticate to Docker Hub
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target_ref == '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run E2E script
         uses: ./workflow-actions/.github/actions/run-e2e-script

@@ -4,6 +4,7 @@
 import { Args, Flags } from "@oclif/core";
 import { runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { withStdoutRedirectedToStderr } from "../../lib/cli/stdout-guard";
 
 export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static id = "sandbox:doctor";
@@ -37,15 +38,18 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     const { args, flags } = await this.parse(SandboxDoctorCliCommand);
-    const doctorArgs: string[] = [];
-    if (this.jsonEnabled()) doctorArgs.push("--json");
-    if (flags.fix) doctorArgs.push("--fix");
-    const report = await runSandboxDoctor(args.sandboxName, doctorArgs, {
-      quietJson: this.jsonEnabled(),
-    });
-    if (this.jsonEnabled()) {
+    const json = this.jsonEnabled();
+    if (json) {
+      // `--fix` is mutually exclusive with `--json` (enforced above), so the
+      // JSON path is always read-only. Redirect any stray stdout to stderr so
+      // the report stays the only thing on stdout.
+      const report = await withStdoutRedirectedToStderr(() =>
+        runSandboxDoctor(args.sandboxName, ["--json"], { quietJson: true }),
+      );
       if (report && report.failed > 0) process.exitCode = 1;
       return report;
     }
+    const doctorArgs = flags.fix ? ["--fix"] : [];
+    await runSandboxDoctor(args.sandboxName, doctorArgs, { quietJson: false });
   }
 }

@@ -843,6 +843,38 @@ describe("getNvidiaCdiSpecPath", () => {
 });
 
 describe("planHostRemediation", () => {
+  function baseAssessment(
+    overrides: Partial<Parameters<typeof planHostRemediation>[0]> = {},
+  ): Parameters<typeof planHostRemediation>[0] {
+    return {
+      platform: "linux",
+      isWsl: false,
+      runtime: "unknown",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: null,
+      dockerServiceEnabled: null,
+      dockerInstalled: true,
+      dockerRunning: false,
+      dockerReachable: false,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "unknown",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: false,
+      dockerCdiSpecDirs: [],
+      cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
+      notes: [],
+      ...overrides,
+    };
+  }
+
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
       platform: "linux",
@@ -874,6 +906,42 @@ describe("planHostRemediation", () => {
     expect(actions[0].id).toBe("start_docker");
     expect(actions[0].blocking).toBe(true);
     expect(actions[0].commands).toContain("sudo systemctl start docker");
+  });
+
+  it("recommends Docker Desktop WSL integration when docker is missing inside WSL", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        isWsl: true,
+        dockerInstalled: false,
+        systemctlAvailable: false,
+      }),
+    );
+
+    expect(actions[0].id).toBe("enable_docker_desktop_wsl_integration");
+    expect(actions[0].title).toBe("Enable Docker Desktop WSL integration");
+    expect(actions[0].blocking).toBe(true);
+    expect(actions[0].commands.join("\n")).toContain(
+      "Docker Desktop → Settings → Resources → WSL integration",
+    );
+    expect(actions[0].commands.join("\n")).toContain("wsl --shutdown");
+    expect(actions[0].commands.join("\n")).toContain("docker info");
+  });
+
+  it("recommends Docker Desktop WSL integration when docker is unreachable inside WSL", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        isWsl: true,
+        dockerInstalled: true,
+        dockerServiceActive: true,
+        systemctlAvailable: false,
+      }),
+    );
+
+    expect(actions[0].id).toBe("enable_docker_desktop_wsl_integration");
+    expect(actions[0].reason).toContain("WSL distro cannot reach the Docker daemon");
+    expect(actions[0].commands.join("\n")).toContain("Start Docker Desktop");
+    expect(actions[0].commands.join("\n")).toContain("wsl --shutdown");
+    expect(actions[0].commands.join("\n")).not.toContain("sudo systemctl start docker");
   });
 
   it("suggests usermod when docker service is active but daemon is unreachable", () => {
