@@ -49,7 +49,7 @@ Maintainers may ask you to move broad or still-forming proposals from an issue t
 ## Community Response Expectations
 
 NemoClaw is an alpha project, and maintainer availability varies with release, security, and stability work.
-Issues, discussions, and pull requests are reviewed on a best effort basis.
+Issues, discussions, and pull requests are reviewed on a best-effort basis.
 The project does not publish guaranteed response or review timelines.
 
 Maintainers prioritize work using severity, security impact, release readiness, reproducibility, maintainer capacity, and community impact.
