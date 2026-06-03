@@ -232,8 +232,9 @@ function normalizeNavigationSourcePath(navPath: string | undefined): string | nu
   const generatedMatch = navPath.match(
     /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/,
   );
-  const sourcePath =
-    generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : normalizeLegacyVariantSource(navPath);
+  const sourcePath = generatedMatch?.[1]
+    ? `${generatedMatch[1]}.mdx`
+    : normalizeLegacyVariantSource(navPath);
   if (!sourcePath.endsWith(".mdx") || sourcePath === "index.mdx") return null;
   return sourcePath;
 }
