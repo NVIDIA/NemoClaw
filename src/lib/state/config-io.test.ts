@@ -196,10 +196,17 @@ describe("config-io", () => {
     // A chmod on a symlink follows to the target — if ~/.nemoclaw/X is a
     // symlink to /etc/passwd, healing must NOT chmod /etc/passwd. lstat
     // before chmod keeps the heal scoped to real files inside the dir.
+    //
+    // Positive control: a regular sibling at 0o644 proves the walker
+    // actually ran (it should be tightened to 0o600). Without the
+    // control, this test would pass vacuously if the walker were a no-op.
     const dir = makeTempDir();
     fs.chmodSync(dir, 0o700);
     const target = path.join(dir, "config.json");
     fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+
+    const sibling = path.join(dir, "should-be-healed.json");
+    fs.writeFileSync(sibling, "stale", { mode: 0o644 });
 
     const outside = path.join(os.tmpdir(), `nemoclaw-symlink-target-${String(process.pid)}`);
     fs.writeFileSync(outside, "outside", { mode: 0o644 });
@@ -208,7 +215,14 @@ describe("config-io", () => {
 
     try {
       readConfigFile(target, null);
-      expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
+      expect(
+        fs.statSync(sibling).mode & 0o777,
+        "positive control: walker tightened the regular sibling",
+      ).toBe(0o600);
+      expect(
+        fs.statSync(outside).mode & 0o777,
+        "symlink target must not be chmodded through the link",
+      ).toBe(0o644);
     } finally {
       fs.unlinkSync(linkPath);
       fs.unlinkSync(outside);
