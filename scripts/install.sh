@@ -1900,9 +1900,7 @@ repair_installer_nvidia_cdi_spec() {
           !isWslDockerDesktopRuntime(host)
         ) {
           process.stdout.write(`missing\t${getNvidiaCdiSpecPath(host)}`);
-          return;
-        }
-        if (
+        } else if (
           host &&
           host.cdiNvidiaGpuSpecStale &&
           host.cdiNvidiaGpuSpecNeedsRepair &&
