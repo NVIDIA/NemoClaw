@@ -91,6 +91,7 @@ flowchart TB
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets operators approve or deny requests in real time.
+Network policy allowlists do not disable OpenShell's SSRF guard; see [Customize the Network Policy](/network-policy/customize-network-policy) for the interaction between egress rules and internal-address blocking.
 
 {/* OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
 See the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices. */}

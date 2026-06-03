@@ -285,6 +285,16 @@ if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
   else
     fail "Sandbox GPU is not enabled in status output"
   fi
+  # #4231: status must report proven CUDA usability, not a bare "enabled". On a
+  # working GPU host the onboarding cuInit proof passes, so status should carry
+  # the "(CUDA verified)" suffix rather than "(CUDA unverified)" or a failure.
+  if echo "$status_output" | grep -Fq "CUDA verified"; then
+    pass "Sandbox GPU status reports CUDA verified"
+  elif echo "$status_output" | grep -Eq "CUDA unverified|last CUDA proof failed"; then
+    fail "Sandbox GPU status shows CUDA not proven on a working GPU host"
+  else
+    skip "Sandbox GPU CUDA proof state not present in status output"
+  fi
 else
   fail "Could not read sandbox GPU status"
 fi
