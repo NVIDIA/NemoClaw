@@ -584,6 +584,12 @@ nemoclaw <name> rebuild
 The sandbox may have been stopped or deleted.
 Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
 
+### Sandbox is registered locally but missing from the gateway
+
+After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists.
+`nemoclaw <name> status` and `nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically.
+Run `nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
+
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.

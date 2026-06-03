@@ -172,6 +172,8 @@ When the default port is already held by another sandbox, `nemoclaw onboard` sca
 <AgentOnly variant="hermes">
 When the default API port is already held by another sandbox, `nemohermes onboard` scans for the next free port and records it for the sandbox.
 </AgentOnly>
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
 
 <AgentOnly variant="openclaw">
 ```bash
