@@ -25,9 +25,12 @@ type PullRequestWarning = {
   message: string;
 };
 
+const RELEASE_NOTES_COMMAND_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
+
 function run(command: string, args: string[]): string {
   return execFileSync(command, args, {
     encoding: "utf8",
+    maxBuffer: RELEASE_NOTES_COMMAND_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
