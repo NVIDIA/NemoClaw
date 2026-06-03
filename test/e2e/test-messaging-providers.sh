@@ -921,14 +921,22 @@ fi
 # `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
 # phone-camera frame, and the openclaw() guard injects it for the single
 # `channels login --channel whatsapp` invocation. Verify both the preload file
-# (root-owned, read-only) and the guard wiring are present in the sandbox.
+# (root-owned/read-only in root mode; read-only in non-root mode) and the guard
+# wiring are present in the sandbox.
 whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
+entrypoint_start_log_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-start.log 2>/dev/null || echo missing")
 if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
   pass "M-WA6b: WhatsApp compact-QR preload installed root:444 (#4522)"
+elif [ "$whatsapp_qr_preload_stat" = "sandbox:444" ] && [ "$entrypoint_start_log_stat" = "sandbox:600" ]; then
+  # /tmp/nemoclaw-start.log is written before sandbox-init.sh is sourced:
+  # root mode creates root:600, while non-root mode creates sandbox:600.
+  # Only accept sandbox-owned sourced files when that independent init-time
+  # signal proves privilege separation was already disabled.
+  pass "M-WA6b: WhatsApp compact-QR preload installed sandbox:444 (non-root mode) (#4522)"
 elif [ "$whatsapp_qr_preload_stat" = "missing" ]; then
   fail "M-WA6b: WhatsApp compact-QR preload not installed in sandbox (#4522)"
 else
-  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (#4522)"
+  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (entrypoint start log: ${entrypoint_start_log_stat}) (#4522)"
 fi
 
 # Assert on the actual NODE_OPTIONS injection line, not just the filename: the

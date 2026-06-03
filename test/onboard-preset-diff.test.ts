@@ -217,7 +217,14 @@ console.log = () => {};
 
     // Final state should still contain every non-Brave previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
-    assert.deepEqual(finalSorted, ["brew", "huggingface", "local-inference", "npm", "pypi"]);
+    assert.deepEqual(finalSorted, [
+      "brew",
+      "huggingface",
+      "local-inference",
+      "npm",
+      "openclaw-pricing",
+      "pypi",
+    ]);
   });
 
   // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
@@ -298,6 +305,7 @@ console.log = () => {};
       "huggingface",
       "my-internal-api",
       "npm",
+      "openclaw-pricing",
       "pypi",
     ]);
   });
