@@ -282,6 +282,27 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
   return isStepStatus(value) ? value : null;
 }
 
+/**
+ * Normalize a web-search config read from the on-disk session JSON.
+ *
+ * Source boundary: the session file is untrusted persisted JSON. It may have
+ * been written by a prior NemoClaw release (with fewer provider values), by a
+ * future release (with values this binary doesn't know yet), or hand-edited.
+ * Treat anything that doesn't match the in-code allowlist as malformed and
+ * normalize it away rather than propagating an invalid shape into the
+ * onboarding state machine.
+ *
+ * Invariants enforced here:
+ *   - A truthy result means `fetchEnabled === true`. Anything else collapses
+ *     to `null` so downstream gates uniformly treat web search as off.
+ *   - `provider` is only preserved when it passes `isWebSearchProvider`. An
+ *     unknown provider falls back to the implicit Brave default rather than
+ *     leaking into the runtime.
+ *
+ * This defensive parse can be removed only when the session schema gains a
+ * version check that hard-fails on unknown shapes — see #4674 for the DDG
+ * rollout that surfaced the multi-version case.
+ */
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   if (!isObject(value) || value.fetchEnabled !== true) return null;
   const config: WebSearchConfig = { fetchEnabled: true };

@@ -134,6 +134,24 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
   });
 
+  it("reports DuckDuckGo config-only verification without running an egress probe", () => {
+    const d = deps(
+      JSON.stringify({
+        tools: { web: { search: { enabled: true, provider: "duckduckgo" } } },
+      }),
+    );
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    // The verifier must not shell out to curl for DDG — the live-search
+    // path is covered by test/e2e/test-duckduckgo-search-e2e.sh.
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+    expect(d.log).toHaveBeenCalledWith(
+      "  ✓ Web search is configured inside sandbox (DuckDuckGo, experimental)",
+    );
+    expect(d.warn).not.toHaveBeenCalled();
+  });
+
   it("warns for unknown agents and catches probe errors", () => {
     const unknown = deps(null);
     verifyWebSearchInsideSandbox("alpha", { name: "other" }, unknown);

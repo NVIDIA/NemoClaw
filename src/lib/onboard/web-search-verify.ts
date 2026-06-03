@@ -110,7 +110,11 @@ export function verifyWebSearchInsideSandbox(
           return;
         }
         if (search.provider === "duckduckgo") {
-          log("  ✓ Web search is active inside sandbox (DuckDuckGo, experimental)");
+          // Config presence only — no runtime egress probe yet. The DDG E2E
+          // (test/e2e/test-duckduckgo-search-e2e.sh, phase D4) covers the
+          // live-search path; downgrade the message here to match what was
+          // actually verified.
+          log("  ✓ Web search is configured inside sandbox (DuckDuckGo, experimental)");
           return;
         }
         if (search.provider !== "brave") {

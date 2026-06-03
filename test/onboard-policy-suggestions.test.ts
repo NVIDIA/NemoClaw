@@ -37,6 +37,7 @@ describe("onboard policy preset suggestions", () => {
     "huggingface",
     "brew",
     "brave",
+    "duckduckgo",
     "slack",
     "discord",
     "telegram",
@@ -162,6 +163,28 @@ describe("onboard policy preset suggestions", () => {
       webSearchSupported: true,
     });
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+  });
+
+  it("adds DuckDuckGo to tier defaults and prunes Brave when provider is duckduckgo", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      webSearchConfig: { fetchEnabled: true, provider: "duckduckgo" },
+      webSearchSupported: true,
+    });
+    expect(suggestions).toContain("duckduckgo");
+    expect(suggestions).not.toContain("brave");
+  });
+
+  it("prunes a stale DuckDuckGo preset when provider is brave", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      webSearchSupported: true,
+    });
+    expect(suggestions).toContain("brave");
+    expect(suggestions).not.toContain("duckduckgo");
   });
 
   it("filters tier defaults to known presets for agent-specific onboarding", () => {

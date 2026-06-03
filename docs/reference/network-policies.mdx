@@ -65,13 +65,15 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. |
-| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, web-search preset (when supported) | Full dev tooling and web search for agents that support web search. No messaging platform access. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, web-search preset (when supported), `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.
-NemoClaw filters tier defaults by the active agent's supported integrations.
-For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+NemoClaw filters tier defaults by the active agent's supported integrations and the selected web-search provider.
+The included web-search preset depends on the provider you picked during onboarding: `brave` for Brave Search (default) or `duckduckgo` for the experimental DuckDuckGo backend.
+The unused web-search preset is pruned from the tier defaults.
+For example, Hermes onboarding omits the web-search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 Claude Code direct egress is not included in any tier or `shields down` permissive policy.
 If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.

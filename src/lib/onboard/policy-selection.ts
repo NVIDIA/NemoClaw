@@ -107,7 +107,7 @@ export function mergeRequiredSetupPolicyPresets(
   );
 }
 
-export function isStaleBuiltinBravePolicyPreset(
+export function isStaleBuiltinWebSearchPolicyPreset(
   name: string,
   options: {
     webSearchConfig?: WebSearchConfig | null;
@@ -145,7 +145,7 @@ export function computeSetupPresetSuggestions(
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
-    .filter((name) => !isStaleBuiltinBravePolicyPreset(name, { webSearchConfig }))
+    .filter((name) => !isStaleBuiltinWebSearchPolicyPreset(name, { webSearchConfig }))
     .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
     .filter((name) => !known || known.has(name));
   const add = (name: string) => {
@@ -199,7 +199,7 @@ export function preparePolicyPresetResumeSelection(
     customPolicyPresetNames,
   );
   const isStaleBuiltinBrave = (name: string) =>
-    isStaleBuiltinBravePolicyPreset(name, {
+    isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
     });
@@ -290,7 +290,7 @@ async function setupPoliciesWithSelectionInner(
     customPresetNames,
   );
   const isStaleBuiltinBrave = (name: string) =>
-    isStaleBuiltinBravePolicyPreset(name, { webSearchConfig, customPresetNames });
+    isStaleBuiltinWebSearchPolicyPreset(name, { webSearchConfig, customPresetNames });
   const appliedForPreservation = pruneDisabledMessagingPolicyPresets(
     applied,
     disabledChannels,
