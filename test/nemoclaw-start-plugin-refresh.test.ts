@@ -137,6 +137,98 @@ function runRefreshBlock(
   return { result, refreshLog, envLog, callLog, tmpDir };
 }
 
+describe("plugin refresh log preparation", () => {
+  it("rejects a preexisting symlink without truncating its target", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-log-"));
+    try {
+      const refreshLog = path.join(tmpDir, "refresh.log");
+      const sensitiveTarget = path.join(tmpDir, "sensitive.txt");
+      fs.writeFileSync(sensitiveTarget, "do not truncate");
+      fs.symlinkSync(sensitiveTarget, refreshLog);
+
+      const script = path.join(tmpDir, "run.sh");
+      fs.writeFileSync(
+        script,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `PLUGIN_REFRESH_LOG=${JSON.stringify(refreshLog)}`,
+          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          "prepare_plugin_refresh_log",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("refusing to use symlinked plugin-refresh log");
+      expect(fs.readFileSync(sensitiveTarget, "utf-8")).toBe("do not truncate");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a preexisting non-regular path", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-log-"));
+    try {
+      const refreshLog = path.join(tmpDir, "refresh.log");
+      fs.mkdirSync(refreshLog);
+
+      const script = path.join(tmpDir, "run.sh");
+      fs.writeFileSync(
+        script,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `PLUGIN_REFRESH_LOG=${JSON.stringify(refreshLog)}`,
+          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          "prepare_plugin_refresh_log",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("refusing to use non-regular plugin-refresh log");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces a raced-in symlink atomically without touching the target", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-log-"));
+    try {
+      const refreshLog = path.join(tmpDir, "refresh.log");
+      const sensitiveTarget = path.join(tmpDir, "sensitive.txt");
+      fs.writeFileSync(sensitiveTarget, "do not truncate");
+
+      const script = path.join(tmpDir, "run.sh");
+      fs.writeFileSync(
+        script,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `PLUGIN_REFRESH_LOG=${JSON.stringify(refreshLog)}`,
+          `RACE_TARGET=${JSON.stringify(sensitiveTarget)}`,
+          'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
+          'chown() { ln -sfn "$RACE_TARGET" "$PLUGIN_REFRESH_LOG"; return 0; }',
+          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          "prepare_plugin_refresh_log",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fs.lstatSync(refreshLog).isSymbolicLink()).toBe(false);
+      expect((fs.statSync(refreshLog).mode & 0o777).toString(8)).toBe("600");
+      expect(fs.readFileSync(sensitiveTarget, "utf-8")).toBe("do not truncate");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("plugin registry refresh workaround (#2021, openclaw/openclaw#89606)", () => {
   it("invokes `openclaw plugins registry --refresh` once the gateway reports ready", () => {
     const { result, refreshLog, callLog, tmpDir } = runRefreshBlock();

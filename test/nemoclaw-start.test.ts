@@ -3507,7 +3507,7 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
       expect(setup.pluginRefreshLogExists).toBe(true);
-      expect(setup.pluginRefreshLogMode).toBe(kind === "root" ? "644" : "600");
+      expect(setup.pluginRefreshLogMode).toBe("600");
     }
   });
 

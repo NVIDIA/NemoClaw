@@ -252,6 +252,15 @@ EOF
       expect(stderr).toContain("/tmp/nemoclaw-plugin-refresh.log is a symlink");
       expect(readFileSync(target, "utf-8")).toBe("do not truncate");
     });
+
+    it("keeps the plugin refresh log private", () => {
+      writeFileSync("/tmp/nemoclaw-plugin-refresh.log", "refresh output");
+      chmodSync("/tmp/nemoclaw-plugin-refresh.log", 0o644);
+
+      const { stderr } = runWithLib("validate_tmp_permissions", { expectFail: true });
+      expect(stderr).toContain("/tmp/nemoclaw-plugin-refresh.log has unexpected permissions");
+      expect(stderr).toContain("expected 600");
+    });
   });
 
   describe("verify_config_integrity", () => {

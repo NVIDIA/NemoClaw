@@ -2783,6 +2783,10 @@ setup_auth_profile_as_sandbox() {
 PLUGIN_REFRESH_LOG="/tmp/nemoclaw-plugin-refresh.log"
 
 prepare_plugin_refresh_log() {
+  local dir base tmp
+  dir="$(dirname "$PLUGIN_REFRESH_LOG")"
+  base="$(basename "$PLUGIN_REFRESH_LOG")"
+
   if [ -L "$PLUGIN_REFRESH_LOG" ]; then
     echo "[SECURITY] refusing to use symlinked plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
     return 1
@@ -2791,12 +2795,22 @@ prepare_plugin_refresh_log() {
     echo "[SECURITY] refusing to use non-regular plugin-refresh log: $PLUGIN_REFRESH_LOG" >&2
     return 1
   fi
-  : >"$PLUGIN_REFRESH_LOG"
-  if [ "$(id -u)" -eq 0 ]; then
-    chown root:root "$PLUGIN_REFRESH_LOG"
-    chmod 644 "$PLUGIN_REFRESH_LOG"
-  else
-    chmod 600 "$PLUGIN_REFRESH_LOG" 2>/dev/null || true
+
+  # Create the log through a same-directory temp file and rename it into place.
+  # Root never opens the sandbox-controlled final /tmp path, and the refresh
+  # command below performs its redirection after dropping to the sandbox user.
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+  if [ "$(id -u)" -eq 0 ] && ! chown sandbox:sandbox "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! chmod 600 "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$PLUGIN_REFRESH_LOG"; then
+    rm -f "$tmp"
+    return 1
   fi
 }
 
@@ -2812,16 +2826,16 @@ start_plugin_registry_refresh() {
     done
     if [ "$ready" -ne 1 ]; then
       echo "[plugin-refresh] gateway did not become ready; skipping registry refresh" >&2
-      return 0
+      exit 0
     fi
     if [ "$(id -u)" -eq 0 ]; then
-      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox \
-        "$OPENCLAW" plugins registry --refresh \
-        >"$PLUGIN_REFRESH_LOG" 2>&1 || true
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+        sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
+        "$OPENCLAW" plugins registry --refresh || true
     else
-      env HOME=/sandbox \
-        "$OPENCLAW" plugins registry --refresh \
-        >"$PLUGIN_REFRESH_LOG" 2>&1 || true
+      env HOME=/sandbox PLUGIN_REFRESH_LOG="$PLUGIN_REFRESH_LOG" \
+        sh -c "exec \"\$@\" >\"\$PLUGIN_REFRESH_LOG\" 2>&1" sh \
+        "$OPENCLAW" plugins registry --refresh || true
     fi
   ) &
   PLUGIN_REFRESH_PID=$!
@@ -3186,7 +3200,11 @@ start_auto_pair
 # `openclaw plugins inspect nemoclaw` says "Plugin not found" (#2021).
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
 # Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
-# This is a temporary workaround; root fix is upstream (openclaw/openclaw#89606).
+# Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
+# regeneration path, outside NemoClaw. NemoClaw can only heal the post-start
+# registry from persisted installRecords until upstream preserves path/npm-origin
+# plugins itself. Remove this workaround after openclaw/openclaw#89606 ships and
+# the full onboard E2E still proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
 
 # NOTE: PIDs are collected after launch; a signal arriving between trap
