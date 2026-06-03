@@ -287,22 +287,16 @@ describe("release-latest-tag.sh", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("previous release v0.0.1");
     expect(
-      run(
-        fixture.root,
-        [
-          "git",
-          "--git-dir",
-          fixture.remote,
-          "show-ref",
-          "--verify",
-          "--quiet",
-          "refs/tags/latest",
-        ],
-        {
-          allowFailure: true,
-        },
-      ),
-    ).toBe("");
+      runScript(fixture.root, [
+        "git",
+        "--git-dir",
+        fixture.remote,
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/tags/latest",
+      ]).status,
+    ).not.toBe(0);
   });
 
   it("rejects a semver tag whose commit is not reachable from main", () => {
