@@ -86,6 +86,35 @@ nemohermes <name> logs --follow
 ```
 </AgentOnly>
 
+The `logs` command shows lifecycle and gateway output.
+It does not export the structured per-session agent state that OpenClaw stores under `.openclaw/agents/`.
+
+## Inspect Agent Session State
+
+OpenClaw stores structured session state inside the sandbox.
+Use these files when you need an audit trail, a compliance review surface, or replay tooling that includes assistant messages and tool activity.
+
+| File | Purpose |
+|---|---|
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Per-session event log. Use this file for audit trails and compliance dashboards. Records can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Lower-level trajectory data for fine-grained replay. This file can be large, so avoid using it for routine audit summaries. |
+| `/sandbox/.openclaw/agents/main/sessions/sessions.json` | Session index that maps known session keys to their persisted state. |
+
+To inspect the session directory from the host, run a sandbox command:
+
+```console
+$ nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
+```
+
+To copy a session log for offline review, use the OpenShell sandbox download command:
+
+```console
+$ openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
+```
+
+Treat exported session logs as sensitive data.
+They can contain prompts, tool inputs, tool outputs, file paths, and cost metadata from the agent run.
+
 ## Monitor Network Activity in the TUI
 
 Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:
