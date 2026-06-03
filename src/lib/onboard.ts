@@ -5068,8 +5068,9 @@ async function setupNim(
             ignoreError: true,
           },
         );
+        let vllmModels: { data?: Array<{ id?: unknown }> } = {};
         try {
-          const vllmModels = JSON.parse(vllmModelsRaw);
+          vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
             const detectedModel =
               typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
@@ -5103,13 +5104,11 @@ async function setupNim(
         if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
         }
-        if (!validation.ok) {
-          continue selectionLoop;
-        }
+        if (!validation.ok) continue selectionLoop;
+        localInference.applyVllmRuntimeContextWindow(vllmModels, model as string);
         preferredInferenceApi = validation.api;
         // Force chat completions — vLLM's /v1/responses endpoint does not
-        // run the --tool-call-parser, so tool calls arrive as raw text.
-        // See: https://github.com/NVIDIA/NemoClaw/issues/976
+        // run the --tool-call-parser, so tool calls arrive as raw text (#976).
         if (preferredInferenceApi !== "openai-completions") {
           console.log(
             "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
