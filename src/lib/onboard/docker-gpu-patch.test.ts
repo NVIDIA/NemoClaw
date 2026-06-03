@@ -837,7 +837,10 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     // Without the short-circuit, a patched container that crashes on startup
     // leaves users waiting the full 900s+ supervisor-reconnect timeout before
-    // any Error-phase diagnostics run (#4316).
+    // any Error-phase diagnostics run. With the debounce now in place, this
+    // test asserts the K=1 (no-debounce) behavior explicitly so the original
+    // fast-fail intent is preserved when the operator opts out of the
+    // debounce.
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
     const listOutputs = [
       "alpha   Provisioning   1s ago",
@@ -853,10 +856,11 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       runOpenshell,
       runCaptureOpenshell,
       sleep,
+      errorPhaseDebouncePolls: 1,
     });
 
     expect(ok).toBe(false);
-    // Without short-circuit we'd loop ~300 iterations. With it, the second
+    // Without short-circuit we'd loop ~300 iterations. With K=1 the second
     // iteration's list output shows Error and the wait bails out.
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
@@ -108,5 +110,17 @@ describe("E2E reusable workflow contract", () => {
     expect(cloudJob.uses).toBe("./.github/workflows/e2e-script.yaml");
     expect(cloudJob.with?.script).toBe("test/e2e/test-full-e2e.sh");
     expect(cloudJob.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+  });
+
+  it("gates WhatsApp sandbox-owned preload acceptance on non-root entrypoint evidence", () => {
+    const script = readFileSync(new URL("./e2e/test-messaging-providers.sh", import.meta.url), "utf8");
+
+    expect(script).toContain(
+      "entrypoint_start_log_stat=$(sandbox_exec \"stat -c '%U:%a' /tmp/nemoclaw-start.log",
+    );
+    expect(script).toContain(
+      "[ \"$whatsapp_qr_preload_stat\" = \"sandbox:444\" ] && [ \"$entrypoint_start_log_stat\" = \"sandbox:600\" ]",
+    );
+    expect(script).toContain("entrypoint start log: ${entrypoint_start_log_stat}");
   });
 });
