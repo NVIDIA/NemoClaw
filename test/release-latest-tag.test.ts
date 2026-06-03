@@ -37,13 +37,24 @@ function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function run(cwd: string, args: string[]): string {
-  return execFileSync(args[0], args.slice(1), {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    env: testEnv(),
-  });
+function run(
+  cwd: string,
+  args: string[],
+  options: { allowFailure?: boolean } = {},
+): string {
+  try {
+    return execFileSync(args[0], args.slice(1), {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: testEnv(),
+    });
+  } catch (error) {
+    if (options.allowFailure) {
+      return "";
+    }
+    throw error;
+  }
 }
 
 type Fixture = {
@@ -137,6 +148,63 @@ function remoteCommit(fixture: Fixture, ref: string): string {
   ]).trim();
 }
 
+function readJson(filePath: string): any {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function createPlan(
+  fixture: Fixture,
+  planPath: string,
+  releaseCommit: string,
+): { plan: any; result: ReturnType<typeof spawnSync> } {
+  const result = runScript(
+    fixture.work,
+    [tsxPath, planScriptPath, "--bump", "patch", "--output", planPath],
+    { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
+  );
+
+  expect(result.status).toBe(0);
+  const plan = readJson(planPath);
+  expect(plan.previousTag).toBe("v0.0.1");
+  expect(plan.nextTag).toBe("v0.0.2");
+  expect(plan.originMainCommit).toBe(releaseCommit);
+  expect(plan.confirmationPhrase).toBe(
+    `CONFIRM RELEASE v0.0.2 ${releaseCommit}`,
+  );
+  return { plan, result };
+}
+
+function cutFromPlan(
+  fixture: Fixture,
+  planPath: string,
+  confirmationPhrase: string,
+): ReturnType<typeof spawnSync> {
+  return runScript(fixture.work, [
+    "bash",
+    cutScriptPath,
+    "--plan",
+    planPath,
+    "--confirm",
+    confirmationPhrase,
+  ]);
+}
+
+function waitForLatest(
+  fixture: Fixture,
+  planPath: string,
+): ReturnType<typeof spawnSync> {
+  return runScript(fixture.work, [
+    "bash",
+    waitLatestScriptPath,
+    "--plan",
+    planPath,
+    "--timeout-secs",
+    "1",
+    "--interval-secs",
+    "1",
+  ]);
+}
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { force: true, recursive: true });
@@ -207,6 +275,36 @@ describe("release-latest-tag.sh", () => {
     expect(remoteCommit(fixture, "refs/tags/latest")).toBe(newerCommit);
   });
 
+  it("rejects a higher semver tag on an older main commit even when latest is missing", () => {
+    const fixture = createFixture();
+    const olderCommit = fixture.firstCommit;
+    const newerCommit = commit(fixture, "newer already released commit");
+    pushTag(fixture, "v0.0.1", newerCommit);
+    pushTag(fixture, "v0.0.2", olderCommit);
+
+    const result = runReleaseLatest(fixture, "v0.0.2");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("previous release v0.0.1");
+    expect(
+      run(
+        fixture.root,
+        [
+          "git",
+          "--git-dir",
+          fixture.remote,
+          "show-ref",
+          "--verify",
+          "--quiet",
+          "refs/tags/latest",
+        ],
+        {
+          allowFailure: true,
+        },
+      ),
+    ).toBe("");
+  });
+
   it("rejects a semver tag whose commit is not reachable from main", () => {
     const fixture = createFixture();
     run(fixture.work, ["git", "checkout", "--orphan", "release-orphan"]);
@@ -230,40 +328,14 @@ describe("release-latest-tag.sh", () => {
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
     const releaseCommit = commit(fixture, "planned release commit");
     const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
 
-    const planResult = runScript(
-      fixture.work,
-      [tsxPath, planScriptPath, "--bump", "patch", "--output", planPath],
-      { NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL: "1" },
-    );
-
-    expect(planResult.status).toBe(0);
-    const plan = JSON.parse(fs.readFileSync(planPath, "utf8"));
-    expect(plan.previousTag).toBe("v0.0.1");
-    expect(plan.nextTag).toBe("v0.0.2");
-    expect(plan.originMainCommit).toBe(releaseCommit);
-    expect(plan.confirmationPhrase).toBe(
-      `CONFIRM RELEASE v0.0.2 ${releaseCommit}`,
-    );
-
-    const cutResult = runScript(fixture.work, [
-      "bash",
-      cutScriptPath,
-      "--plan",
-      planPath,
-      "--confirm",
-      plan.confirmationPhrase,
-    ]);
+    const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
 
     expect(cutResult.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
     expect(
-      JSON.parse(
-        fs.readFileSync(
-          path.join(fixture.root, "release", "cut-result.json"),
-          "utf8",
-        ),
-      ),
+      readJson(path.join(fixture.root, "release", "cut-result.json")),
     ).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
@@ -274,25 +346,11 @@ describe("release-latest-tag.sh", () => {
     const latestResult = runReleaseLatest(fixture, "v0.0.2");
     expect(latestResult.status).toBe(0);
 
-    const waitResult = runScript(fixture.work, [
-      "bash",
-      waitLatestScriptPath,
-      "--plan",
-      planPath,
-      "--timeout-secs",
-      "1",
-      "--interval-secs",
-      "1",
-    ]);
+    const waitResult = waitForLatest(fixture, planPath);
 
     expect(waitResult.status).toBe(0);
     expect(
-      JSON.parse(
-        fs.readFileSync(
-          path.join(fixture.root, "release", "latest-result.json"),
-          "utf8",
-        ),
-      ),
+      readJson(path.join(fixture.root, "release", "latest-result.json")),
     ).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
@@ -300,5 +358,113 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
+  });
+
+  it("rejects a tampered release plan before cutting the tag", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    const tampered = { ...plan, forbiddenOperations: [] };
+    fs.writeFileSync(
+      planPath,
+      `${JSON.stringify(tampered, null, 2)}\n`,
+      "utf8",
+    );
+
+    const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
+
+    expect(cutResult.status).not.toBe(0);
+    expect(cutResult.stderr).toContain("planHash mismatch");
+  });
+
+  it("detects lkg creation after a plan captured lkg as absent", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    expect(plan.lkgBefore).toBeNull();
+    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(
+      0,
+    );
+    expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
+    pushTag(fixture, "lkg", fixture.firstCommit);
+
+    const waitResult = waitForLatest(fixture, planPath);
+
+    expect(waitResult.status).not.toBe(0);
+    expect(waitResult.stderr).toContain(
+      "lkg was created after the release plan was generated",
+    );
+  });
+
+  it("marks release notes data as partial when a PR metadata lookup fails", () => {
+    const fixture = createFixture();
+    const binDir = path.join(fixture.root, "bin");
+    fs.mkdirSync(binDir);
+    const ghPath = path.join(binDir, "gh");
+    fs.writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "api" ]; then
+  printf '%s\n' '{"commits":[{"commit":{"message":"feat: one (#1)"}},{"commit":{"message":"fix: two (#2)"}}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "1" ]; then
+  printf '%s\n' '{"number":1,"title":"one"}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ] && [ "$3" = "2" ]; then
+  echo 'missing PR' >&2
+  exit 1
+fi
+exit 2
+`,
+      "utf8",
+    );
+    fs.chmodSync(ghPath, 0o755);
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(
+      planPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          mode: "tag-only",
+          previousTag: "v0.0.1",
+          nextTag: "v0.0.2",
+          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
+          planHash: "a".repeat(64),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const outputPath = path.join(fixture.root, "release", "notes-data.json");
+
+    const result = runScript(
+      fixture.work,
+      [
+        tsxPath,
+        path.join(repoRoot, "scripts", "release-notes-data.ts"),
+        "--plan",
+        planPath,
+        "--output",
+        outputPath,
+      ],
+      {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const data = readJson(outputPath);
+    expect(data).toMatchObject({ status: "partial", prNumbers: [1, 2] });
+    expect(data.pullRequests).toEqual([{ number: 1, title: "one" }]);
+    expect(data.pullRequestWarnings[0]).toMatchObject({ number: 2 });
   });
 });

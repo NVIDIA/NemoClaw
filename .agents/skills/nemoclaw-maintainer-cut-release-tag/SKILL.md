@@ -119,6 +119,8 @@ This writes:
 <release-dir>/notes-data.json
 ```
 
+If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
+
 Draft release notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
 
 ```text

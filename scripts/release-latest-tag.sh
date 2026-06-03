@@ -59,6 +59,21 @@ if [[ -n "$latest_commit" ]] && ! git merge-base --is-ancestor "$latest_commit" 
   fail "Refusing to move latest backward: current latest $latest_commit is not an ancestor of $RELEASE_TAG ($release_commit)"
 fi
 
+previous_remote_semver="$({
+  git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | grep -Fvx "$RELEASE_TAG" \
+    | sort -Vr \
+    | head -1
+} || true)"
+previous_semver_commit=""
+if [[ -n "$previous_remote_semver" ]]; then
+  previous_semver_commit="$(git rev-parse "${previous_remote_semver}^{commit}")"
+  if ! git merge-base --is-ancestor "$previous_semver_commit" "$release_commit"; then
+    fail "Refusing to move latest backward: previous release $previous_remote_semver ($previous_semver_commit) is not an ancestor of $RELEASE_TAG ($release_commit)"
+  fi
+fi
+
 git tag -fa latest "$release_commit" -m "latest -> $RELEASE_TAG"
 
 if [[ "$PUSH_LATEST" != "0" ]]; then
@@ -73,6 +88,8 @@ fi
   echo "- Remote main: \`$main_commit\`"
   echo "- Latest remote semver: \`$latest_remote_semver\`"
   echo "- Previous latest commit: \`${latest_commit:-none}\`"
+  echo "- Previous semver tag: \`${previous_remote_semver:-none}\`"
+  echo "- Previous semver commit: \`${previous_semver_commit:-none}\`"
   echo "- Updated: \`latest\`"
   echo "- Not touched: \`lkg\`"
 } >>"${GITHUB_STEP_SUMMARY:-/dev/null}"

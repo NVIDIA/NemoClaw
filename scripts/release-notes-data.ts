@@ -143,6 +143,7 @@ function main(): void {
 
   const data = {
     schemaVersion: 1,
+    status: pullRequestWarnings.length > 0 ? "partial" : "ok",
     planPath,
     planHash: plan.planHash,
     previousTag: plan.previousTag,

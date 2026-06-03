@@ -26,6 +26,7 @@ Create a local Markdown draft. Do not create or update a GitHub Discussion; the 
 - The release tag should already exist. If the user is still cutting the tag, use `nemoclaw-maintainer-cut-release-tag` first.
 - Use live GitHub and remote tag state, not memory or a stale local branch.
 - If `<release-dir>/notes-data.json` exists from `npm run release:notes-data`, use it as the starting source of truth and query GitHub only to fill missing fields.
+- If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report those warnings and ask the maintainer whether to fetch or fill the missing PR metadata before drafting.
 
 ## Step 1: Verify the Release Range
 

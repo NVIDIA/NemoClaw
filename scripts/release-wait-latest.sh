@@ -78,6 +78,9 @@ lkg_after="$(git ls-remote --tags origin 'refs/tags/lkg^{}' | awk '{print $1}')"
 if [[ -n "$lkg_before" && "$lkg_after" != "$lkg_before" ]]; then
   fail "lkg changed from $lkg_before to $lkg_after"
 fi
+if [[ -z "$lkg_before" && -n "$lkg_after" ]]; then
+  fail "lkg was created after the release plan was generated: $lkg_after"
+fi
 
 result_path="$(dirname "$PLAN_PATH")/latest-result.json"
 node -e 'const fs=require("fs"); const result={schemaVersion:1,status:"ok",planPath:process.argv[1],planHash:process.argv[2],tag:process.argv[3],targetCommit:process.argv[4],semverPeeledCommit:process.argv[5],latestPeeledCommit:process.argv[6],lkgPeeledCommitBefore:process.argv[7] || null,lkgPeeledCommitAfter:process.argv[8] || null,createdAt:new Date().toISOString()}; fs.writeFileSync(process.argv[9], JSON.stringify(result, null, 2) + "\n");' "$PLAN_PATH" "$plan_hash" "$tag" "$target" "$semver_peeled" "$latest_peeled" "$lkg_before" "$lkg_after" "$result_path"

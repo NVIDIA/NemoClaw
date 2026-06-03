@@ -51,6 +51,8 @@ cd "$repo_root"
 status="$(git status --short)"
 [[ -z "$status" ]] || fail "Release tagging requires a clean worktree"
 
+node -e 'const fs=require("fs"); const crypto=require("crypto"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const semver=/^v\d+\.\d+\.\d+$/; const sha=/^[0-9a-f]{40}$/; const hash=/^[0-9a-f]{64}$/; if (data.schemaVersion !== 1) throw new Error("schemaVersion must be 1"); if (data.mode !== "tag-only") throw new Error("mode must be tag-only"); if (!semver.test(data.previousTag)) throw new Error("previousTag must be semver"); if (!semver.test(data.nextTag)) throw new Error("nextTag must be semver"); if (!sha.test(data.originMainCommit)) throw new Error("originMainCommit must be a full SHA"); if (!hash.test(data.planHash)) throw new Error("planHash must be a sha256 hex string"); const {planHash, ...planWithoutHash}=data; const actual=crypto.createHash("sha256").update(JSON.stringify(planWithoutHash, null, 2)).digest("hex"); if (actual !== planHash) throw new Error("planHash mismatch: expected " + planHash + ", recomputed " + actual);' "$PLAN_PATH"
+
 schema_version="$(json_field schemaVersion)"
 mode="$(json_field mode)"
 tag="$(json_field nextTag)"
@@ -62,6 +64,8 @@ plan_hash="$(json_field planHash)"
 [[ "$mode" == "tag-only" ]] || fail "Unsupported plan mode: $mode"
 [[ "$CONFIRMATION" == "$expected_confirmation" ]] || fail "Confirmation phrase does not match plan"
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Plan tag is not semver: $tag"
+[[ "$target" =~ ^[0-9a-f]{40}$ ]] || fail "Plan target commit is not a full SHA: $target"
+[[ "$plan_hash" =~ ^[0-9a-f]{64}$ ]] || fail "Plan hash is not a SHA-256 hex string: $plan_hash"
 
 git fetch origin main --tags --force
 
