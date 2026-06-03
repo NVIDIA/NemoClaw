@@ -20,16 +20,47 @@ function deps(overrides: Partial<DestroyGatewayDeps> = {}): DestroyGatewayDeps {
 }
 
 describe("destroyGatewayWithVolumeCleanup", () => {
-  it("destroys lifecycle gateways and removes their OpenShell cluster volumes", () => {
+  it("removes lifecycle gateways and deletes their OpenShell cluster volumes", () => {
     const d = deps();
 
     expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
 
-    expect(d.runOpenshell).toHaveBeenCalledWith(["gateway", "destroy", "-g", "nemoclaw"], {
+    expect(d.runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
       ignoreError: true,
     });
     expect(d.clearRegistry).toHaveBeenCalledOnce();
     expect(d.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith("openshell-cluster-nemoclaw", {
+      ignoreError: true,
+    });
+  });
+
+  it("falls back to gateway destroy when remove is unavailable", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 })
+      .mockReturnValueOnce({ status: 0 });
+    const d = deps({ runOpenshell });
+
+    expect(destroyGatewayWithVolumeCleanup(d)).toBe(true);
+
+    expect(runOpenshell).toHaveBeenNthCalledWith(1, ["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+    });
+    expect(runOpenshell).toHaveBeenNthCalledWith(2, ["gateway", "destroy", "-g", "nemoclaw"], {
+      ignoreError: true,
+    });
+  });
+
+  it("does not fall back to gateway destroy when lifecycle commands are unavailable", () => {
+    const runOpenshell = vi.fn().mockReturnValueOnce({ status: 1 });
+    const d = deps({
+      hasLifecycleCommands: vi.fn(() => false),
+      runOpenshell,
+    });
+
+    expect(destroyGatewayWithVolumeCleanup(d)).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
       ignoreError: true,
     });
   });

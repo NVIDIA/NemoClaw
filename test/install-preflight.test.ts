@@ -4213,3 +4213,113 @@ sys.exit(exit_code)
     expect(phases).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Build-dependency preflight (#4415): missing binutils/`strings` should fail
+// fast at preflight, before any clone/build/download work, instead of ~5
+// minutes in at OpenShell verification.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like buildIsolatedSystemPath but lets the caller exclude additional binary
+ * names (in addition to node/npm/npx). Used to simulate a host that is missing
+ * `strings` (binutils) while keeping the rest of coreutils available.
+ */
+function buildSystemPathExcluding(extra: readonly string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-nodep-"));
+  const EXCLUDE = new Set(["node", "npm", "npx", ...extra]);
+  for (const sysDir of ["/usr/bin", "/bin"]) {
+    if (!fs.existsSync(sysDir)) continue;
+    for (const name of fs.readdirSync(sysDir)) {
+      if (EXCLUDE.has(name)) continue;
+      try {
+        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+    }
+  }
+  return dir;
+}
+
+/** docker stub whose `info` always succeeds, so ensure_docker passes. */
+function writeDockerOkStub(fakeBin: string) {
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then exit 0; fi
+exit 0
+`,
+  );
+  writeExecutable(
+    path.join(fakeBin, "systemctl"),
+    `#!/usr/bin/env bash
+if [ "$1" = "is-active" ] && [ "$2" = "docker" ]; then echo "active"; exit 0; fi
+exit 0
+`,
+  );
+}
+
+describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
+  it("fails fast at preflight when binutils (strings) is missing, before any clone/build", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/'strings' \(from binutils\) is required/);
+    expect(output).toMatch(/sudo apt-get install -y binutils/);
+    // Fail-fast guarantee: never reached the OpenShell install/verify or the
+    // CLI build, which is the ~5-minutes-in failure point the issue reports.
+    expect(output).not.toMatch(/Installing OpenShell/);
+    expect(output).not.toMatch(/Cloning into/);
+  });
+
+  it("does not fire the binutils preflight when OpenShell install is deferred", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-deferred-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    // npm stub that fails fast on install, so the run stops shortly AFTER the
+    // (skipped) binutils preflight rather than doing real work. The assertion
+    // only cares that our binutils error never fires under DEFER.
+    writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+        NPM_PREFIX: path.join(tmp, "prefix"),
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    // The deferred path postpones all OpenShell work (and its own strings
+    // check) to a later phase, so the early preflight must stay silent.
+    expect(output).not.toMatch(/'strings' \(from binutils\) is required/);
+  });
+});

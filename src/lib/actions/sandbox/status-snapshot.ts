@@ -18,6 +18,7 @@ import {
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
+import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
@@ -106,8 +107,13 @@ export interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
 }
 
+type ReconcileSandboxGatewayState = (
+  sandboxName: string,
+) => Promise<SandboxGatewayState>;
+
 interface CollectSandboxStatusSnapshotDeps {
   probeProviderHealthImpl?: ProbeProviderHealth;
+  reconcile?: ReconcileSandboxGatewayState;
 }
 
 export async function collectSandboxStatusSnapshot(
@@ -117,12 +123,16 @@ export async function collectSandboxStatusSnapshot(
     deps?: CollectSandboxStatusSnapshotDeps;
   } = {},
 ): Promise<SandboxStatusSnapshot> {
+  const reconcile =
+    opts.deps?.reconcile ??
+    ((name: string) =>
+      getReconciledSandboxGatewayState(name, {
+        getState: getSandboxGatewayStateForStatus,
+      }));
   const sb = registry.getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
-    lookup = await getReconciledSandboxGatewayState(sandboxName, {
-      getState: getSandboxGatewayStateForStatus,
-    });
+    lookup = await reconcile(sandboxName);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     lookup = {
@@ -190,10 +200,26 @@ export async function collectSandboxStatusSnapshot(
 
 export async function getSandboxStatusReport(
   sandboxName: string,
+  deps: CollectSandboxStatusSnapshotDeps = {},
+): Promise<SandboxStatusReport> {
+  // The report is the machine-readable (--json) payload the CLI prints on
+  // stdout. Building it reconciles the gateway, and that path prints human
+  // progress to stdout via console.log (step(), gateway-start streaming).
+  // Redirect any such writes to stderr while the report is built so stdout
+  // carries only the JSON document.
+  return withStdoutRedirectedToStderr(() =>
+    buildSandboxStatusReport(sandboxName, deps),
+  );
+}
+
+async function buildSandboxStatusReport(
+  sandboxName: string,
+  deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
   const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
+    deps,
   });
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   const dockerRuntime =

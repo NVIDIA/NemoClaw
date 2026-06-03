@@ -395,6 +395,41 @@ function runConnect(
 
 describe("sandbox connect inference route swap (#1248)", () => {
   it(
+    "skips the vLLM model preflight on connect --probe-only but keeps it for a full connect (#4585)",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture(
+        {
+          name: "my-sandbox",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+      const bogus = { NEMOCLAW_VLLM_MODEL: "definitely-not-a-real-vllm-model" };
+      const PREFLIGHT_HINT = "NEMOCLAW_VLLM_MODEL is consumed by";
+
+      // probe-only / recover never install or serve a model, so the express-vLLM
+      // model preflight must be skipped rather than hard-exiting the probe.
+      const probe = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, ["--probe-only"]);
+      const probeOut = (probe.stdout || "") + (probe.stderr || "");
+      // probe-only must proceed (not just avoid the hint): a non-zero exit would
+      // mean it failed for some other reason before the skipped preflight.
+      expect(probe.status).toBe(0);
+      expect(probeOut).not.toContain(PREFLIGHT_HINT);
+
+      // A full connect still runs the preflight and fails fast on the bogus value.
+      const full = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, []);
+      const fullOut = (full.stdout || "") + (full.stderr || "");
+      expect(full.status).toBe(1);
+      expect(fullOut).toContain(PREFLIGHT_HINT);
+    },
+  );
+
+  it(
     "swaps inference route when live route does not match sandbox provider",
     testTimeoutOptions(20_000),
     () => {
