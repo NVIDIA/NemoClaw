@@ -238,7 +238,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
-  it("does not emit generic platforms blocks for Telegram or Slack messaging tokens", () => {
+  it("enables Slack under platforms and keeps Telegram top-level only when messaging tokens are configured", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
@@ -253,7 +253,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toBeUndefined();
-    expect(config.platforms.slack).toBeUndefined();
+    expect(config.platforms.slack).toEqual({ enabled: true });
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
     expect(envFile).toContain(
@@ -266,6 +266,24 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
     expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
+  });
+
+  it("omits platforms.slack when Slack channel is not enabled", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
+    });
+
+    expect(config.platforms.slack).toBeUndefined();
+    expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+  });
+
+  it("enables Slack under platforms even when the slack token allowlist is empty", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+    });
+
+    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.api_server.enabled).toBe(true);
   });
 
   it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
