@@ -52,15 +52,15 @@ except Exception as exc:
   fi
 fi
 if [[ "${agent}" == "hermes" ]]; then
-  # This scenario asserts the static enablement contract:
-  #   1) config.yaml advertises platforms.slack.enabled=true so Hermes' gateway
-  #      instantiates the Slack adapter at boot (#4712 root cause).
-  #   2) gateway.log shows the Slack platform actually connected via Socket Mode.
+  # This scenario asserts the static enablement contract Hermes' gateway uses
+  # to start its Slack adapter:
+  #   1) config.yaml carries platforms.slack.enabled=true so the gateway
+  #      instantiates the Slack platform at boot. Without it, Hermes runs only
+  #      api_server and slack_bolt never starts.
+  #   2) gateway.log shows the Slack adapter actually authenticated and
+  #      connected via Socket Mode (not merely that startup began).
   #   3) SLACK_ALLOWED_CHANNELS is wired through .env so the adapter scopes
-  #      @-mention handling to the configured channel set.
-  # Dynamic @-mention -> bot-response round-trips against a real or simulated
-  # Slack workspace are covered by test/e2e/test-hermes-slack-e2e.sh and live
-  # outside the scenario-suite scope.
+  #      message handling to the configured channel set.
   if [[ -n "${E2E_DRY_RUN:-}" ]]; then
     e2e_pass "expected-state.messaging.slack.hermes-platforms-enabled dry-run"
     e2e_pass "expected-state.messaging.slack.hermes-allowed-channels-scoped dry-run"
@@ -136,7 +136,7 @@ else:
     if [[ -z "${gateway_log}" ]]; then
       e2e_fail "expected-state.messaging.slack.hermes-gateway-running could not read gateway log from sandbox or entrypoint surface"
     fi
-    if printf '%s\n' "${gateway_log}" | grep -qE 'Connecting to slack|\[Slack\] Socket Mode connected|\[Slack\] Authenticated as|slack_bolt\.AsyncApp.*Bolt app is running'; then
+    if printf '%s\n' "${gateway_log}" | grep -qE '\[Slack\] Socket Mode connected|\[Slack\] Authenticated as|✓ slack connected|slack_bolt\.AsyncApp.*Bolt app is running'; then
       e2e_pass "expected-state.messaging.slack.hermes-gateway-running gateway booted slack platform"
     else
       sanitized_tail="$(printf '%s\n' "${gateway_log}" | tail -n 20 | sed -E \
