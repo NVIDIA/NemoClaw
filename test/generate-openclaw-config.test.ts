@@ -195,6 +195,47 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.models).toBeDefined();
   });
 
+  it("keeps OpenClaw OTEL diagnostics disabled by default", () => {
+    const config = runConfigScript();
+    expect(config.diagnostics).toBeUndefined();
+    expect(config.plugins.entries["diagnostics-otel"]).toBeUndefined();
+  });
+
+  it("enables traces-only OpenClaw OTEL diagnostics when requested", () => {
+    const config = buildConfigDirect({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+      NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "nemoclaw-local",
+      NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+    });
+
+    expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
+    expect(config.diagnostics).toEqual({
+      enabled: true,
+      otel: {
+        enabled: true,
+        endpoint: "http://host.openshell.internal:4318",
+        protocol: "http/protobuf",
+        serviceName: "nemoclaw-local",
+        traces: true,
+        metrics: false,
+        logs: false,
+        sampleRate: 0.5,
+      },
+    });
+    expect(config.diagnostics.otel.captureContent).toBeUndefined();
+  });
+
+  it("rejects OTEL endpoints with embedded credentials", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://token@example.com:4318",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  });
+
   it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
@@ -1269,6 +1310,27 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
     expect(config.agents.defaults.model.primary).toBe("inference/deepseek-ai/DeepSeek-V4-Flash");
     expect(config.models.providers.deepinfra).toBeUndefined();
+  });
+
+  it("propagates ollama-local streaming usage compat through the managed inference route (#3947)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "qwen3.6:35b",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/qwen3.6:35b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsUsageInStreaming: true }),
+      ).toString("base64"),
+    });
+
+    expect(Object.keys(config.models.providers)).toEqual(["inference"]);
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "qwen3.6:35b",
+      name: "inference/qwen3.6:35b",
+      compat: { supportsUsageInStreaming: true },
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/qwen3.6:35b");
   });
 
   it("adds Kimi K2.6 compat for managed inference.local chat completions", () => {

@@ -13,9 +13,9 @@ skill:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-Add, remove, or modify the endpoints that the sandbox is allowed to reach.
+Add, remove, or modify the endpoints the sandbox can reach.
 
-The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
+The NemoClaw repository defines the sandbox policy in a declarative YAML file, and [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) enforces it at runtime.
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
 <Note>
@@ -38,7 +38,7 @@ See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#a
 > [!IMPORTANT]
 > Make static policy edits on the host, not inside the sandbox.
 > The sandbox image includes a small set of operational tools such as `vi`, `jq`, and `dos2unix`, but host-side policy files remain the durable source of truth.
-> Changes made only inside the sandbox are also ephemeral and are lost when the sandbox is recreated.
+> The sandbox also loses changes made only inside the sandbox when it is recreated.
 
 ## Static Changes
 
@@ -91,7 +91,7 @@ nemohermes onboard
 ```
 </AgentOnly>
 
-The wizard picks up the modified policy file and applies it to the sandbox.
+The wizard reads the modified policy file and applies it to the sandbox.
 
 ### Verify the Policy
 
@@ -169,7 +169,7 @@ NemoClaw reads the live policy via `openshell policy get --full`, structurally m
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
-### Option 2: Snapshot, Edit, and Set via OpenShell
+### Option 2: Snapshot, Edit, and Set with OpenShell
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
 You must start from the **live** policy, not from a baseline policy file, so the presets layered on at onboarding are preserved in the file you apply.
@@ -189,10 +189,10 @@ openshell policy set --policy live-policy.yaml my-assistant
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline policy plus the presets recorded for the sandbox.
 <AgentOnly variant="openclaw">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit the Hermes policy additions and re-run `nemohermes onboard`.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit the Hermes policy additions and re-run `nemohermes onboard`.
 </AgentOnly>
 
 ### Approve Requests Interactively
@@ -286,8 +286,7 @@ To include a preset in the baseline, merge its entries into the Hermes policy ad
 </AgentOnly>
 
 <Note>
-The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
-accept the `preset:` metadata block used in preset YAML files.
+The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not accept the `preset:` metadata block used in preset YAML files.
 <AgentOnly variant="openclaw">
 Use `nemoclaw <name> policy-add` for presets.
 </AgentOnly>
@@ -389,7 +388,8 @@ Review every host in a custom preset before applying it, especially when the fil
 
 ### Remove a Custom Preset
 
-Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
+NemoClaw records custom presets applied with `--from-file` or `--from-dir` in the sandbox registry alongside their full YAML content.
+You can remove them by name without keeping the original file on disk:
 
 <AgentOnly variant="openclaw">
 ```bash

@@ -47,7 +47,7 @@ For repository layout, file paths, and deeper diagrams, see [Architecture](../re
 
 ## Design Principles
 
-NemoClaw architecture follows the following principles.
+NemoClaw follows these architecture principles.
 
 Versioned blueprint
 : Host-side orchestration uses a versioned blueprint and runner that can evolve on its own release cadence.
@@ -60,8 +60,7 @@ Supply chain safety
 : Blueprint artifacts are immutable, versioned, and digest-verified before execution.
 
 OpenShell-backed lifecycle
-: NemoClaw orchestrates OpenShell resources under the hood, but <AgentCli /> onboard
-  is the supported operator entry point for creating or recreating NemoClaw-managed sandboxes.
+: NemoClaw orchestrates OpenShell resources under the hood, but <AgentCli /> onboard is the supported operator entry point for creating or recreating NemoClaw-managed sandboxes.
 
 Reproducible setup
 : Running setup again recreates the sandbox from the same blueprint and policy definitions.
@@ -79,7 +78,7 @@ NemoClaw is split into integration pieces on the host and in the sandbox image:
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- _Hermes runtime configuration_ is written into `/sandbox/.hermes` during onboarding, including `config.yaml`, environment files, and platform adapter settings for supported messaging channels.
+- NemoClaw writes Hermes runtime configuration into `/sandbox/.hermes` during onboarding, including `config.yaml`, environment files, and platform adapter settings for supported messaging channels.
 
 </AgentOnly>
 - The _blueprint_ is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.

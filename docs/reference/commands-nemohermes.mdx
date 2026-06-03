@@ -131,6 +131,8 @@ Three tiers are available:
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, see [Network Policies](network-policies#policy-tiers).
+When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
+Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
@@ -208,6 +210,9 @@ If you enable Telegram during onboarding, the wizard can also prompt for whether
 Set `TELEGRAM_REQUIRE_MENTION=1` for non-interactive onboarding when you want mention-only group replies.
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
+If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
+Existing live sandboxes are not deleted by this cancel rollback path.
+
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.
 In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
@@ -235,7 +240,9 @@ On the Docker-driver gateway path, preflight stays read-only when it detects a s
 It prints a `⚠ Gateway will be recreated when sandbox creation starts` notice and defers the actual teardown to step `[2/8] Starting OpenShell gateway`.
 This means pressing `Ctrl+C` between preflight and step `[2/8]` leaves the running gateway and existing sandbox containers untouched, so `nemohermes onboard` is safe to run just to check preflight output.
 For Linux Docker-driver gateways, onboarding also checks that a helper container on the OpenShell Docker network can reach `host.openshell.internal:<gateway-port>`.
-If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to any port <gateway-port> proto tcp` command before it reports the gateway healthy.
+If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to <gateway-ip> port <gateway-port> proto tcp` command before it reports the gateway healthy.
+Set `NEMOCLAW_AUTO_FIX_FIREWALL=1` to opt in to automatic UFW remediation for this specific failure: NemoClaw uses `sudo -n` only, validates the Docker bridge subnet/gateway/port, applies the narrow UFW rule only after a proven TCP reachability failure, and re-probes before continuing.
+If passwordless sudo, UFW, or active UFW is unavailable, NemoClaw falls back to the manual guidance path without prompting for a password.
 Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
 The poll count is clamped to a minimum of `1` so the probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
@@ -369,6 +376,10 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the variable, or supply the missing token, before retrying.
 
+When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
+Use `nemohermes inference set --provider <provider> --model <model>` to make an intentional route change.
+If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
+
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `nemohermes onboard` after a reboot in this case.
@@ -423,6 +434,8 @@ Pass `--json` to emit a structured per-sandbox report instead of the text render
 The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, and `dockerPaused`.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
+`dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
+In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), or `failureLayer` is non-null.
 The alias form `nemohermes <name> status --json` requires the sandbox to be registered locally; the canonical form `nemohermes sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
@@ -456,6 +469,7 @@ When the host Docker daemon is reachable but the per-sandbox container is stoppe
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to `Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
+When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
@@ -657,6 +671,8 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 
 Add a host alias to the sandbox pod template.
 Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
+Host alias commands use the legacy Kubernetes gateway `Sandbox` resource path.
+They are not supported on Docker-driver or VM-driver sandboxes because those drivers do not run the gateway cluster container that owns this resource.
 
 ```bash
 nemohermes my-assistant hosts-add searxng.local 192.168.1.105
@@ -845,6 +861,90 @@ nemohermes my-assistant skill remove my-skill
 
 Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+
+### `nemohermes <name> agents add`
+
+Run the OpenClaw interactive add wizard inside the sandbox.
+This is a thin pass-through to `openclaw agents add` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+
+```bash
+nemohermes my-assistant agents add
+nemohermes my-assistant agents add work --model gpt-4o
+```
+
+### `nemohermes <name> agents delete <agent-id>`
+
+Remove an OpenClaw agent from the sandbox.
+This is a thin pass-through to `openclaw agents delete <id>` via `openshell sandbox exec`; the OpenClaw CLI owns gateway dispatch (`agents.delete`), host-side workspace removal, and config edits.
+Flags accepted by the in-sandbox CLI (`--force`, `--json`) are forwarded verbatim.
+
+```bash
+nemohermes my-assistant agents delete work
+nemohermes my-assistant agents delete work --force --json
+```
+
+### `nemohermes <name> sessions`
+
+List OpenClaw conversation sessions in the sandbox.
+With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
+This is a thin pass-through to `openclaw sessions` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+
+```bash
+nemohermes my-assistant sessions
+nemohermes my-assistant sessions --all-agents --json
+```
+
+### `nemohermes <name> sessions list`
+
+Pass-through to `openclaw sessions list` inside the sandbox.
+Accepts every flag the in-sandbox CLI does (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`).
+
+```bash
+nemohermes my-assistant sessions list
+nemohermes my-assistant sessions list --agent work --json
+```
+
+### `nemohermes <name> sessions reset <key>`
+
+Archive a session and rebind its key to a fresh `sessionId` by invoking the OpenClaw gateway `sessions.reset` RPC inside the sandbox.
+Goes through `openshell sandbox exec` -> `openclaw gateway call sessions.reset`, so the gateway owns archival, lock handling, and lifecycle events; the host never edits `sessions.json` directly.
+
+```bash
+nemohermes my-assistant sessions reset main
+nemohermes my-assistant sessions reset agent:work:telegram:t-1
+nemohermes my-assistant sessions reset telegram:t-1 --agent work --reason new
+nemohermes my-assistant sessions reset agent:main:main --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <id>` | Agent id when `<key>` is an alias rather than the canonical `agent:<id>:<rest>` form. |
+| `--reason new\|reset` | `reset` (default) archives the prior transcript; `new` rebinds without preserving the archive trail. |
+| `--json` | Print the reset result as JSON. |
+| `--verbose` | Print the gateway entry payload after a successful reset. |
+
+The `<key>` argument accepts an alias (e.g. `main`, `telegram:t-1`) or the canonical `agent:<id>:<rest>` form.
+Mismatched `--agent` plus canonical-key combinations are refused before the gateway is invoked.
+
+### `nemohermes <name> sessions delete <key>`
+
+Remove a session entry by invoking the OpenClaw gateway `sessions.delete` RPC inside the sandbox.
+The gateway refuses to remove the agent's main session.
+The transcript on disk is removed by default; pass `--keep-transcript` to retain it.
+
+```bash
+nemohermes my-assistant sessions delete telegram:t-1
+nemohermes my-assistant sessions delete agent:work:telegram:t-1
+nemohermes my-assistant sessions delete telegram:t-1 --agent work --keep-transcript
+nemohermes my-assistant sessions delete agent:main:slack:c-9 --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <id>` | Agent id when `<key>` is an alias rather than the canonical `agent:<id>:<rest>` form. |
+| `--keep-transcript` | Retain the session transcript on disk after the entry is removed. |
+| `--json` | Print the delete result as JSON. |
+| `--verbose` | Print the gateway entry payload after a successful delete. |
 
 ### `nemohermes <name> rebuild`
 
@@ -1163,6 +1263,8 @@ nemohermes inference set --provider <provider> --model <model> [--sandbox <name>
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
 If you only want the lower-level OpenShell route operation, run `openshell inference set -g nemoclaw --model <model> --provider <provider>` directly.
 When either flag is missing, `nemohermes inference set` prints that OpenShell command instead of an oclif flag-validation error.
+The command updates the host registry immediately after the gateway route changes.
+If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `nemohermes <name> rebuild`.
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
@@ -1368,6 +1470,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
+When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
@@ -1472,6 +1575,7 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_AUTO_FIX_FIREWALL` | `1` to enable | Opts in to automatic UFW remediation when Linux Docker-driver sandbox containers cannot reach the host gateway after a proven TCP failure. NemoClaw runs `sudo -n` only, validates the narrow Docker bridge subnet → gateway IP:port rule before invoking UFW, re-probes after applying it, and otherwise falls back to the printed manual command. |
 | `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
 
 ### Onboard Profiling Traces

@@ -834,6 +834,20 @@ function applyPresetContent(
       }
       registry.updateSandbox(sandboxName, { policies: pols });
     }
+  } else if (options.custom) {
+    // The preset reached the gateway, but sandbox `sandboxName` has no local
+    // registry entry, so it cannot be recorded under `customPolicies`. Custom
+    // presets are surfaced only from the registry (both `listCustomPresets`
+    // and `getGatewayPresets` read `registry.getCustomPolicies`), so an
+    // unrecorded custom preset never appears in `policy-list` or `status`.
+    // Report the gap instead of exiting 0 as if the preset were fully applied. (#4510)
+    console.error(
+      `  Warning: '${presetName}' was applied to the gateway but could not be ` +
+        `recorded locally because sandbox '${sandboxName}' is not in the ` +
+        `registry, so it will not appear in policy-list or status. Recover or ` +
+        `re-onboard the sandbox, then re-apply.`,
+    );
+    return false;
   }
 
   return true;

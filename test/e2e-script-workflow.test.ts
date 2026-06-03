@@ -37,6 +37,10 @@ describe("E2E reusable workflow contract", () => {
     const defaultSecrets = {
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
       BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
+      DOCKERHUB_USERNAME:
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
+      DOCKERHUB_TOKEN:
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
     const messagingLiveSecrets = {
       TELEGRAM_BOT_TOKEN_REAL: "${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}",
@@ -55,6 +59,69 @@ describe("E2E reusable workflow contract", () => {
           ? { ...defaultSecrets, ...messagingLiveSecrets }
           : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
+    }
+  });
+
+  it("authenticates Docker Hub pulls without exposing credentials to target-ref dispatches", () => {
+    const authStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Authenticate to Docker Hub",
+    );
+
+    expect(authStep?.if).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target_ref == '' }}",
+    );
+    expect(authStep?.env?.DOCKERHUB_USERNAME).toBe("${{ secrets.DOCKERHUB_USERNAME }}");
+    expect(authStep?.env?.DOCKERHUB_TOKEN).toBe("${{ secrets.DOCKERHUB_TOKEN }}");
+    expect(authStep?.run).toContain("docker login docker.io");
+    expect(authStep?.run).toContain("continuing with anonymous pulls");
+  });
+
+  it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
+    const directE2eJobs = [
+      "docs-validation-e2e",
+      "openclaw-tui-chat-correlation-e2e",
+      "issue-3600-gpu-proof-optional-e2e",
+      "kimi-inference-compat-e2e",
+      "bedrock-runtime-compatible-anthropic-e2e",
+      "token-rotation-e2e",
+      "sandbox-operations-e2e",
+      "openshell-gateway-upgrade-e2e",
+      "double-onboard-e2e",
+      "onboard-repair-e2e",
+      "onboard-resume-e2e",
+      "onboard-negative-paths-e2e",
+      "runtime-overrides-e2e",
+      "credential-sanitization-e2e",
+      "telegram-injection-e2e",
+      "launchable-smoke-e2e",
+      "gpu-e2e",
+      "gpu-double-onboard-e2e",
+    ];
+
+    for (const name of directE2eJobs) {
+      const checkoutStep = nightlyWorkflow.jobs[name].steps?.find((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
+      const authStep = nightlyWorkflow.jobs[name].steps?.find(
+        (step) => step.name === "Authenticate to Docker Hub",
+      );
+
+      expect(checkoutStep?.with?.ref, name).toBe("${{ inputs.target_ref || github.ref }}");
+      expect(checkoutStep?.with?.["persist-credentials"], name).toBe(false);
+      expect(authStep, name).toBeDefined();
+      expect(authStep?.if, name).toBe(
+        "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}",
+      );
+      expect(authStep?.env?.DOCKERHUB_USERNAME, name).toBe(
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
+      );
+      expect(authStep?.env?.DOCKERHUB_TOKEN, name).toBe(
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
+      );
+      expect(authStep?.run, name).toContain("docker login docker.io");
+      expect(authStep?.run, name).not.toContain("persist-credentials:");
+      expect(authStep?.run, name).not.toContain("uses:");
+      expect(authStep?.run, name).not.toContain("with:");
     }
   });
 
