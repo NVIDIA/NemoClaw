@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerInfoFormat } from "../adapters/docker";
+import { shellQuote } from "../core/shell-quote";
 
 export type RunCaptureFn = typeof import("../runner").runCapture;
 
@@ -259,7 +260,9 @@ export function buildNvidiaCdiRepairCommands(
   specPath: string,
 ): string[] {
   const specDir = path.dirname(specPath);
-  const commands = [`sudo mkdir -p ${specDir}`];
+  const quotedSpecDir = shellQuote(specDir);
+  const quotedSpecPath = shellQuote(specPath);
+  const commands = [`sudo mkdir -p ${quotedSpecDir}`];
   if (assessment.systemctlAvailable !== false) {
     commands.push(
       "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
@@ -268,7 +271,7 @@ export function buildNvidiaCdiRepairCommands(
     );
   }
   commands.push(
-    `sudo nvidia-ctk cdi generate --output=${specPath}   # fallback if the refresh service does not repair the spec`,
+    `sudo nvidia-ctk cdi generate --output=${quotedSpecPath}   # fallback if the refresh service does not repair the spec`,
     "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
     "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
   );
@@ -300,8 +303,9 @@ export function buildStaleCdiAutoFixCommands(): string[] {
 export function buildStaleCdiWarnCommands(flaggedFilePath: string): string[] {
   const commands = buildStaleCdiAutoFixCommands();
   if (flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH) {
+    const quotedFlaggedFilePath = shellQuote(flaggedFilePath);
     commands.push(
-      `sudo rm -f ${flaggedFilePath}   # optional: remove the stale leftover (the service owns ${NVIDIA_CDI_REFRESH_SPEC_PATH})`,
+      `sudo rm -f ${quotedFlaggedFilePath}   # optional: remove the stale leftover (the service owns ${NVIDIA_CDI_REFRESH_SPEC_PATH})`,
     );
   }
   commands.push(
@@ -315,8 +319,9 @@ export function buildStaleCdiManualWarnCommands(flaggedFilePath: string): string
     `Refresh NVIDIA CDI specs using your host's service manager so ${NVIDIA_CDI_REFRESH_SPEC_PATH} is current.`,
   ];
   if (flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH) {
+    const quotedFlaggedFilePath = shellQuote(flaggedFilePath);
     commands.push(
-      `Optionally remove the stale leftover after the refresh: sudo rm -f ${flaggedFilePath}`,
+      `Optionally remove the stale leftover after the refresh: sudo rm -f ${quotedFlaggedFilePath}`,
     );
   }
   commands.push(

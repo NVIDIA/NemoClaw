@@ -199,16 +199,29 @@ describe("docker-cdi staleness detection", () => {
 
 describe("docker-cdi remediation commands", () => {
   it("keeps missing-spec remediation on the direct-generation fallback path", () => {
-    const commands = buildNvidiaCdiRepairCommands({ systemctlAvailable: true }, "/etc/cdi/nvidia.yaml");
+    const commands = buildNvidiaCdiRepairCommands(
+      { systemctlAvailable: true },
+      "/etc/cdi/nvidia.yaml",
+    );
 
-    expect(commands[0]).toBe("sudo mkdir -p /etc/cdi");
+    expect(commands[0]).toBe("sudo mkdir -p '/etc/cdi'");
     expect(commands[1]).toBe(
       "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
     );
     expect(commands[2]).toBe("sudo systemctl start nvidia-cdi-refresh.service");
     expect(commands[3]).toContain("nvidia-ctk cdi list");
-    expect(commands[4]).toContain("sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml");
+    expect(commands[4]).toContain("sudo nvidia-ctk cdi generate --output='/etc/cdi/nvidia.yaml'");
     expect(commands[5]).toContain("nvidia-ctk cdi list");
+  });
+
+  it("shell-quotes CDI repair paths in generated commands", () => {
+    const commands = buildNvidiaCdiRepairCommands(
+      { systemctlAvailable: false },
+      "/tmp/cdi dir/nvidia;bad.yaml",
+    );
+
+    expect(commands[0]).toBe("sudo mkdir -p '/tmp/cdi dir'");
+    expect(commands[1]).toContain("--output='/tmp/cdi dir/nvidia;bad.yaml'");
   });
 
   it("shows stale-spec refresh commands with optional leftover removal only for /etc/cdi", () => {
@@ -217,7 +230,7 @@ describe("docker-cdi remediation commands", () => {
       "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
     );
     expect(leftoverCommands[1]).toBe("sudo systemctl start nvidia-cdi-refresh.service");
-    expect(leftoverCommands[2]).toContain("sudo rm -f /etc/cdi/nvidia.yaml");
+    expect(leftoverCommands[2]).toContain("sudo rm -f '/etc/cdi/nvidia.yaml'");
     expect(leftoverCommands.join("\n")).not.toContain("--output=/etc/cdi");
     expect(leftoverCommands.join("\n")).not.toContain("nvidia-ctk cdi list");
 
@@ -229,8 +242,17 @@ describe("docker-cdi remediation commands", () => {
     const commands = buildStaleCdiManualWarnCommands("/etc/cdi/nvidia.yaml");
 
     expect(commands.join("\n")).toContain("/var/run/cdi/nvidia.yaml");
-    expect(commands.join("\n")).toContain("sudo rm -f /etc/cdi/nvidia.yaml");
+    expect(commands.join("\n")).toContain("sudo rm -f '/etc/cdi/nvidia.yaml'");
     expect(commands.join("\n")).not.toContain("systemctl");
     expect(commands.join("\n")).not.toContain("nvidia-ctk cdi list");
+  });
+
+  it("shell-quotes stale leftover paths in displayed guidance", () => {
+    expect(buildStaleCdiWarnCommands("/tmp/cdi dir/nvidia;bad.yaml").join("\n")).toContain(
+      "sudo rm -f '/tmp/cdi dir/nvidia;bad.yaml'",
+    );
+    expect(buildStaleCdiManualWarnCommands("/tmp/cdi dir/nvidia;bad.yaml").join("\n")).toContain(
+      "sudo rm -f '/tmp/cdi dir/nvidia;bad.yaml'",
+    );
   });
 });
