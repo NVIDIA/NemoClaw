@@ -172,6 +172,8 @@ session and the baked image.
 <AgentOnly variant="openclaw">
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) also uses `nemoclaw inference set`.
 The command updates both the gateway route and the OpenClaw provider namespace in the running sandbox config.
+If the in-sandbox config sync fails after the gateway route is updated, NemoClaw keeps the host registry aligned with the gateway and prints a rebuild hint.
+Run the rebuild before relying on the running agent if the warning says the image config could not be patched.
 
 ```bash
 nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
@@ -181,6 +183,8 @@ nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-
 <AgentOnly variant="hermes">
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) also uses `nemohermes inference set`.
 The command updates both the gateway route and `/sandbox/.hermes/config.yaml`.
+If the Hermes config sync fails after the gateway route is updated, NemoClaw keeps the host registry aligned with the gateway and prints a rebuild hint.
+Run the rebuild before relying on the running agent if the warning says the image config could not be patched.
 
 ```bash
 nemohermes inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify

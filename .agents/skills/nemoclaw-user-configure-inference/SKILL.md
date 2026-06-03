@@ -372,7 +372,9 @@ For an already-running vLLM server, run `nemohermes onboard` and select **Local 
 If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
 If vLLM is not running and your host matches a DGX Spark or DGX Station managed profile, NemoClaw shows the **Install vLLM** or **Start vLLM** entry by default.
 Generic Linux NVIDIA GPU hosts still require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
-NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, and prints progress markers while the model loads.
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+If Docker pull output stops making progress, a watchdog stops the stalled pull instead of failing slow but active downloads on a fixed wall-clock timeout.
+If vLLM never becomes ready, NemoClaw prints a short tail of the vLLM container logs before exiting.
 The first run can take 10 to 30 minutes.
 Later runs reuse the cached image and model weights.
 
