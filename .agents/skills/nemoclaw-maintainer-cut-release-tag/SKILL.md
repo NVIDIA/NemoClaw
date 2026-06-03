@@ -145,4 +145,5 @@ Return:
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new exact confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
+- `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.

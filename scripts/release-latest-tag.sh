@@ -54,6 +54,11 @@ if [[ "$RELEASE_TAG" != "$latest_remote_semver" ]]; then
   fail "Refusing to promote $RELEASE_TAG: latest remote semver tag is $latest_remote_semver"
 fi
 
+latest_commit="$(git rev-parse --verify --quiet "refs/tags/latest^{commit}" || true)"
+if [[ -n "$latest_commit" ]] && ! git merge-base --is-ancestor "$latest_commit" "$release_commit"; then
+  fail "Refusing to move latest backward: current latest $latest_commit is not an ancestor of $RELEASE_TAG ($release_commit)"
+fi
+
 git tag -fa latest "$release_commit" -m "latest -> $RELEASE_TAG"
 
 if [[ "$PUSH_LATEST" != "0" ]]; then
@@ -67,6 +72,7 @@ fi
   echo "- Release commit: \`$release_commit\`"
   echo "- Remote main: \`$main_commit\`"
   echo "- Latest remote semver: \`$latest_remote_semver\`"
+  echo "- Previous latest commit: \`${latest_commit:-none}\`"
   echo "- Updated: \`latest\`"
   echo "- Not touched: \`lkg\`"
 } >>"${GITHUB_STEP_SUMMARY:-/dev/null}"

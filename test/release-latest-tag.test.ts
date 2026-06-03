@@ -191,6 +191,22 @@ describe("release-latest-tag.sh", () => {
     expect(result.stderr).toContain("latest remote semver tag is v0.0.2");
   });
 
+  it("rejects a higher semver tag on an older main commit so latest cannot move backward", () => {
+    const fixture = createFixture();
+    const olderCommit = fixture.firstCommit;
+    const newerCommit = commit(fixture, "newer already released commit");
+    pushTag(fixture, "v0.0.1", newerCommit);
+    expect(runReleaseLatest(fixture, "v0.0.1").status).toBe(0);
+    expect(remoteCommit(fixture, "refs/tags/latest")).toBe(newerCommit);
+    pushTag(fixture, "v0.0.2", olderCommit);
+
+    const result = runReleaseLatest(fixture, "v0.0.2");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing to move latest backward");
+    expect(remoteCommit(fixture, "refs/tags/latest")).toBe(newerCommit);
+  });
+
   it("rejects a semver tag whose commit is not reachable from main", () => {
     const fixture = createFixture();
     run(fixture.work, ["git", "checkout", "--orphan", "release-orphan"]);

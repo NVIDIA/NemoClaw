@@ -179,8 +179,7 @@ function main(): void {
   const originRemote = run("git", ["remote", "get-url", "origin"]).trim();
   if (
     process.env.NEMOCLAW_RELEASE_ALLOW_NON_CANONICAL !== "1" &&
-    !/NVIDIA\/NemoClaw(?:\.git)?$/.test(originRemote) &&
-    !originRemote.includes("/NemoClaw")
+    !/NVIDIA\/NemoClaw(?:\.git)?$/.test(originRemote)
   ) {
     throw new Error(`Unexpected origin remote: ${originRemote}`);
   }
