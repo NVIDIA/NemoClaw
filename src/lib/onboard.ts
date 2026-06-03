@@ -476,12 +476,6 @@ const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./on
 const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
   require("./onboard/host-gateway-process");
 const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
-const {
-  warnOrRejectGatewayHostConflicts,
-}: typeof import("./onboard/gateway-host-preflight") = require("./onboard/gateway-host-preflight");
-const {
-  rejectUnsupportedContainerRuntime,
-}: typeof import("./onboard/unsupported-runtime-preflight") = require("./onboard/unsupported-runtime-preflight");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const {
@@ -648,12 +642,6 @@ async function promptYesNoOrDefault(
   return onboardPromptHelpers.promptYesNoOrDefault(promptHelperDeps, question, envVar, defaultIsYes);
 }
 
-const gatewayHostPreflightDeps = {
-  printRemediationActions,
-  promptYesNoOrDefault,
-  error: console.error,
-  exitProcess: (code: number) => process.exit(code),
-};
 // ── Helpers ──────────────────────────────────────────────────────
 
 const {
@@ -1858,12 +1846,27 @@ function assertCdiNvidiaGpuSpecPresent(
   process.exit(1);
 }
 
+
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
 > & {
   optedOutGpuPassthrough?: boolean;
 };
+
+// Reject unsupported container runtimes (currently only Podman with the
+// Linux Docker-driver gateway) before any Docker-specific probes. Both
+// the fresh preflight and `--resume` backstop call this — if `docker`
+// resolves to Podman, surface the unsupported-runtime message instead of
+// running bridge/DNS diagnostics that would be misleading.
+function rejectUnsupportedContainerRuntime(host: ReturnType<typeof assessHost>): void {
+  if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+    console.error(`  ✗ ${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`);
+    console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
+    console.error("    Switch to Docker Engine and rerun onboarding.");
+    process.exit(1);
+  }
+}
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
@@ -1884,7 +1887,6 @@ async function preflight(
   rejectUnsupportedContainerRuntime(host);
   console.log("  ✓ Docker is running");
   require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
-  await warnOrRejectGatewayHostConflicts(host, gatewayHostPreflightDeps);
   const gpu = nim.detectGpu();
   const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
     flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
@@ -2278,6 +2280,7 @@ async function startGatewayWithOptions(
   if (gatewayEnv.OPENSHELL_CLUSTER_IMAGE) {
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
+
   // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
   // first-run environments) the embedded k3s needs more time than OpenShell's
   // internal health-check window allows. Retrying after a clean destroy lets
@@ -2481,6 +2484,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     if (exitOnFailure) process.exit(1);
     throw new Error("OpenShell gateway binary not found");
   }
+
   const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
   if (existingPid !== null && isPidAlive(existingPid)) {
     if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
