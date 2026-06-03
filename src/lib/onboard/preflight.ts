@@ -169,9 +169,15 @@ type CdiDeviceNode = DeviceNumbers & {
   path: string;
 };
 
+type EffectiveNvidiaCdiSpec = {
+  filePath: string;
+  parsed: unknown;
+};
+
 const NVIDIA_CDI_KIND_YAML_RE =
   /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
 const NVIDIA_CDI_KIND_JSON_RE = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
+const NVIDIA_CDI_REFRESH_SPEC_PATH = "/var/run/cdi/nvidia.yaml";
 
 function buildCommandVArgv(commandName: string): readonly string[] {
   return ["sh", "-c", 'command -v "$1"', "--", commandName];
@@ -414,6 +420,41 @@ function parseCdiSpec(raw: string, filePath: string): unknown {
   return YAML.parse(raw);
 }
 
+function findEffectiveNvidiaCdiSpec(
+  specDirs: readonly string[],
+  readdirImpl: (dir: string) => string[],
+  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
+): EffectiveNvidiaCdiSpec | null {
+  // Docker CDI precedence is highest in the last configured directory.
+  for (const dir of [...specDirs].reverse()) {
+    let entries: string[];
+    try {
+      entries = readdirImpl(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
+      const filePath = path.join(dir, entry);
+      let raw: string;
+      try {
+        raw = readFileImpl(filePath, "utf-8");
+      } catch {
+        continue;
+      }
+      if (!NVIDIA_CDI_KIND_YAML_RE.test(raw) && !NVIDIA_CDI_KIND_JSON_RE.test(raw)) {
+        continue;
+      }
+      try {
+        return { filePath, parsed: parseCdiSpec(raw, filePath) };
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
 function collectCdiDeviceNodes(value: unknown, filePath: string): CdiDeviceNode[] {
   const nodes: CdiDeviceNode[] = [];
   const stack: unknown[] = [value];
@@ -448,39 +489,13 @@ function findCdiDeviceNodeMismatch(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
   runCaptureImpl: RunCaptureFn,
 ): string | null {
-  for (const dir of specDirs) {
-    let entries: string[];
-    try {
-      entries = readdirImpl(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
-      const filePath = path.join(dir, entry);
-      let raw: string;
-      try {
-        raw = readFileImpl(filePath, "utf-8");
-      } catch {
-        continue;
-      }
-      if (!NVIDIA_CDI_KIND_YAML_RE.test(raw) && !NVIDIA_CDI_KIND_JSON_RE.test(raw)) {
-        continue;
-      }
-      let parsed: unknown;
-      try {
-        parsed = parseCdiSpec(raw, filePath);
-      } catch {
-        continue;
-      }
-      const deviceNodes = collectCdiDeviceNodes(parsed, filePath);
-      for (const node of deviceNodes) {
-        const liveDevice = readLiveLinuxDeviceNumbers(node.path, runCaptureImpl);
-        if (!liveDevice) continue;
-        if (node.major === liveDevice.major && node.minor === liveDevice.minor) continue;
-        return `${node.filePath} ${node.path}=${node.major}:${node.minor}, live=${liveDevice.major}:${liveDevice.minor}`;
-      }
-    }
+  const effective = findEffectiveNvidiaCdiSpec(specDirs, readdirImpl, readFileImpl);
+  if (!effective) return null;
+  for (const node of collectCdiDeviceNodes(effective.parsed, effective.filePath)) {
+    const liveDevice = readLiveLinuxDeviceNumbers(node.path, runCaptureImpl);
+    if (!liveDevice) continue;
+    if (node.major === liveDevice.major && node.minor === liveDevice.minor) continue;
+    return `${node.filePath} ${node.path}=${node.major}:${node.minor}, live=${liveDevice.major}:${liveDevice.minor}`;
   }
   return null;
 }
@@ -662,6 +677,50 @@ function buildNvidiaCdiRefreshCommands(): string[] {
     "sudo systemctl start nvidia-cdi-refresh.service",
     "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
   ];
+}
+
+function extractCdiMismatchFilePath(mismatch: string | undefined): string {
+  const trimmed = String(mismatch || "").trim();
+  if (!trimmed) return "";
+  const firstWhitespace = trimmed.search(/\s/);
+  return firstWhitespace > 0 ? trimmed.slice(0, firstWhitespace) : trimmed;
+}
+
+function buildStaleCdiAutoFixCommands(): string[] {
+  return [
+    "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
+    "sudo systemctl start nvidia-cdi-refresh.service",
+  ];
+}
+
+function buildStaleCdiWarnCommands(flaggedFilePath: string): string[] {
+  const commands = buildStaleCdiAutoFixCommands();
+  if (flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH) {
+    commands.push(
+      `sudo rm -f ${flaggedFilePath}   # optional: remove the stale leftover (the service owns ${NVIDIA_CDI_REFRESH_SPEC_PATH})`,
+    );
+  }
+  commands.push(
+    "nemoclaw onboard      # re-run to confirm the stale-spec warning clears (or --no-gpu to skip GPU)",
+  );
+  return commands;
+}
+
+function explainStaleCdiReason(mismatch: string | undefined): string {
+  const detail = mismatch || "unknown device-node mismatch";
+  const flaggedFilePath = extractCdiMismatchFilePath(mismatch);
+  const isLeftover = flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH;
+  return (
+    `An NVIDIA CDI device node no longer matches the live device (${detail}). ` +
+    "OpenShell's `gateway start --gpu` injects devices from the CDI spec, so a stale " +
+    "device number points the container at the wrong device and CUDA init fails " +
+    "(`CUDA unknown error`). The nvidia-cdi-refresh service keeps " +
+    `${NVIDIA_CDI_REFRESH_SPEC_PATH} current on driver/toolkit changes` +
+    (isLeftover
+      ? `; the flagged ${flaggedFilePath} is a stale leftover that the refreshed ` +
+        `${NVIDIA_CDI_REFRESH_SPEC_PATH} overrides.`
+      : "; re-enable and run it to regenerate the spec.")
+  );
 }
 
 function explainNvidiaCdiRepairReason(assessment: HostAssessment): string {
@@ -1124,33 +1183,41 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
   }
 
   if (assessment.cdiNvidiaGpuSpecNeedsRepair || assessment.cdiNvidiaGpuSpecMissing) {
+    const missingSpec = assessment.cdiNvidiaGpuSpecMissing;
+    const flaggedFilePath = extractCdiMismatchFilePath(assessment.cdiNvidiaGpuSpecMismatch);
     const specPath = getNvidiaCdiSpecPath(assessment);
-    const generateCommands = buildNvidiaCdiRepairCommands(assessment, specPath);
+    const repairCommands = missingSpec
+      ? buildNvidiaCdiRepairCommands(assessment, specPath)
+      : buildStaleCdiWarnCommands(flaggedFilePath);
+    const reason = missingSpec
+      ? explainNvidiaCdiRepairReason(assessment)
+      : explainStaleCdiReason(assessment.cdiNvidiaGpuSpecMismatch);
     if (isWslDockerDesktopRuntime(assessment)) {
       actions.push(wslDockerDesktopGpuCompatibilityAction());
     } else if (assessment.nvidiaContainerToolkitInstalled) {
-      const title = assessment.cdiNvidiaGpuSpecMissing
+      const title = missingSpec
         ? "Generate NVIDIA CDI device specs"
         : "Refresh NVIDIA CDI device specs";
       actions.push({
-        id: assessment.cdiNvidiaGpuSpecMissing
-          ? "generate_nvidia_cdi_spec"
-          : "refresh_nvidia_cdi_spec",
+        id: missingSpec ? "generate_nvidia_cdi_spec" : "refresh_nvidia_cdi_spec",
         title,
         kind: "sudo",
-        reason: explainNvidiaCdiRepairReason(assessment),
-        commands: generateCommands,
+        reason,
+        commands: repairCommands,
         blocking: true,
       });
     } else {
+      const title = missingSpec
+        ? "Install NVIDIA Container Toolkit and generate CDI device specs"
+        : "Install NVIDIA Container Toolkit and refresh CDI device specs";
       actions.push({
         id: "install_nvidia_container_toolkit",
-        title: "Install NVIDIA Container Toolkit and generate CDI device specs",
+        title,
         kind: "sudo",
-        reason: `${explainNvidiaCdiRepairReason(assessment)} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
+        reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
         commands: buildContainerToolkitBootstrapCommands(
           assessment.packageManager,
-          generateCommands,
+          repairCommands,
         ),
         blocking: true,
       });

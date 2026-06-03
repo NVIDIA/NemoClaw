@@ -174,6 +174,184 @@ describe("assessHost — CDI device-spec gap (#3152)", () => {
     expect(result.nvidiaCdiRefreshServiceEnabled).toBe(false);
   });
 
+  it("ignores a stale lower-precedence /etc/cdi spec when /var/run/cdi is fresh", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) => {
+        if (filePath === "/etc/cdi/nvidia.yaml") {
+          return [
+            "cdiVersion: 0.5.0",
+            "kind: nvidia.com/gpu",
+            "devices:",
+            "  - name: all",
+            "    containerEdits:",
+            "      deviceNodes:",
+            "        - path: /dev/nvidia-uvm",
+            "          hostPath: /dev/nvidia-uvm",
+            "          type: c",
+            "          major: 498",
+            "",
+          ].join("\n");
+        }
+        if (filePath === "/var/run/cdi/nvidia.yaml") {
+          return [
+            "cdiVersion: 0.5.0",
+            "kind: nvidia.com/gpu",
+            "devices:",
+            "  - name: all",
+            "    containerEdits:",
+            "      deviceNodes:",
+            "        - path: /dev/nvidia-uvm",
+            "          hostPath: /dev/nvidia-uvm",
+            "          type: c",
+            "          major: 499",
+            "",
+          ].join("\n");
+        }
+        return "Linux version 6.8.0-58-generic";
+      },
+      readdirImpl: (dir: string) => {
+        if (dir === "/etc/cdi") return ["nvidia.yaml"];
+        if (dir === "/var/run/cdi") return ["nvidia.yaml"];
+        return [];
+      },
+      runCaptureImpl: (command: readonly string[]) => {
+        if (command[0] === "systemctl" && command[1] === "is-enabled") return "enabled";
+        if (command[0] === "systemctl" && command[1] === "is-active") return "active";
+        if (command[0] === "systemctl" && command[1] === "is-failed") return "inactive";
+        if (command[0] === "stat" && command[3] === "/dev/nvidia-uvm") return "1f3 0";
+        return "";
+      },
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      }),
+      commandExistsImpl: (name: string) =>
+        name === "docker" || name === "systemctl" || name === "nvidia-ctk",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+    expect(result.cdiNvidiaGpuSpecStale).toBe(false);
+    expect(result.cdiNvidiaGpuSpecNeedsRepair).toBe(false);
+    expect(result.cdiNvidiaGpuSpecMismatch).toBeUndefined();
+  });
+
+  it("flags a stale /etc/cdi spec when no higher-precedence /var/run/cdi spec exists", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) =>
+        filePath === "/etc/cdi/nvidia.yaml"
+          ? [
+              "cdiVersion: 0.5.0",
+              "kind: nvidia.com/gpu",
+              "devices:",
+              "  - name: all",
+              "    containerEdits:",
+              "      deviceNodes:",
+              "        - path: /dev/nvidia-uvm",
+              "          hostPath: /dev/nvidia-uvm",
+              "          type: c",
+              "          major: 498",
+              "",
+            ].join("\n")
+          : "Linux version 6.8.0-58-generic",
+      readdirImpl: (dir: string) => (dir === "/etc/cdi" ? ["nvidia.yaml"] : []),
+      runCaptureImpl: (command: readonly string[]) => {
+        if (command[0] === "systemctl" && command[1] === "is-enabled") return "enabled";
+        if (command[0] === "systemctl" && command[1] === "is-active") return "active";
+        if (command[0] === "systemctl" && command[1] === "is-failed") return "inactive";
+        if (command[0] === "stat" && command[3] === "/dev/nvidia-uvm") return "1f3 0";
+        return "";
+      },
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      }),
+      commandExistsImpl: (name: string) =>
+        name === "docker" || name === "systemctl" || name === "nvidia-ctk",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+    expect(result.cdiNvidiaGpuSpecStale).toBe(true);
+    expect(result.cdiNvidiaGpuSpecNeedsRepair).toBe(true);
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("/etc/cdi/nvidia.yaml");
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("/dev/nvidia-uvm=498:0");
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("live=499:0");
+  });
+
+  it("flags a stale /var/run/cdi spec when it is the effective spec", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      release: "6.8.0-58-generic",
+      readFileImpl: (filePath: string) => {
+        if (filePath === "/etc/cdi/nvidia.yaml") {
+          return [
+            "cdiVersion: 0.5.0",
+            "kind: nvidia.com/gpu",
+            "devices:",
+            "  - name: all",
+            "    containerEdits:",
+            "      deviceNodes:",
+            "        - path: /dev/nvidia-uvm",
+            "          hostPath: /dev/nvidia-uvm",
+            "          type: c",
+            "          major: 499",
+            "",
+          ].join("\n");
+        }
+        if (filePath === "/var/run/cdi/nvidia.yaml") {
+          return [
+            "cdiVersion: 0.5.0",
+            "kind: nvidia.com/gpu",
+            "devices:",
+            "  - name: all",
+            "    containerEdits:",
+            "      deviceNodes:",
+            "        - path: /dev/nvidia-uvm",
+            "          hostPath: /dev/nvidia-uvm",
+            "          type: c",
+            "          major: 498",
+            "",
+          ].join("\n");
+        }
+        return "Linux version 6.8.0-58-generic";
+      },
+      readdirImpl: (dir: string) => {
+        if (dir === "/etc/cdi") return ["nvidia.yaml"];
+        if (dir === "/var/run/cdi") return ["nvidia.yaml"];
+        return [];
+      },
+      runCaptureImpl: (command: readonly string[]) => {
+        if (command[0] === "systemctl" && command[1] === "is-enabled") return "enabled";
+        if (command[0] === "systemctl" && command[1] === "is-active") return "active";
+        if (command[0] === "systemctl" && command[1] === "is-failed") return "inactive";
+        if (command[0] === "stat" && command[3] === "/dev/nvidia-uvm") return "1f3 0";
+        return "";
+      },
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "27.0",
+        CDISpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      }),
+      commandExistsImpl: (name: string) =>
+        name === "docker" || name === "systemctl" || name === "nvidia-ctk",
+      gpuProbeImpl: () => true,
+    });
+
+    expect(result.cdiNvidiaGpuSpecMissing).toBe(false);
+    expect(result.cdiNvidiaGpuSpecStale).toBe(true);
+    expect(result.cdiNvidiaGpuSpecNeedsRepair).toBe(true);
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("/var/run/cdi/nvidia.yaml");
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("/dev/nvidia-uvm=498:0");
+    expect(result.cdiNvidiaGpuSpecMismatch).toContain("live=499:0");
+  });
+
   it("flags a stale NVIDIA CDI spec when nvidia-uvm omits minor and its major no longer matches", () => {
     const result = assessHost({
       platform: "linux",
@@ -620,6 +798,95 @@ describe("planHostRemediation — CDI", () => {
     expect(action?.commands[5]).toContain("nvidia-ctk cdi list");
     expect(action?.commands[6]).toContain("nemoclaw onboard");
     expect(action?.reason).toContain("nvidia.com/gpu");
+  });
+
+  it("emits stale-spec refresh commands without direct /etc/cdi generation", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        cdiNvidiaGpuSpecStale: true,
+        cdiNvidiaGpuSpecNeedsRepair: true,
+        cdiNvidiaGpuSpecMismatch:
+          "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+      }),
+    );
+
+    const action = actions.find(
+      (entry: { id: string }) => entry.id === "refresh_nvidia_cdi_spec",
+    );
+    expect(action).toBeTruthy();
+    expect(action?.kind).toBe("sudo");
+    expect(action?.blocking).toBe(true);
+    expect(action?.commands[0]).toBe(
+      "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
+    );
+    expect(action?.commands[1]).toBe("sudo systemctl start nvidia-cdi-refresh.service");
+    expect(action?.commands[2]).toContain("sudo rm -f /etc/cdi/nvidia.yaml");
+    expect(action?.commands[2]).toContain("optional");
+    expect(action?.commands[3]).toContain("nemoclaw onboard");
+    expect(action?.commands.some((command) => command.includes("mkdir -p /etc/cdi"))).toBe(
+      false,
+    );
+    expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(
+      false,
+    );
+    expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(
+      false,
+    );
+    expect(action?.reason).toContain("/etc/cdi/nvidia.yaml");
+    expect(action?.reason).toContain("/var/run/cdi/nvidia.yaml");
+  });
+
+  it("does not offer leftover removal when the stale effective spec is /var/run/cdi", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        cdiNvidiaGpuSpecStale: true,
+        cdiNvidiaGpuSpecNeedsRepair: true,
+        cdiNvidiaGpuSpecMismatch:
+          "/var/run/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+      }),
+    );
+
+    const action = actions.find(
+      (entry: { id: string }) => entry.id === "refresh_nvidia_cdi_spec",
+    );
+    expect(action).toBeTruthy();
+    expect(action?.commands.some((command) => command.includes("rm -f"))).toBe(false);
+    expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(
+      false,
+    );
+    expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(
+      false,
+    );
+  });
+
+  it("uses stale refresh commands after toolkit bootstrap when nvidia-ctk is missing", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        cdiNvidiaGpuSpecStale: true,
+        cdiNvidiaGpuSpecNeedsRepair: true,
+        cdiNvidiaGpuSpecMismatch:
+          "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+        nvidiaContainerToolkitInstalled: false,
+      }),
+    );
+
+    const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(action).toBeTruthy();
+    expect(action?.title).toContain("refresh CDI");
+    expect(action?.commands.some((command) => command === "sudo apt-get install -y nvidia-container-toolkit")).toBe(
+      true,
+    );
+    expect(
+      action?.commands.some((command) =>
+        command === "sudo systemctl start nvidia-cdi-refresh.service",
+      ),
+    ).toBe(true);
+    expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(
+      false,
+    );
+    expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(
+      false,
+    );
   });
 
   it("emits a non-blocking refresh-service warning when refresh units are unhealthy", () => {
