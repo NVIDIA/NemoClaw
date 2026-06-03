@@ -6,10 +6,30 @@ import { describe, expect, it } from "vitest";
 import {
   assertOllamaUpgradeApplied,
   resolveOllamaInstallMenuEntry,
+  resolveRunningOllamaMenuEntry,
 } from "../../../dist/lib/onboard/ollama-install-menu";
 import { MIN_OLLAMA_VERSION } from "../../../dist/lib/inference/ollama-version";
 
 const LINUX_NON_WSL = { platform: "linux" as const, isWsl: false };
+
+describe("resolveRunningOllamaMenuEntry", () => {
+  it("labels unsupported Windows-host Ollama without suggesting it", () => {
+    const entry = resolveRunningOllamaMenuEntry({
+      hasOllama: false,
+      ollamaRunning: true,
+      ollamaHost: "host.docker.internal",
+      isWsl: true,
+      ollamaPort: 11434,
+      windowsHostLabelSuffix: " (requires Docker Desktop WSL integration)",
+    });
+
+    expect(entry).toEqual({
+      key: "ollama",
+      label:
+        "Local Ollama (Windows host:11434) — running (requires Docker Desktop WSL integration)",
+    });
+  });
+});
 
 describe("resolveOllamaInstallMenuEntry", () => {
   it("offers a fresh install when no Ollama is present", () => {

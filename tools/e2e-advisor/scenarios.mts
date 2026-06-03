@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -5,21 +6,58 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { getChangedFiles } from "../advisors/git.mts";
-import { parseArgs, writeJson } from "../advisors/io.mts";
+import { getChangedFiles, getDiff } from "../advisors/git.mts";
+import {
+  advisorArtifactPaths,
+  parseArgs,
+  parsePositiveInt,
+  readJson,
+  writeJson,
+  type AdvisorArtifactPaths,
+} from "../advisors/io.mts";
+import {
+  dropUndefinedValues,
+  enumValue,
+  extractJson,
+  recordItems,
+  stringOrUndefined,
+} from "../advisors/json.mts";
+import {
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  READ_ONLY_TOOLS,
+  type RunAdvisorResult,
+  runReadOnlyAdvisor,
+} from "../advisors/session.mts";
 
+const root = process.cwd();
+const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
+const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
+const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 const SCENARIO_WORKFLOW = "e2e-scenarios.yaml";
 const SCENARIO_ALL_WORKFLOW = "e2e-scenarios-all.yaml";
-const DEFAULT_BASELINE_SCENARIO = "ubuntu-repo-cloud-openclaw";
-const CORE_SCENARIO_IDS = [
-  "ubuntu-repo-cloud-openclaw",
-  "ubuntu-repo-cloud-hermes",
-  "gpu-repo-local-ollama-openclaw",
-  "macos-repo-cloud-openclaw",
-  "wsl-repo-cloud-openclaw",
-  "brev-launchable-cloud-openclaw",
-  "ubuntu-no-docker-preflight-negative",
-];
+const ALLOWED_WORKFLOWS = new Set<string>([SCENARIO_WORKFLOW, SCENARIO_ALL_WORKFLOW]);
+// Scenario IDs are embedded into the dispatch command we hand to users; restrict
+// to a strict kebab-case allowlist so a hallucinated id can never inject shell
+// metacharacters or non-canonical tokens into the dispatch line.
+const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+export function canonicalDispatchCommand(workflow: string, id: string): string {
+  if (workflow === SCENARIO_ALL_WORKFLOW) {
+    return `gh workflow run ${SCENARIO_ALL_WORKFLOW} --ref <pr-head-ref>`;
+  }
+  return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field scenarios=${id}`;
+}
+
+type ArtifactPaths = AdvisorArtifactPaths;
+type AdvisorSchema = Record<string, unknown>;
+type Confidence = "low" | "medium" | "high";
+
+type AdvisorMetadata = {
+  baseRef: string;
+  headRef: string;
+  changedFiles: string[];
+};
 
 export type ScenarioRecommendation = {
   id: string;
@@ -40,204 +78,285 @@ export type ScenarioAdvisorResult = {
   required: ScenarioRecommendation[];
   optional: ScenarioRecommendation[];
   noScenarioE2eReason: string | null;
-  confidence: "high";
-};
-
-type ScenarioEntry = {
-  suites?: unknown;
-  runner_requirements?: unknown;
+  confidence: Confidence;
 };
 
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  try {
-    main();
-  } catch (error: unknown) {
+  main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
-  }
+  });
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const outDir = args.outDir || "artifacts/e2e-advisor";
   const baseRef = args.base || process.env.BASE_REF || "origin/main";
   const headRef = args.head || process.env.HEAD_REF || "HEAD";
-  const resultPath = path.join(outDir, "e2e-scenario-advisor-result.json");
-  const summaryPath = path.join(outDir, "e2e-scenario-advisor-summary.md");
+  const schemaPath = args.schema || "tools/e2e-advisor/scenarios-schema.json";
+  const artifacts = artifactPaths(outDir);
+  // Keep generated advisor credential config outside uploaded artifacts.
+  const configDir =
+    process.env.E2E_SCENARIO_ADVISOR_CONFIG_DIR ||
+    path.join("/tmp", `nemoclaw-e2e-scenario-advisor-config-${process.pid}`);
+  const timeoutMs = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_TIMEOUT_MS, 900000);
+  const heartbeatMs = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_HEARTBEAT_MS, 60000);
+  const maxCaptureBytes = parsePositiveInt(process.env.E2E_SCENARIO_ADVISOR_MAX_CAPTURE_BYTES, 5 * 1024 * 1024);
 
   fs.mkdirSync(outDir, { recursive: true });
 
+  logProgress(`Starting scenario advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`);
+  const schema = readJson<AdvisorSchema>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
-  const result = analyzeScenarioRecommendations({
-    baseRef,
-    headRef,
-    changedFiles,
-    root: process.cwd(),
-  });
-  writeJson(resultPath, result);
-  fs.writeFileSync(summaryPath, renderScenarioSummary(result));
-  console.log(renderScenarioSummary(result));
+  logProgress(`Detected ${changedFiles.length} changed file(s)`);
+  const diff = getDiff(baseRef, headRef, 120000);
+  logProgress(`Collected diff: ${diff.length} character(s) after truncation`);
+  const systemPrompt = buildSystemPrompt(schema);
+  const prompt = buildPrompt({ baseRef, headRef, changedFiles, diff });
+  fs.writeFileSync(artifacts.prompt, prompt);
+  logProgress(`Wrote scenario advisor prompt: ${prompt.length} character(s) at ${artifacts.prompt}`);
+
+  const metadata = { baseRef, headRef, changedFiles };
+  const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
+  const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
+
+  if (process.env.E2E_SCENARIO_ADVISOR_RUN_ANALYSIS === "0") {
+    writeUnavailable("E2E_SCENARIO_ADVISOR_RUN_ANALYSIS=0");
+    process.exit(0);
+  }
+
+  logProgress(`Launching advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`);
+  logProgress(`Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`);
+
+  let sdkResult: RunAdvisorResult | undefined;
+  try {
+    sdkResult = await runReadOnlyAdvisor({
+      cwd: root,
+      promptTurns: [{ name: "scenario-analysis", prompt }],
+      systemPrompt,
+      configDir,
+      htmlExportPath: artifacts.sessionHtml,
+      timeoutMs,
+      heartbeatMs,
+      maxCaptureBytes,
+      credentialEnv: ADVISOR_CREDENTIAL_ENV,
+      logPrefix: "e2e-scenario-advisor",
+      logProgress,
+    });
+    fs.writeFileSync(artifacts.raw, sdkResult.raw);
+    logProgress(
+      `Advisor SDK finished: textBytes=${Buffer.byteLength(sdkResult.text, "utf8")} rawBytes=${Buffer.byteLength(
+        sdkResult.raw,
+        "utf8",
+      )}`,
+    );
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    fs.writeFileSync(artifacts.raw, `Scenario advisor SDK execution failed: ${reason}\n`);
+    writeFailure(reason);
+    process.exit(1);
+  }
+
+  let result: ScenarioAdvisorResult;
+  try {
+    result = normalizeScenarioAdvisorResult(
+      extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_scenario_advisor_json"),
+      metadata,
+    );
+  } catch (error: unknown) {
+    writeFailure(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  writeJson(artifacts.result, result);
+  writeJson(artifacts.finalResult, result);
+  const summary = renderScenarioSummary(result);
+  fs.writeFileSync(artifacts.summary, summary);
+  console.log(summary);
 }
 
-export function analyzeScenarioRecommendations({
+function artifactPaths(outDir: string): ArtifactPaths {
+  return advisorArtifactPaths(outDir, "e2e-scenario-advisor");
+}
+
+function writeUnavailableArtifacts(
+  paths: ArtifactPaths,
+  metadata: AdvisorMetadata,
+  reason: string,
+  failed: boolean,
+): void {
+  const result = unavailableResult(metadata, reason, failed);
+  writeJson(
+    paths.result,
+    failed
+      ? { failed: true, reason, promptPath: paths.prompt, rawPath: paths.raw }
+      : { skipped: true, reason, promptPath: paths.prompt },
+  );
+  writeJson(paths.finalResult, result);
+  fs.writeFileSync(
+    paths.summary,
+    `# E2E Scenario Advisor\n\n${failed ? "Failed" : "Skipped"}: ${reason}\n`,
+  );
+  if (failed) {
+    console.error(`Scenario advisor analysis failed: ${reason}`);
+  }
+}
+
+function logProgress(message: string): void {
+  console.log(`[e2e-scenario-advisor] ${new Date().toISOString()} ${message}`);
+}
+
+export function buildSystemPrompt(schema: AdvisorSchema): string {
+  return [
+    "You are the NemoClaw E2E Scenario advisor for CI.",
+    "",
+    "Your job is to recommend which **scenario E2E** jobs should run for a PR. Scenario E2E is the layered scenario suite under `test/e2e-scenario/`, dispatched via `.github/workflows/e2e-scenarios.yaml` (single-scenario) and `.github/workflows/e2e-scenarios-all.yaml` (fan-out).",
+    "",
+    "You are a separate advisor from the general E2E recommendation advisor. Do not opine on legacy `test/e2e/` workflows or non-scenario E2E jobs; those are owned by the general advisor.",
+    "",
+    "Authoritative sources to inspect with your read-only tools:",
+    "- `.github/workflows/e2e-scenarios.yaml` — its `ROUTES` table is the ground truth for dispatchable scenario IDs and runner placement.",
+    "- `.github/workflows/e2e-scenarios-all.yaml` — fan-out workflow.",
+    "- `test/e2e-scenario/nemoclaw_scenarios/scenarios.yaml` — scenario metadata (`setup_scenarios`, `test_plans`, base/onboarding profiles).",
+    "- `test/e2e-scenario/nemoclaw_scenarios/expected-states.yaml` — expected-state contracts.",
+    "- `test/e2e-scenario/validation_suites/suites.yaml` — suite definitions and their scripts.",
+    "- `test/e2e-scenario/runtime/` — shared runner/runtime code (changes here usually require all-scenarios).",
+    "",
+    "Decision policy:",
+    "- Required (all scenarios): changes to scenario runtime/runner code, scenario catalog metadata, expected-state metadata, suite catalog metadata, or the scenario workflows themselves. Recommend the `e2e-scenarios-all` fan-out.",
+    "- Required (targeted): suite-script or onboarding/install-helper changes that affect a specific subset. Recommend the smallest set of scenario IDs from the `ROUTES` table that exercises the changed surface.",
+    "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
+    "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect scenario E2E behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
+    "",
+    "Hard rules:",
+    "- Only recommend scenario IDs that exist in the `ROUTES` table of `e2e-scenarios.yaml`. Do not invent IDs.",
+    "- The `e2e-scenarios.yaml` workflow accepts a single comma-separated `scenarios` input. Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
+    "- For the fan-out, use exactly: `gh workflow run e2e-scenarios-all.yaml --ref <pr-head-ref>` and set `id`/`workflow` to `e2e-scenarios-all`/`e2e-scenarios-all.yaml`.",
+    "- A `suiteFilter` may be set on a recommendation as analytical metadata explaining why the scenario was selected. It must NOT leak into the dispatch command.",
+    "- `relevantChangedFiles` must be the subset of `changedFiles` under `test/e2e-scenario/`, `.github/workflows/e2e-scenarios*.yaml`, or other directly scenario-relevant paths.",
+    "",
+    "Return JSON only matching this schema:",
+    "```json",
+    JSON.stringify(schema),
+    "```",
+  ].join("\n");
+}
+
+export function buildPrompt({
   baseRef,
   headRef,
   changedFiles,
-  root = process.cwd(),
+  diff,
 }: {
   baseRef: string;
   headRef: string;
   changedFiles: string[];
-  root?: string;
-}): ScenarioAdvisorResult {
-  const scenarios = loadScenarios(root);
-  const suiteToScenarios = buildSuiteToScenarios(scenarios);
-  const scenariosWithGpuOrSpecialRunners =
-    detectSpecialRunnerScenarios(scenarios);
-  const suiteScriptMap = loadSuiteScriptMap(root);
-  const suiteIds = new Set(Object.keys(suiteScriptMap));
-  const directScenarioIds = new Set<string>();
-  const changedSuiteIds = new Set<string>();
-  const reasons = new Set<string>();
-  const relevantChangedFiles = changedFiles.filter(isScenarioRelevantFile);
-  let allScenariosRequired = false;
+  diff: string;
+}): string {
+  return `Return a scenario E2E recommendation for this PR.
 
-  for (const file of changedFiles) {
-    if (file === ".github/workflows/e2e-scenarios-all.yaml") {
-      allScenariosRequired = true;
-      reasons.add("the all-scenarios fan-out workflow changed");
-    } else if (file === ".github/workflows/e2e-scenarios.yaml") {
-      allScenariosRequired = true;
-      reasons.add("the reusable single-scenario workflow changed");
-    } else if (file === "test/e2e/nemoclaw_scenarios/scenarios.yaml") {
-      allScenariosRequired = true;
-      reasons.add("scenario catalog metadata changed");
-    } else if (file === "test/e2e/nemoclaw_scenarios/expected-states.yaml") {
-      allScenariosRequired = true;
-      reasons.add("expected-state metadata changed");
-    } else if (file === "test/e2e/validation_suites/suites.yaml") {
-      allScenariosRequired = true;
-      reasons.add("suite catalog metadata changed");
-    } else if (
-      file.startsWith("test/e2e/runtime/") ||
-      file.startsWith("test/e2e/nemoclaw_scenarios/helpers/")
-    ) {
-      allScenariosRequired = true;
-      reasons.add("shared scenario runner/runtime code changed");
-    } else if (
-      file.startsWith("test/e2e/nemoclaw_scenarios/onboard/") ||
-      file.startsWith("test/e2e/nemoclaw_scenarios/install/")
-    ) {
-      directScenarioIds.add(DEFAULT_BASELINE_SCENARIO);
-      reasons.add("scenario install/onboard helper code changed");
-    }
+Set these fields exactly:
+- version: 1
+- baseRef: ${JSON.stringify(baseRef)}
+- headRef: ${JSON.stringify(headRef)}
+- changedFiles: ${JSON.stringify(changedFiles)}
 
-    for (const suiteId of inferSuiteIdsFromPath(
-      file,
-      suiteIds,
-      suiteScriptMap,
-    )) {
-      changedSuiteIds.add(suiteId);
-      reasons.add(`validation suite \`${suiteId}\` changed`);
-    }
+Changed files:
+${changedFiles.map((file) => `- ${file}`).join("\n") || "- <none>"}
+
+Git diff, truncated if large:
+\`\`\`diff
+${diff || "<no diff available>"}
+\`\`\`
+`;
+}
+
+export function normalizeScenarioAdvisorResult(
+  result: unknown,
+  metadata: AdvisorMetadata,
+): ScenarioAdvisorResult {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("Scenario advisor returned a non-object result");
   }
 
-  for (const suiteId of changedSuiteIds) {
-    const matchingScenarios = suiteToScenarios.get(suiteId) || [];
-    for (const scenario of matchingScenarios) directScenarioIds.add(scenario);
-  }
-
-  const required: ScenarioRecommendation[] = [];
-  const optional: ScenarioRecommendation[] = [];
-  if (allScenariosRequired) {
-    required.push({
-      id: "e2e-scenarios-all",
-      workflow: SCENARIO_ALL_WORKFLOW,
-      required: true,
-      reason:
-        [...reasons].join("; ") || "scenario E2E workflow or metadata changed",
-      dispatchCommand:
-        "gh workflow run e2e-scenarios-all.yaml --ref <pr-head-ref>",
-    });
-  }
-
-  for (const scenario of [...directScenarioIds].sort()) {
-    if (allScenariosRequired && CORE_SCENARIO_IDS.includes(scenario)) continue;
-    const suiteFilter = suiteFilterForScenario(
-      scenario,
-      changedSuiteIds,
-      scenarios,
-    );
-    required.push(
-      buildSingleScenarioRecommendation(
-        scenario,
-        suiteFilter,
-        reasonForScenario(scenario, changedSuiteIds, reasons),
-      ),
-    );
-  }
-
-  if (allScenariosRequired && changedSuiteIds.size > 0) {
-    for (const scenario of scenariosForSuites(
-      changedSuiteIds,
-      suiteToScenarios,
-    )) {
-      if (CORE_SCENARIO_IDS.includes(scenario)) continue;
-      const suiteFilter = suiteFilterForScenario(
-        scenario,
-        changedSuiteIds,
-        scenarios,
-      );
-      optional.push(
-        buildSingleScenarioRecommendation(
-          scenario,
-          suiteFilter,
-          `Targeted follow-up for changed suite(s): ${suiteFilter || [...changedSuiteIds].sort().join(",")}`,
-          false,
-        ),
-      );
-    }
-  }
-
-  for (const specialScenario of scenariosWithGpuOrSpecialRunners) {
-    if (
-      [...required, ...optional].some(
-        (item) => item.scenario === specialScenario,
-      )
-    )
-      continue;
-    const suites = suitesForScenario(specialScenario, scenarios);
-    if ([...changedSuiteIds].some((suite) => suites.includes(suite))) {
-      optional.push(
-        buildSingleScenarioRecommendation(
-          specialScenario,
-          suiteFilterForScenario(specialScenario, changedSuiteIds, scenarios),
-          "Special-runner scenario covers a changed suite but may require scarce hardware/secrets.",
-          false,
-        ),
-      );
-    }
-  }
+  const object = result as Record<string, unknown>;
+  const required = sanitizeRecommendations(object.required, true);
+  const optional = sanitizeRecommendations(object.optional, false);
+  const reasonField = object.noScenarioE2eReason;
+  const noScenarioE2eReason =
+    typeof reasonField === "string" && reasonField.trim()
+      ? reasonField.trim()
+      : reasonField === null || reasonField === undefined
+        ? required.length === 0 && optional.length === 0
+          ? "Advisor reported no scenario E2E impact."
+          : null
+        : null;
 
   return {
     version: 1,
-    baseRef,
-    headRef,
-    changedFiles,
-    relevantChangedFiles,
-    required: uniqueRecommendations(required),
-    optional: uniqueRecommendations(optional).filter(
-      (candidate) => !required.some((item) => item.id === candidate.id),
-    ),
-    noScenarioE2eReason:
-      required.length === 0 && optional.length === 0
-        ? "No scenario workflow, scenario metadata, scenario runtime, or validation-suite files changed."
-        : null,
-    confidence: "high",
+    baseRef: metadata.baseRef,
+    headRef: metadata.headRef,
+    changedFiles: metadata.changedFiles,
+    relevantChangedFiles: stringArrayWithinChanged(object.relevantChangedFiles, metadata.changedFiles),
+    required,
+    optional: optional.filter((candidate) => !required.some((item) => item.id === candidate.id)),
+    noScenarioE2eReason,
+    confidence: enumValue<["low", "medium", "high"]>(object.confidence, ["low", "medium", "high"], "medium"),
   };
+}
+
+function sanitizeRecommendations(value: unknown, requiredFlag: boolean): ScenarioRecommendation[] {
+  const seen = new Set<string>();
+  const output: ScenarioRecommendation[] = [];
+  for (const item of recordItems(value)) {
+    const id = stringOrUndefined(item.id);
+    const reason = stringOrUndefined(item.reason);
+    const workflow = stringOrUndefined(item.workflow);
+    if (!id || !reason || !workflow) continue;
+    // Allowlist: only the two scenario workflows may be dispatched, and only
+    // kebab-case ids are accepted. Reject everything else; we do not trust
+    // the model to author shell-safe dispatch commands.
+    if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
+    if (!SCENARIO_ID_PATTERN.test(id)) continue;
+    // Workflow/id pairing invariant: e2e-scenarios-all.yaml fan-out is the
+    // only valid pairing for the synthetic id "e2e-scenarios-all", and that
+    // id is meaningless on the single-scenario workflow. Reject mismatches
+    // rather than render a misleading dispatch line.
+    if (workflow === SCENARIO_ALL_WORKFLOW && id !== "e2e-scenarios-all") continue;
+    if (workflow === SCENARIO_WORKFLOW && id === "e2e-scenarios-all") continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const scenario = stringOrUndefined(item.scenario);
+    const suiteFilter = stringOrUndefined(item.suiteFilter);
+    // Build dispatchCommand server-side. The model's value is intentionally
+    // discarded so prompt drift can never leak a non-canonical dispatch into
+    // the sticky comment.
+    const dispatchCommand = canonicalDispatchCommand(workflow, id);
+    output.push(
+      dropUndefinedValues({
+        id,
+        workflow,
+        scenario,
+        suiteFilter,
+        // Authority is the array position, not the model. Items in required[]
+        // are required; items in optional[] are optional. The model's
+        // per-item `required` boolean is ignored.
+        required: requiredFlag,
+        reason,
+        dispatchCommand,
+      }) as ScenarioRecommendation,
+    );
+  }
+  return output;
+}
+
+function stringArrayWithinChanged(value: unknown, changedFiles: string[]): string[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(changedFiles);
+  return value.filter((file): file is string => typeof file === "string" && allowed.has(file));
 }
 
 export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
@@ -278,275 +397,28 @@ export function renderScenarioSummary(result: ScenarioAdvisorResult): string {
   return `${lines.join("\n")}\n`;
 }
 
-function loadScenarios(root: string): Record<string, ScenarioEntry> {
-  const filePath = path.join(
-    root,
-    "test/e2e/nemoclaw_scenarios/scenarios.yaml",
-  );
-  if (!fs.existsSync(filePath)) return {};
-  const text = fs.readFileSync(filePath, "utf8");
-  return {
-    ...parseScenarioSection(text, "test_plans"),
-    ...parseScenarioSection(text, "setup_scenarios"),
-  };
-}
-
-function loadSuiteScriptMap(root: string): Record<string, string[]> {
-  const filePath = path.join(root, "test/e2e/validation_suites/suites.yaml");
-  if (!fs.existsSync(filePath)) return {};
-  return parseSuiteScripts(fs.readFileSync(filePath, "utf8"));
-}
-
-function parseScenarioSection(
-  text: string,
-  sectionName: string,
-): Record<string, ScenarioEntry> {
-  const section = extractTopLevelSection(text, sectionName);
-  const scenarios: Record<string, ScenarioEntry> = {};
-  let currentId: string | undefined;
-  let inSuites = false;
-  let inRunnerRequirements = false;
-
-  for (const line of section.split(/\r?\n/)) {
-    const entryMatch = line.match(
-      /^  ([A-Za-z0-9_.-]+(?:__[A-Za-z0-9_.-]+)?):\s*$/,
-    );
-    if (entryMatch) {
-      currentId = entryMatch[1];
-      scenarios[currentId] = { suites: [], runner_requirements: [] };
-      inSuites = false;
-      inRunnerRequirements = false;
-      continue;
-    }
-    if (!currentId) continue;
-    if (/^    suites:\s*(?:\[\])?\s*$/.test(line)) {
-      inSuites = true;
-      inRunnerRequirements = false;
-      continue;
-    }
-    if (/^    runner_requirements:\s*$/.test(line)) {
-      inSuites = false;
-      inRunnerRequirements = true;
-      continue;
-    }
-    if (/^    [A-Za-z0-9_-]+:/.test(line)) {
-      inSuites = false;
-      inRunnerRequirements = false;
-      continue;
-    }
-    const listItem = line.match(/^    - ([A-Za-z0-9_.-]+)\s*$/);
-    if (listItem && inSuites) {
-      (scenarios[currentId].suites as string[]).push(listItem[1]);
-    } else if (listItem && inRunnerRequirements) {
-      (scenarios[currentId].runner_requirements as string[]).push(listItem[1]);
-    }
-  }
-
-  return scenarios;
-}
-
-function parseSuiteScripts(text: string): Record<string, string[]> {
-  const section = extractTopLevelSection(text, "suites");
-  const suites: Record<string, string[]> = {};
-  let currentId: string | undefined;
-
-  for (const line of section.split(/\r?\n/)) {
-    const suiteMatch = line.match(/^  ([A-Za-z0-9_.-]+):\s*$/);
-    if (suiteMatch) {
-      currentId = suiteMatch[1];
-      suites[currentId] = [];
-      continue;
-    }
-    if (!currentId) continue;
-    const scriptMatch = line.match(/^      script:\s*([A-Za-z0-9_./-]+)\s*$/);
-    if (scriptMatch) suites[currentId].push(scriptMatch[1]);
-  }
-
-  return suites;
-}
-
-function extractTopLevelSection(text: string, sectionName: string): string {
-  const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((line) => line === `${sectionName}:`);
-  if (start === -1) return "";
-  const sectionLines: string[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (/^[A-Za-z0-9_-]+:/.test(line)) break;
-    sectionLines.push(line);
-  }
-  return sectionLines.join("\n");
-}
-
-function buildSuiteToScenarios(
-  scenarios: Record<string, ScenarioEntry>,
-): Map<string, string[]> {
-  const suiteToScenarios = new Map<string, string[]>();
-  for (const [scenario, entry] of Object.entries(scenarios)) {
-    for (const suite of normalizeStringArray(entry.suites)) {
-      const current = suiteToScenarios.get(suite) || [];
-      current.push(scenario);
-      suiteToScenarios.set(suite, current);
-    }
-  }
-  for (const [suite, scenarioIds] of suiteToScenarios)
-    suiteToScenarios.set(suite, scenarioIds.sort());
-  return suiteToScenarios;
-}
-
-function detectSpecialRunnerScenarios(
-  scenarios: Record<string, ScenarioEntry>,
-): string[] {
-  return Object.entries(scenarios)
-    .filter(
-      ([id, entry]) =>
-        id.startsWith("gpu-") ||
-        id.startsWith("macos-") ||
-        id.startsWith("wsl-") ||
-        id.startsWith("brev-") ||
-        normalizeStringArray(entry.runner_requirements).length > 0,
-    )
-    .map(([id]) => id)
-    .sort();
-}
-
-function isScenarioRelevantFile(file: string): boolean {
-  return (
-    file === ".github/workflows/e2e-scenarios.yaml" ||
-    file === ".github/workflows/e2e-scenarios-all.yaml" ||
-    file.startsWith("test/e2e/runtime/") ||
-    file.startsWith("test/e2e/nemoclaw_scenarios/") ||
-    file.startsWith("test/e2e/validation_suites/")
-  );
-}
-
-function inferSuiteIdsFromPath(
-  file: string,
-  suiteIds: Set<string>,
-  suiteScriptMap: Record<string, string[]>,
-): string[] {
-  if (
-    !file.startsWith("test/e2e/validation_suites/") ||
-    file.endsWith("/suites.yaml")
-  )
-    return [];
-  const relative = file.slice("test/e2e/validation_suites/".length);
-  const segments = relative.split("/");
-  const candidates = new Set<string>();
-  for (let size = Math.min(segments.length, 3); size >= 1; size -= 1) {
-    candidates.add(segments.slice(0, size).join("-"));
-    candidates.add(segments.slice(0, size).join("/"));
-  }
-  candidates.add(segments[0]);
-  for (const suiteId of suiteIds) {
-    const normalizedSuiteId = suiteId.replaceAll("-", "/");
-    if (
-      relative === `${normalizedSuiteId}.sh` ||
-      relative.startsWith(`${normalizedSuiteId}/`)
-    ) {
-      candidates.add(suiteId);
-    }
-  }
-
-  const matches = [...candidates].filter((candidate) =>
-    suiteIds.has(candidate),
-  );
-  if (matches.length > 0)
-    return matches.sort((a, b) => b.length - a.length).slice(0, 1);
-
-  const scriptMatches = Object.entries(suiteScriptMap)
-    .filter(([, scripts]) => scripts.includes(relative))
-    .map(([suiteId]) => suiteId);
-  if (scriptMatches.length > 0) return scriptMatches.sort();
-
-  return [segments[0]];
-}
-
-function scenariosForSuites(
-  changedSuiteIds: Set<string>,
-  suiteToScenarios: Map<string, string[]>,
-): string[] {
-  const scenarioIds = new Set<string>();
-  for (const suiteId of changedSuiteIds) {
-    for (const scenarioId of suiteToScenarios.get(suiteId) || [])
-      scenarioIds.add(scenarioId);
-  }
-  return [...scenarioIds].sort();
-}
-
-function suiteFilterForScenario(
-  scenario: string,
-  changedSuiteIds: Set<string>,
-  scenarios: Record<string, ScenarioEntry>,
-): string | undefined {
-  const scenarioSuites = suitesForScenario(scenario, scenarios);
-  const relevantSuites = [...changedSuiteIds]
-    .filter((suite) => scenarioSuites.includes(suite))
-    .sort();
-  return relevantSuites.length > 0 ? relevantSuites.join(",") : undefined;
-}
-
-function suitesForScenario(
-  scenario: string,
-  scenarios: Record<string, ScenarioEntry>,
-): string[] {
-  return normalizeStringArray(scenarios[scenario]?.suites);
-}
-
-function reasonForScenario(
-  scenario: string,
-  changedSuiteIds: Set<string>,
-  reasons: Set<string>,
-): string {
-  const suiteText =
-    changedSuiteIds.size > 0
-      ? ` Changed suite(s): ${[...changedSuiteIds]
-          .sort()
-          .map((suite) => `\`${suite}\``)
-          .join(", ")}.`
-      : "";
-  return `Scenario \`${scenario}\` exercises the changed scenario E2E surface.${suiteText} ${[...reasons].join("; ")}`.trim();
-}
-
-function buildSingleScenarioRecommendation(
-  scenario: string,
-  suiteFilter: string | undefined,
+function unavailableResult(
+  metadata: AdvisorMetadata,
   reason: string,
-  required = true,
-): ScenarioRecommendation {
-  const suitePart = suiteFilter
-    ? ` --field suite_filter=${shellQuote(suiteFilter)}`
-    : "";
+  failed: boolean,
+): ScenarioAdvisorResult {
   return {
-    id: suiteFilter ? `${scenario}:${suiteFilter}` : scenario,
-    workflow: SCENARIO_WORKFLOW,
-    scenario,
-    suiteFilter,
-    required,
-    reason,
-    dispatchCommand: `gh workflow run e2e-scenarios.yaml --ref <pr-head-ref> --field scenario=${shellQuote(scenario)}${suitePart}`,
+    version: 1,
+    baseRef: metadata.baseRef,
+    headRef: metadata.headRef,
+    changedFiles: metadata.changedFiles,
+    relevantChangedFiles: [],
+    required: [],
+    optional: [],
+    noScenarioE2eReason: failed
+      ? `Scenario advisor review failed: ${reason}`
+      : `Scenario advisor review unavailable: ${reason}`,
+    confidence: "low",
   };
 }
 
-function uniqueRecommendations(
-  recommendations: ScenarioRecommendation[],
-): ScenarioRecommendation[] {
-  const seen = new Set<string>();
-  const output: ScenarioRecommendation[] = [];
-  for (const recommendation of recommendations) {
-    if (seen.has(recommendation.id)) continue;
-    seen.add(recommendation.id);
-    output.push(recommendation);
-  }
-  return output;
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_.:/=-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+// Constants are exported so workflow tests can pin them without duplicating literals.
+export const SCENARIO_ADVISOR_WORKFLOWS = {
+  single: SCENARIO_WORKFLOW,
+  all: SCENARIO_ALL_WORKFLOW,
+} as const;

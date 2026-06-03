@@ -13,8 +13,15 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   hermesToolGateways: string[];
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
+  webSearchEnabled: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    /**
+     * Mark this sandbox as the default. Called here (not at sandbox creation) so
+     * a cancel at the policy-preset step never leaves an unconfigured sandbox
+     * registered as default (#4614).
+     */
+    setDefaultSandbox(sandboxName: string): void;
     recordPostVerifyStarted(): Promise<Session>;
     recordSessionComplete(updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -25,6 +32,13 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
+    /**
+     * Best-effort probe that confirms the agent runtime actually accepted the
+     * web-search config and (for Brave) that the L7 proxy rewrites the
+     * `X-Subscription-Token` header at egress. Called after the post-policy
+     * sandbox-process recovery so the final policy/gateway state is live.
+     */
+    verifyWebSearchInsideSandbox(sandboxName: string, agent: Agent): void;
     printDashboard(
       sandboxName: string,
       model: string,
@@ -53,8 +67,13 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   hermesToolGateways,
   stagedLegacyKeys,
   migratedLegacyKeys,
+  webSearchEnabled,
   deps,
 }: FinalizationStateOptions<Agent, VerifyChain, VerificationResult>): Promise<FinalizationStateResult> {
+  // Reaching finalization means the policy-preset step was confirmed, so it is
+  // now safe to register this sandbox as the default (#4614).
+  deps.setDefaultSandbox(sandboxName);
+
   if (agent) deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
 
   const allStagedMigrated =
@@ -75,6 +94,13 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+
+  // Probe Brave Search egress through the L7 proxy now that the final
+  // policy and provider state are live — earlier probes would race the
+  // not-yet-applied `brave` preset (#3626). Best-effort; never blocks.
+  if (webSearchEnabled) {
+    deps.verifyWebSearchInsideSandbox(sandboxName, agent);
+  }
 
   await deps.recordPostVerifyStarted();
 
