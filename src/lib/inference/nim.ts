@@ -20,6 +20,11 @@ const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
+import {
+  isDenylistedNvidiaGpuName,
+  isPlausibleNvidiaGpuName,
+  nvidiaHostLooksGenuine,
+} from "./gpu-trust";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
@@ -52,6 +57,13 @@ export interface GpuDetection {
   gpus?: NimGpu[];
   count: number;
   totalMemoryMB: number;
+  // Currently free GPU memory at probe time. NVIDIA: summed from
+  // `nvidia-smi memory.free`. Unified-memory (Spark/Jetson): approximated
+  // from host `MemAvailable` since GPU memory is the system pool. macOS:
+  // approximated from `vm_stat` reclaimable pages. Absent when every
+  // probe was inconclusive; downstream callers fall back to
+  // `totalMemoryMB`.
+  availableMemoryMB?: number;
   perGpuMB: number;
   cores?: number | null;
   nimCapable: boolean;
@@ -148,6 +160,54 @@ function readHostMemoryMB(): number {
       if (memLine) {
         const parts = memLine.split(/\s+/);
         return parseInt(parts[1], 10) || 0;
+      }
+    }
+  } catch {
+    /* ignored */
+  }
+  return 0;
+}
+
+// macOS equivalent of `MemAvailable`: parse `vm_stat` output, sum the
+// kernel-reclaimable page classes (free + inactive + speculative), and
+// scale by the reported page size. The result is the same "could I load
+// a 22 GB model right now?" signal the unified-memory Linux path uses.
+// Returns 0 when any expected field is missing so the caller can treat
+// the figure as "unknown" and fall back to total memory.
+function readMacOsAvailableMemoryMB(): number {
+  try {
+    const out = runCapture(["vm_stat"], { ignoreError: true });
+    if (!out) return 0;
+    const pageMatch = out.match(/page size of (\d+) bytes/);
+    if (!pageMatch) return 0;
+    const pageBytes = parseInt(pageMatch[1], 10);
+    if (!Number.isFinite(pageBytes) || pageBytes <= 0) return 0;
+    const grab = (label: string): number => {
+      const match = out.match(new RegExp(`Pages ${label}:\\s+(\\d+)\\.`));
+      return match ? parseInt(match[1], 10) : 0;
+    };
+    const pages = grab("free") + grab("inactive") + grab("speculative");
+    if (pages <= 0) return 0;
+    return Math.floor((pages * pageBytes) / 1024 / 1024);
+  } catch {
+    return 0;
+  }
+}
+
+// `free -m` columns: total used free shared buff/cache available.
+// "available" (column 6) is the kernel's estimate of memory that can be
+// reclaimed without swapping — the right signal for "is there room for a
+// 22 GB Ollama load right now?" on unified-memory hosts. Returns 0 when
+// the column cannot be parsed; the caller treats 0 as "unknown" and falls
+// back to total memory.
+function readHostAvailableMemoryMB(): number {
+  try {
+    const freeOut = runCapture(["free", "-m"], { ignoreError: true });
+    if (freeOut) {
+      const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+      if (memLine) {
+        const parts = memLine.split(/\s+/);
+        return parseInt(parts[6], 10) || 0;
       }
     }
   } catch {
@@ -255,45 +315,90 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
 }
 
 export function detectGpu(): GpuDetection | null {
-  // Try NVIDIA first — query name and VRAM in a single call so the preflight
-  // line can show the GPU model alongside the memory size.
+  // Try NVIDIA first — query name, total, and free VRAM in a single call so
+  // the preflight line can show the GPU model alongside the memory size and
+  // the bootstrap-model selector can pick a model that fits currently
+  // available memory, not just the headline total.
   try {
     const output = runCapture(
-      ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+      [
+        "nvidia-smi",
+        "--query-gpu=name,memory.total,memory.free",
+        "--format=csv,noheader,nounits",
+      ],
       { ignoreError: true },
     );
     if (output) {
-      type ParsedGpu = { name: string; memoryMB: number };
+      type ParsedGpu = { name: string; memoryMB: number; freeMemoryMB: number };
       const parsed: ParsedGpu[] = [];
       for (const raw of output.split("\n")) {
         const line = raw.trim();
         if (!line) continue;
-        // Split on the LAST comma — GPU names can contain commas in rare cases.
-        const idx = line.lastIndexOf(",");
-        if (idx === -1) continue;
-        const name = line.slice(0, idx).trim();
-        const memoryMB = parseInt(line.slice(idx + 1).trim(), 10);
+        // Split on commas from the RIGHT: free MB, then total MB; the
+        // remainder is the GPU name (which can itself contain commas).
+        const lastIdx = line.lastIndexOf(",");
+        if (lastIdx === -1) continue;
+        const freeMemoryMB = parseInt(line.slice(lastIdx + 1).trim(), 10);
+        const beforeFree = line.slice(0, lastIdx);
+        const totalIdx = beforeFree.lastIndexOf(",");
+        if (totalIdx === -1) continue;
+        const memoryMB = parseInt(beforeFree.slice(totalIdx + 1).trim(), 10);
+        const name = beforeFree.slice(0, totalIdx).trim();
         if (isNaN(memoryMB)) continue;
-        parsed.push({ name, memoryMB });
+        parsed.push({
+          name,
+          memoryMB,
+          freeMemoryMB: isNaN(freeMemoryMB) ? 0 : freeMemoryMB,
+        });
       }
       if (parsed.length > 0) {
-        const totalMemoryMB = parsed.reduce(
+        const platform = detectNvidiaPlatform();
+        // Off Spark/Station/Jetson firmware, layer a denylist check and the
+        // trust-tier gate before trusting the nvidia-smi probe. The observed
+        // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
+        // either signal alone is sufficient to reject. Treat any denylisted
+        // row as a poisoned probe and reject the whole result — partial
+        // filtering would let a mixed-row spoof surface a non-placeholder
+        // row as a real GPU.
+        const firmwareConfirmsNvidia =
+          platform === "spark" || platform === "station" || platform === "jetson";
+        let trusted: ParsedGpu[];
+        if (firmwareConfirmsNvidia) {
+          trusted = parsed;
+        } else {
+          if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+            return null;
+          }
+          if (!nvidiaHostLooksGenuine()) {
+            return null;
+          }
+          trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
+        }
+        if (trusted.length === 0) {
+          return null;
+        }
+        const totalMemoryMB = trusted.reduce(
           (sum: number, p: ParsedGpu) => sum + p.memoryMB,
           0,
         );
-        const firstName = parsed[0].name;
+        const availableMemoryMB = trusted.reduce(
+          (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
+          0,
+        );
+        const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName =
-          !!firstName && parsed.every((p: ParsedGpu) => p.name === firstName);
-        const platform = detectNvidiaPlatform();
+          !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
-          gpus: parsed.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
-          count: parsed.length,
+          gpus: trusted.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
+          count: trusted.length,
           totalMemoryMB,
-          perGpuMB: parsed[0].memoryMB,
+          ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
+          perGpuMB: trusted[0].memoryMB,
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
@@ -322,11 +427,29 @@ export function detectGpu(): GpuDetection | null {
     const firmwarePlatform = detectNvidiaPlatform();
     const firmwareIsUnifiedMemory =
       firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    // Reject placeholder names on hosts where firmware does not vouch for an
+    // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
+    // could in principle emit `JMJWOA-Generic-*` on this fallback too.
+    if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
+      isDenylistedNvidiaGpuName(name),
+    )) {
+      return null;
+    }
     const taggedNames = gpuNames.filter((name: string) =>
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
+    // Tagged-name acceptance on non-firmware-vouched hosts must additionally
+    // pass the trust-tier gate so the same source-boundary policy documented
+    // in gpu-trust.ts applies on the unified-memory fallback.
+    const allowTaggedOnGenericFirmware = nvidiaHostLooksGenuine();
     const unifiedGpuNames =
-      taggedNames.length > 0 ? taggedNames : firmwareIsUnifiedMemory ? gpuNames : [];
+      taggedNames.length > 0
+        ? firmwareIsUnifiedMemory || allowTaggedOnGenericFirmware
+          ? taggedNames
+          : []
+        : firmwareIsUnifiedMemory
+          ? gpuNames
+          : [];
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB();
       const count = unifiedGpuNames.length;
@@ -351,12 +474,17 @@ export function detectGpu(): GpuDetection | null {
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
       // Approximation, but the only number nvidia-smi gives us in this path.
+      // `availableMemoryMB` mirrors that approximation using MemAvailable so
+      // the bootstrap-model selector reacts to concurrent GPU workloads
+      // eating into the shared system pool.
+      const availableMemoryMB = readHostAvailableMemoryMB();
       return {
         type: "nvidia",
         ...(allUnifiedSameName ? { name: firstUnifiedName } : {}),
         gpus: unifiedGpuNames.map((name: string) => ({ name, memoryMB: perGpuMB })),
         count,
         totalMemoryMB,
+        ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
         perGpuMB: perGpuMB || totalMemoryMB,
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
@@ -373,12 +501,14 @@ export function detectGpu(): GpuDetection | null {
   const tegraGpu = detectTegraHostGpu();
   if (tegraGpu) {
     const totalMemoryMB = readHostMemoryMB();
+    const availableMemoryMB = readHostAvailableMemoryMB();
     return {
       type: "nvidia",
       name: tegraGpu.name,
       gpus: [{ name: tegraGpu.name, memoryMB: totalMemoryMB }],
       count: 1,
       totalMemoryMB,
+      ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
       perGpuMB: totalMemoryMB,
       nimCapable: canRunNimWithMemory(totalMemoryMB),
       unifiedMemory: true,
@@ -414,12 +544,14 @@ export function detectGpu(): GpuDetection | null {
             }
           }
 
+          const availableMemoryMB = readMacOsAvailableMemoryMB();
           return {
             type: "apple",
             name,
             count: 1,
             cores: coresMatch ? parseInt(coresMatch[1], 10) : null,
             totalMemoryMB: memoryMB,
+            ...(availableMemoryMB > 0 ? { availableMemoryMB } : {}),
             perGpuMB: memoryMB,
             nimCapable: false,
           };

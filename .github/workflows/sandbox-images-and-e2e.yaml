@@ -84,6 +84,19 @@ jobs:
           docker run --rm --user sandbox nemoclaw-hermes-production \
             test -x /usr/local/bin/nemoclaw-start
 
+      - name: Run Hermes root entrypoint smoke
+        env:
+          NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
+        run: bash test/e2e/test-hermes-root-entrypoint-smoke.sh
+
+      - name: Upload Hermes root entrypoint smoke log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-root-entrypoint-smoke-log
+          path: /tmp/nemoclaw-hermes-root-entrypoint-smoke.log
+          if-no-files-found: ignore
+
   build-sandbox-images-arm64:
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm

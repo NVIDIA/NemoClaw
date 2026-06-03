@@ -15,8 +15,22 @@ type ReviewAdvisorResult = {
     recommendation?: string;
     confidence?: string;
     oneLine?: string;
+    topItem?: string;
+    sinceLastReview?: {
+      resolved?: number;
+      stillApplies?: number;
+      newItems?: number;
+    };
   };
-  findings?: Array<{ severity?: string }>;
+  findings?: Array<{
+    severity?: string;
+    title?: string;
+    file?: string | null;
+    line?: number | null;
+    description?: string;
+    recommendation?: string;
+    evidence?: string;
+  }>;
   reviewCompleteness?: {
     limitations?: string[];
   };
@@ -58,7 +72,7 @@ async function main(): Promise<void> {
 }
 
 export function buildComment({
-  summary,
+  summary: _summary,
   result,
   runUrl,
   marker,
@@ -71,28 +85,101 @@ export function buildComment({
   const blockerCount = result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
   const warningCount = result?.findings?.filter((finding) => finding.severity === "warning").length ?? 0;
   const suggestionCount = result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
-  const recommendation = result?.summary?.recommendation ? result.summary.recommendation.replaceAll("_", " ") : "unknown";
-  const confidence = result?.summary?.confidence || "unknown";
-  const sha = result?.headSha ? `\n**Analyzed HEAD:** \`${result.headSha}\`` : "";
-  const run = runUrl ? `\n\n[Workflow run](${runUrl})` : "";
-  const limitations = result?.reviewCompleteness?.limitations?.length
-    ? `\n\n**Limitations:** ${result.reviewCompleteness.limitations.join("; ")}`
+  const secondary = buildSecondarySummary(result);
+  const findingsDetails = renderFindingsDetails(result);
+  const previousReviewDetails = renderPreviousReviewDetails(result);
+  const details = runUrl
+    ? `\n[Workflow run details](${runUrl})`
     : "";
-
   return `${marker || MARKER}
 ## PR Review Advisor
 
-**Recommendation:** ${recommendation}
-**Confidence:** ${confidence}${sha}
-**Findings:** ${blockerCount} blocker(s), ${warningCount} warning(s), ${suggestionCount} suggestion(s)
+**Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
+${secondary}${findingsDetails}${previousReviewDetails}${details}
 
-This is an automated advisory review. A human maintainer must make the final merge decision.${limitations}${run}
+This is an automated advisory review. A human maintainer must make the final merge decision.
 
-<details>
-<summary>Full advisor summary</summary>
-
-${summary.trim()}
-
-</details>
 `;
+}
+
+function buildSecondarySummary(result?: ReviewAdvisorResult): string {
+  const sinceLastReview = result?.summary?.sinceLastReview;
+  if (sinceLastReview) {
+    return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved, ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")}, ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
+  }
+  const topItem = result?.summary?.topItem || topFindingTitle(result);
+  return topItem ? `**Top item:** ${escapeCommentText(topItem)}\n` : "";
+}
+
+function topFindingTitle(result?: ReviewAdvisorResult): string | undefined {
+  return result?.findings?.find((finding) => finding.severity === "blocker")?.title ||
+    result?.findings?.find((finding) => finding.severity === "warning")?.title ||
+    result?.findings?.find((finding) => finding.severity === "suggestion")?.title;
+}
+
+function renderFindingsDetails(result?: ReviewAdvisorResult): string {
+  if (!result?.findings?.length) return "";
+  const sections = [
+    { summary: "🛠️ Needs attention", findings: result.findings.filter((finding) => finding.severity === "blocker") },
+    { summary: "🔎 Worth checking", findings: result.findings.filter((finding) => finding.severity === "warning") },
+    { summary: "🌱 Nice ideas", findings: result.findings.filter((finding) => finding.severity === "suggestion") },
+  ];
+  const lines: string[] = ["", "<details>", "<summary>Review findings</summary>", ""];
+  for (const section of sections) {
+    lines.push(`### ${section.summary}`);
+    if (section.findings.length === 0) {
+      lines.push("- _None._");
+    } else {
+      for (const finding of section.findings.slice(0, 20)) {
+        lines.push(formatFinding(finding));
+      }
+    }
+    lines.push("");
+  }
+  lines.push("</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function renderPreviousReviewDetails(result?: ReviewAdvisorResult): string {
+  const sinceLastReview = result?.summary?.sinceLastReview;
+  if (!sinceLastReview || !result?.findings?.length) return "";
+  const lines: string[] = ["<details>", "<summary>Since last review details</summary>", ""];
+  lines.push("Current findings:");
+  for (const finding of result.findings.slice(0, 20)) lines.push(formatFinding(finding));
+  lines.push("", "</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[number]): string {
+  const title = escapeCommentText(finding.title || "Review finding");
+  const location = formatFindingLocation(finding);
+  const description = finding.description ? `: ${escapeCommentText(finding.description)}` : "";
+  const lines = [`- **${title}**${location}${description}`];
+  if (finding.recommendation) {
+    lines.push(`  - Recommendation: ${escapeCommentText(finding.recommendation)}`);
+  }
+  if (finding.evidence) lines.push(`  - Evidence: ${escapeCommentText(finding.evidence)}`);
+  return lines.join("\n");
+}
+
+function formatFindingLocation(finding: NonNullable<ReviewAdvisorResult["findings"]>[number]): string {
+  if (!finding.file) return "";
+  const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
+  return ` (${escapeCommentText(finding.file)}${line})`;
+}
+
+function escapeCommentText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([\\`*_\[\]()!|])/g, "\\$1")
+    .replaceAll("@", "&#64;");
+}
+
+function countLabel(count: unknown, singular: string, plural = `${singular}s`): string {
+  const numeric = typeof count === "number" && Number.isFinite(count) ? count : 0;
+  return `${numeric} ${numeric === 1 ? singular : plural}`;
 }

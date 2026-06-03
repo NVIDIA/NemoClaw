@@ -26,7 +26,16 @@ export function ensureLocalAdapterStateDir(
   stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR,
 ): void {
   if (!fs.existsSync(stateDir)) {
-    fs.mkdirSync(stateDir, { recursive: true });
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  }
+  // Tighten permissions in case the directory was created with a lax umask.
+  try {
+    const stat = fs.statSync(stateDir);
+    if ((stat.mode & 0o077) !== 0) {
+      fs.chmodSync(stateDir, 0o700);
+    }
+  } catch {
+    // Best effort — stat/chmod may fail on non-POSIX or read-only fs.
   }
 }
 

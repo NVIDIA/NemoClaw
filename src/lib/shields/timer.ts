@@ -10,15 +10,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { isRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
-import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "../sandbox/config";
+import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import { lockAgentConfig } from "./index";
-
-type UnknownRecord = { [key: string]: unknown };
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -26,6 +24,8 @@ interface ShieldsStatePatch {
   shieldsDownTimeout?: number | null;
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
+  chattrApplied?: boolean;
+  fileHashes?: { [path: string]: string };
 }
 
 interface TimerArgs {
@@ -42,10 +42,6 @@ interface TimerArgs {
 }
 
 const STATE_DIR = resolveNemoclawStateDir();
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
   const [sandboxName, snapshotPath, restoreAtIso, configPath, configDir, processToken] = argv;
@@ -193,6 +189,8 @@ function runRestoreTimer(args: TimerArgs): void {
     // that interactive `shields up` uses. Fall back to the bare configPath/
     // configDir from argv if resolution fails (e.g., registry unavailable).
     let lockVerified = true;
+    let lockedChattr: boolean | null = null;
+    let lockedHashes: { [path: string]: string } | null = null;
     if (args.configPath) {
       let lockTarget: {
         agentName?: string;
@@ -201,17 +199,22 @@ function runRestoreTimer(args: TimerArgs): void {
         sensitiveFiles?: string[];
       } | null = null;
       try {
-        const resolvedTarget = resolveAgentConfig(args.sandboxName);
-        if (resolvedTarget === DEFAULT_AGENT_CONFIG && args.configDir) {
-          lockTarget = { configPath: args.configPath, configDir: args.configDir };
-        } else {
-          lockTarget = resolvedTarget;
-        }
+        // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
+        // carries the OpenClaw sensitiveFiles (.config-hash) that
+        // shields-up locks and that the content seal hashes. Dropping
+        // them here would persist a partial fileHashes map and the next
+        // `shields status` would flag the missing entries as drift.
+        lockTarget = resolveAgentConfig(args.sandboxName);
       } catch {
-        // Fall back to argv-supplied paths without sensitive files —
-        // better to lock the main config than nothing at all.
+        // Resolver itself threw (registry unavailable). Fall back to
+        // argv-supplied paths, but still infer sensitiveFiles from
+        // configDir so the locked set matches what shields-up uses.
         if (args.configDir) {
-          lockTarget = { configPath: args.configPath, configDir: args.configDir };
+          lockTarget = {
+            configPath: args.configPath,
+            configDir: args.configDir,
+            sensitiveFiles: [`${args.configDir}/.config-hash`],
+          };
         } else {
           lockVerified = false;
           appendAudit({
@@ -226,7 +229,9 @@ function runRestoreTimer(args: TimerArgs): void {
       }
       if (lockTarget) {
         try {
-          lockAgentConfig(args.sandboxName, lockTarget);
+          const lockResult = lockAgentConfig(args.sandboxName, lockTarget);
+          lockedChattr = lockResult.chattrApplied;
+          lockedHashes = lockResult.fileHashes;
         } catch (error: unknown) {
           lockVerified = false;
           appendAudit({
@@ -243,13 +248,16 @@ function runRestoreTimer(args: TimerArgs): void {
 
     // Only mark shields as UP if the lock was verified (or no config path).
     if (lockVerified) {
-      updateState(args.stateFile, {
+      const patch: ShieldsStatePatch = {
         shieldsDown: false,
         shieldsDownAt: null,
         shieldsDownTimeout: null,
         shieldsDownReason: null,
         shieldsDownPolicy: null,
-      });
+      };
+      if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
+      if (lockedHashes !== null) patch.fileHashes = lockedHashes;
+      updateState(args.stateFile, patch);
 
       appendAudit({
         action: "shields_auto_restore",

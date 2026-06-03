@@ -1,21 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CommandGroup, PublicCommandDisplayEntry } from "./command-display";
+import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
+import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
+import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
-type PublicDisplayLayout = {
-  group: CommandGroup;
-  order: number;
-  usage?: string;
-  description?: string;
-  flags?: string;
-  hidden?: boolean;
-  deprecated?: boolean;
-};
-
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
+  ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
       "group": "Backup",
@@ -110,6 +105,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "hidden": true
     }
   ],
+  "resources": [
+    {
+      "group": "Resources",
+      "order": 900,
+      "description": "Show hardware inventory (CPU cores, RAM, GPU VRAM)",
+      "flags": "[--json]"
+    }
+  ],
   "root:version": [
     {
       "group": "Getting Started",
@@ -131,8 +134,9 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Messaging Channels",
       "order": 21,
+      "usage": "nemoclaw <name> channels add <channel>",
       "description": "Save credentials and rebuild",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:list": [
@@ -145,24 +149,36 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Messaging Channels",
       "order": 22,
+      "usage": "nemoclaw <name> channels remove <channel>",
       "description": "Remove a configured messaging channel",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:start": [
     {
       "group": "Messaging Channels",
       "order": 24,
+      "usage": "nemoclaw <name> channels start <channel>",
       "description": "Re-enable a previously stopped channel",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:stop": [
     {
       "group": "Messaging Channels",
       "order": 23,
+      "usage": "nemoclaw <name> channels stop <channel>",
       "description": "Disable channel (keeps credentials)",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
+    }
+  ],
+  "sandbox:channels:status": [
+    {
+      "group": "Messaging Channels",
+      "order": 25,
+      "usage": "nemoclaw <name> channels status",
+      "description": "Channel-specific runtime diagnostics",
+      "flags": "[--channel <channel>] [--json]"
     }
   ],
   "sandbox:config:get": [
@@ -348,6 +364,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "<path>"
     }
   ],
+  "sandbox:skill:remove": [
+    {
+      "group": "Skills",
+      "order": 16.1,
+      "flags": "<skill>"
+    }
+  ],
   "sandbox:snapshot:create": [
     {
       "group": "Sandbox Management",
@@ -365,7 +388,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Sandbox Management",
       "order": 9,
-      "flags": "[selector] [--to <dst>]"
+      "flags": "[selector] [--to <dst>] [--force] [--yes|-y]"
     }
   ],
   "sandbox:status": [

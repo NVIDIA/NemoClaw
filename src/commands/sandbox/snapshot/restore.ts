@@ -12,11 +12,12 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Restore state from a snapshot";
   static description = "Restore sandbox workspace state from a snapshot.";
-  static usage = ["<name> [selector] [--to <dst>]"];
+  static usage = ["<name> [selector] [--to <dst>] [--force] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> sandbox snapshot restore alpha",
     "<%= config.bin %> sandbox snapshot restore alpha v2",
     "<%= config.bin %> sandbox snapshot restore alpha before-upgrade --to beta",
+    "<%= config.bin %> sandbox snapshot restore alpha v2 --to beta --force --yes",
   ];
   static args = {
     sandboxName: sandboxNameArg,
@@ -28,6 +29,14 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
   };
   static flags = {
     to: Flags.string({ description: "Restore into another sandbox" }),
+    force: Flags.boolean({
+      description:
+        "When --to names an existing sandbox, delete it before restoring. Refuses by default.",
+    }),
+    yes: Flags.boolean({
+      char: "y",
+      description: "Skip the interactive confirmation when --force is used.",
+    }),
   };
 
   public async run(): Promise<void> {
@@ -37,6 +46,8 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
         kind: "restore",
         selector: args.selector,
         to: flags.to,
+        force: flags.force,
+        yes: flags.yes,
       });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);

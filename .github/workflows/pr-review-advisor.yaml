@@ -162,18 +162,16 @@ jobs:
             headSha: process.env.HEAD_SHA || "unknown",
             changedFiles: [],
             summary: { recommendation: "info_only", confidence: "low", oneLine: `PR review advisor skipped: ${reason}` },
-            gateStatus: { ci: gate, mergeability: gate, reviewThreads: gate, riskyCodeTested: gate },
             findings: [],
             acceptanceCoverage: [],
             securityCategories: [{ category: "Holistic Security Posture", verdict: "warning", justification: "Advisor bootstrap skip; human review required." }],
             testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
-            e2eAdvisorStatus: { found: false, requiredJobs: [], passedForHeadSha: [], missingForHeadSha: [], verdict: "not_found" },
             positives: [],
             reviewCompleteness: { limitations: [reason], requiresHumanReview: true },
           };
           fs.writeFileSync(path.join(outDir, "pr-review-advisor-result.json"), `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`);
           fs.writeFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# PR Review Advisor\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n\nHuman maintainer review required: **yes**\n`);
+          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# PR Review Advisor\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`);
           NODE
             exit 0
           fi

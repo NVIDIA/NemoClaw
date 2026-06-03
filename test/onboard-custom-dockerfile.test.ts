@@ -119,7 +119,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const cmd = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const cmd = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   commands.push({ command: cmd, env: args[2]?.env || null });
   // Observe the staged build context state while the sandbox create is in
   // flight — onboard deletes it once streamSandboxCreate resolves.

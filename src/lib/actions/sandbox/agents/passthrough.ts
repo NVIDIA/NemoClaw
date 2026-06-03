@@ -1,0 +1,59 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { CLI_NAME } from "../../../cli/branding";
+import { execSandbox } from "../exec";
+import { ensureLiveSandboxOrExit } from "../gateway-state";
+
+export type AgentsPassthroughVerb = "add" | "delete";
+
+export interface AgentsPassthroughOptions {
+  verb: AgentsPassthroughVerb;
+  extraArgs?: readonly string[];
+}
+
+export function hasAgentsPassthroughHelpToken(args: readonly string[]): boolean {
+  for (const arg of args) {
+    if (arg === "--") break;
+    if (arg === "--help" || arg === "-h") return true;
+  }
+  return false;
+}
+
+export function printAgentsPassthroughHelp(verb: AgentsPassthroughVerb): void {
+  const flagsToken = `openclaw-agents-${verb}-flags`;
+  console.log("");
+  console.log(`  Usage: ${CLI_NAME} <name> agents ${verb} [${flagsToken}...]`);
+  console.log("");
+  console.log(
+    `  Pass-through to \`openclaw agents ${verb} ...\` inside the sandbox via \`openshell sandbox exec\`.`,
+  );
+  console.log("  All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim.");
+  console.log("");
+}
+
+export function printAgentsParentHelp(): void {
+  console.log("");
+  console.log(`  Usage: ${CLI_NAME} <name> agents <subcommand> [openclaw-agents-flags...]`);
+  console.log("");
+  console.log(
+    "  Manage OpenClaw agents inside the sandbox. The parent command itself has no",
+  );
+  console.log(
+    "  runnable default; pick one of the subcommands below or pass `--help` for details.",
+  );
+  console.log("");
+  console.log("  Subcommands:");
+  console.log("    add       Add an OpenClaw agent in the sandbox.");
+  console.log("    delete    Delete an OpenClaw agent in the sandbox.");
+  console.log("");
+}
+
+export async function runAgentsPassthrough(
+  sandboxName: string,
+  { verb, extraArgs = [] }: AgentsPassthroughOptions,
+): Promise<void> {
+  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  const command = ["openclaw", "agents", verb, ...extraArgs];
+  await execSandbox(sandboxName, command);
+}

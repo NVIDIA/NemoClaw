@@ -13,18 +13,29 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { parseVersionFromText, versionGte } from "../adapters/openshell/client.js";
-import * as registry from "../state/registry.js";
-import { loadAgent } from "../agent/defs.js";
+import {
+  captureSandboxSshConfigCommand,
+  parseVersionFromText,
+  versionGte,
+} from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import { loadAgent } from "../agent/defs.js";
+import * as registry from "../state/registry.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
   isStale: boolean;
   detectionMethod: "registry" | "ssh-exec" | "unavailable";
+}
+
+/**
+ * Controls whether version checks may use cached metadata or must inspect the sandbox runtime.
+ */
+export interface VersionCheckOptions {
+  forceProbe?: boolean;
+  skipProbe?: boolean;
 }
 
 /**
@@ -47,12 +58,12 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const sshConfigResult = captureOpenshellCommand(
-    openshellBinary,
-    ["sandbox", "ssh-config", sandboxName],
-    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-  );
+  const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (sshConfigResult.status !== 0) return null;
+  if (!sshConfigResult.output.trim()) return null;
 
   const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
@@ -87,7 +98,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
  */
 export function checkAgentVersion(
   sandboxName: string,
-  opts?: { forceProbe?: boolean; skipProbe?: boolean },
+  opts?: VersionCheckOptions,
 ): VersionCheckResult {
   const agent = resolveAgentForSandbox(sandboxName);
   const expectedVersion = agent.expectedVersion;

@@ -4,24 +4,25 @@
 import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
+import { CLI_NAME } from "../cli/branding";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
   type SandboxInferenceConfig,
 } from "../inference/config";
-import type { ConfigObject, ConfigValue } from "../security/credential-filter";
-import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import {
+  type AgentConfigTarget,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
-  type AgentConfigTarget,
   writeSandboxConfig,
 } from "../sandbox/config";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
+import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
-import * as registry from "../state/registry";
 import type { SandboxEntry } from "../state/registry";
+import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 
 export interface InferenceSetOptions {
@@ -39,6 +40,7 @@ export interface InferenceSetResult {
   providerKey: string;
   configChanged: boolean;
   sessionUpdated: boolean;
+  inSandboxConfigSynced: boolean;
 }
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
@@ -364,6 +366,12 @@ export async function runInferenceSet(
     );
   }
 
+  // Write the registry before the crash-prone in-sandbox sync so the gateway
+  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
+  if (!deps.updateSandbox(sandboxName, { provider, model })) {
+    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  }
+
   const config = deps.readSandboxConfig(sandboxName, target);
   const patched =
     agentName === "hermes"
@@ -375,11 +383,36 @@ export async function runInferenceSet(
       ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
       : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
   );
-  deps.writeSandboxConfig(sandboxName, target, config);
-  deps.recomputeSandboxConfigHash(sandboxName, target);
-
-  if (!deps.updateSandbox(sandboxName, { provider, model })) {
-    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  // In-sandbox config is the last, crash-prone layer (gateway + registry already consistent):
+  //   - don't abort on failure; track whether it synced, never report a false "synced"
+  // Two degraded states, both fixed by `rebuild` (regenerates openclaw.json + .config-hash from registry):
+  //   - write fails:           config left old (old .config-hash still matches it)
+  //   - hash recompute fails:  config new but .config-hash stale -> integrity-guard mismatch
+  let inSandboxConfigSynced = false;
+  try {
+    deps.writeSandboxConfig(sandboxName, target, config);
+    try {
+      deps.recomputeSandboxConfigHash(sandboxName, target);
+      inSandboxConfigSynced = true;
+    } catch (hashError) {
+      const detail =
+        hashError instanceof Error && hashError.message ? hashError.message : String(hashError);
+      deps.log(
+        `  Warning: wrote the in-sandbox config for '${sandboxName}' but failed to refresh its ` +
+          `integrity hash: ${detail}`,
+      );
+      deps.log(`  Run '${CLI_NAME} ${sandboxName} rebuild' to resync the in-sandbox config.`);
+    }
+  } catch (writeError) {
+    const detail =
+      writeError instanceof Error && writeError.message ? writeError.message : String(writeError);
+    deps.log(
+      `  Warning: gateway and registry now use ${provider} / ${model}, but writing the ` +
+        `in-sandbox config failed: ${detail}`,
+    );
+    deps.log(
+      `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
+    );
   }
   const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, deps);
 
@@ -387,14 +420,20 @@ export async function runInferenceSet(
     action: "shields_down",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}`,
+    reason: `inference set ${agentName}:${provider}:${model}${
+      inSandboxConfigSynced ? "" : " (in-sandbox sync incomplete)"
+    }`,
   });
 
-  deps.log(
-    agentName === "hermes"
-      ? `  Inference route synced for '${sandboxName}': ${model}`
-      : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-  );
+  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
+  // warning above already described the degraded state.
+  if (inSandboxConfigSynced) {
+    deps.log(
+      agentName === "hermes"
+        ? `  Inference route synced for '${sandboxName}': ${model}`
+        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
+    );
+  }
 
   return {
     sandboxName,
@@ -404,5 +443,6 @@ export async function runInferenceSet(
     providerKey: patched.route.providerKey,
     configChanged: patched.changed,
     sessionUpdated,
+    inSandboxConfigSynced,
   };
 }

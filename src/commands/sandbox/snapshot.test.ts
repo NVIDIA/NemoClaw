@@ -46,6 +46,20 @@ describe("snapshot oclif commands", () => {
       kind: "restore",
       selector: "v2",
       to: "beta",
+      force: undefined,
+      yes: undefined,
+    });
+  });
+
+  it("threads --force and --yes into the typed restore action (#3756)", async () => {
+    await SnapshotRestoreCommand.run(["alpha", "--to", "beta", "--force", "--yes"], rootDir);
+
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
+      kind: "restore",
+      selector: undefined,
+      to: "beta",
+      force: true,
+      yes: true,
     });
   });
 

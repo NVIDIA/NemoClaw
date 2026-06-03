@@ -7,24 +7,36 @@ import type { WebSearchConfig } from "../inference/web-search";
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
 };
+import {
+  isOpenclawAgent,
+  requiredOpenclawOtelPolicyPresets,
+} from "./openclaw-otel-policy-presets";
 
 export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
   webSearchConfig?: WebSearchConfig | null;
   provider?: string | null;
+  agent?: string | null;
   isNonInteractive?: () => boolean;
+  env?: NodeJS.ProcessEnv;
 }
 
 export function getSuggestedPolicyPresets({
   enabledChannels = null,
   webSearchConfig = null,
   provider = null,
+  agent = null,
   isNonInteractive,
+  env = process.env,
 }: SuggestedPolicyPresetOptions = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
   if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
     suggestions.push("local-inference");
+  }
+  if (isOpenclawAgent(agent)) {
+    suggestions.push("openclaw-pricing");
+    suggestions.push(...requiredOpenclawOtelPolicyPresets(agent, env));
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
   const nonInteractive =
