@@ -3,6 +3,7 @@
 
 import { Args } from "@oclif/core";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { withStdoutRedirectedToStderr } from "../../lib/cli/stdout-guard";
 
 import { runSandboxDoctor } from "../../lib/actions/sandbox/doctor";
 
@@ -25,12 +26,13 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
 
   public async run(): Promise<unknown> {
     const { args } = await this.parse(SandboxDoctorCliCommand);
-    const report = await runSandboxDoctor(
-      args.sandboxName,
-      this.jsonEnabled() ? ["--json"] : [],
-      { quietJson: this.jsonEnabled() },
-    );
-    if (this.jsonEnabled()) {
+    const json = this.jsonEnabled();
+    const report = json
+      ? await withStdoutRedirectedToStderr(() =>
+          runSandboxDoctor(args.sandboxName, ["--json"], { quietJson: true }),
+        )
+      : await runSandboxDoctor(args.sandboxName, [], { quietJson: false });
+    if (json) {
       if (report && report.failed > 0) process.exitCode = 1;
       return report;
     }
