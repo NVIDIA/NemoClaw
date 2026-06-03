@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Ecosystem"
 sidebar-title: "Ecosystem"
-description: "How Hermes, OpenShell, and NemoClaw form one stack, where NemoClaw sits, what it adds beyond a DIY OpenShell deployment, and when to use the reference integration versus OpenShell alone."
+description: "How Hermes, OpenShell, and NemoClaw form one stack, where NemoClaw sits, what it adds beyond a custom OpenShell deployment, and when to use the reference integration versus OpenShell alone."
 description-agent: "Explains how Hermes, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond integrating OpenShell yourself, and when to prefer NemoHermes versus OpenShell. Use when users ask about Hermes, OpenShell, and NemoClaw together, or when to use NemoClaw versus OpenShell for Hermes."
 keywords: ["nemoclaw ecosystem", "hermes agent", "nemohermes", "nemoclaw vs openshell", "run hermes openshell sandbox"]
 content:
@@ -12,11 +12,11 @@ content:
 NemoClaw provides onboarding, lifecycle management, and Hermes operations within OpenShell containers.
 Use the `nemohermes` CLI alias when you work from the Hermes agent guide; it is equivalent to `nemoclaw` with the Hermes agent pre-selected.
 
-This page describes how the ecosystem is formed across projects, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [Hermes](https://hermes-agent.nousresearch.com/docs/), and how to choose between NemoHermes and OpenShell alone.
+This page describes how these projects form the ecosystem, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [Hermes](https://hermes-agent.nousresearch.com/docs/), and how to choose between NemoHermes and OpenShell alone.
 
 ## How the Stack Fits Together
 
-There are three pieces in a NemoClaw for Hermes deployment: Hermes, OpenShell, and NemoClaw, each with a distinct scope.
+A NemoClaw for Hermes deployment combines three pieces with distinct scopes: Hermes, OpenShell, and NemoClaw.
 The following diagram shows how they fit together.
 
 ```mermaid
@@ -60,18 +60,18 @@ The difference is who owns the integration work.
 
 | Path | What it means |
 |------|---------------|
-| **NemoClaw path** | You adopt the reference stack. NemoClaw's Hermes blueprint encodes a hardened image, default policies, and orchestration so `nemohermes onboard` can stand up a known-good Hermes-on-OpenShell setup with less custom glue. |
+| **NemoClaw path** | You adopt the reference stack. NemoClaw's Hermes blueprint encodes a hardened image, default policies, and orchestration so `nemohermes onboard` can create a known-good Hermes-on-OpenShell setup with less custom glue. |
 | **OpenShell path** | You use OpenShell as the platform and supply your own container, Hermes install steps, policy YAML, provider setup, and any host bridges. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
 
-## What NemoClaw Adds Beyond DIY OpenShell
+## What NemoClaw Adds Beyond Custom OpenShell
 
 You can run Hermes inside OpenShell without NemoClaw by building your own image, writing policy YAML, registering providers, and wiring inference routes yourself.
 That path is valid when you need full control over the container layout.
 
 NemoClaw builds on OpenShell with additional security hardening, automation, and lifecycle tooling for Hermes.
-The following table compares DIY OpenShell integration with `nemohermes onboard`.
+The following table compares custom OpenShell integration with `nemohermes onboard`.
 
-| Capability | DIY OpenShell + Hermes | `nemohermes onboard` |
+| Capability | Custom OpenShell + Hermes | `nemohermes onboard` |
 |---|---|---|
 | Sandbox isolation | Yes, when you apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges enforcement through your policy. | Yes. NemoClaw applies these through the blueprint and layers a Hermes-specific restrictive policy on top. |
 | Credential handling | You create OpenShell providers manually with `openshell provider create` and configure placeholder resolution at egress. | NemoClaw creates OpenShell providers during onboarding and filters sensitive host environment variables from the sandbox creation command to reduce accidental leakage through build args. |
@@ -94,9 +94,9 @@ Use the following table to decide when to use NemoHermes versus OpenShell alone.
 | You are standardizing on the NVIDIA reference for always-on Hermes agents with policy and inference routing. | NemoClaw (`nemohermes`) |
 | You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell (and your orchestration) |
 
-## Related topics
+## Related Topics
 
-- [Overview](overview) contains what NemoClaw is, capabilities, benefits, and use cases.
+- [Overview](overview) describes what NemoClaw is, including capabilities, benefits, and use cases.
 - [How It Works](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Hermes.
 - [Architecture](../reference/architecture) shows the repository structure and technical diagrams.
 - [Quickstart with Hermes](../get-started/quickstart-hermes) installs NemoClaw and launches your first Hermes sandbox.

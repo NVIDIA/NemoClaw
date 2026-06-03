@@ -122,7 +122,8 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e
+          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
+          sessions-agents-cli-e2e
         required: false
         type: string
         default: ""
@@ -479,13 +480,60 @@ jobs:
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-  # ── Channels add/remove lifecycle E2E (#3462 Test 2) ────────────────
-  # Regression coverage for #3437 (channels add must auto-apply the matching
-  # network policy preset so the bridge boots with egress to its upstream API)
-  # and #3671 (channels remove must detach providers, un-apply the preset,
-  # and survive a follow-up rebuild without being silently re-added from
-  # shell env). Telegram-only — the other paste-token channels walk the same
-  # KNOWN_CHANNELS + preset lookup code path.
+  # ── Sessions / agents CLI groups E2E ─────────────────────────────────
+  # Coverage for the `nemoclaw <name> sessions` and `nemoclaw <name> agents`
+  # CLI groups: openclaw-sessions passthrough (list/show/reset), agents
+  # add/delete lifecycle, and their related routing through the public-argv
+  # translator. The OpenShell sandbox is provisioned end-to-end so the
+  # groups are exercised against a live OpenClaw runtime.
+  #
+  # Secret-bearing target-ref execution — gating contract:
+  #   * This workflow has no `pull_request` or `pull_request_target` trigger
+  #     (see `on:` at the top of this file). The only ways to reach this job
+  #     are the nightly `schedule:` (which checks out `github.ref` =
+  #     default branch) and `workflow_dispatch:` (which requires repo write
+  #     access to invoke). Fork PRs cannot trigger this job at all.
+  #   * Therefore the `inputs.target_ref || github.ref` ref expression only
+  #     runs target-ref code when one of:
+  #       (a) `schedule:` fires against the default branch (no `target_ref`
+  #           input is available on schedule events), or
+  #       (b) a user with repo write access calls `workflow_dispatch` and
+  #           chooses a `target_ref`. Both paths are "trusted-ref": the
+  #           code reached at runtime has already passed maintainer review
+  #           or is the default branch itself.
+  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential — purposefully
+  #     not a production key. It is wired only to the inference quota
+  #     allocated to this repository's E2E lane, with no IAM / billing
+  #     authority outside that quota. Treat exposure as "rotate at the
+  #     quota boundary," not "rotate at the production boundary." Audit
+  #     trail: `gh api repos/NVIDIA/NemoClaw/actions/secrets/NVIDIA_API_KEY`
+  #     shows the secret scope.
+  #   * The top-level `github.repository == 'NVIDIA/NemoClaw'` check
+  #     additionally guards repo-forked schedules.
+  #   * `github_token: false` (below) — the script does not need a GitHub
+  #     token; keep it disabled unless a documented need appears.
+  # This shape matches every other `e2e-script.yaml` caller in this file;
+  # changing it for one job would diverge from the repo-wide pattern and
+  # should be done across the workflow, not in this PR.
+  sessions-agents-cli-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sessions-agents-cli-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-sessions-agents-cli.sh
+      timeout_minutes: 60
+      artifact_name: "install-log-sessions-agents-cli"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-sessions-agents-cli"}'
+      nvidia_api_key: true
+      github_token: false
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   channels-add-remove-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1933,6 +1981,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2040,6 +2089,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2204,6 +2254,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
