@@ -77,7 +77,6 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       hermesToolGateways: string[],
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
-    setDefaultSandbox(sandboxName: string): void;
     getSandboxAgentRegistryFields(agent: Agent, agentVersionKnown: boolean): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -307,7 +306,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
       provider,
       ...deps.getSandboxAgentRegistryFields(agent, !fromDockerfile),
     });
-    deps.setDefaultSandbox(sandboxName);
+    // Default-marking is deferred to finalization so a cancelled onboard never
+    // leaves this sandbox registered as default (#4614).
     session = await deps.recordStepComplete(
       "sandbox",
       deps.toSessionUpdates({

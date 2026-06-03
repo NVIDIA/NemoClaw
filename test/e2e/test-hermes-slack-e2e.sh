@@ -338,8 +338,14 @@ config_text = Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")
 cfg = yaml.safe_load(config_text) or {}
 errors = []
 platforms = cfg.get("platforms")
-if isinstance(platforms, dict) and "slack" in platforms:
-    errors.append("platforms.slack present")
+if not isinstance(platforms, dict):
+    errors.append("platforms map missing or not a mapping")
+else:
+    slack = platforms.get("slack")
+    if not isinstance(slack, dict):
+        errors.append("platforms.slack missing or not a mapping")
+    elif slack.get("enabled") is not True:
+        errors.append(f"platforms.slack.enabled is not true ({slack!r})")
 if "SLACK_BOT_TOKEN" in config_text or "SLACK_APP_TOKEN" in config_text:
     errors.append("config.yaml contains Slack token env keys")
 if errors:
@@ -350,7 +356,7 @@ PY
 )
 
 if [ "$config_probe" = "OK" ]; then
-  pass "config.yaml has no generic platforms.slack block or Slack token keys"
+  pass "config.yaml enables platforms.slack and contains no Slack token keys"
 else
   fail "config.yaml check failed: ${config_probe:0:400}"
 fi

@@ -71,14 +71,11 @@ describe("detectVllmProfile", () => {
     expect(detectVllmProfile({})).toBeNull();
   });
 
-  it("ready/fatal markers are populated and shared between profiles", () => {
-    const spark = detectVllmProfile({ spark: true });
+  it("shares Spark timeout budgets with the generic profile", () => {
+    const spark = detectVllmProfile({ spark: true, type: "nvidia" });
     const generic = detectVllmProfile({ type: "nvidia" });
-    expect(spark!.readyMarker).toBeInstanceOf(RegExp);
-    expect(spark!.fatalMarkers.length).toBeGreaterThan(0);
-    // Generic profile reuses Spark's marker tables.
-    expect(generic!.readyMarker).toBe(spark!.readyMarker);
-    expect(generic!.fatalMarkers).toBe(spark!.fatalMarkers);
+    expect(generic!.pullTimeoutSec).toBe(spark!.pullTimeoutSec);
+    expect(generic!.loadTimeoutSec).toBe(spark!.loadTimeoutSec);
   });
 });
 
