@@ -2357,7 +2357,10 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
       assert.equal(payload.sandboxName, "my-assistant");
-      assert.deepEqual(payload.defaultCalls, ["my-assistant"]);
+      // createSandbox no longer marks the sandbox default — that is deferred to the
+      // finalization step so a cancel at policy presets can't leave an unconfigured
+      // sandbox as default (#4614).
+      assert.deepEqual(payload.defaultCalls, []);
       assert.ok(
         payload.registerCalls.some(
           (entry: Record<string, unknown>) =>

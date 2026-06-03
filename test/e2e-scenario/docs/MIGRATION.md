@@ -38,6 +38,19 @@ Use these GitHub issues for status and follow-up work:
 If a migration discovery needs durable tracking, add it to the relevant issue or
 open a focused child issue. Avoid adding long-lived checklists here.
 
+## What belongs in the repo
+
+Keep durable framework guidance here:
+
+- how to run the scenario runner,
+- where scenario metadata, typed builders, manifests, and suites live,
+- how to add or review a scenario, expected state, assertion, or suite,
+- stable conventions that should not change with every migration batch.
+
+Do not add migration status tables, per-legacy-script checklists, temporary
+coverage counts, or owner queues to this file. Put those in the issue or PR
+that owns the work instead.
+
 ## What to migrate next
 
 When moving behavior from a legacy E2E script into the scenario framework:
