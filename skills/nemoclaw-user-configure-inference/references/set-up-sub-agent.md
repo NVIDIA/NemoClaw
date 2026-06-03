@@ -46,8 +46,7 @@ Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary
 
 ```console
 $ export SANDBOX=my-assistant
-$ export DOCKER_CTR=openshell-cluster-nemoclaw
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
+$ nemoclaw "$SANDBOX" exec -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
 ```
 
 Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
@@ -57,12 +56,12 @@ Upload the patched config and refresh the hash.
 In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof; lock the config root-owned and read-only afterward if the sandbox should enforce config integrity at startup.
 
 ```console
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/.config-hash
-$ cat /tmp/openclaw.updated.json | docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -c agent -- sh -c 'cat > /sandbox/.openclaw/openclaw.json'
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/openclaw.json
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/.config-hash
+$ SANDBOX_CTR=$(docker ps --format '{{.Names}}' \
+>   | awk -v name="$SANDBOX" '$0 == "openshell-" name || $0 ~ "^openshell-" name "-" { print; exit }')
+$ test -n "$SANDBOX_CTR"
+$ cat /tmp/openclaw.updated.json \
+>   | docker exec -i --user root "$SANDBOX_CTR" sh -c 'cat > /sandbox/.openclaw/openclaw.json'
+$ docker exec --user root "$SANDBOX_CTR" sh -c 'cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash && chown sandbox:sandbox openclaw.json .config-hash && chmod 660 openclaw.json .config-hash'
 ```
 
 Check `/tmp/gateway.log` after upload and confirm the gateway hot-reloaded the provider or `agents.list` change.
@@ -80,7 +79,7 @@ Use the same provider ID that appears in `models.providers`, such as `nvidia-omn
 After uploading the auth profile, make sure the sub-agent directory is owned by the sandbox user:
 
 ```console
-$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
+$ docker exec --user root "$SANDBOX_CTR" chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
 ```
 
 ## Allow Auxiliary Provider Egress
