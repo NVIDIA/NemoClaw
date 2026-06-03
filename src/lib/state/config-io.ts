@@ -17,6 +17,32 @@ type JsonValue = JsonScalar | JsonObject | JsonValue[];
 type JsonObject = { [key: string]: JsonValue };
 type SerializableConfig = JsonScalar | JsonValue[] | object;
 
+// Host-state vs sandbox-internal scoping. `ensureConfigDir` is a general
+// helper, but the 700/600 perm-heal contract only applies to the host's
+// `~/.nemoclaw` state directory. The mutable-sandbox OpenClaw config tree
+// (`/sandbox/.openclaw`, `openclaw.json`) has a different contract — 2770
+// directory / 660 file — so silently normalizing it would reintroduce the
+// EACCES bug that #4538 / PR #4610 are fighting. These predicates let the
+// heal opt out cleanly when a caller routes a sandbox-internal path here.
+function hostNemoclawDir(): string {
+  const home = process.env.HOME ?? os.homedir();
+  return path.resolve(home, ".nemoclaw");
+}
+
+function isHostNemoclawRoot(dirPath: string): boolean {
+  return path.resolve(dirPath) === hostNemoclawDir();
+}
+
+const MUTABLE_SANDBOX_CONFIG_ROOT = "/sandbox/.openclaw";
+
+function isMutableSandboxConfigPath(targetPath: string): boolean {
+  const resolved = path.resolve(targetPath);
+  return (
+    resolved === MUTABLE_SANDBOX_CONFIG_ROOT ||
+    resolved.startsWith(`${MUTABLE_SANDBOX_CONFIG_ROOT}/`)
+  );
+}
+
 function toError(error: Error | string | number | boolean | null | undefined): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -182,12 +208,19 @@ export function ensureConfigDir(dirPath: string): void {
   // SECURITY: Block symlink attacks before creating or writing to the directory.
   rejectSymlinksOnPath(dirPath);
 
+  // The 700/dir + 600/file contract is host-state only. Mutable sandbox
+  // OpenClaw config paths use 2770/660 (#4538) and must not be normalized
+  // here even if a caller routes them through ensureConfigDir.
+  const mutableSandboxPath = isMutableSandboxConfigPath(dirPath);
+
   try {
     fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
 
-    const stat = fs.statSync(dirPath);
-    if ((stat.mode & 0o077) !== 0) {
-      fs.chmodSync(dirPath, 0o700);
+    if (!mutableSandboxPath) {
+      const stat = fs.statSync(dirPath);
+      if ((stat.mode & 0o077) !== 0) {
+        fs.chmodSync(dirPath, 0o700);
+      }
     }
   } catch (error) {
     const errnoError = error instanceof Error ? error : null;
@@ -215,14 +248,15 @@ export function ensureConfigDir(dirPath: string): void {
     throw error;
   }
 
-  // Heal every root-level file in the dir, not just the one being read.
-  // Issue #4546 expects auto-repair across all root-level files
-  // (sandboxes.json, onboard-session.json, ollama-auth-proxy.pid,
-  // ollama-proxy-token, usage-notice.json, etc.) — most of which are written
-  // by code paths that don't flow through readConfigFile/writeConfigFile.
-  // Doing the walk here means every nemoclaw invocation that touches the
-  // config dir restores the entire root level to mode 600.
-  healRootLevelFiles(dirPath);
+  // Heal every root-level file ONLY when this is the host `~/.nemoclaw`
+  // root. #4546's acceptance criteria scope to that exact dir (sandboxes.json,
+  // onboard-session.json, ollama-auth-proxy.pid, ollama-proxy-token,
+  // usage-notice.json). Walking siblings of arbitrary config dirs could
+  // silently normalize a mutable-sandbox config tree (#4538) or any future
+  // contract where 600 is wrong, so the heal stays opt-in by path.
+  if (isHostNemoclawRoot(dirPath)) {
+    healRootLevelFiles(dirPath);
+  }
 }
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
@@ -239,14 +273,18 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
   try {
     const content = parseJson<T>(fs.readFileSync(filePath, "utf-8"));
 
-    // Heal file-level permission drift: tighten group/world bits.
-    // lstat (not stat) so we don't chmod through a symlink to a target
-    // outside the config dir — defensive duplicate of healRootLevelFiles
+    // Heal file-level permission drift: tighten group/world bits. lstat
+    // (not stat) so we don't chmod through a symlink to a target outside
+    // the config dir. Skip mutable-sandbox OpenClaw config paths so a
+    // future caller reading openclaw.json doesn't accidentally tighten
+    // its 660 contract (#4538). Defensive duplicate of healRootLevelFiles
     // for read paths whose dirname differs from what ensureConfigDir saw.
     try {
-      const st = fs.lstatSync(filePath);
-      if (st.isFile() && (st.mode & 0o077) !== 0) {
-        fs.chmodSync(filePath, 0o600);
+      if (!isMutableSandboxConfigPath(filePath)) {
+        const st = fs.lstatSync(filePath);
+        if (st.isFile() && (st.mode & 0o077) !== 0) {
+          fs.chmodSync(filePath, 0o600);
+        }
       }
     } catch {
       // Best effort — don't fail the read if we can't heal permissions.

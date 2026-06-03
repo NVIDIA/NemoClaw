@@ -169,27 +169,33 @@ describe("config-io", () => {
     // per-file heal alone misses them. The dir walk in ensureConfigDir is
     // what covers them — verify by writing several siblings at 644 and
     // confirming a single read tightens all of them to 600.
-    const dir = makeTempDir();
-    fs.chmodSync(dir, 0o700);
-    const target = path.join(dir, "config.json");
-    fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+    //
+    // The walk is scoped to the host ~/.nemoclaw root, so the test sets
+    // HOME to a temp dir and writes under <home>/.nemoclaw.
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const dir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(dir, { mode: 0o700 });
+      const target = path.join(dir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
 
-    const siblings = [
-      "onboard-session.json",
-      "ollama-proxy-token",
-      "ollama-auth-proxy.pid",
-      "usage-notice.json",
-    ];
-    for (const name of siblings) {
-      fs.writeFileSync(path.join(dir, name), "stale", { mode: 0o644 });
-    }
+      const siblings = [
+        "onboard-session.json",
+        "ollama-proxy-token",
+        "ollama-auth-proxy.pid",
+        "usage-notice.json",
+      ];
+      for (const name of siblings) {
+        fs.writeFileSync(path.join(dir, name), "stale", { mode: 0o644 });
+      }
 
-    readConfigFile(target, null);
+      readConfigFile(target, null);
 
-    for (const name of siblings) {
-      const mode = fs.statSync(path.join(dir, name)).mode & 0o777;
-      expect(mode, `${name} should be tightened to 600`).toBe(0o600);
-    }
+      for (const name of siblings) {
+        const mode = fs.statSync(path.join(dir, name)).mode & 0o777;
+        expect(mode, `${name} should be tightened to 600`).toBe(0o600);
+      }
+    });
   });
 
   it("ensureConfigDir skips symlinks during the root-level heal", () => {
@@ -200,34 +206,32 @@ describe("config-io", () => {
     // Positive control: a regular sibling at 0o644 proves the walker
     // actually ran (it should be tightened to 0o600). Without the
     // control, this test would pass vacuously if the walker were a no-op.
-    const dir = makeTempDir();
-    fs.chmodSync(dir, 0o700);
-    const target = path.join(dir, "config.json");
-    fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const dir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(dir, { mode: 0o700 });
+      const target = path.join(dir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
 
-    const sibling = path.join(dir, "should-be-healed.json");
-    fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+      const sibling = path.join(dir, "should-be-healed.json");
+      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
 
-    // Use mkdtempSync (via makeTempDir) for an unguessable outside path —
-    // a predictable os.tmpdir()+pid path is a CodeQL "insecure temporary
-    // file" pattern and lets a coresident attacker pre-create the target.
-    const outsideDir = makeTempDir();
-    const outside = path.join(outsideDir, "target");
-    fs.writeFileSync(outside, "outside", { mode: 0o644 });
-    const linkPath = path.join(dir, "rogue-link");
-    fs.symlinkSync(outside, linkPath);
+      const outsideDir = makeTempDir();
+      const outside = path.join(outsideDir, "target");
+      fs.writeFileSync(outside, "outside", { mode: 0o644 });
+      const linkPath = path.join(dir, "rogue-link");
+      fs.symlinkSync(outside, linkPath);
 
-    readConfigFile(target, null);
-    expect(
-      fs.statSync(sibling).mode & 0o777,
-      "positive control: walker tightened the regular sibling",
-    ).toBe(0o600);
-    expect(
-      fs.statSync(outside).mode & 0o777,
-      "symlink target must not be chmodded through the link",
-    ).toBe(0o644);
-    // Cleanup of linkPath and outside happens via afterEach (both live
-    // inside dirs in tmpDirs).
+      readConfigFile(target, null);
+      expect(
+        fs.statSync(sibling).mode & 0o777,
+        "positive control: walker tightened the regular sibling",
+      ).toBe(0o600);
+      expect(
+        fs.statSync(outside).mode & 0o777,
+        "symlink target must not be chmodded through the link",
+      ).toBe(0o644);
+    });
   });
 
   it("readConfigFile does not chmod through a symlink even via the per-file heal", () => {
@@ -246,6 +250,63 @@ describe("config-io", () => {
     readConfigFile(symlinkPath, null);
     expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
     // Cleanup via afterEach (both dirs are tracked in tmpDirs).
+  });
+
+  // ── Scope-boundary tests (cv's PR #4628 feedback) ──────────────────────
+  // The 700/600 heal is HOST-state-only — it must not normalize mutable
+  // sandbox OpenClaw config trees (2770/660 per #4538) or arbitrary
+  // config directories that may have their own permission contracts.
+
+  function withHome<T>(home: string, fn: () => T): T {
+    const previous = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      return fn();
+    } finally {
+      if (previous === undefined) delete process.env.HOME;
+      else process.env.HOME = previous;
+    }
+  }
+
+  it("ensureConfigDir does NOT heal siblings when dirPath is not the host ~/.nemoclaw root", () => {
+    // An arbitrary config dir (not the host nemoclaw state root) must
+    // leave sibling perms alone — otherwise a future caller pointing
+    // ensureConfigDir at a mutable-sandbox or third-party state dir
+    // would silently tighten files that have a different contract.
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const unrelatedDir = path.join(makeTempDir(), "other-tool-state");
+      fs.mkdirSync(unrelatedDir, { recursive: true, mode: 0o700 });
+      const target = path.join(unrelatedDir, "config.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+      const sibling = path.join(unrelatedDir, "other.json");
+      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+
+      readConfigFile(target, null);
+
+      expect(
+        fs.statSync(sibling).mode & 0o777,
+        "sibling under an unrelated dir must keep its mode",
+      ).toBe(0o644);
+    });
+  });
+
+  it("ensureConfigDir DOES heal siblings when dirPath IS the host ~/.nemoclaw root", () => {
+    // Positive control for the scope boundary: when the path is the host
+    // nemoclaw state root, the walk fires as before (#4546 acceptance).
+    const fakeHome = makeTempDir();
+    withHome(fakeHome, () => {
+      const hostDir = path.join(fakeHome, ".nemoclaw");
+      fs.mkdirSync(hostDir, { mode: 0o700 });
+      const target = path.join(hostDir, "sandboxes.json");
+      fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
+      const sibling = path.join(hostDir, "onboard-session.json");
+      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+
+      readConfigFile(target, null);
+
+      expect(fs.statSync(sibling).mode & 0o777).toBe(0o600);
+    });
   });
 
   it("supports both rich and legacy constructor forms", () => {
