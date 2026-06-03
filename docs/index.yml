@@ -65,6 +65,7 @@ navigation:
                 slug: switch-inference-providers
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
+                slug: set-up-sub-agent
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default

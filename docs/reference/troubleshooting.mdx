@@ -597,6 +597,12 @@ nemoclaw <name> rebuild
 The sandbox may have been stopped or deleted.
 Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
 
+### Sandbox is registered locally but missing from the gateway
+
+After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists.
+`nemoclaw <name> status` and `nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically.
+Run `nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
+
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
@@ -1254,6 +1260,11 @@ Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostic
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
 
+If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
+The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to five consecutive polls of about 10 seconds in total.
+Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
+Set it to a higher integer such as `15` (about 30 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+
 ### `pip install` fails with a system-packages error
 
 Recent Ubuntu releases (including DGX Spark's Ubuntu 24.04) mark the system Python install as externally managed, so `pip install` without a virtual environment fails.
@@ -1274,7 +1285,7 @@ If you run other services on Spark that expect port 3000, bind them to a differe
 <a id="windows-wsl-2"></a>
 ## Windows Subsystem for Linux
 
-For environment setup steps, see [Windows Prerequisites](../get-started/windows-preparation).
+For environment setup steps, see [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -1348,7 +1359,7 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the [Quickstart](../get-started/quickstart) and [Windows Setup](../get-started/windows-preparation) pages.
+For additional troubleshooting, see the [Quickstart](../get-started/quickstart) and [Windows Setup](../get-started/prerequisites/windows-preparation) pages.
 
 ## Podman
 
@@ -1442,7 +1453,7 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 ## Hermes
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
-For setup, refer to [Quickstart with Hermes](/get-started/quickstart-hermes).
+For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart-hermes).
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
@@ -1539,7 +1550,7 @@ Reset a specific provider's credentials with `nemohermes credentials reset <prov
 
 ### `Brave Search` policy preset has no effect under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](/get-started/quickstart-hermes) and [Network Policies](/reference/network-policies)).
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](../../hermes/get-started/quickstart-hermes) and [Network Policies](network-policies)).
 If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
 Configure Hermes web search from the agent's own configuration inside the sandbox.
 
