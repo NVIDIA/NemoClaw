@@ -228,6 +228,9 @@ if model.get("base_url") != "https://inference.local/v1":
     errors.append(f"model.base_url={model.get('base_url')!r}")
 if model.get("provider") != "custom":
     errors.append(f"model.provider={model.get('provider')!r}")
+api_key = model.get("api_key")
+if not isinstance(api_key, str) or not api_key.startswith("sk-"):
+    errors.append(f"model.api_key={api_key!r}")
 
 if re.search(r"(?ms)^models:\s*\n(?:[ \t].*\n)*?[ \t]+providers:", text):
     errors.append("OpenClaw-style models.providers block present")
