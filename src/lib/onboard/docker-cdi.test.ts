@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 // neighboring preflight tests.
 import {
   buildNvidiaCdiRepairCommands,
+  buildStaleCdiManualWarnCommands,
   buildStaleCdiWarnCommands,
   collectCdiDeviceNodes,
   findCdiDeviceNodeMismatch,
@@ -222,5 +223,14 @@ describe("docker-cdi remediation commands", () => {
 
     const serviceCommands = buildStaleCdiWarnCommands("/var/run/cdi/nvidia.yaml");
     expect(serviceCommands.some((command) => command.includes("rm -f"))).toBe(false);
+  });
+
+  it("shows manual stale-spec guidance without systemctl on non-systemd hosts", () => {
+    const commands = buildStaleCdiManualWarnCommands("/etc/cdi/nvidia.yaml");
+
+    expect(commands.join("\n")).toContain("/var/run/cdi/nvidia.yaml");
+    expect(commands.join("\n")).toContain("sudo rm -f /etc/cdi/nvidia.yaml");
+    expect(commands.join("\n")).not.toContain("systemctl");
+    expect(commands.join("\n")).not.toContain("nvidia-ctk cdi list");
   });
 });

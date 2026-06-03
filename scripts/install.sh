@@ -1905,6 +1905,7 @@ repair_installer_nvidia_cdi_spec() {
           host.cdiNvidiaGpuSpecStale &&
           host.cdiNvidiaGpuSpecNeedsRepair &&
           !host.cdiNvidiaGpuSpecMissing &&
+          host.nvidiaContainerToolkitInstalled &&
           !isWslDockerDesktopRuntime(host)
         ) {
           const mismatch = String(host.cdiNvidiaGpuSpecMismatch || "");

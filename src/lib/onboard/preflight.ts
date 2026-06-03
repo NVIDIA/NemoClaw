@@ -19,6 +19,7 @@ import { DASHBOARD_PORT } from "../core/ports";
 import {
   buildNvidiaCdiRefreshCommands,
   buildNvidiaCdiRepairCommands,
+  buildStaleCdiManualWarnCommands,
   buildStaleCdiWarnCommands,
   explainNvidiaCdiRepairReason,
   explainStaleCdiReason,
@@ -893,7 +894,9 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     const specPath = getNvidiaCdiSpecPath(assessment);
     const repairCommands = missingSpec
       ? buildNvidiaCdiRepairCommands(assessment, specPath)
-      : buildStaleCdiWarnCommands(flaggedFilePath);
+      : assessment.systemctlAvailable
+        ? buildStaleCdiWarnCommands(flaggedFilePath)
+        : buildStaleCdiManualWarnCommands(flaggedFilePath);
     const reason = missingSpec
       ? explainNvidiaCdiRepairReason(assessment)
       : explainStaleCdiReason(assessment.cdiNvidiaGpuSpecMismatch);
@@ -906,7 +909,7 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       actions.push({
         id: missingSpec ? "generate_nvidia_cdi_spec" : "refresh_nvidia_cdi_spec",
         title,
-        kind: "sudo",
+        kind: missingSpec || assessment.systemctlAvailable ? "sudo" : "manual",
         reason,
         commands: repairCommands,
         blocking: true,

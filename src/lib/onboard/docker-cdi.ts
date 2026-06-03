@@ -310,6 +310,21 @@ export function buildStaleCdiWarnCommands(flaggedFilePath: string): string[] {
   return commands;
 }
 
+export function buildStaleCdiManualWarnCommands(flaggedFilePath: string): string[] {
+  const commands = [
+    `Refresh NVIDIA CDI specs using your host's service manager so ${NVIDIA_CDI_REFRESH_SPEC_PATH} is current.`,
+  ];
+  if (flaggedFilePath && flaggedFilePath !== NVIDIA_CDI_REFRESH_SPEC_PATH) {
+    commands.push(
+      `Optionally remove the stale leftover after the refresh: sudo rm -f ${flaggedFilePath}`,
+    );
+  }
+  commands.push(
+    "nemoclaw onboard      # re-run to confirm the stale-spec warning clears (or --no-gpu to skip GPU)",
+  );
+  return commands;
+}
+
 export function explainStaleCdiReason(mismatch: string | undefined): string {
   const detail = mismatch || "unknown device-node mismatch";
   const flaggedFilePath = extractCdiMismatchFilePath(mismatch);

@@ -284,6 +284,25 @@ describe("planHostRemediation — CDI", () => {
     );
   });
 
+  it("emits manual stale-spec guidance without systemctl on non-systemd hosts", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        systemctlAvailable: false,
+        cdiNvidiaGpuSpecStale: true,
+        cdiNvidiaGpuSpecNeedsRepair: true,
+        cdiNvidiaGpuSpecMismatch:
+          "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+      }),
+    );
+    const action = actions.find((entry: { id: string }) => entry.id === "refresh_nvidia_cdi_spec");
+
+    expect(action).toBeTruthy();
+    expect(action?.blocking).toBe(true);
+    expect(action?.kind).toBe("manual");
+    expect(action?.commands.join("\n")).toContain("/var/run/cdi/nvidia.yaml");
+    expect(action?.commands.join("\n")).not.toContain("systemctl");
+  });
+
   it("emits a non-blocking refresh-service warning when refresh units are unhealthy", () => {
     const actions = planHostRemediation(
       baseAssessment({
