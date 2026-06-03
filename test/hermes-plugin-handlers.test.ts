@@ -328,6 +328,95 @@ print(json.dumps(result))
     );
   });
 
+  it("anchors the strip_think_blocks patch via _pre_llm_call gateway hook", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    @staticmethod
+    def _strip_think_blocks(content):
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+
+plugin._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "n",
+    "provider": "p",
+    "base_url": "b",
+    "gateway": "g",
+    "port": 1,
+}
+
+# Simulate the first Telegram turn arriving via the gateway hook chain.
+# _pre_llm_call should set the platform anchor AND install the patch on the
+# stubbed run_agent.AIAgent so the subsequent _strip_think_blocks call goes
+# through the platform-aware wrapper. This is the integration shape of the
+# Hermes gateway first-message path (#4175 review feedback from @cv).
+plugin._pre_llm_call(user_message="hello", is_first_turn=True, platform="telegram")
+on_telegram_same = AIAgent._strip_think_blocks(
+    'send_message: "to telegram: Hello from gateway."'
+)
+on_telegram_cross = AIAgent._strip_think_blocks(
+    'send_message: "to slack: leaked into telegram chat"'
+)
+
+# Simulate the next first-turn message on a different platform (Discord). The
+# patch is already installed; only the platform anchor should follow the new
+# turn so the wrapper re-evaluates target_platform against current_platform.
+plugin._pre_llm_call(user_message="hi", is_first_turn=True, platform="discord")
+on_discord_same = AIAgent._strip_think_blocks(
+    'send_message: "to discord: Hello from gateway."'
+)
+on_discord_stale_target = AIAgent._strip_think_blocks(
+    'send_message: "to telegram: should not normalize on discord"'
+)
+
+print(json.dumps({
+    "telegram_same": on_telegram_same,
+    "telegram_cross": on_telegram_cross,
+    "discord_same": on_discord_same,
+    "discord_stale_target": on_discord_stale_target,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      telegram_same: string;
+      telegram_cross: string;
+      discord_same: string;
+      discord_stale_target: string;
+    };
+
+    // First-turn Telegram hook path: body extracted via the patched chain.
+    expect(result.telegram_same).toBe("Hello from gateway.");
+    // Cross-platform target on the same Telegram session: preserved verbatim
+    // — proves the anchor refuses to silently deliver into the wrong chat.
+    expect(result.telegram_cross).toBe(
+      'send_message: "to slack: leaked into telegram chat"',
+    );
+    // Subsequent Discord-turn hook path: anchor follows the new platform.
+    expect(result.discord_same).toBe("Hello from gateway.");
+    // Stale-target after platform switch (telegram body on a discord turn):
+    // also preserved, pinning that the anchor refreshes per-turn.
+    expect(result.discord_stale_target).toBe(
+      'send_message: "to telegram: should not normalize on discord"',
+    );
+  });
+
   it("grounds first Telegram turns to reply directly instead of spelling tool calls", () => {
     const output = runPython(`
 import importlib.util
