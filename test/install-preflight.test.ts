@@ -1394,7 +1394,7 @@ exit 1
       });
 
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec/);
     expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
     expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);

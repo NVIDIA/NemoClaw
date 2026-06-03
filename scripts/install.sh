@@ -1861,7 +1861,7 @@ repair_installer_nvidia_cdi_spec() {
         const host = assessHost();
         if (
           host &&
-          host.cdiNvidiaGpuSpecMissing &&
+          (host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) &&
           !isWslDockerDesktopRuntime(host)
         ) {
           process.stdout.write(getNvidiaCdiSpecPath(host));
@@ -1886,10 +1886,10 @@ repair_installer_nvidia_cdi_spec() {
   fi
 
   local sudo_cmd=()
-  info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  info "Refreshing NVIDIA CDI device spec at ${spec_path}."
   info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
-  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing."
-  info "Without it, OpenShell gateway startup would fail before the sandbox can use the GPU."
+  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing or may be stale."
+  info "Without a refreshed spec, OpenShell gateway startup can fail before the sandbox can use the GPU."
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then

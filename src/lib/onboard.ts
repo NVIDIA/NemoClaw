@@ -1841,16 +1841,19 @@ function assertCdiNvidiaGpuSpecPresent(
   hostGpuPlatform: string | null | undefined = null,
 ): void {
   if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!host.cdiNvidiaGpuSpecMissing || optedOutGpuPassthrough) return;
+  if (
+    !(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) ||
+    optedOutGpuPassthrough
+  ) {
+    return;
+  }
   console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but no",
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the",
   );
   console.error(
-    "  nvidia.com/gpu CDI spec was found on the host. OpenShell's gateway start will",
+    "  NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail",
   );
-  console.error(
-    "  fail with `unresolvable CDI devices nvidia.com/gpu=all` (issue #3152).",
-  );
+  console.error("  until the CDI spec is refreshed.");
   printRemediationActions(planHostRemediation(host));
   process.exit(1);
 }
