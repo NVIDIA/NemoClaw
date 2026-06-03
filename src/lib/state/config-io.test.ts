@@ -208,25 +208,26 @@ describe("config-io", () => {
     const sibling = path.join(dir, "should-be-healed.json");
     fs.writeFileSync(sibling, "stale", { mode: 0o644 });
 
-    const outside = path.join(os.tmpdir(), `nemoclaw-symlink-target-${String(process.pid)}`);
+    // Use mkdtempSync (via makeTempDir) for an unguessable outside path —
+    // a predictable os.tmpdir()+pid path is a CodeQL "insecure temporary
+    // file" pattern and lets a coresident attacker pre-create the target.
+    const outsideDir = makeTempDir();
+    const outside = path.join(outsideDir, "target");
     fs.writeFileSync(outside, "outside", { mode: 0o644 });
     const linkPath = path.join(dir, "rogue-link");
     fs.symlinkSync(outside, linkPath);
 
-    try {
-      readConfigFile(target, null);
-      expect(
-        fs.statSync(sibling).mode & 0o777,
-        "positive control: walker tightened the regular sibling",
-      ).toBe(0o600);
-      expect(
-        fs.statSync(outside).mode & 0o777,
-        "symlink target must not be chmodded through the link",
-      ).toBe(0o644);
-    } finally {
-      fs.unlinkSync(linkPath);
-      fs.unlinkSync(outside);
-    }
+    readConfigFile(target, null);
+    expect(
+      fs.statSync(sibling).mode & 0o777,
+      "positive control: walker tightened the regular sibling",
+    ).toBe(0o600);
+    expect(
+      fs.statSync(outside).mode & 0o777,
+      "symlink target must not be chmodded through the link",
+    ).toBe(0o644);
+    // Cleanup of linkPath and outside happens via afterEach (both live
+    // inside dirs in tmpDirs).
   });
 
   it("readConfigFile does not chmod through a symlink even via the per-file heal", () => {
@@ -235,19 +236,16 @@ describe("config-io", () => {
     const dir = makeTempDir();
     fs.chmodSync(dir, 0o700);
 
-    const outside = path.join(os.tmpdir(), `nemoclaw-symlink-readtarget-${String(process.pid)}`);
+    const outsideDir = makeTempDir();
+    const outside = path.join(outsideDir, "target.json");
     fs.writeFileSync(outside, JSON.stringify({ outside: true }), { mode: 0o644 });
     const symlinkPath = path.join(dir, "config.json");
     fs.symlinkSync(outside, symlinkPath);
 
-    try {
-      // Reading through the symlink should not chmod the target file.
-      readConfigFile(symlinkPath, null);
-      expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
-    } finally {
-      fs.unlinkSync(symlinkPath);
-      fs.unlinkSync(outside);
-    }
+    // Reading through the symlink should not chmod the target file.
+    readConfigFile(symlinkPath, null);
+    expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
+    // Cleanup via afterEach (both dirs are tracked in tmpDirs).
   });
 
   it("supports both rich and legacy constructor forms", () => {
