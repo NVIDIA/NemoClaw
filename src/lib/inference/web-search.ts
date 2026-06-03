@@ -20,4 +20,10 @@ export interface WebSearchConfig {
   provider?: WebSearchProvider;
 }
 
+export function isWebSearchEnabled(
+  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
+): boolean {
+  return webSearchConfig?.fetchEnabled === true;
+}
+
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";

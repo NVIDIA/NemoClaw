@@ -867,6 +867,36 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
+  it("emits the DuckDuckGo provider with no apiKey when NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo", () => {
+    const config = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "duckduckgo",
+    });
+    expect(config.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "duckduckgo",
+    });
+    expect((config.tools?.web?.search as { apiKey?: string })?.apiKey).toBeUndefined();
+  });
+
+  it("falls back to Brave when NEMOCLAW_WEB_SEARCH_PROVIDER is unset or unknown", () => {
+    const unset = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
+    expect(unset.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "brave",
+      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+    });
+    const unknown = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "bing",
+    });
+    expect(unknown.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "brave",
+      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+    });
+  });
+
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
     expect(config.tools?.toolSearch).toBe(true);

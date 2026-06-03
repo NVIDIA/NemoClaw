@@ -232,10 +232,11 @@ BRAVE_API_KEY=... \
 If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
 After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
-To enable the experimental DuckDuckGo Web Search backend in non-interactive mode, set both the experimental flag and the provider:
+To enable the experimental DuckDuckGo Web Search backend in non-interactive mode, set the experimental flag, the provider, and accept the third-party software notice (or pass `--yes-i-accept-third-party-software`):
 
 ```bash
 NEMOCLAW_EXPERIMENTAL=1 NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   nemoclaw onboard --non-interactive
 ```
 

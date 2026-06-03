@@ -172,7 +172,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     return config?.provider === "duckduckgo";
   }
 
-  async function promptWebSearchProvider(): Promise<WebSearchProvider | null> {
+  async function promptWebSearchProvider(): Promise<WebSearchProvider> {
     if (!isDuckDuckGoExperimentalEnabled()) return "brave";
     while (true) {
       const answer = (
@@ -242,10 +242,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       return null;
     }
 
-    const provider = duckDuckGoRequested ? "duckduckgo" : await promptWebSearchProvider();
-    if (provider === null) {
-      return null;
-    }
+    const provider: WebSearchProvider = duckDuckGoRequested
+      ? "duckduckgo"
+      : await promptWebSearchProvider();
 
     if (provider === "duckduckgo") {
       console.log("  ✓ Enabled DuckDuckGo Web Search (experimental, unofficial)");

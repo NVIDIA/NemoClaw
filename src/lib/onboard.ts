@@ -7018,7 +7018,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       hermesToolGateways,
       stagedLegacyKeys,
       migratedLegacyKeys,
-      webSearchEnabled: webSearchConfig?.fetchEnabled === true,
+      webSearchEnabled: webSearch.isWebSearchEnabled(webSearchConfig),
       deps: {
         ensureAgentDashboardForward,
         setDefaultSandbox: registry.setDefault,

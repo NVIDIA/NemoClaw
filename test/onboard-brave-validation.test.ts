@@ -407,6 +407,75 @@ const { configureWebSearch } = require(${onboardPath});
   });
 });
 
+describe("configureWebSearch (DuckDuckGo non-interactive)", () => {
+  function runDuckDuckGoConfigure(envOverride: NodeJS.ProcessEnv): {
+    exitCode: number;
+    payload: { result: { fetchEnabled: boolean; provider?: string } | null; logs: string[] };
+  } {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ddg-"));
+    const scriptPath = path.join(tmpDir, "configure-web-search-ddg.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const logs = [];
+console.log = (...args) => logs.push(args.join(" "));
+const { configureWebSearch } = require(${onboardPath});
+(async () => {
+  const result = await configureWebSearch(null);
+  fs.writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ result, logs }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`,
+    );
+
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          ...envOverride,
+        },
+      });
+      const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
+      return { exitCode: typeof result.status === "number" ? result.status : -1, payload };
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it("selects duckduckgo when NEMOCLAW_EXPERIMENTAL=1 and NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo", () => {
+    const { exitCode, payload } = runDuckDuckGoConfigure({
+      NEMOCLAW_EXPERIMENTAL: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "duckduckgo",
+      BRAVE_API_KEY: "",
+    });
+
+    expect(exitCode).toBe(0);
+    expect(payload.result).toEqual({ fetchEnabled: true, provider: "duckduckgo" });
+  });
+
+  it("ignores NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo without the experimental flag", () => {
+    const { exitCode, payload } = runDuckDuckGoConfigure({
+      NEMOCLAW_EXPERIMENTAL: "",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "duckduckgo",
+      BRAVE_API_KEY: "",
+    });
+
+    expect(exitCode).toBe(0);
+    expect(payload.result).toBeNull();
+  });
+});
+
 describe("configureWebSearch (interactive)", () => {
   it("returns to the Brave Search enable prompt when backing out of the API key prompt", () => {
     const { exitCode, payload } = runInteractiveConfigureWebSearch({

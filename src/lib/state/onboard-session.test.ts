@@ -723,6 +723,43 @@ describe("onboard session", () => {
     expect(loaded.webSearchConfig).toBeNull();
   });
 
+  it("preserves a duckduckgo web-search provider across save/load", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      webSearchConfig: { fetchEnabled: true, provider: "duckduckgo" },
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true, provider: "duckduckgo" });
+  });
+
+  it("drops unknown provider values from persisted web-search config", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      webSearchConfig: {
+        fetchEnabled: true,
+        // The disk-state boundary may have been written by a future or
+        // tampered build. Anything that does not match the in-code
+        // allowlist must be discarded by the normalizer, leaving only
+        // fetchEnabled.
+        provider: "bing" as unknown as "brave",
+      },
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+  });
+
+  it("treats fetchEnabled !== true as no web-search config", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      webSearchConfig: { fetchEnabled: false as unknown as true, provider: "duckduckgo" },
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.webSearchConfig).toBeNull();
+  });
+
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {
     session.saveSession(
       session.createSession({ metadata: { gatewayName: "nemoclaw", fromDockerfile: null } }),
