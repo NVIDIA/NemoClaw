@@ -21,6 +21,7 @@ function extractShellFunctionBefore(name: string, nextName: string): string {
 }
 
 const ENSURE_DOCKER_FUNCTION = extractShellFunctionBefore("ensure_docker", "is_wsl_host");
+const describeLinux = process.platform === "linux" ? describe : describe.skip;
 
 type EnsureDockerOutcome = {
   status: number | null;
@@ -77,7 +78,7 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
     #   - user is non-root, not in docker group via NSS, not in active group list
     #   - sudo is a no-op so usermod doesn't actually run
     #   - uname reports Linux and is_wsl_host returns 1 so platform guards
-    #     don't bail out early when the test suite runs on macOS
+    #     do not bail out early in the Linux CI job
     uname() { printf 'Linux\n'; }
     docker() { return 1; }
     systemctl() { return 0; }
@@ -122,7 +123,7 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, sgArgs };
 }
 
-describe("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
+describeLinux("install.sh ensure_docker — #4414 non-interactive self re-exec", () => {
   it("re-execs through 'sg docker' instead of exiting 0 when NEMOCLAW_NON_INTERACTIVE=1", () => {
     // Repro of #4414: on a clean Ubuntu VM, the non-interactive curl|bash
     // installer adds the user to the docker group, then exits and asks the
