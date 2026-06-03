@@ -20,8 +20,12 @@ export function appendHostProxyEnvArgs(
   const proxyEnv: Record<string, string> = {};
   for (const name of HOST_PROXY_ENV_NAMES) {
     const value = env[name];
-    if (typeof value === "string" && value.trim() !== "") {
-      proxyEnv[name] = value;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      // Filter on the trimmed value but ALSO store the trimmed value —
+      // forwarding the surrounding whitespace would break consumers that
+      // don't re-trim.
+      if (trimmed !== "") proxyEnv[name] = trimmed;
     }
   }
 

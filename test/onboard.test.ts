@@ -123,6 +123,51 @@ describe("onboard helpers", () => {
     expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
   });
 
+  it("trims surrounding whitespace from proxy env values before forwarding", () => {
+    // A `HTTP_PROXY="  http://x:8888  "` from a sloppy shell rc must not
+    // flow through with surrounding whitespace — downstream consumers
+    // that don't re-trim would treat the value as malformed.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "  http://127.0.0.1:8888  ",
+      HTTPS_PROXY: "\thttp://127.0.0.1:8888\n",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    for (const entry of envArgs) {
+      expect(entry, "no forwarded entry should contain leading/trailing whitespace").toBe(
+        entry.trim(),
+      );
+    }
+  });
+
+  it("synthesizes both NO_PROXY and no_proxy in the sandbox so case-sensitive consumers stay covered", () => {
+    // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
+    // which one the user originally set. A user who only sets HTTP_PROXY
+    // (with no NO_PROXY at all) still gets both cases synthesized in the
+    // sandbox so case-sensitive consumers (e.g. some Python libs read
+    // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
+    // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
+    // future refactor of `withLocalNoProxy` doesn't silently drop one case.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy (lowercase) should also be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      expect(v).toContain("localhost");
+      expect(v).toContain("127.0.0.1");
+      expect(v).toContain("host.docker.internal");
+    }
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
