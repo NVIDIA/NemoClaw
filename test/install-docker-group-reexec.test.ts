@@ -9,6 +9,18 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
+const INSTALLER_SOURCE = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
+
+function extractShellFunctionBefore(name: string, nextName: string): string {
+  const start = INSTALLER_SOURCE.indexOf(`${name}() {`);
+  const end = INSTALLER_SOURCE.indexOf(`\n${nextName}() {`, start);
+  if (start === -1 || end === -1) {
+    throw new Error(`expected ${name} before ${nextName} in scripts/install.sh`);
+  }
+  return INSTALLER_SOURCE.slice(start, end).trimEnd();
+}
+
+const ENSURE_DOCKER_FUNCTION = extractShellFunctionBefore("ensure_docker", "is_wsl_host");
 
 type EnsureDockerOutcome = {
   status: number | null;
@@ -21,6 +33,22 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-docker-group-"));
   const sgLog = path.join(tmp, "sg-args.txt");
   const sgStub = path.join(tmp, "sg");
+  const harnessDir = path.join(tmp, "scripts");
+  const installHarness = path.join(harnessDir, "install.sh");
+  fs.mkdirSync(harnessDir, { recursive: true });
+
+  // Keep the harness focused on ensure_docker so macOS platform tests do not
+  // depend on sourcing the installer's top-level Bash state with /bin/bash 3.
+  fs.writeFileSync(
+    installHarness,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'installer_non_interactive() { [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]; }',
+      ENSURE_DOCKER_FUNCTION,
+    ].join("\n"),
+    { mode: 0o755 },
+  );
 
   // Stub `sg`: record the args the installer asked us to execute, then exit 0.
   // Without this stub, `exec sg docker -c …` would replace the test process
@@ -40,7 +68,7 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
 
   const snippet = `
     set -e
-    source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+    source "${installHarness}"
 
     # Force the slow path through ensure_docker:
     #   - docker info fails (group not yet active in this shell)
