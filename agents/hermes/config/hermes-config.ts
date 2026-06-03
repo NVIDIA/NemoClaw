@@ -34,6 +34,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       default: settings.model,
       provider: "custom",
       base_url: settings.baseUrl,
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     },
     terminal: {
       backend: "local",

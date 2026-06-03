@@ -105,6 +105,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
     expect(config.platforms).toEqual({
       api_server: {
@@ -117,6 +118,15 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
+  });
+
+  it("emits a model.api_key placeholder that satisfies the LiteLLM sk- prefix gate", () => {
+    const { config } = runConfigScript();
+
+    expect(typeof config.model.api_key).toBe("string");
+    expect(config.model.api_key.startsWith("sk-")).toBe(true);
+    expect(config.model.api_key).not.toBe("no-key-required");
+    expect(config.model.api_key).toMatch(/OPENSHELL/);
   });
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
@@ -367,6 +377,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "moonshotai/kimi-k2.6",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
     expect(config.kimi).toBeUndefined();
     expect(config.openclawPlugins).toBeUndefined();
