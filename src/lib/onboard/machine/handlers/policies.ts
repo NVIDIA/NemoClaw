@@ -92,6 +92,13 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     updateSession(mutator: (session: Session) => Session | void): Session;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
+    // Persist the operator's effective policy preset selection back to the
+    // sandbox registry. The sandbox is registered earlier with only the
+    // create-time/boot presets (messaging/Hermes setup), so without this
+    // write-back the registry keeps a stale `policies` list and recreate /
+    // re-onboard reintroduces removed tier defaults (e.g. a removed Balanced
+    // `npm`). See #4621.
+    persistAppliedPolicyPresets(sandboxName: string, appliedPolicyPresets: string[]): void;
   };
 }
 
@@ -156,6 +163,18 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;
   let session: Session | null;
+  // Whether the effective set was authoritatively reconciled onto the live
+  // gateway, so it is safe to persist and mark final. Only the setup path that
+  // runs syncPresetSelection (signalled by onSelection firing) qualifies:
+  //   - the skip path (NEMOCLAW_POLICY_MODE=skip/none/no) returns [] without
+  //     touching the live set, so persisting [] would wipe real policies;
+  //   - the resume path only checks recorded presets are a *subset* of what's
+  //     applied (arePolicyPresetsApplied), not that the live set matches — an
+  //     interrupted prior run may still have extra applied presets (e.g. an
+  //     `npm` whose removal never completed), so we must not record the
+  //     narrowed set as the finalized truth.
+  // See #4621.
+  let reflectsLiveAppliedSet = false;
   if (resumePolicies) {
     deps.skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
     await deps.recordStateSkipped("policies", {
@@ -194,12 +213,26 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       webSearchSupported,
       hermesToolGateways,
       onSelection: (policyPresets) => {
+        // onSelection fires only when a selection was reconciled to the live
+        // gateway (resume reapply, non-interactive custom/suggested, or the
+        // interactive tier selector). The skip path returns before calling it.
+        reflectsLiveAppliedSet = true;
         deps.updateSession((current) => {
           current.policyPresets = policyPresets;
           return current;
         });
       },
     });
+    // Reconcile the registry with the *effective* preset selection so a later
+    // recreate/re-onboard carries the operator's exact set forward instead of
+    // reapplying stale tier defaults. Done *before* recordStepComplete so an
+    // interruption can't leave a completed-resumable session without the
+    // finalized marker (--resume would then skip the persist permanently).
+    // Skipped for the skip path (onSelection never fired), which leaves the live
+    // applied set untouched and would otherwise be clobbered with []. See #4621.
+    if (reflectsLiveAppliedSet) {
+      deps.persistAppliedPolicyPresets(sandboxName, appliedPolicyPresets);
+    }
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({ sandboxName, provider, model, policyPresets: appliedPolicyPresets }),

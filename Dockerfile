@@ -473,6 +473,13 @@ ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
 # Channel IDs scope Slack channel @mention handling. User allowlists still come
 # from NEMOCLAW_MESSAGING_ALLOWED_IDS_B64. Default: empty map.
 ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+# Base64-encoded JSON array of secondary OpenClaw agent config entries
+# (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
+# "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
+# Each entry is appended to agents.list[] after the canonical "main" entry, so
+# the primary agent always remains the default. See generate-openclaw-config.mts
+# for the validator. Default: empty array (W10= == base64("[]")).
+ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -521,6 +528,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
     NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \

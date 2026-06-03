@@ -1034,6 +1034,105 @@ exit 1
     });
   });
 
+  describe("issue 4510: policy-add --from-file false success when the sandbox is absent from the registry", () => {
+    const registryModule = requireForTest(
+      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+    ) as Record<string, any>;
+    const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
+
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let resolveSpy: ReturnType<typeof vi.spyOn>;
+    let savedGetSandbox: any;
+    let savedAddCustomPolicy: any;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      origHome = process.env.HOME;
+      process.env.HOME = tmpHome;
+      resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      savedGetSandbox = registryModule.getSandbox;
+      savedAddCustomPolicy = registryModule.addCustomPolicy;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      resolveSpy.mockRestore();
+      registryModule.getSandbox = savedGetSandbox;
+      registryModule.addCustomPolicy = savedAddCustomPolicy;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("returns false and warns when a custom preset cannot be recorded locally", () => {
+      // Sandbox is Ready on the gateway but missing from the local registry
+      // (e.g. after stale-registry pruning), so addCustomPolicy cannot persist.
+      registryModule.getSandbox = () => null;
+      const addSpy = vi.fn(() => false);
+      registryModule.addCustomPolicy = addSpy;
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        // Pre-fix this returned true (silent exit 0) while policy-list/status
+        // never showed the preset. The command must not claim success.
+        expect(result).toBe(false);
+        expect(addSpy).not.toHaveBeenCalled();
+        const combined = errors.join("\n");
+        expect(combined).toContain("my-assistant");
+        expect(combined).toMatch(/could not be\s+recorded locally/);
+        expect(combined).toMatch(/policy-list or status/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("records the custom preset and returns true when the sandbox is registered", () => {
+      registryModule.getSandbox = (name: string) => ({ name });
+      const addSpy = vi.fn(() => true);
+      registryModule.addCustomPolicy = addSpy;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        expect(result).toBe(true);
+        expect(addSpy).toHaveBeenCalledWith(
+          "my-assistant",
+          expect.objectContaining({
+            name: "slack-files-upload",
+            content: CUSTOM_CONTENT,
+            sourcePath: SOURCE_PATH,
+          }),
+        );
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+  });
+
   describe("extractPresetEntries", () => {
     it("returns null for null input", () => {
       expect(policies.extractPresetEntries(null)).toBe(null);

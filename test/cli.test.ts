@@ -2739,6 +2739,91 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("doctor does not inspect the legacy k3s gateway container in Docker-driver mode", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    // Docker-driver sandbox: no legacy `openshell-cluster-*` container exists.
+    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "docker" });
+    // Record docker argv and make `docker inspect` fail like an absent legacy
+    // container would. The doctor must not even attempt the inspect, so this
+    // should never produce a failure — and we assert the call was skipped, not
+    // merely that its failure was tolerated.
+    const dockerCalls = path.join(setup.home, "docker-calls");
+    fs.writeFileSync(
+      path.join(setup.localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(dockerCalls)}`,
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // Healthy curl so the unrelated provider-health probe does not fail the
+    // report and mask the gateway-only assertions below.
+    fs.writeFileSync(
+      path.join(setup.localBin, "curl"),
+      ["#!/usr/bin/env bash", 'echo "{}"', "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    expect(r.out).not.toContain("openshell-cluster");
+    const report = JSON.parse(r.out) as {
+      status: string;
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+    // Core contract: the legacy k3s container inspect must be skipped entirely,
+    // not attempted-and-ignored.
+    const recordedDockerCalls = fs.existsSync(dockerCalls)
+      ? fs.readFileSync(dockerCalls, "utf8")
+      : "";
+    expect(recordedDockerCalls).not.toMatch(/\binspect\b/);
+    const openshellStatus = report.checks.find((check) => check.label === "OpenShell status");
+    expect(openshellStatus).toEqual(
+      expect.objectContaining({ group: "Gateway", status: "ok", detail: "connected to nemoclaw" }),
+    );
+    // The Docker-driver gateway is healthy, so no Gateway check should fail.
+    expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
+    expect(report.status).toBe("ok");
+    expect(r.code).toBe(0);
+  });
+
+  it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    const report = JSON.parse(r.out) as {
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    const dockerContainer = report.checks.find((check) => check.label === "Docker container");
+    expect(dockerContainer).toEqual(
+      expect.objectContaining({
+        group: "Gateway",
+        status: "ok",
+        detail: expect.stringContaining("openshell-cluster-nemoclaw"),
+      }),
+    );
+  });
+
   it(
     "doctor reports fresh shields state as not configured instead of down",
     testTimeoutOptions(30_000),
@@ -5152,6 +5237,7 @@ describe("CLI dispatch", () => {
         }),
         { mode: 0o600 },
       );
+      writeHealthyDockerStub(localBin);
       fs.writeFileSync(
         path.join(localBin, "openshell"),
         [
@@ -5280,7 +5366,7 @@ describe("CLI dispatch", () => {
     expect(calls).not.toContain("should-not-connect");
   });
 
-  it("removes stale registry entries when connect targets a missing live sandbox", () => {
+  it("preserves the registry entry when connect targets a missing live sandbox (#4497)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-stale-connect-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -5311,8 +5397,9 @@ describe("CLI dispatch", () => {
         "  exit 1",
         "fi",
         // Simulate a healthy, active `nemoclaw` named gateway so the
-        // lifecycle guard confirms healthy_named and the registry removal
-        // path fires. Without this, the guard preserves the entry (#2276).
+        // lifecycle guard confirms healthy_named. Even on this path connect
+        // must now preserve the entry so a follow-up rebuild can recover it
+        // (#4497); it previously removed it here (#2276).
         'if [ "$1" = "status" ]; then',
         "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
         "  exit 0",
@@ -5332,9 +5419,11 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(1);
-    expect(r.out.includes("Removed stale local registry entry")).toBeTruthy();
+    expect(r.out.includes("Removed stale local registry entry")).toBe(false);
+    expect(r.out.includes("registered locally, but is not present")).toBeTruthy();
+    expect(r.out.includes("preserved")).toBeTruthy();
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeUndefined();
+    expect(saved.sandboxes.alpha).toBeDefined();
   });
 
   it("recovers a missing registry entry from the last onboard session during list", () => {
