@@ -368,6 +368,7 @@ ensure_hermes_state_dir() {
 ensure_hermes_history_file() {
   local file="$1"
   local mode="$2"
+  local nlinks
 
   if [ -L "$file" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${file} is a symlink" >&2
@@ -376,6 +377,20 @@ ensure_hermes_history_file() {
   if [ -e "$file" ] && [ ! -f "$file" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${file} is not a regular file" >&2
     return 1
+  fi
+
+  # Reject hard-linked targets. An attacker who controls the sandbox user
+  # before shields-up can pre-create .hermes_history as a hard link to
+  # config.yaml or .env. Both -L and -f pass, so without this guard the
+  # subsequent chown sandbox:sandbox + chmod 660 would walk the shared
+  # inode and silently undo the shields-up root:root 0444 lock on the
+  # config file after verify_config_integrity has already passed.
+  if [ -e "$file" ]; then
+    nlinks="$(stat -c '%h' "$file" 2>/dev/null || stat -f '%l' "$file" 2>/dev/null || true)"
+    if [ "${nlinks:-}" != "1" ]; then
+      echo "[SECURITY] Refusing Hermes layout repair because ${file} has hard-link count ${nlinks:-unknown}" >&2
+      return 1
+    fi
   fi
 
   if [ ! -e "$file" ]; then

@@ -155,7 +155,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
   rootOwnedConfigRoot?: boolean;
-  preExistingHistory?: "regular" | "symlink" | "directory";
+  preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-cleanup-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -172,9 +172,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.lockedConfigRoot || opts.rootOwnedConfigRoot) {
     fs.chmodSync(hermesHome, 0o755);
   }
+  const configYamlPath = path.join(hermesHome, "config.yaml");
+  const envFilePath = path.join(hermesHome, ".env");
   if (opts.lockedConfigRoot) {
-    fs.writeFileSync(path.join(hermesHome, "config.yaml"), "model: test\n");
-    fs.writeFileSync(path.join(hermesHome, ".env"), "HERMES_TEST=1\n");
+    fs.writeFileSync(configYamlPath, "model: test\n", { mode: 0o600 });
+    fs.writeFileSync(envFilePath, "HERMES_TEST=1\n", { mode: 0o600 });
   }
   const historyPath = path.join(hermesHome, ".hermes_history");
   const symlinkTarget = path.join(tmpDir, "history-target");
@@ -185,6 +187,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
     fs.symlinkSync(symlinkTarget, historyPath);
   } else if (opts.preExistingHistory === "directory") {
     fs.mkdirSync(historyPath);
+  } else if (opts.preExistingHistory === "hardlink-to-config") {
+    if (!opts.lockedConfigRoot) {
+      throw new Error("hardlink-to-config requires lockedConfigRoot to write the target file");
+    }
+    fs.linkSync(configYamlPath, historyPath);
   }
   fs.symlinkSync("runtime/gateway.pid", legacyPid);
   if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
@@ -291,6 +298,12 @@ function runHermesGatewayRuntimeCleanup(opts: {
     const symlinkTargetContent = fs.existsSync(symlinkTarget)
       ? fs.readFileSync(symlinkTarget, "utf-8")
       : "";
+    const configYamlMode = fs.existsSync(configYamlPath)
+      ? (fs.statSync(configYamlPath).mode & 0o777).toString(8)
+      : "missing";
+    const configYamlContent = fs.existsSync(configYamlPath)
+      ? fs.readFileSync(configYamlPath, "utf-8")
+      : "";
     return {
       result,
       killLog: fs.existsSync(killLog) ? fs.readFileSync(killLog, "utf-8") : "",
@@ -304,6 +317,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       historyKind,
       historyContent,
       symlinkTargetContent,
+      configYamlMode,
+      configYamlContent,
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -530,6 +545,22 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       "Refusing Hermes layout repair because",
     );
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
+  });
+
+  it("fails Hermes startup when the locked-root history path hard-links a sealed config file", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      lockedConfigRoot: true,
+      preExistingHistory: "hardlink-to-config",
+    });
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.historyKind).toBe("regular");
+    expect(run.result.stderr).toContain(
+      "Refusing Hermes layout repair because",
+    );
+    expect(run.result.stderr).toContain("has hard-link count");
+    expect(run.configYamlMode).toBe("600");
+    expect(run.configYamlContent).toBe("model: test\n");
   });
 
   it("fails Hermes startup when the locked-root history path is a directory", () => {
