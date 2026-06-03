@@ -15,8 +15,15 @@ interface RunReconcileOptions {
    * - undefined → no openshell on PATH (probe falls back to in-file logic).
    * - "" → openshell exists but returns empty JSON (probe yields no model).
    * - non-empty string → openshell returns `{"model": <string>}`.
+   * Ignored when `gatewayRawOutput` is set.
    */
   gatewayModel?: string;
+  /**
+   * Raw stdout the stub emits instead of a JSON-formatted payload. Use to
+   * exercise malformed-JSON or unexpected-shape paths. Takes precedence
+   * over `gatewayModel` when both are set.
+   */
+  gatewayRawOutput?: string;
   env?: Record<string, string>;
 }
 
@@ -45,9 +52,14 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     const binDir = path.join(root, "bin");
     fs.mkdirSync(binDir);
-    if (options.gatewayModel !== undefined) {
+    const installStub = options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
+    if (installStub) {
       const payload =
-        options.gatewayModel === "" ? "{}" : JSON.stringify({ model: options.gatewayModel });
+        options.gatewayRawOutput !== undefined
+          ? options.gatewayRawOutput
+          : options.gatewayModel === ""
+            ? "{}"
+            : JSON.stringify({ model: options.gatewayModel });
       const stub = [
         "#!/usr/bin/env bash",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
@@ -101,10 +113,9 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         }
       })
       .join(path.delimiter);
-    const pathValue =
-      options.gatewayModel !== undefined
-        ? `${binDir}${path.delimiter}${scrubbedPath}`
-        : scrubbedPath;
+    const pathValue = installStub
+      ? `${binDir}${path.delimiter}${scrubbedPath}`
+      : scrubbedPath;
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
       env: { ...process.env, ...options.env, PATH: pathValue },
@@ -287,6 +298,34 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
     // models[0] is untouched in legacy-fallback mode.
+    expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
+  });
+
+  it("falls back to the in-file reconcile when the gateway probe emits malformed JSON", () => {
+    // A future packaging shift could ship an `openshell` shim that doesn't
+    // implement `inference get --json` and returns junk on stdout. The
+    // current absorb-via-SystemExit(0) path should still leave the user
+    // in the legacy in-file reconcile state — pinning this so a refactor
+    // of the probe parser can't silently degrade to "do nothing".
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+            },
+          },
+        },
+      },
+      { gatewayRawOutput: "<html>not json at all</html>" },
+    );
+
+    expect(result.status).toBe(0);
+    // Legacy in-file path runs: primary is aligned to the file's first
+    // model, models[0] stays untouched (same shape as the empty-probe case).
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
     expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
   });
 });
