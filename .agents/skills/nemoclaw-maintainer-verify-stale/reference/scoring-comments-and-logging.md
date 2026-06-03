@@ -470,10 +470,10 @@ Never stage or commit the log to the NemoClaw repo.
 - macOS verification *via the Brev path*. Brev offers no macOS instances. The Step 6.7 local-first short-circuit *does* run on a maintainer's macOS laptop — so manual single-issue runs against pure-CLI bugs work on macOS. The weekly batch cron is Linux-only because that path always uses Brev.
 - Issues requiring third-party integration credentials (Slack, Discord, Telegram, Hermes, OpenClaw, WeChat).
 - Service-account bot identity. v1 runs under each maintainer's own GitHub credentials.
-- Versioned labels. A single `fixed-on-latest` label is swept on each release cut.
+- Versioned labels. `fixed-on-latest` and `verify-inconclusive` are persistent maintainer-review labels, not per-release labels.
 
 ---
 
 ## Companion Behavior
 
-`nemoclaw-maintainer-cut-release-tag` sweeps `fixed-on-latest` and `verify-inconclusive` from all open issues at release time. Without that sweep, "latest" drifts and verifications go stale silently. The by-design path uses the existing repo `status: wont-fix` label; that label is **not** swept (it's also applied for non-skill reasons such as scope or priority decisions, and clearing it would erase human triage work).
+`nemoclaw-maintainer-cut-release-tag` does not sweep issue labels during release. A `fixed-on-latest` or `verify-inconclusive` label stays until a maintainer removes it or explicitly re-runs verification for that issue. The by-design path uses the existing repo `status: wont-fix` label; that label is also persistent because it is applied for non-skill reasons such as scope or priority decisions.

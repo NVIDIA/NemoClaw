@@ -133,7 +133,9 @@ clone_nemoclaw_ref() {
 
   git init --quiet "$dest"
   git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  git -C "$dest" fetch --quiet --depth 1 origin "$ref"
+  if ! git -C "$dest" fetch --quiet --depth 1 origin "$ref"; then
+    error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+  fi
   git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
 }
 
@@ -552,7 +554,10 @@ usage() {
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
-  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: lkg)\n"
+  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: lkg)\n"
+  printf "                                  In curl pipes, set this on bash or export it first.\n"
+  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
+  printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
   printf "                                  | hermes-provider\n"

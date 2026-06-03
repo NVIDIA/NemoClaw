@@ -423,11 +423,51 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "--no-verify",
       ]);
 
-      // Verify the notice was printed
+      // Override must be loud (#3726), not a silent status-style line.
       const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("differs from the recorded route");
       expect(combined).toContain(
-        "Switching inference route to anthropic-prod/claude-sonnet-4-20250514",
+        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
       );
+    },
+  );
+
+  it(
+    "warns and aligns the route even in --probe-only quiet mode (#3726)",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "probe-diverged-sandbox",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "nvidia-prod", // live gateway route differs from the recorded route
+        "nvidia/nemotron-3-super-120b-a12b",
+      );
+
+      const result = runConnect(tmpDir, sandboxName, {}, ["--probe-only"]);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      // Divergence warning is emitted even though the probe path runs quiet.
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("differs from the recorded route");
+      expect(combined).toContain(
+        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
+      );
+      // Gateway is still re-pointed to the recorded route...
+      expect(state.inferenceSetCalls).toContainEqual([
+        "--provider",
+        "anthropic-prod",
+        "--model",
+        "claude-sonnet-4-20250514",
+        "--no-verify",
+      ]);
+      // ...and probe-only never opens an SSH session.
+      expect(state.sandboxConnectCalls).toEqual([]);
     },
   );
 

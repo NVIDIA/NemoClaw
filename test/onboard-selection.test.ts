@@ -531,7 +531,11 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+    });
+  }
   if (cmd.includes("docker images")) return "";
   return "";
 };
@@ -542,7 +546,14 @@ const { setupNim } = require(${onboardPath});
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim({ type: "nvidia" }, null);
-    originalLog(JSON.stringify({ result, messages, lines }));
+    originalLog(
+      JSON.stringify({
+        result,
+        messages,
+        lines,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      }),
+    );
   } finally {
     console.log = originalLog;
   }
@@ -562,6 +573,7 @@ const { setupNim } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_EXPERIMENTAL: "",
         NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_CONTEXT_WINDOW: "",
       },
     });
 
@@ -571,11 +583,15 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "vllm-local");
     assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.contextWindow, "65536");
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Detected local inference option: vLLM"),
       ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
     );
     assert.ok(
       payload.lines.some((line: string) =>
@@ -585,6 +601,120 @@ const { setupNim } = require(${onboardPath});
       ),
     );
     assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
+  });
+
+  it("does not apply detected vLLM max_model_len when validation returns to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
+    const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const validationPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "inference-selection-validation.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const validationHelpers = require(${validationPath});
+
+class StopAfterValidationBackout extends Error {}
+
+const messages = [];
+const lines = [];
+const originalLog = console.log;
+let chooseCount = 0;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) {
+    chooseCount += 1;
+    if (chooseCount === 1) return findRunningVllmChoice();
+    throw new StopAfterValidationBackout("validation returned to provider selection");
+  }
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+    });
+  }
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+validationHelpers.createInferenceSelectionValidationHelpers = () => ({
+  validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+  validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
+  validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+  validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+});
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await setupNim({ type: "nvidia" }, null);
+    throw new Error("setupNim unexpectedly completed");
+  } catch (error) {
+    if (!(error instanceof StopAfterValidationBackout)) throw error;
+    originalLog(
+      JSON.stringify({
+        messages,
+        lines,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW || null,
+      }),
+    );
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_CONTEXT_WINDOW: "",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.contextWindow, null);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Detected model: meta-llama/Llama-3.3-70B-Instruct"),
+      ),
+    );
+    assert.ok(
+      !payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
+    );
   });
 
   it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {

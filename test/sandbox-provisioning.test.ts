@@ -682,6 +682,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
     const chattrMarker = path.join(tmp, "chattr-installed");
+    const tmuxMarker = path.join(tmp, "tmux-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
     const command = dockerRunCommandBetween(
@@ -695,9 +696,10 @@ describe("sandbox provisioning: base runtime tools", () => {
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
       `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `tmux_marker=${JSON.stringify(tmuxMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
