@@ -118,10 +118,10 @@ test/e2e-scenario/
 
 ## Migration tracking
 
-Keep mutable migration state in GitHub issues and PRs, not in repo-local
-checklists. The parent architecture issue is #3588. Active audit-coverage work
-is tracked by the #4347–#4357 issue set, with focused follow-ups such as #4378
-for specific drift fixes.
+Migration status is tracked outside the repository in GitHub issues and PRs,
+not in repo-local checklists. The parent architecture issue is #3588. Active
+audit-coverage work is tracked by the #4347–#4357 issue set, with focused
+follow-ups such as #4378 for specific drift fixes.
 
 The old workflow-level parity report has been removed. Use scenario framework
 tests, the coverage report, PR review, and the audit issues to decide what to

@@ -4,8 +4,9 @@
 # E2E scenario migration notes
 
 This file records the current migration model for contributors. It is not the
-source of truth for per-domain status. Keep mutable migration state in GitHub
-issues and PRs so reviewers can discuss, update, and close work in one place.
+source of truth for per-domain status. Mutable migration state is tracked
+outside the repository in GitHub issues and pull requests so reviewers can
+discuss, update, and close work in one place.
 
 ## Current migration state
 
