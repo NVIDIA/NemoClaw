@@ -705,7 +705,7 @@ load_fern_route_index() {
   [[ "$FERN_ROUTE_INDEX_LOADED" -eq 1 ]] && return 0
   FERN_ROUTE_INDEX_LOADED=1
 
-  local nav_yml="$REPO_ROOT/docs/index.yml"
+  local nav_yml="${CHECK_DOCS_FERN_NAV_YML:-$REPO_ROOT/docs/index.yml}"
   [[ -f "$nav_yml" ]] || return 0
   if ! command -v "$NODE" >/dev/null 2>&1; then
     return 0
@@ -715,8 +715,10 @@ load_fern_route_index() {
   # dependencies. Each emitted row is: <docs source path> TAB <canonical route>.
   # The parser intentionally handles the subset used by docs/index.yml:
   # variants, nested sections with slugs, and pages/sections with path+slug.
-  FERN_ROUTE_INDEX="$(
-    "$NODE" - "$nav_yml" <<'NODE' 2>/dev/null || true
+  local _fern_route_index_err
+  _fern_route_index_err="$(mktemp)"
+  if ! FERN_ROUTE_INDEX="$(
+    "$NODE" - "$nav_yml" <<'NODE' 2>"$_fern_route_index_err"
 const fs = require("node:fs");
 const navPath = process.argv[2];
 const lines = fs.readFileSync(navPath, "utf8").split(/\r?\n/);
@@ -789,9 +791,17 @@ for (const line of lines) {
   maybePushSection(current);
 }
 
+if (rows.length === 0) {
+  throw new Error(`no Fern routes found in ${navPath}`);
+}
 process.stdout.write(rows.join("\n"));
 NODE
-  )"
+  )"; then
+    echo "check-docs: [links] failed to parse Fern navigation ${nav_yml#"$REPO_ROOT"/}: $(tr '\n' ' ' <"$_fern_route_index_err" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')" >&2
+    rm -f "$_fern_route_index_err"
+    return 1
+  fi
+  rm -f "$_fern_route_index_err"
 }
 
 normalize_fern_route_path() {
@@ -830,12 +840,23 @@ normalize_fern_route_path() {
 
 fern_route_exists() {
   local route="$1" candidate
-  load_fern_route_index
+  if ! load_fern_route_index; then
+    return 3
+  fi
   [[ -n "$FERN_ROUTE_INDEX" ]] || return 1
 
   route="$(normalize_fern_route_path "$route")" || return 1
   local -a candidates=("$route")
   case "$route" in
+    openclaw)
+      candidates+=("user-guide/openclaw/home")
+      ;;
+    hermes)
+      candidates+=("user-guide/hermes/home")
+      ;;
+    user-guide/openclaw | user-guide/hermes)
+      candidates+=("$route/home")
+      ;;
     openclaw/* | hermes/*)
       candidates+=("user-guide/$route")
       ;;
@@ -868,14 +889,23 @@ fern_relative_ref_exists() {
     *) return 1 ;;
   esac
 
-  load_fern_route_index
+  if ! load_fern_route_index; then
+    return 3
+  fi
   [[ -n "$FERN_ROUTE_INDEX" ]] || return 1
 
   while IFS=$'\t' read -r _source current || [[ -n "${current:-}" ]]; do
     [[ "$_source" == "$source_rel" ]] || continue
     route="${current%/*}/$stripped"
-    if fern_route_exists "$route"; then
+    local _fern_rc
+    set +e
+    fern_route_exists "$route"
+    _fern_rc=$?
+    set -e
+    if [[ "$_fern_rc" -eq 0 ]]; then
       return 0
+    elif [[ "$_fern_rc" -eq 3 ]]; then
+      return 3
     fi
   done <<<"$FERN_ROUTE_INDEX"
   return 1
@@ -943,15 +973,35 @@ check_local_ref() {
   fi
 
   if [[ "$stripped" == /* ]]; then
-    if fern_route_exists "$stripped" || site_source_ref_exists "$stripped"; then
+    local _fern_rc
+    set +e
+    fern_route_exists "$stripped"
+    _fern_rc=$?
+    set -e
+    if [[ "$_fern_rc" -eq 0 ]]; then
+      return 0
+    elif [[ "$_fern_rc" -eq 3 ]]; then
+      return 1
+    fi
+    if site_source_ref_exists "$stripped"; then
       return 0
     fi
     echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
     return 1
   fi
 
-  if source_ref_exists "$(dirname "$md_path")" "$stripped" || fern_relative_ref_exists "$md_path" "$stripped"; then
+  if source_ref_exists "$(dirname "$md_path")" "$stripped"; then
     return 0
+  fi
+  local _fern_relative_rc
+  set +e
+  fern_relative_ref_exists "$md_path" "$stripped"
+  _fern_relative_rc=$?
+  set -e
+  if [[ "$_fern_relative_rc" -eq 0 ]]; then
+    return 0
+  elif [[ "$_fern_relative_rc" -eq 3 ]]; then
+    return 1
   fi
   echo "check-docs: [links] broken local link in $md_path:$line_no -> $target" >&2
   return 1
