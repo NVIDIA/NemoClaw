@@ -5068,8 +5068,9 @@ async function setupNim(
             ignoreError: true,
           },
         );
+        let vllmModels: { data?: Array<{ id?: unknown }> } = {};
         try {
-          const vllmModels = JSON.parse(vllmModelsRaw);
+          vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
             const detectedModel =
               typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
@@ -5079,7 +5080,6 @@ async function setupNim(
               process.exit(1);
             }
             console.log(`  Detected model: ${model}`);
-            localInference.applyVllmRuntimeContextWindow(vllmModels, detectedModel);
           } else {
             console.error("  Could not detect model from vLLM. Please specify manually.");
             process.exit(1);
@@ -5104,9 +5104,8 @@ async function setupNim(
         if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
         }
-        if (!validation.ok) {
-          continue selectionLoop;
-        }
+        if (!validation.ok) continue selectionLoop;
+        localInference.applyVllmRuntimeContextWindow(vllmModels, model as string);
         preferredInferenceApi = validation.api;
         // Force chat completions — vLLM's /v1/responses endpoint does not
         // run the --tool-call-parser, so tool calls arrive as raw text (#976).
