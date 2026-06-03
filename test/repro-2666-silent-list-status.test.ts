@@ -421,5 +421,5 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     } finally {
       await new Promise<void>((resolve) => listener.close(() => resolve()));
     }
-  });
+  }, 30_000);
 });

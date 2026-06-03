@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { applyOpenShellVmDnsMonkeypatch } from "../../../dist/lib/actions/sandbox/vm-dns-monkeypatch";
 import { applyOnboardVmDnsMonkeypatch } from "../../../dist/lib/onboard/vm-dns-monkeypatch";
 
 describe("applyOnboardVmDnsMonkeypatch", () => {
@@ -92,5 +93,32 @@ describe("applyOnboardVmDnsMonkeypatch", () => {
     expect(warnings).toEqual([
       "  Warning: OpenShell VM DNS monkeypatch did not apply: VM rootfs not found",
     ]);
+  });
+
+  // Regression: #3728. macOS Docker-driver sandboxes were misclassified as VM
+  // and ran the VM-only DNS monkeypatch path, which printed misleading warnings.
+  // The Docker runtime path should be silent — no "skipped", no "Warning".
+  it("emits no output for macOS Docker-driver sandboxes", () => {
+    const logs: string[] = [];
+    const warns: string[] = [];
+
+    applyOnboardVmDnsMonkeypatch(
+      "mac-docker",
+      { openshellDriver: "docker" },
+      {
+        apply: (sandboxName, entry) =>
+          applyOpenShellVmDnsMonkeypatch(sandboxName, entry, {
+            capture: () => ({ status: 0, output: "" }),
+            env: {},
+            platform: "darwin",
+            stateDir: "/tmp/nemoclaw-test-state-3728",
+          }),
+        log: (message) => logs.push(message),
+        warn: (message) => warns.push(message),
+      },
+    );
+
+    expect(logs).toEqual([]);
+    expect(warns).toEqual([]);
   });
 });

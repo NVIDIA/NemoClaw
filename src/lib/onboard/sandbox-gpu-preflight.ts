@@ -4,12 +4,16 @@
 import { dockerInfoFormat } from "../adapters/docker";
 import { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs } from "./docker-cdi";
 import type { SandboxGpuConfig, SandboxGpuFlag } from "./sandbox-gpu-mode";
+import {
+  detectWslDockerDesktopStatus,
+  type WslDockerDesktopDetectionDeps,
+  type WslDockerDesktopStatus,
+  wslDockerDesktopGpuCompatibilityRemediationLines,
+} from "./wsl-docker-desktop-gpu";
 
 const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
-export type SandboxGpuPreflightDeps = {
-  platform?: NodeJS.Platform;
-  dockerInfoFormat?: (format: string, opts?: Record<string, unknown>) => string;
+export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
   getDockerCdiSpecDirs?: () => string[];
   findReadableNvidiaCdiSpecFiles?: (dirs: string[]) => string[];
 };
@@ -41,7 +45,14 @@ export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): S
   return null;
 }
 
-export function sandboxGpuRemediationLines(): string[] {
+export function sandboxGpuRemediationLines(
+  options: { wslDockerDesktop?: boolean; wslDockerDesktopStatus?: WslDockerDesktopStatus } = {},
+): string[] {
+  const status =
+    options.wslDockerDesktopStatus ??
+    (options.wslDockerDesktop ? "docker-desktop" : "not-docker-desktop");
+  const wslRemediationLines = wslDockerDesktopGpuCompatibilityRemediationLines(status);
+  if (wslRemediationLines) return wslRemediationLines;
   return [
     "Install/configure NVIDIA Container Toolkit CDI, then restart Docker:",
     "  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
@@ -126,7 +137,7 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
 }
 
-export interface DirectSandboxGpuVerifierDeps {
+export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionDeps {
   runOpenshell(
     args: string[],
     opts?: Record<string, unknown>,
@@ -160,7 +171,9 @@ export function createDirectSandboxGpuVerifier(deps: DirectSandboxGpuVerifierDep
       const diagnostic = deps.compactText(deps.redact(`${result.stderr || ""} ${result.stdout || ""}`));
       console.error(`  ✗ GPU proof failed: ${proof.label}`);
       if (diagnostic) console.error(`    ${diagnostic.slice(0, 300)}`);
-      for (const line of sandboxGpuRemediationLines()) {
+      for (const line of sandboxGpuRemediationLines({
+        wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
+      })) {
         console.error(`    ${line}`);
       }
       const statusText = String(result.status || 1);
@@ -184,6 +197,14 @@ export function validateSandboxGpuPreflight(
     return;
   }
 
+  const wslDockerDesktopStatus = detectWslDockerDesktopStatus(deps);
+  if (wslDockerDesktopStatus === "docker-desktop") {
+    console.log(
+      "  Docker Desktop WSL detected; using Docker --gpus compatibility path instead of CDI spec validation.",
+    );
+    return;
+  }
+
   const cdiSpecDirs = (deps.getDockerCdiSpecDirs ?? getDockerCdiSpecDirs)();
   const cdiSpecFiles = (deps.findReadableNvidiaCdiSpecFiles ?? findReadableNvidiaCdiSpecFiles)(
     cdiSpecDirs,
@@ -191,7 +212,11 @@ export function validateSandboxGpuPreflight(
   if (cdiSpecFiles.length === 0) {
     console.error("");
     console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
+    for (const line of sandboxGpuRemediationLines({
+      wslDockerDesktopStatus,
+    })) {
+      console.error(`    ${line}`);
+    }
     process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);

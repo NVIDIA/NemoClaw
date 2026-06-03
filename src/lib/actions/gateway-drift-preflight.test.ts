@@ -23,6 +23,15 @@ const driftIssue: OpenShellStateRpcIssue = {
   },
 };
 
+const hostProcessDriftIssue: OpenShellStateRpcIssue = {
+  kind: "host_process_drift",
+  drift: {
+    gatewayBin: "/home/u/.local/bin/openshell-gateway",
+    currentVersion: "0.0.43",
+    expectedVersion: "0.0.44",
+  },
+};
+
 function mockExit() {
   return vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
     throw new Error(`process.exit(${code ?? 0})`);
@@ -128,6 +137,34 @@ describe("gateway drift preflight for maintenance actions", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("backup-all fails before sandbox list on host-process gateway binary drift", async () => {
+    detectPreflightIssueSpy.mockReturnValue(hostProcessDriftIssue);
+
+    await expect(backupAll()).rejects.toThrow("process.exit(1)");
+
+    expect(printIssueSpy).toHaveBeenCalledWith(
+      hostProcessDriftIssue,
+      expect.objectContaining({ command: "nemoclaw backup-all" }),
+    );
+    expect(captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
+  it("upgrade-sandboxes fails before sandbox list on host-process gateway binary drift", async () => {
+    detectPreflightIssueSpy.mockReturnValue(hostProcessDriftIssue);
+
+    await expect(upgradeSandboxes({ check: true })).rejects.toThrow("process.exit(1)");
+
+    expect(printIssueSpy).toHaveBeenCalledWith(
+      hostProcessDriftIssue,
+      expect.objectContaining({ command: "nemoclaw upgrade-sandboxes" }),
+    );
+    expect(captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(classifyUpgradeableSandboxesSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+  });
+
   it("backup-all recovers the named gateway and retries the sandbox list before backing up", async () => {
     captureOpenshellSpy
       .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
@@ -152,6 +189,34 @@ describe("gateway drift preflight for maintenance actions", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(1);
     expect(backupSandboxStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("backup-all skips sandboxes that are not in Ready phase", async () => {
+    const registry = requireDist("../../../dist/lib/state/registry.js");
+    (registry.listSandboxes as ReturnType<typeof vi.fn>).mockReturnValue({
+      sandboxes: [
+        { name: "alpha", provider: "nvidia-prod", model: "nemotron" },
+        { name: "beta", provider: "nvidia-prod", model: "nemotron" },
+      ],
+    });
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: [
+        "NAME              NAMESPACE  CREATED              PHASE",
+        "alpha             openshell  2026-03-24 10:00:00  Ready",
+        "beta              openshell  2026-03-24 10:01:00  Error",
+      ].join("\n"),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    spies.push(logSpy);
+
+    await backupAll();
+
+    expect(backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+    expect(backupSandboxStateSpy).not.toHaveBeenCalledWith("beta");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "Skipping 'beta' (not running)",
+    );
   });
 
   it("backup-all fails closed on protobuf mismatch instead of treating sandboxes as stopped", async () => {

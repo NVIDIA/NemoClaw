@@ -337,12 +337,21 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 download_with_curl() {
   local name
+  local -a curl_progress
+  # Show a live progress bar on a terminal so the (often slow) release download
+  # is not a silent gap; stay quiet (errors only) when non-interactive. (#4431)
+  if [ -t 1 ] || [ -t 2 ]; then
+    curl_progress=(--progress-bar)
+  else
+    curl_progress=(-sS)
+  fi
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
-    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
+    curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
       -o "$tmpdir/$name"
   done
 }
 
+info "Downloading OpenShell release assets (this may take a minute)..."
 if command -v gh >/dev/null 2>&1; then
   gh_ok=1
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do

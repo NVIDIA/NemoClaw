@@ -12,6 +12,7 @@ export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
   webSearchConfig?: WebSearchConfig | null;
   provider?: string | null;
+  agent?: string | null;
   isNonInteractive?: () => boolean;
 }
 
@@ -19,12 +20,16 @@ export function getSuggestedPolicyPresets({
   enabledChannels = null,
   webSearchConfig = null,
   provider = null,
+  agent = null,
   isNonInteractive,
 }: SuggestedPolicyPresetOptions = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
   if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
     suggestions.push("local-inference");
+  }
+  if (agent === "openclaw") {
+    suggestions.push("openclaw-pricing");
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
   const nonInteractive =

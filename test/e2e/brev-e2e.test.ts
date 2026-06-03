@@ -270,6 +270,7 @@ function sshEnv(
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
   if (GPU_TEST_SUITE) {
     // This suite validates Docker GPU passthrough and sandbox inference wiring.
