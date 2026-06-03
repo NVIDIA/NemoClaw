@@ -71,7 +71,7 @@ navigation:
             collapsed: open-by-default
             contents:
               - page: "Manage Sandbox Lifecycle"
-                path: manage-sandboxes/lifecycle.mdx
+                path: manage-sandboxes/lifecycle.openclaw.generated.mdx
                 slug: lifecycle
               - page: "Runtime Controls"
                 path: manage-sandboxes/runtime-controls.mdx
@@ -222,7 +222,7 @@ navigation:
             collapsed: open-by-default
             contents:
               - page: "Manage Sandbox Lifecycle"
-                path: manage-sandboxes/lifecycle.mdx
+                path: manage-sandboxes/lifecycle.hermes.generated.mdx
                 slug: lifecycle
               - page: "Runtime Controls"
                 path: manage-sandboxes/runtime-controls.mdx
