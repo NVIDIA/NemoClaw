@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse } from "yaml";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const docsRoot = path.join(repoRoot, "docs");
 const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
-const lifecyclePath = path.join(repoRoot, "docs/manage-sandboxes/lifecycle.mdx");
 const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
 const agentVariants = ["openclaw", "hermes"] as const;
 
@@ -20,6 +21,24 @@ type RenderedFile = {
 type RenderAgentVariantOptions = {
   outputPath?: string;
   sourcePath?: string;
+};
+type DocsIndex = {
+  navigation?: NavigationItem[];
+};
+type NavigationItem = {
+  variants?: NavigationVariant[];
+  layout?: NavigationNode[];
+  contents?: NavigationNode[];
+  path?: string;
+  slug?: string;
+};
+type NavigationVariant = {
+  slug?: string;
+  layout?: NavigationNode[];
+};
+type NavigationNode = {
+  contents?: NavigationNode[];
+  path?: string;
 };
 
 const GENERATED_NOTICE =
@@ -65,6 +84,7 @@ export function renderHermesCommandsReference(source: string): string {
       "",
     ),
   )
+    .replaceAll(CLI_SENTINEL, "nemohermes")
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
@@ -129,6 +149,10 @@ export function renderAgentVariantPage(
   options: RenderAgentVariantOptions = {},
 ): string {
   const { frontmatter, body } = splitFrontmatter(source);
+  const renderedFrontmatter = frontmatter.replaceAll(
+    CLI_SENTINEL,
+    variant === "hermes" ? "nemohermes" : "nemoclaw",
+  );
   let renderedBody = stripAgentOnlyBlocksForVariant(
     body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
     variant,
@@ -138,37 +162,135 @@ export function renderAgentVariantPage(
     .trimStart();
 
   if (options.sourcePath && options.outputPath) {
-    renderedBody = rewriteRelativeMarkdownLinks(
-      renderedBody,
-      path.dirname(options.sourcePath),
-      path.dirname(options.outputPath),
-    );
+    renderedBody = rewriteRelativePaths(renderedBody, options.sourcePath, options.outputPath);
   }
 
-  return `${frontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(/\s*$/, "\n");
+  return `${renderedFrontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(
+    /\s*$/,
+    "\n",
+  );
 }
 
 function renderGeneratedAgentVariantPages(): RenderedFile[] {
-  const source = readFileSync(lifecyclePath, "utf8");
-  const basename = path.basename(lifecyclePath, ".mdx");
-  const relativeSourceDirectory = path.relative(
-    path.join(repoRoot, "docs"),
-    path.dirname(lifecyclePath),
-  );
-  return agentVariants.map((variant) => {
-    const outputPath = path.join(
-      generatedDocsRoot,
-      relativeSourceDirectory,
-      `${basename}.${variant}.generated.mdx`,
-    );
-    return {
-      path: outputPath,
-      contents: renderAgentVariantPage(source, variant, {
-        outputPath,
-        sourcePath: lifecyclePath,
-      }),
-    };
+  return findAgentVariantSourcePaths().flatMap((sourceFilePath) => {
+    const source = readFileSync(sourceFilePath, "utf8");
+    const basename = path.basename(sourceFilePath, ".mdx");
+    const relativeSourceDirectory = path.relative(docsRoot, path.dirname(sourceFilePath));
+    return agentVariants.map((variant) => {
+      const outputPath = path.join(
+        generatedDocsRoot,
+        relativeSourceDirectory,
+        `${basename}.${variant}.generated.mdx`,
+      );
+      return {
+        path: outputPath,
+        contents: renderAgentVariantPage(source, variant, {
+          outputPath,
+          sourcePath: sourceFilePath,
+        }),
+      };
+    });
   });
+}
+
+function findAgentVariantSourcePaths(): string[] {
+  const sharedSources = findSharedNavigationSourcePaths();
+  assertNoUnsharedPlaceholders(sharedSources);
+  return [...sharedSources].sort().map((sourcePath) => path.join(docsRoot, sourcePath));
+}
+
+function findSharedNavigationSourcePaths(): Set<string> {
+  const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
+  const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
+  const openclaw = userGuide?.variants?.find((variant) => variant.slug === "openclaw");
+  const hermes = userGuide?.variants?.find((variant) => variant.slug === "hermes");
+  if (!openclaw?.layout || !hermes?.layout) {
+    throw new Error("docs/index.yml must define openclaw and hermes navigation variants");
+  }
+
+  const openclawPaths = collectSourcePaths(openclaw.layout);
+  const hermesPaths = collectSourcePaths(hermes.layout);
+  return new Set([...openclawPaths].filter((sourcePath) => hermesPaths.has(sourcePath)));
+}
+
+function collectSourcePaths(nodes: NavigationNode[]): Set<string> {
+  const paths = new Set<string>();
+  for (const node of nodes) {
+    const sourcePath = normalizeNavigationSourcePath(node.path);
+    if (sourcePath) paths.add(sourcePath);
+    if (node.contents) {
+      for (const childPath of collectSourcePaths(node.contents)) {
+        paths.add(childPath);
+      }
+    }
+  }
+  return paths;
+}
+
+function normalizeNavigationSourcePath(navPath: string | undefined): string | null {
+  if (!navPath) return null;
+  const generatedMatch = navPath.match(
+    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/,
+  );
+  const sourcePath =
+    generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : normalizeLegacyVariantSource(navPath);
+  if (!sourcePath.endsWith(".mdx") || sourcePath === "index.mdx") return null;
+  return sourcePath;
+}
+
+function normalizeLegacyVariantSource(navPath: string): string {
+  if (navPath === "reference/commands-nemohermes.mdx") return "reference/commands.mdx";
+  return navPath;
+}
+
+function assertNoUnsharedPlaceholders(sharedSources: Set<string>): void {
+  const offenderPaths: string[] = [];
+  for (const sourcePath of findPlaceholderSourcePaths()) {
+    if (!sharedSources.has(sourcePath)) offenderPaths.push(sourcePath);
+  }
+  if (offenderPaths.length > 0) {
+    throw new Error(
+      [
+        "The following non-shared nav pages contain $$nemoclaw and would render it literally:",
+        ...offenderPaths.map((offenderPath) => `  - docs/${offenderPath}`),
+        "Use a literal CLI name on single-variant pages, or add the page to both nav variants.",
+      ].join("\n"),
+    );
+  }
+}
+
+function findPlaceholderSourcePaths(): string[] {
+  const files: string[] = [];
+  walkDocs(docsRoot, files);
+  return files.sort();
+}
+
+function walkDocs(directory: string, files: string[]): void {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith("_")) continue;
+      walkDocs(entryPath, files);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue;
+    if (entry.name.endsWith(".generated.mdx") || entry.name === "commands-nemohermes.mdx") {
+      continue;
+    }
+    if (readFileSync(entryPath, "utf8").includes(CLI_SENTINEL)) {
+      files.push(path.relative(docsRoot, entryPath).replaceAll(path.sep, "/"));
+    }
+  }
+}
+
+function rewriteRelativePaths(body: string, sourcePath: string, outputPath: string): string {
+  const sourceDirectory = path.dirname(sourcePath);
+  const outputDirectory = path.dirname(outputPath);
+  return rewriteRelativeImports(
+    rewriteRelativeMarkdownLinks(body, sourceDirectory, outputDirectory),
+    sourceDirectory,
+    outputDirectory,
+  );
 }
 
 function rewriteRelativeMarkdownLinks(
@@ -180,6 +302,20 @@ function rewriteRelativeMarkdownLinks(
     if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
     return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
   });
+}
+
+function rewriteRelativeImports(
+  body: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  return body.replace(
+    /^(import\s+[^'"]+\s+from\s+["'])([^"']+)(["'];?)$/gm,
+    (_match, prefix, target, suffix) => {
+      if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
+      return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
+    },
+  );
 }
 
 function shouldKeepLinkTarget(target: string): boolean {

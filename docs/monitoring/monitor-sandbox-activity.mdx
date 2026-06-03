@@ -24,23 +24,11 @@ Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health,
 
 Run the status command to view the sandbox state, gateway health, and active inference configuration:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> status
+$$nemoclaw <name> status
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> status
-```
-</AgentOnly>
 
-<AgentOnly variant="openclaw">
-For local Ollama and local vLLM routes, `nemoclaw <name> status` also probes the host-side health endpoint directly.
-</AgentOnly>
-<AgentOnly variant="hermes">
-For local Ollama and local vLLM routes, `nemohermes <name> status` also probes the host-side health endpoint directly.
-</AgentOnly>
+For local Ollama and local vLLM routes, `$$nemoclaw <name> status` also probes the host-side health endpoint directly.
 This check catches a stopped local backend before you retry `inference.local` from inside the sandbox.
 
 Key output fields include:
@@ -50,41 +38,22 @@ Key output fields include:
 - Inference health for local Ollama and local vLLM shows `healthy` or `unreachable` together with the probed local URL.
 - NIM status shows whether a NIM container is running and healthy when that path is in use.
 
-<AgentOnly variant="openclaw">
-Run `nemoclaw <name> status` on the host to check sandbox state.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Run `nemohermes <name> status` on the host to check sandbox state.
-</AgentOnly>
+Run `$$nemoclaw <name> status` on the host to check sandbox state.
 Use `openshell sandbox list` for the underlying sandbox details.
 
 ## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> logs
+$$nemoclaw <name> logs
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> logs
-```
-</AgentOnly>
 
 To follow the log output in real time:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> logs --follow
+$$nemoclaw <name> logs --follow
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> logs --follow
-```
-</AgentOnly>
 
 The `logs` command shows lifecycle and gateway output.
 It does not export the structured per-session agent state that OpenClaw stores under `.openclaw/agents/`.
@@ -103,7 +72,7 @@ Use these files when you need an audit trail, a compliance review surface, or re
 To inspect the session directory from the host, run a sandbox command:
 
 ```console
-$ nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
+$ $$nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
 ```
 
 To copy a session log for offline review, use the OpenShell sandbox download command:
@@ -139,37 +108,24 @@ Run a test inference request to verify that the provider is responding:
 
 <AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant connect
+$$nemoclaw my-assistant connect
 openclaw agent --agent main -m "Test inference" --session-id debug
 ```
 </AgentOnly>
 <AgentOnly variant="hermes">
 ```bash
-nemohermes my-hermes connect
+$$nemoclaw my-hermes connect
 hermes
 ```
 </AgentOnly>
 
 If the request fails, check the following:
 
-<AgentOnly variant="openclaw">
-
-1. Run `nemoclaw <name> status` to confirm the active provider and endpoint.
+1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
    For local Ollama and local vLLM, check the `Inference` line first.
    If it shows `unreachable`, restart the local backend before retrying from inside the sandbox.
-2. Run `nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
+2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
 3. Verify that the inference endpoint is reachable from the host.
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-1. Run `nemohermes <name> status` to confirm the active provider and endpoint.
-   For local Ollama and local vLLM, check the `Inference` line first.
-   If it shows `unreachable`, restart the local backend before retrying from inside the sandbox.
-2. Run `nemohermes <name> logs --follow` to view error messages from the blueprint runner.
-3. Verify that the inference endpoint is reachable from the host.
-
-</AgentOnly>
 
 ## Related Topics
 
