@@ -96,8 +96,15 @@ function prNumbersFromCompare(compare: {
   const numbers = new Set<number>();
   for (const commit of compare.commits ?? []) {
     const headline = commit.commit?.message?.split("\n")[0] ?? "";
-    for (const match of headline.matchAll(/#(\d+)/g)) {
-      numbers.add(Number(match[1]));
+    const squashMatch = /\(#(\d+)\)\s*$/.exec(headline);
+    if (squashMatch) {
+      numbers.add(Number(squashMatch[1]));
+      continue;
+    }
+
+    const mergeMatch = /^Merge pull request #(\d+)\b/.exec(headline);
+    if (mergeMatch) {
+      numbers.add(Number(mergeMatch[1]));
     }
   }
   return Array.from(numbers).sort((a, b) => a - b);

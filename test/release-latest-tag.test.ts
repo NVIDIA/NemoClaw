@@ -476,6 +476,73 @@ describe("release-latest-tag.sh", () => {
     );
   });
 
+  it("extracts only squash-merge PR numbers from release notes compare commits", () => {
+    const fixture = createFixture();
+    const binDir = path.join(fixture.root, "bin");
+    fs.mkdirSync(binDir);
+    const ghPath = path.join(binDir, "gh");
+    fs.writeFileSync(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "api" ]; then
+  printf '%s\n' '{"commits":[{"commit":{"message":"fix: use issue ref (#123) (#456)"}},{"commit":{"message":"docs: closes #789 (#987)"}},{"commit":{"message":"Merge pull request #654 from branch"}}]}'
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '{"number":%s,"title":"pr %s"}\n' "$3" "$3"
+  exit 0
+fi
+exit 2
+`,
+      "utf8",
+    );
+    fs.chmodSync(ghPath, 0o755);
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    fs.mkdirSync(path.dirname(planPath), { recursive: true });
+    fs.writeFileSync(
+      planPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          mode: "tag-only",
+          previousTag: "v0.0.1",
+          nextTag: "v0.0.2",
+          originMainCommit: "0123456789abcdef0123456789abcdef01234567",
+          planHash: "a".repeat(64),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const outputPath = path.join(fixture.root, "release", "notes-data.json");
+
+    const result = runScript(
+      fixture.work,
+      [
+        tsxPath,
+        path.join(repoRoot, "scripts", "release-notes-data.ts"),
+        "--plan",
+        planPath,
+        "--output",
+        outputPath,
+      ],
+      {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const data = readJson(outputPath);
+    expect(data).toMatchObject({ status: "ok", prNumbers: [456, 654, 987] });
+    expect(data.pullRequests).toEqual([
+      { number: 456, title: "pr 456" },
+      { number: 654, title: "pr 654" },
+      { number: 987, title: "pr 987" },
+    ]);
+  });
+
   it("marks release notes data as partial when a PR metadata lookup fails", () => {
     const fixture = createFixture();
     const binDir = path.join(fixture.root, "bin");
