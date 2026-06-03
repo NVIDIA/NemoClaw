@@ -55,21 +55,28 @@ describe("onboard policy preset suggestions", () => {
     process.env.DISCORD_BOT_TOKEN = "discord-token";
     process.env.SLACK_BOT_TOKEN = "slack-token";
     try {
-      expect(getSuggestedPolicyPresets({ enabledChannels: [] })).toEqual(["pypi", "npm"]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: [] })).toEqual([
+        "pypi",
+        "npm",
+        "openclaw-pricing",
+      ]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["telegram"] })).toEqual([
         "pypi",
         "npm",
+        "openclaw-pricing",
         "telegram",
       ]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["discord", "slack"] })).toEqual([
         "pypi",
         "npm",
+        "openclaw-pricing",
         "slack",
         "discord",
       ]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
         "pypi",
         "npm",
+        "openclaw-pricing",
         "whatsapp",
       ]);
     } finally {
@@ -109,9 +116,9 @@ describe("onboard policy preset suggestions", () => {
 
   it("suggests openclaw-pricing preset only for the openclaw agent", () => {
     expect(getSuggestedPolicyPresets({ agent: "openclaw" })).toContain("openclaw-pricing");
+    expect(getSuggestedPolicyPresets({ agent: null })).toContain("openclaw-pricing");
+    expect(getSuggestedPolicyPresets({})).toContain("openclaw-pricing");
     expect(getSuggestedPolicyPresets({ agent: "hermes" })).not.toContain("openclaw-pricing");
-    expect(getSuggestedPolicyPresets({ agent: null })).not.toContain("openclaw-pricing");
-    expect(getSuggestedPolicyPresets({})).not.toContain("openclaw-pricing");
   });
 
   it("suggests local OTEL policy only when OpenClaw OTEL is enabled", () => {
@@ -160,22 +167,26 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(hermesSuggestions).not.toContain("openclaw-pricing");
 
-    // Defence-in-depth: the suggestion gate must not fire for raw null
-    // or omitted-agent cases either. The handler normalises null to
-    // "openclaw" upstream, but anything that bypasses that normalisation
-    // (third-party callers, tests) should default to safe-no-add.
+    // Default/blank agents are OpenClaw in the lower-level helpers too.
     const nullAgentSuggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: knownWithPricing,
       agent: null,
     });
-    expect(nullAgentSuggestions).not.toContain("openclaw-pricing");
+    expect(nullAgentSuggestions).toContain("openclaw-pricing");
 
     const omittedAgentSuggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: knownWithPricing,
     });
-    expect(omittedAgentSuggestions).not.toContain("openclaw-pricing");
+    expect(omittedAgentSuggestions).toContain("openclaw-pricing");
+
+    const blankAgentSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: " ",
+    });
+    expect(blankAgentSuggestions).toContain("openclaw-pricing");
   });
 
   it("adds local OTEL policy to tier suggestions only when OpenClaw OTEL is enabled", () => {

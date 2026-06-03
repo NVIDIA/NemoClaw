@@ -14,9 +14,9 @@ import {
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
 import {
-  isOpenclawOtelEndpointLocal,
-  isOpenclawOtelEnabled,
+  isOpenclawAgent,
   mergeRequiredOpenclawOtelPolicyPresets,
+  requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
 import { withPolicyApplicationTrace } from "./tracing";
 
@@ -169,11 +169,9 @@ export function computeSetupPresetSuggestions(
   };
   if (webSearchConfig) add("brave");
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
-  if (agent === "openclaw") {
+  if (isOpenclawAgent(agent)) {
     add("openclaw-pricing");
-    if (isOpenclawOtelEnabled(env) && isOpenclawOtelEndpointLocal(env)) {
-      add("openclaw-diagnostics-otel-local");
-    }
+    for (const preset of requiredOpenclawOtelPolicyPresets(agent, env)) add(preset);
   }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
