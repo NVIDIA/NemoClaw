@@ -242,7 +242,7 @@ NEMOCLAW_EXPERIMENTAL=1 NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo \
 
 `NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo` selects the DuckDuckGo backend, which has no API key requirement.
 The DuckDuckGo backend is unofficial and rate-limited; do not depend on it for production workloads.
-In interactive mode, the wizard prompts for `[brave/duckduckgo]` only when `NEMOCLAW_EXPERIMENTAL=1` is set; otherwise it defaults to Brave.
+In interactive mode, the wizard prompts for `[brave/duckduckgo]` only when `NEMOCLAW_EXPERIMENTAL=1` is set and `NEMOCLAW_WEB_SEARCH_PROVIDER` is unset; otherwise it defaults to Brave. Pre-setting `NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo` (together with `NEMOCLAW_EXPERIMENTAL=1`) skips the provider prompt and selects DuckDuckGo directly in both interactive and non-interactive modes.
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
