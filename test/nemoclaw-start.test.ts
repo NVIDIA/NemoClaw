@@ -3275,8 +3275,19 @@ describe("Telegram diagnostics (#2766)", () => {
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
     const preloadExists = fs.existsSync(preloadPath);
     const preloadMode = preloadExists ? (fs.statSync(preloadPath).mode & 0o777).toString(8) : "";
+    const pluginRefreshLogExists = fs.existsSync(pluginRefreshLog);
+    const pluginRefreshLogMode = pluginRefreshLogExists
+      ? (fs.statSync(pluginRefreshLog).mode & 0o777).toString(8)
+      : "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, preloadExists, preloadMode, preloadPath };
+    return {
+      result,
+      preloadExists,
+      preloadMode,
+      preloadPath,
+      pluginRefreshLogExists,
+      pluginRefreshLogMode,
+    };
   }
 
   it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
@@ -3495,6 +3506,8 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("ORDER:configure");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
+      expect(setup.pluginRefreshLogExists).toBe(true);
+      expect(setup.pluginRefreshLogMode).toBe(kind === "root" ? "644" : "600");
     }
   });
 
