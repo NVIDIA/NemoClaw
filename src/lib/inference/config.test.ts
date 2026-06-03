@@ -328,43 +328,6 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
-  // #2747 followup to #3678: Ollama's OpenAI-compat stream omits the usage
-  // chunk unless the request sets `stream_options.include_usage: true`.
-  // OpenClaw gates that on `model.compat.supportsUsageInStreaming`. The
-  // ollama-local path runs through `inference.local`, which OpenClaw's
-  // own Ollama detector doesn't recognise — so the compat flag has to
-  // travel into openclaw.json via `inferenceCompat`. The previous Python-
-  // side conditional in `generate-openclaw-config.py` could never fire
-  // because `providerKey` resolves to `MANAGED_PROVIDER_ID` ("inference")
-  // for ollama-local, not "ollama" / "ollama-local". Wiring it here is
-  // the right layer.
-  it("forces supportsUsageInStreaming for ollama-local (#2747)", () => {
-    expect(getSandboxInferenceConfig("qwen2.5:7b", "ollama-local")).toEqual({
-      providerKey: MANAGED_PROVIDER_ID,
-      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen2.5:7b`,
-      inferenceBaseUrl: INFERENCE_ROUTE_URL,
-      inferenceApi: "openai-completions",
-      inferenceCompat: {
-        supportsUsageInStreaming: true,
-      },
-    });
-  });
-
-  it("does not force supportsUsageInStreaming for non-ollama providers", () => {
-    for (const provider of [
-      "nvidia-prod",
-      "nvidia-nim",
-      "nvidia-router",
-      "openai-api",
-      "compatible-endpoint",
-      "anthropic-prod",
-      "gemini-api",
-    ]) {
-      const compat = getSandboxInferenceConfig("model", provider).inferenceCompat;
-      expect(compat?.supportsUsageInStreaming).toBeUndefined();
-    }
-  });
-
   it("uses a probed Responses API override when one is available", () => {
     expect(getSandboxInferenceConfig("gpt-5.4", "openai-api", "openai-responses")).toEqual({
       providerKey: "openai",

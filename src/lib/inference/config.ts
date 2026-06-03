@@ -240,23 +240,6 @@ export function getSandboxInferenceConfig(
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       break;
-    case "ollama-local":
-      // Ollama's OpenAI-compatible /v1/chat/completions stream omits the
-      // `usage` chunk unless the request sets `stream_options.include_usage:
-      // true`. OpenClaw gates that on `model.compat.supportsUsageInStreaming`
-      // (src/agents/openai-transport-stream.ts upstream); its own Ollama
-      // extension auto-detects the flag only when the endpoint reads as
-      // localhost:11434 or `model.provider === "ollama"` exactly, which
-      // doesn't match the standardised `inference.local` URL NemoClaw routes
-      // through. Pin the compat flag here so the TUI token counter updates
-      // after each turn instead of staying `?` (#2747). Mirrors the LM Studio
-      // extension's `withLmstudioUsageCompat` workaround.
-      providerKey = MANAGED_PROVIDER_ID;
-      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
-      inferenceCompat = {
-        supportsUsageInStreaming: true,
-      };
-      break;
     case "nvidia-prod":
     case "nvidia-nim":
     default:
