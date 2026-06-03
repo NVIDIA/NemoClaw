@@ -799,8 +799,8 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 
 Add a host alias to the sandbox pod template.
 Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
-Host alias commands are supported for Docker-driver and VM-driver sandboxes.
-They are not available on Kubernetes-driver sandboxes, where host alias ownership stays with the cluster resource model.
+Host alias commands use the legacy Kubernetes gateway `Sandbox` resource path.
+They are not supported on Docker-driver or VM-driver sandboxes because those drivers do not run the gateway cluster container that owns this resource.
 
 ```bash
 nemoclaw my-assistant hosts-add searxng.local 192.168.1.105
