@@ -57,10 +57,10 @@ if [[ "${agent}" == "hermes" ]]; then
   #   1) config.yaml carries platforms.slack.enabled=true so the gateway
   #      instantiates the Slack platform at boot. Without it, Hermes runs only
   #      api_server and slack_bolt never starts.
-  #   2) gateway.log shows the Slack adapter actually authenticated and
-  #      connected via Socket Mode (not merely that startup began).
-  #   3) SLACK_ALLOWED_CHANNELS is wired through .env so the adapter scopes
-  #      message handling to the configured channel set.
+  #   2) gateway.log shows the Slack adapter completed Socket Mode connection
+  #      and the Bolt app reached the running state.
+  #   3) SLACK_ALLOWED_CHANNELS, when configured, is present in .env so the
+  #      allowlist values reach the adapter's environment.
   if [[ -n "${E2E_DRY_RUN:-}" ]]; then
     e2e_pass "expected-state.messaging.slack.hermes-platforms-enabled dry-run"
     e2e_pass "expected-state.messaging.slack.hermes-allowed-channels-scoped dry-run"
@@ -136,7 +136,7 @@ else:
     if [[ -z "${gateway_log}" ]]; then
       e2e_fail "expected-state.messaging.slack.hermes-gateway-running could not read gateway log from sandbox or entrypoint surface"
     fi
-    if printf '%s\n' "${gateway_log}" | grep -qE '\[Slack\] Socket Mode connected|\[Slack\] Authenticated as|✓ slack connected|slack_bolt\.AsyncApp.*Bolt app is running'; then
+    if printf '%s\n' "${gateway_log}" | grep -qE '\[Slack\] Socket Mode connected|✓ slack connected|slack_bolt\.AsyncApp.*Bolt app is running'; then
       e2e_pass "expected-state.messaging.slack.hermes-gateway-running gateway booted slack platform"
     else
       sanitized_tail="$(printf '%s\n' "${gateway_log}" | tail -n 20 | sed -E \
