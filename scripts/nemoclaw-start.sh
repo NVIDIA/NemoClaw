@@ -673,13 +673,17 @@ ensure_mutable_openclaw_config_hash() {
   # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
   # cannot bypass the sandbox-only write bit and the redirection
   # aborts with EACCES, so step down to the file's owner for the write.
-  local run_prefix=()
-  if [ "$(id -u)" -eq 0 ]; then
-    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
-  fi
-
   # shellcheck disable=SC2016  # positional params are expanded by the inner sh
-  if ! "${run_prefix[@]}" sh -c '
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
+      cd "$1" || exit 1
+      sha256sum openclaw.json >".config-hash" || exit 1
+      chmod 660 ".config-hash" 2>/dev/null || true
+    ' _ "$config_dir"; then
+      printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+      return 1
+    fi
+  elif ! sh -c '
     cd "$1" || exit 1
     sha256sum openclaw.json >".config-hash" || exit 1
     chmod 660 ".config-hash" 2>/dev/null || true
