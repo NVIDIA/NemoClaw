@@ -177,9 +177,10 @@ Non-interactive re-onboards in the default `suggested` policy mode preserve pres
 To make a re-onboard authoritative, set `NEMOCLAW_POLICY_MODE=custom` and provide `NEMOCLAW_POLICY_PRESETS` with the exact list to apply; onboarding removes anything else.
 See `NEMOCLAW_POLICY_MODE` (use the `nemoclaw-user-reference` skill) for the full table.
 
-## Update to the Latest Version
+## Update to the Maintained Version
 
-When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+When a maintained NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+The standard installer follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
 
 ### Update the NemoClaw CLI
 
@@ -187,7 +188,7 @@ Re-run the installer.
 Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
 If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
 The automatic path is offered only when the existing `nemoclaw` CLI supports `backup-all`; older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all` and `openshell gateway destroy -g nemoclaw || openshell gateway destroy` before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
+For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 ```console
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
@@ -254,6 +255,14 @@ nemoclaw uninstall
 | `--yes`            | Skip the confirmation prompt.                        |
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+**Note:**
+
+`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+Uninstall removes every other entry under `~/.nemoclaw/`.
+Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
+See `nemoclaw uninstall` (use the `nemoclaw-user-reference` skill) for the full preservation contract.
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 

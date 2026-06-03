@@ -122,7 +122,8 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e
+          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
+          sessions-agents-cli-e2e
         required: false
         type: string
         default: ""
@@ -144,6 +145,13 @@ on:
         required: false
         type: string
         default: ""
+      post_to_slack:
+        description: >-
+          Post the scorecard to a preview Slack channel on selective
+          dispatches (schedule and full runs always post).
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -173,9 +181,11 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-nightly"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
+    secrets: &nightly-e2e-default-secrets
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+      DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
   cloud-onboard-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -191,9 +201,7 @@ jobs:
       checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   cloud-inference-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -208,9 +216,7 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-inference"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   skill-agent-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -225,9 +231,7 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-skill-agent-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-skill-agent"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   docs-validation-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -237,10 +241,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
+      - &target-ref-checkout
+        name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
+
+      # Authenticate Docker Hub pulls for sandbox image builds when CI
+      # credentials are configured. Withhold credentials from workflow_dispatch
+      # runs against an explicit target_ref because those can execute untrusted
+      # PR-head code checked out above.
+      - &dockerhub-auth-step
+        name: Authenticate to Docker Hub
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Install NemoClaw
         env:
@@ -285,6 +310,8 @@ jobs:
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+      DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
+      DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
       TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
       TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
       DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
@@ -306,9 +333,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-slack-pairing","SLACK_APP_TOKEN":"xapp-fake-slack-pairing-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-pairing-e2e"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   openclaw-tui-chat-correlation-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -318,10 +343,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Resolve public install ref
         id: public_install_ref
@@ -368,10 +392,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -401,9 +424,7 @@ jobs:
       env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-pairing-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-discord-pairing"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   # ── OpenClaw Scope-Upgrade Approval E2E (#4462) ────────────────
   # Positive proof: in a real sandbox, accept either a visible pending CLI
   # scope upgrade or the fixed watcher's immediate approval, then confirm
@@ -427,9 +448,7 @@ jobs:
       env_json: '{"NEMOCLAW_4462_MODE":"approval","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AUTO_PAIR_DEADLINE_SECS":"30","NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS":"3","NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS":"600","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-issue-4462-scope-upgrade"}'
       nvidia_api_key: true
       github_token: false
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   # ── OpenClaw Gateway-Pinned Approval Characterization (#4462) ──
   # Diagnostic proof: in a real sandbox, wait for the fixed watcher to exit,
   # force the legacy gateway-pinned approve path, record the observed
@@ -453,9 +472,7 @@ jobs:
       env_json: '{"NEMOCLAW_4462_AGENT_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-agent.log","NEMOCLAW_4462_APPROVAL_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-approval.log","NEMOCLAW_4462_AUTO_PAIR_DEADLINE_SECS":"12","NEMOCLAW_4462_AUTO_PAIR_FAST_DEADLINE_SECS":"1","NEMOCLAW_4462_AUTO_PAIR_RUN_TIMEOUT_SECS":"2","NEMOCLAW_4462_AUTO_PAIR_SLOW_INTERVAL_SECS":"1","NEMOCLAW_4462_INSTALL_LOG":"/tmp/nemoclaw-e2e-issue-4462-scope-upgrade-repro-install.log","NEMOCLAW_4462_MODE":"legacy-repro","NEMOCLAW_4462_STATE_LOG":"/tmp/nemoclaw-issue-4462-scope-upgrade-repro-state.log","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-issue-4462-scope-upgrade-repro"}'
       nvidia_api_key: true
       github_token: false
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   messaging-compatible-endpoint-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -469,16 +486,59 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-msg-compat","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-  # ── Channels add/remove lifecycle E2E (#3462 Test 2) ────────────────
-  # Regression coverage for #3437 (channels add must auto-apply the matching
-  # network policy preset so the bridge boots with egress to its upstream API)
-  # and #3671 (channels remove must detach providers, un-apply the preset,
-  # and survive a follow-up rebuild without being silently re-added from
-  # shell env). Telegram-only — the other paste-token channels walk the same
-  # KNOWN_CHANNELS + preset lookup code path.
+    secrets: *nightly-e2e-default-secrets
+  # ── Sessions / agents CLI groups E2E ─────────────────────────────────
+  # Coverage for the `nemoclaw <name> sessions` and `nemoclaw <name> agents`
+  # CLI groups: openclaw-sessions passthrough (list/show/reset), agents
+  # add/delete lifecycle, and their related routing through the public-argv
+  # translator. The OpenShell sandbox is provisioned end-to-end so the
+  # groups are exercised against a live OpenClaw runtime.
+  #
+  # Secret-bearing target-ref execution — gating contract:
+  #   * This workflow has no `pull_request` or `pull_request_target` trigger
+  #     (see `on:` at the top of this file). The only ways to reach this job
+  #     are the nightly `schedule:` (which checks out `github.ref` =
+  #     default branch) and `workflow_dispatch:` (which requires repo write
+  #     access to invoke). Fork PRs cannot trigger this job at all.
+  #   * Therefore the `inputs.target_ref || github.ref` ref expression only
+  #     runs target-ref code when one of:
+  #       (a) `schedule:` fires against the default branch (no `target_ref`
+  #           input is available on schedule events), or
+  #       (b) a user with repo write access calls `workflow_dispatch` and
+  #           chooses a `target_ref`. Both paths are "trusted-ref": the
+  #           code reached at runtime has already passed maintainer review
+  #           or is the default branch itself.
+  #   * `NVIDIA_API_KEY` is the repo-scoped E2E credential — purposefully
+  #     not a production key. It is wired only to the inference quota
+  #     allocated to this repository's E2E lane, with no IAM / billing
+  #     authority outside that quota. Treat exposure as "rotate at the
+  #     quota boundary," not "rotate at the production boundary." Audit
+  #     trail: `gh api repos/NVIDIA/NemoClaw/actions/secrets/NVIDIA_API_KEY`
+  #     shows the secret scope.
+  #   * The top-level `github.repository == 'NVIDIA/NemoClaw'` check
+  #     additionally guards repo-forked schedules.
+  #   * `github_token: false` (below) — the script does not need a GitHub
+  #     token; keep it disabled unless a documented need appears.
+  # This shape matches every other `e2e-script.yaml` caller in this file;
+  # changing it for one job would diverge from the repo-wide pattern and
+  # should be done across the workflow, not in this PR.
+  sessions-agents-cli-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sessions-agents-cli-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-sessions-agents-cli.sh
+      timeout_minutes: 60
+      artifact_name: "install-log-sessions-agents-cli"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-sessions-agents-cli"}'
+      nvidia_api_key: true
+      github_token: false
+    secrets: *nightly-e2e-default-secrets
   channels-add-remove-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -499,9 +559,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-channels-add-remove","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-add-remove-e2e"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   # ── Channels stop/start lifecycle E2E (#3462) ───────────────────────
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials).
@@ -524,9 +582,7 @@ jobs:
       env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-stop-start-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_ID":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-channels-stop-start","SLACK_ALLOWED_USERS":"U0123456789,U09ABCDEFGH","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-stop-start-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-stop-start-e2e","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-stop-start-e2e","WECHAT_ACCOUNT_ID":"e2e-fake-account-stop-start","WECHAT_ALLOWED_IDS":"wxid_stopstart_operator","WECHAT_BASE_URL":"https://ilinkai-fake-stop-start.wechat.com","WECHAT_BOT_TOKEN":"test-fake-wechat-token-stop-start-e2e","WECHAT_USER_ID":"wxid_stopstart_operator"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   brave-search-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -542,9 +598,7 @@ jobs:
       brave_api_key: true
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   kimi-inference-compat-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -554,10 +608,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Run Kimi inference compatibility E2E test
         env:
@@ -608,10 +661,9 @@ jobs:
       matrix:
         agent: [openclaw, hermes]
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Run Bedrock Runtime compatible Anthropic E2E test
         env:
@@ -670,10 +722,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Run token rotation E2E test
         env:
@@ -716,9 +767,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-survival"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   issue-2478-crash-loop-recovery-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -734,9 +783,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-2478"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -752,9 +799,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-dashboard-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -770,9 +815,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-root-entrypoint-smoke-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -785,9 +828,7 @@ jobs:
       timeout_minutes: 45
       artifact_name: "hermes-root-entrypoint-smoke-log"
       artifact_path: "/tmp/nemoclaw-hermes-root-entrypoint-smoke.log"
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   openclaw-onboard-security-posture-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -803,9 +844,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-security-posture"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-onboard-security-posture-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -821,9 +860,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-security-posture"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-inference-switch-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -839,9 +876,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-inference-switch"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-discord-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -857,9 +892,7 @@ jobs:
       env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-hermes-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_IDS":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-discord"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   hermes-slack-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -876,9 +909,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-slack","SLACK_APP_TOKEN":"xapp-test-hermes-slack-app-token","SLACK_BOT_TOKEN":"xoxb-test-hermes-slack-token"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   sandbox-operations-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -888,10 +919,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Start gateway log streamer (background)
         run: |
@@ -1141,9 +1171,7 @@ jobs:
       artifact_path: "test-inference-routing-*.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   openclaw-inference-switch-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1158,9 +1186,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-inference-switch"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   network-policy-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1174,9 +1200,7 @@ jobs:
       artifact_path: "test-network-policy-*.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"restricted","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   state-backup-restore-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1191,9 +1215,7 @@ jobs:
       artifact_path: "test-state-backup-restore-*.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   tunnel-lifecycle-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1208,9 +1230,7 @@ jobs:
       artifact_path: "test-tunnel-lifecycle-*.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   diagnostics-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1224,9 +1244,7 @@ jobs:
       artifact_path: "test-diagnostics-*.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   credential-migration-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1242,9 +1260,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cred-migration"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   snapshot-commands-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1260,9 +1276,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-snapshot"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   shields-config-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1278,9 +1292,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-shields"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   vm-driver-privileged-exec-routing-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1294,9 +1306,7 @@ jobs:
       artifact_name: "vm-driver-privileged-exec-routing-log"
       artifact_path: "/tmp/nemoclaw-vm-driver-privileged-exec-routing-build.log"
       env_json: '{"NEMOCLAW_NON_INTERACTIVE":"1"}'
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   rebuild-openclaw-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1312,9 +1322,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-oc"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   upgrade-stale-sandbox-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1332,9 +1340,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-upgrade-stale"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1344,10 +1350,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Setup Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1393,9 +1398,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-hm"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   rebuild-hermes-stale-base-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1411,9 +1414,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-hm-base"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   double-onboard-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1423,11 +1424,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1463,11 +1462,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1503,11 +1500,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1543,11 +1538,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1584,11 +1577,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1625,10 +1616,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1668,10 +1658,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1722,9 +1711,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-overlayfs"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   device-auth-health-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -1740,9 +1727,7 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-health-auth"}'
       nvidia_api_key: true
       github_token: true
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+    secrets: *nightly-e2e-default-secrets
   launchable-smoke-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1752,10 +1737,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Run launchable install-flow smoke test
         env:
@@ -1811,10 +1795,9 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_PROVIDER: "ollama"
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Verify GPU availability
         run: |
@@ -1866,10 +1849,9 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_PROVIDER: "ollama"
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
 
       - name: Verify GPU availability
         run: |
@@ -1926,6 +1908,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2033,6 +2016,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2197,6 +2181,7 @@ jobs:
         issue-4462-scope-upgrade-approval-e2e,
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
+        sessions-agents-cli-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2246,6 +2231,14 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: Checkout scorecard builder
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/scorecard
+          sparse-checkout-cone-mode: false
+
       - name: Generate nightly scorecard
         id: scorecard
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -2291,11 +2284,31 @@ jobs:
             const ran = total - skipped;
             const perfect = failure === 0 && cancelled === 0 && ran > 0;
 
-            // ── Identify failed jobs ────────────────────────────────
-            const failedJobs = entries
+            // ── Identify failed jobs (with html_url for clickable links) ──
+            const failedNames = entries
               .filter(([, { result }]) => result === 'failure')
               .map(([name]) => name)
               .sort();
+
+            let urlByName = new Map();
+            if (failedNames.length > 0) {
+              try {
+                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                });
+                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
+              } catch (e) {
+                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+              }
+            }
+
+            const failedJobs = failedNames.map((name) => ({
+              name,
+              url: urlByName.get(name) || null,
+            }));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
@@ -2367,15 +2380,15 @@ jobs:
               `**Jobs run:** ${ran} of ${total}`,
               `  ✅ ${success} passed`,
               `  ❌ ${failure} failed`,
-              `  ⊘  ${cancelled} cancelled`,
-              `  ⏭️  ${skipped} skipped`,
+              `  🚫 ${cancelled} cancelled`,
+              `  ⏭️ ${skipped} skipped`,
             );
 
             if (failedJobs.length > 0) {
               lines.push('');
               lines.push('**Failed jobs:**');
-              for (const name of failedJobs) {
-                lines.push(`  - \`${name}\``);
+              for (const job of failedJobs) {
+                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
               }
             }
 
@@ -2394,37 +2407,94 @@ jobs:
             await core.summary.write();
             core.setOutput('scorecard', scorecard);
 
-      # ── Optional Slack notification ────────────────────────────
+            // Structured data for the Slack step.
+            // Contract: scripts/scorecard/build-slack-blocks.ts
+            core.setOutput('scorecardData', JSON.stringify({
+              today,
+              runMode,
+              isSelectiveDispatch,
+              requestedJobs,
+              total,
+              ran,
+              success,
+              failure,
+              cancelled,
+              skipped,
+              perfect,
+              failedJobs,
+              trendLine,
+              runUrl,
+            }));
+
+      # ── Slack notification ────────────────────────────
+      # Production routes (always post; runMode is computed by the generate step):
+      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
+      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #
+      # Selective dispatch is skipped by default. Devs may opt into the
+      # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
       - name: Post scorecard to Slack
-        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
+          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
+          SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
+          POST_TO_SLACK: ${{ inputs.post_to_slack }}
         with:
           script: |
-            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-            if (!webhookUrl) {
-              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
+            const path = require('path');
+            const {
+              buildBlocks,
+              buildFallbackText,
+              getStatusColor,
+              getSlackChannel,
+            } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+            );
+
+            const data = JSON.parse(process.env.SCORECARD_DATA);
+            const channel = getSlackChannel(data);
+
+            // Selective dispatches only post when the user explicitly opts in.
+            // Schedule + Manual full run always post.
+            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
+              core.info('Selective dispatch without post_to_slack — skipping');
               return;
             }
 
-            const scorecard = process.env.SCORECARD_TEXT;
+            const envByChannel = {
+              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
+              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
+            };
+            const webhookUrl = process.env[envByChannel[channel]];
 
-            // Strip markdown formatting for Slack plain-text rendering
-            const slackText = scorecard
-              .replace(/^## /gm, '')
-              .replace(/\*\*/g, '*')
-              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+            if (!webhookUrl) {
+              core.info(`Slack webhook for "${channel}" not configured — skipping`);
+              return;
+            }
+
+            // Legacy attachment wrapper enables the coloured left-edge bar.
+            const payload = {
+              text: buildFallbackText(data),
+              attachments: [
+                {
+                  color: getStatusColor(data),
+                  blocks: buildBlocks(data),
+                },
+              ],
+            };
 
             const resp = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: slackText }),
+              body: JSON.stringify(payload),
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
             } else {
-              core.info('Scorecard posted to Slack');
+              core.info(`Scorecard posted to Slack (${channel})`);
             }
