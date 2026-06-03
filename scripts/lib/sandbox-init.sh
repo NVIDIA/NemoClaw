@@ -225,6 +225,33 @@ lock_config_after_write() {
 # Usage:
 #   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 #
+# Single source of truth for the dangerous capabilities the entrypoint drops
+# and (in strict mode) verifies are gone. "bit:name" pairs; bit numbers per
+# /usr/include/linux/capability.h. Both the capsh --drop list and
+# dangerous_caps_in_capbnd() derive from this array, so the drop-set and the
+# strict-mode verify-set cannot drift apart (issue #3280).
+DANGEROUS_CAPS=(
+  "21:cap_sys_admin"
+  "19:cap_sys_ptrace"
+  "13:cap_net_raw"
+  "1:cap_dac_override"
+  "18:cap_sys_chroot"
+  "4:cap_fsetid"
+  "31:cap_setfcap"
+  "27:cap_mknod"
+  "29:cap_audit_write"
+  "10:cap_net_bind_service"
+)
+
+# Comma-separated capability names for `capsh --drop`, derived from DANGEROUS_CAPS.
+dangerous_caps_drop_list() {
+  local entry out=""
+  for entry in "${DANGEROUS_CAPS[@]}"; do
+    out="${out:+$out,}${entry#*:}"
+  done
+  printf '%s' "$out"
+}
+
 # The first argument is the absolute path to the entrypoint script to
 # re-exec via capsh. Remaining arguments are forwarded.
 drop_capabilities() {
@@ -237,7 +264,7 @@ drop_capabilities() {
     if capsh --has-p=cap_setpcap 2>/dev/null; then
       export NEMOCLAW_CAPS_DROPPED=1
       exec capsh \
-        --drop=cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+        --drop="$(dangerous_caps_drop_list)" \
         -- -c "exec $entrypoint \"\$@\"" -- "$@"
     fi
     # CAP_SETPCAP missing (or the exec above failed): the drop could not run.
@@ -261,15 +288,17 @@ drop_capabilities() {
 #
 # Bash arithmetic handles 64-bit ints on 64-bit platforms; CAP_LAST_CAP is ~41
 # today, well within range. Avoids a gawk-strtonum dependency.
+#
+# Returns nonzero with no output if the hex is empty or malformed, so callers
+# can treat "could not parse" the same as "could not read" instead of silently
+# treating an unparseable bounding set as clean (issue #3280).
 dangerous_caps_in_capbnd() {
   local cap_bnd_hex="$1" val entry bit name present=""
+  case "$cap_bnd_hex" in
+    "" | *[!0-9A-Fa-f]*) return 1 ;;
+  esac
   val=$((16#$cap_bnd_hex))
-  for entry in \
-    "21:cap_sys_admin" \
-    "19:cap_sys_ptrace" \
-    "13:cap_net_raw" \
-    "1:cap_dac_override" \
-    "10:cap_net_bind_service"; do
+  for entry in "${DANGEROUS_CAPS[@]}"; do
     bit="${entry%%:*}"
     name="${entry#*:}"
     if [ $(((val >> bit) & 1)) -ne 0 ]; then
@@ -307,9 +336,11 @@ enforce_cap_drop_if_required() {
   if [ -z "$cap_bnd_hex" ]; then
     # Cannot verify → in strict mode, refuse rather than assume safety.
     reason="could not read bounding set from ${status_path} — cannot verify drop"
-  else
-    present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"
-    [ -n "$present" ] && reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
+  elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    # Non-empty but unparseable CapBnd is equally unverifiable → refuse.
+    reason="could not parse bounding set (CapBnd=${cap_bnd_hex}) — cannot verify drop"
+  elif [ -n "$present" ]; then
+    reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
   fi
   [ -n "$reason" ] || return 0
 
@@ -347,8 +378,9 @@ report_residual_capabilities() {
   fi
   echo "[SECURITY] Residual CapBnd=${cap_bnd_hex}" >&2
 
-  present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"
-  if [ -n "$present" ]; then
+  if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    echo "[SECURITY] Could not parse CapBnd=${cap_bnd_hex} — residual caps unknown" >&2
+  elif [ -n "$present" ]; then
     echo "[SECURITY] Dangerous caps remain in bounding set: ${present}" >&2
   fi
 }

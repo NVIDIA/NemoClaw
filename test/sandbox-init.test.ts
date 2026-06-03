@@ -416,9 +416,10 @@ EOF
     // real enforcement against a controlled bounding set without depending on
     // the test runner's own /proc/self/status. CapBnd 0x4a82c35fb is the exact
     // value hulynn decoded on the failing Colossus host.
-    const QA_CAPBND = "00000004a82c35fb"; // contains all 5 inspected dangerous caps
+    const QA_CAPBND = "00000004a82c35fb"; // contains all 10 inspected dangerous caps
     const CLEAN_CAPBND = "0000000000000000"; // none present
-    const QA_DANGEROUS = "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_net_bind_service";
+    const QA_DANGEROUS =
+      "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
 
     // Stub capsh so it is found on PATH (command -v succeeds) but reports
     // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
@@ -571,6 +572,50 @@ EOF
       expect(combined).toContain("Refusing to start sandbox");
       expect(combined).toContain("could not read bounding set");
       expect(combined).not.toContain("SHOULD_NOT_REACH");
+    });
+
+    // Harden (issue #3280): a non-empty but unparseable CapBnd (corrupt /proc,
+    // CRLF fixture, future format change) must be treated as "cannot verify"
+    // — refusing in strict mode — and must NOT surface a raw bash arithmetic
+    // error. MALFORMED_CAPBND contains non-hex characters.
+    const MALFORMED_CAPBND = "00000000nothex0";
+    it("refuses under REQUIRE_CAP_DROP=1 when CapBnd is non-empty but unparseable", () => {
+      const { stdout, stderr } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...writeStatusFixture(MALFORMED_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint",
+          'echo "SHOULD_NOT_REACH"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        {
+          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
+          expectFail: true,
+        },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).toContain("could not parse bounding set");
+      expect(combined).not.toContain("SHOULD_NOT_REACH");
+      // No leaked bash arithmetic error.
+      expect(combined).not.toMatch(/value too great for base|invalid arithmetic|16#/);
+    });
+
+    it("warns and continues (no abort) on an unparseable CapBnd when REQUIRE_CAP_DROP is unset", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(MALFORMED_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
+          'echo "CONTINUED_ON_BAD_CAPBND"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
+      );
+      expect(stdout).toContain("residual caps unknown");
+      expect(stdout).toContain("CONTINUED_ON_BAD_CAPBND");
+      expect(stdout).not.toContain("Refusing to start sandbox");
     });
 
     it("continues (no regression) when NEMOCLAW_REQUIRE_CAP_DROP is unset even with residual caps", () => {
