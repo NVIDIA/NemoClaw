@@ -3069,6 +3069,15 @@ describe("CLI dispatch", () => {
     expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
   });
 
+  it("rejects sandbox channels start for a missing sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-missing-"));
+    writeSandboxRegistry(home);
+
+    const start = runWithEnv("sandbox channels start does-not-exist discord", { HOME: home });
+    expect(start.code).toBe(1);
+    expect(start.out).toContain("Sandbox 'does-not-exist' not found in the registry.");
+  });
+
   it("adds host aliases with a sandbox json patch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-hosts-add-"));
     const localBin = path.join(home, "bin");
