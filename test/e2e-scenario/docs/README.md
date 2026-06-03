@@ -13,17 +13,21 @@ one or more **suites** run functional assertions against it.
 setup scenario → expected state → suite sequence
 ```
 
-The declarative sources of truth live in three files — read these
-first, they are short and deliberately not redundant with prose:
+The durable framework inputs live in these places — read these first,
+they are short and deliberately not redundant with prose:
 
 - [`../nemoclaw_scenarios/scenarios.yaml`](../nemoclaw_scenarios/scenarios.yaml)
-  — platforms, installs, runtimes, onboarding choices, and the
-  concrete scenarios that combine them.
+  — YAML metadata for platforms, installs, runtimes, onboarding choices,
+  layered test plans, and legacy scenario aliases.
 - [`../nemoclaw_scenarios/expected-states.yaml`](../nemoclaw_scenarios/expected-states.yaml)
   — reusable structural contracts (gateway health, sandbox status,
   inference routing, etc.).
 - [`../validation_suites/suites.yaml`](../validation_suites/suites.yaml)
   — ordered validation steps, each with a `requires_state` predicate.
+- [`../scenarios/`](../scenarios/)
+  — typed scenario builders, manifests, assertion groups, phase
+  orchestrators, and shared SUT-boundary clients used by scenario
+  framework tests and scenario-workflow planning.
 
 ## Layered scenario model
 
@@ -58,9 +62,11 @@ setup state.
 ## Where things live
 
 ```text
-test/e2e/
+test/e2e-scenario/
   docs/                              # README.md, MIGRATION.md
-  nemoclaw_scenarios/                # declarative scenario inputs + setup machinery
+  scenarios/                         # typed builders, assertion groups, phase orchestration
+  manifests/                         # product-facing NemoClawInstance manifests
+  nemoclaw_scenarios/                # YAML scenario inputs + setup machinery
     scenarios.yaml / expected-states.yaml
     install/       # install dispatcher + one file per install profile
     onboard/       # onboard dispatcher + one file per onboarding profile
@@ -77,9 +83,16 @@ test/e2e/
     lib/           # shared shell helpers: context, env, cleanup, logging, artifacts, sandbox-teardown
 ```
 
-The CI entry point is `.github/workflows/e2e-scenarios.yaml` (manual dispatch). Existing legacy workflows (`nightly-e2e.yaml`, `macos-e2e.yaml`, `wsl-e2e.yaml`, etc.) remain in place during the migration.
+The CI entry point is `.github/workflows/e2e-scenarios.yaml` (manual dispatch).
+Existing legacy workflows (`nightly-e2e.yaml`, `macos-e2e.yaml`,
+`wsl-e2e.yaml`, etc.) remain in place during the migration.
 
-Migration coverage is tracked through the layered scenario definitions, suite inventory, and the domain migration issues linked from issue #3588. Do not add a workflow-level parity report or assertion-ledger gate; use focused code review and the scenario coverage report to decide what to migrate next.
+Migration status is tracked outside the repository in the parent epic #3588,
+the active audit-coverage issues, and the pull requests that land each batch.
+Do not add per-script migration checklists, temporary coverage counts,
+workflow-level parity reports, or assertion-ledger gates to repo docs; use
+focused code review and the scenario coverage report to decide what to migrate
+next.
 
 ## How to add a scenario, state, or suite
 
@@ -93,6 +106,12 @@ describe the required shape; `run-scenario.sh <id> --plan-only`
 validates your change without running anything destructive.
 
 When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
-`FAIL: <id>` log line, and update migration coverage through the scenario coverage report and the domain issues under `#3588`. Sandbox lifecycle assertions should use `validation_suites/lib/sandbox_lifecycle.sh`, consume `$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
+`FAIL: <id>` log line, and record migration evidence or follow-up state in the
+owning issue or PR. Sandbox lifecycle assertions should use
+`validation_suites/lib/sandbox_lifecycle.sh`, consume
+`$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks
+isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios
+such as GPU, macOS, WSL, Brev, or DGX Spark must also list
+`runner_requirements` in `scenarios.yaml`.
 
 Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.

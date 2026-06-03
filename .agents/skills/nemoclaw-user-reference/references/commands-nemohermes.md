@@ -1,21 +1,12 @@
----
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-title: "NemoHermes CLI Commands Reference"
-sidebar-title: "Commands"
-description: "Full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands."
-description-agent: "Includes the full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands. Use when looking up a specific `nemohermes` subcommand, flag, argument, or exit code."
-keywords: ["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]
-content:
-  type: "reference"
----
-{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+# NemoHermes CLI Commands Reference
 
 The `nemohermes` alias is the primary interface for managing Hermes sandboxes through NemoClaw.
 It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash`).
 Most commands in this reference use the same arguments and subcommands across agent variants.
 Use `nemohermes` when you want Hermes selected by default.
-For guidance on choosing between the agent CLIs and the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide).
+For guidance on choosing between the agent CLIs and the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide.md).
 
 ## Agent Selection
 
@@ -95,10 +86,10 @@ This clears stale or failed session state before NemoClaw creates a new session 
 The installer also accepts `--fresh` and forwards it to `nemohermes onboard`, which skips automatic resume detection.
 `--resume` and `--fresh` are mutually exclusive.
 
-<Warning>
+**Warning:**
+
 For NemoClaw-managed environments, use `nemohermes onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemohermes onboard`.
-</Warning>
 
 Use `--fresh` to ignore any saved onboarding session and restart the wizard from scratch. This is useful after an interrupted `nemohermes onboard` run when you want to discard saved state instead of continuing it with `--resume`.
 
@@ -116,7 +107,7 @@ To perform those steps manually, run `nemohermes backup-all`, retire the old gat
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
-Credentials are registered with the OpenShell gateway and never persisted to host disk. See [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
+Credentials are registered with the OpenShell gateway and never persisted to host disk. See Credential Storage (use the `nemoclaw-user-configure-security` skill) for details on inspection, rotation, and migration from earlier releases.
 The legacy `nemohermes setup` command is deprecated; use `nemohermes onboard` instead.
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
@@ -130,7 +121,7 @@ Three tiers are available:
 | Open | Broad access across third-party services including messaging and productivity. Agent-specific unsupported presets are filtered out. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
-For details on tiers and the presets each includes, see [Network Policies](network-policies#policy-tiers).
+For details on tiers and the presets each includes, see [Network Policies](network-policies.md#policy-tiers).
 When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
 Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
@@ -346,10 +337,10 @@ nemohermes list --json
 
 ### `nemohermes deploy`
 
-<Warning>
+**Warning:**
+
 The `nemohermes deploy` command is deprecated.
 Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemohermes onboard` on that host.
-</Warning>
 
 Deploy NemoClaw to a remote GPU instance through [Brev](https://brev.nvidia.com).
 This command remains as a compatibility wrapper for the older Brev-specific bootstrap flow.
@@ -517,22 +508,6 @@ Use `--json` for machine-readable output.
 nemohermes my-assistant doctor [--json]
 ```
 
-### `nemohermes <name> exec`
-
-Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
-Use `--` to separate `exec` options from the command you want to run inside the sandbox.
-
-```bash
-nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--workdir <dir>` | Set the working directory inside the sandbox |
-| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
-| `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
-
 ### `nemohermes <name> logs`
 
 View sandbox logs.
@@ -566,12 +541,12 @@ Stop the NIM container, remove the host-side Docker image built during onboard, 
 This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
-<Warning>
+**Warning:**
+
 This command permanently deletes the sandbox **and its persistent volume**.
-All [workspace files](../manage-sandboxes/workspace-files) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
-Back up your workspace first with `nemohermes <name> snapshot create` or see [Backup and Restore](../manage-sandboxes/backup-restore).
+All workspace files (use the `nemoclaw-user-manage-sandboxes` skill) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+Back up your workspace first with `nemohermes <name> snapshot create` or see Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill).
 If you want to upgrade the sandbox while preserving state, use `nemohermes <name> rebuild` instead.
-</Warning>
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
@@ -1100,7 +1075,7 @@ When `--to` names an existing sandbox, restore refuses to overwrite it unless yo
 With `--force`, NemoClaw confirms the destructive restore unless you also pass `--yes` or run with `NEMOCLAW_NON_INTERACTIVE=1`.
 Use this path only when the destination sandbox can be replaced by the selected snapshot.
 
-### `nemohermes <name> share mount`
+## `nemohermes <name> share mount`
 
 Mount the sandbox filesystem on the host machine via SSHFS for bidirectional file sharing.
 Files edited on the host appear instantly inside the sandbox, and vice versa.
@@ -1129,7 +1104,7 @@ Prerequisites:
 nemohermes my-assistant share mount /sandbox/workspace ~/my-workspace
 ```
 
-### `nemohermes <name> share unmount`
+## `nemohermes <name> share unmount`
 
 Unmount a previously mounted sandbox filesystem.
 
@@ -1203,17 +1178,17 @@ nemohermes tunnel stop
 
 ### `nemohermes start`
 
-<Warning>
+**Warning:**
+
 Deprecated. Use `nemohermes tunnel start` instead.
-</Warning>
 
 This command remains as a compatibility alias to `nemohermes tunnel start`.
 
 ### `nemohermes stop`
 
-<Warning>
+**Warning:**
+
 Deprecated. Use `nemohermes tunnel stop` instead.
-</Warning>
 
 This command remains as a compatibility alias to `nemohermes tunnel stop`.
 
@@ -1271,10 +1246,10 @@ Use `--no-verify` only when OpenShell cannot verify the provider at switch time 
 
 ### `nemohermes setup`
 
-<Warning>
+**Warning:**
+
 The `nemohermes setup` command is deprecated.
 Use `nemohermes onboard` instead.
-</Warning>
 
 This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
@@ -1284,10 +1259,10 @@ nemohermes setup
 
 ### `nemohermes setup-spark`
 
-<Warning>
+**Warning:**
+
 The `nemohermes setup-spark` command is deprecated.
 Use the standard installer and run `nemohermes onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
-</Warning>
 
 This command remains as a compatibility alias to `nemohermes onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
@@ -1380,14 +1355,14 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 nemohermes uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
-##### User-data preservation under `~/.nemoclaw/`
+#### User-data preservation under `~/.nemoclaw/`
 
 To avoid uninstall destroying host-side user data, uninstall preserves the following entries under `~/.nemoclaw/` by default:
 
 | Entry | What it holds |
 |---|---|
 | `rebuild-backups/` | Host-side snapshots that `nemohermes <name> snapshot create` and `nemohermes backup-all` write. `nemohermes <name> snapshot restore` reads them back after you reinstall. |
-| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see [Backup and Restore](../manage-sandboxes/backup-restore)). |
+| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill)). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
