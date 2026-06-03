@@ -6,6 +6,17 @@ import type { OnboardMachineTransitionKind, OnboardNonTerminalMachineState } fro
 
 export type OnboardStateResultTransitionKind = Exclude<OnboardMachineTransitionKind, "failure">;
 
+export interface OnboardStateTransitionOptions {
+  transitionKind?: OnboardStateResultTransitionKind;
+  updates?: SessionUpdates;
+  metadata?: Record<string, unknown> | null;
+}
+
+export type OnboardStateTransitionHelperOptions = Omit<
+  OnboardStateTransitionOptions,
+  "transitionKind"
+>;
+
 export interface OnboardStateTransitionResult {
   type: "transition";
   next: OnboardNonTerminalMachineState;
@@ -34,11 +45,7 @@ export type OnboardStateResult =
 
 export function transitionTo(
   next: OnboardNonTerminalMachineState,
-  options: {
-    transitionKind?: OnboardStateResultTransitionKind;
-    updates?: SessionUpdates;
-    metadata?: Record<string, unknown> | null;
-  } = {},
+  options: OnboardStateTransitionOptions = {},
 ): OnboardStateTransitionResult {
   return {
     type: "transition",
@@ -51,21 +58,21 @@ export function transitionTo(
 
 export function advanceTo(
   next: OnboardNonTerminalMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "advance" });
 }
 
 export function retryTo(
   next: OnboardNonTerminalMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "retry" });
 }
 
 export function branchTo(
   next: OnboardNonTerminalMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "branch" });
 }

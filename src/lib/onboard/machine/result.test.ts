@@ -8,9 +8,10 @@ import {
   branchTo,
   completeOnboardMachine,
   failOnboardMachine,
+  type OnboardStateResultTransitionKind,
+  type OnboardStateTransitionHelperOptions,
   retryTo,
   transitionTo,
-  type OnboardStateResultTransitionKind,
 } from "./result";
 import type { OnboardNonTerminalMachineState } from "./types";
 
@@ -53,6 +54,24 @@ describe("onboard state result helpers", () => {
       next: "agent_setup",
       transitionKind: "branch",
     });
+  });
+
+  it("type-checks helper options without accepting transition kind overrides", () => {
+    expectTypeOf(advanceTo).parameter(1).toEqualTypeOf<
+      OnboardStateTransitionHelperOptions | undefined
+    >();
+
+    advanceTo("preflight", {
+      updates: { sandboxName: "my-assistant" },
+      metadata: { reason: "typed" },
+    });
+
+    // @ts-expect-error transitionKind is controlled by each specialized helper.
+    advanceTo("preflight", { transitionKind: "retry" });
+    // @ts-expect-error updates must match the persisted onboarding session shape.
+    retryTo("provider_selection", { updates: { unknown: "value" } });
+    // @ts-expect-error metadata must be an object or null.
+    branchTo("agent_setup", { metadata: "bad" });
   });
 
   it("builds terminal completion and failure results", () => {
