@@ -1709,6 +1709,10 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export through the `diagnostics-otel` plugin. Disabled by default. |
+| `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT` | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to `http://host.openshell.internal:4318` when `NEMOCLAW_OPENCLAW_OTEL=1`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME` | service name | Sets the OTEL `service.name` for OpenClaw gateway spans. Defaults to `openclaw-gateway`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE` | `0.0` to `1.0` | Sets OpenClaw's root-span sample rate for conversation diagnostics. Defaults to `1.0`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
@@ -1838,6 +1842,28 @@ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json nemoclaw onboard
 
 Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
+
+### OpenClaw Conversation OTEL Diagnostics
+
+Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to enable runtime conversation traces through OpenClaw's `diagnostics-otel` plugin.
+This is separate from `NEMOCLAW_TRACE`, which records NemoClaw onboarding phases to a local JSON file.
+NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metrics and logs are disabled, and prompt/tool content capture is not enabled.
+
+For a local Jaeger collector:
+
+```console
+$ docker run --rm --name nemoclaw-jaeger \
+    -e COLLECTOR_OTLP_ENABLED=true \
+    -p 16686:16686 \
+    -p 4318:4318 \
+    jaegertracing/all-in-one:1.57
+$ NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
+$ nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes
+```
+
+Then open `http://localhost:16686` and select the `openclaw-gateway` service.
+The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` to `host.openshell.internal:4318`.
+For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
 
 ### Probe Timeouts
 

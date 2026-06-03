@@ -1170,6 +1170,21 @@ ensure_supported_runtime() {
   info "Runtime OK: Node.js ${node_version}, npm ${npm_version}"
 }
 
+# Fail fast when a host dependency that scripts/install-openshell.sh relies on
+# is missing, before any clone/build/download work. install-openshell.sh uses
+# `strings` (binutils) to confirm the OpenShell CLI binary carries the
+# credential-rewrite endpoints; without it the install ran for ~5 minutes
+# (Node.js, clone, npm install, tsc build, OpenShell download + checksum)
+# only to abort at the final verification step (#4415). Skip when the OpenShell
+# install is deferred: that flag postpones all OpenShell work to a later phase
+# where install-openshell.sh runs the same `strings` check itself.
+ensure_openshell_build_deps() {
+  if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+    return 0
+  fi
+  command_exists strings || error "'strings' (from binutils) is required to install and verify OpenShell. Install it first (Debian/Ubuntu: sudo apt-get install -y binutils) and re-run the installer."
+}
+
 # ---------------------------------------------------------------------------
 # 1. Node.js
 # ---------------------------------------------------------------------------
@@ -2457,6 +2472,7 @@ main() {
   preflight_usage_notice_prompt
 
   ensure_docker
+  ensure_openshell_build_deps
 
   # Offer express install on supported platforms (DGX Spark / Station / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
