@@ -132,6 +132,23 @@ function runTirithMarkerBootstrap(opts: {
   }
 }
 
+const LOCKED_HERMES_CONFIG_STAT_MOCK = [
+  "stat() {",
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
+  '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
+  '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
+  '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
+  "    ;;",
+  "  esac",
+  '  command stat "$@"',
+  "}",
+].join("\n");
+
 function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   const pidDir = path.join(procRoot, String(pid));
   fs.mkdirSync(pidDir, { recursive: true });
@@ -217,24 +234,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `NEMOCLAW_PROC_ROOT=${shellQuote(procRoot)}`,
-      opts.lockedConfigRoot || opts.rootOwnedConfigRoot
-        ? [
-            'stat() {',
-            '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-            '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-            '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-            '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-            '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
-            '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
-            '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
-            '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
-            '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
-            '    ;;',
-            '  esac',
-            '  command stat "$@"',
-            '}',
-          ].join("\n")
-        : "",
+      opts.lockedConfigRoot || opts.rootOwnedConfigRoot ? LOCKED_HERMES_CONFIG_STAT_MOCK : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
       "HERMES_DASHBOARD_PUBLIC_PORT=9119",
@@ -481,24 +481,7 @@ function runShieldsUpRuntimeEnv(opts: {
   }
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const statMock = opts.locked
-    ? [
-        "stat() {",
-        '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-        '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-        '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
-        '  if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "755\\n"; return 0; fi',
-        '  case "${3:-}" in "$HERMES_DIR/config.yaml"|"$HERMES_DIR/.env")',
-        '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ]; then printf "root:root\\n"; return 0; fi',
-        '    if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%a" ]; then printf "444\\n"; return 0; fi',
-        '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Su:%Sg" ]; then printf "root:root\\n"; return 0; fi',
-        '    if [ "${1:-}" = "-f" ] && [ "${2:-}" = "%Lp" ]; then printf "444\\n"; return 0; fi',
-        '    ;;',
-        '  esac',
-        '  command stat "$@"',
-        "}",
-      ].join("\n")
-    : "";
+  const statMock = opts.locked ? LOCKED_HERMES_CONFIG_STAT_MOCK : "";
   const presetLine =
     opts.presetValue === undefined
       ? "unset HERMES_KANBAN_DISPATCH_IN_GATEWAY"
