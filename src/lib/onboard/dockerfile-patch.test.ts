@@ -190,7 +190,12 @@ describe("dockerfile patch helpers", () => {
     );
 
     const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    const compat = patched.match(/^ARG NEMOCLAW_INFERENCE_COMPAT_B64=(.+)$/m)?.[1];
     expect(patched).toContain("ARG NEMOCLAW_INFERENCE_BASE_URL=http://127.0.0.1:11434/v1");
+    expect(compat).toBeDefined();
+    expect(Buffer.from(compat || "", "base64").toString("utf-8")).toBe(
+      JSON.stringify({ supportsUsageInStreaming: true }),
+    );
   });
 
   it("strips CR/LF from Dockerfile ARG interpolations", () => {

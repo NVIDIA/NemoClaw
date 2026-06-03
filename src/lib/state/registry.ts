@@ -31,6 +31,12 @@ export interface SandboxEntry {
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
+  // True once the onboard policy step has fully completed and reconciled the
+  // effective preset selection (set by the post-policy registry write). Absent
+  // on a sandbox whose registration recorded only boot-time presets but whose
+  // policy step never finished — so re-onboard knows whether `policies`
+  // represents a final selection it can carry forward. See #4621.
+  policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
   imageTag?: string | null;
@@ -216,6 +222,11 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      // policyPresetsFinalized is intentionally not set here: registration means
+      // the policy step has not completed for this entry. It is stamped only by
+      // the post-policy registry write (see policy-preset-persistence), so a
+      // snapshot clone (which spreads the source entry but resets `policies`)
+      // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,

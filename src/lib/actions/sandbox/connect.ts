@@ -14,12 +14,16 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import * as agentRuntime from "../../agent/runtime";
-import { parseGatewayInference } from "../../inference/config";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import {
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+  sanitizeRouteValueForDisplay,
+} from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
-import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   ensureOllamaAuthProxy,
   probeOllamaAuthProxyHealth,
@@ -39,8 +43,8 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
@@ -582,17 +586,36 @@ function ensureSandboxInferenceRoute(
           timeout: OPENSHELL_PROBE_TIMEOUT_MS,
         }).output,
       );
-      if (!live || live.provider !== sb.provider || live.model !== sb.model) {
-        if (!quiet) {
+      const plan = planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model });
+      if (plan.kind !== "aligned") {
+        if (plan.kind === "diverged") {
+          // Shared gateway: re-point loudly (even when quiet) — silent revert was
+          // #3726. Values sanitized: registry/gateway strings are untrusted.
+          const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
+          const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
+          const recordedRoute = `${sanitizeRouteValueForDisplay(sb.provider)}/${sanitizeRouteValueForDisplay(sb.model)}`;
+          console.error(
+            `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
+              `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
+          );
+          console.error(
+            `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
+              `${liveProvider}/${liveModel}, set it the supported way:${R}`,
+          );
+          console.error(
+            `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+          );
+        } else if (!quiet) {
+          // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
           console.log(
-            `  Switching inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
+            `  Setting inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
           );
         }
         const swapResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
           ignoreError: true,
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         });
-        if (swapResult.status !== 0 && !quiet) {
+        if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
           console.error(
             `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
           );

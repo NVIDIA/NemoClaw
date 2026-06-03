@@ -15,7 +15,7 @@ Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs H
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
 Review the [Prerequisites](prerequisites) before starting.
-Docker must be installed, running, and reachable from the current shell before Hermes onboarding can build the sandbox image.
+Install Docker, start it, and verify that the current shell can reach it before Hermes onboarding builds the sandbox image.
 On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
 If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
 On macOS, start Docker Desktop or Colima before you run the installer.
@@ -109,8 +109,7 @@ nemohermes onboard
 The dashboard uses port `9119` by default.
 Set `NEMOCLAW_HERMES_DASHBOARD_PORT` before onboarding to choose a different port.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` to enable Hermes' optional in-browser TUI tab.
-For upstream dashboard features, see the
-[Hermes web dashboard documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
+For upstream dashboard features, refer to the [Hermes web dashboard documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
 
 ```text
 ──────────────────────────────────────────────────
@@ -177,7 +176,7 @@ Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
 
 ## Open the Optional Dashboard
 
-When `NEMOCLAW_HERMES_DASHBOARD=1` is set during onboarding, NemoClaw starts `hermes dashboard --no-open` inside the sandbox and forwards `http://127.0.0.1:9119/` on the host.
+When you set `NEMOCLAW_HERMES_DASHBOARD=1` during onboarding, NemoClaw starts `hermes dashboard --no-open` inside the sandbox and forwards `http://127.0.0.1:9119/` on the host.
 The API endpoint remains separate on `8642`.
 
 If the dashboard forward is missing after a reboot or terminal restart, start it again:
