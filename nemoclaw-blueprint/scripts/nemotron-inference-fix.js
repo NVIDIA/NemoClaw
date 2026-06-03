@@ -25,6 +25,35 @@
 //   Scoped strictly to known affected models — all other requests pass
 //   through untouched. Backends that do not support chat_template_kwargs
 //   silently ignore the extra field per the OpenAI-compatible API contract.
+//
+// Source-of-truth / removal contract (NemoClaw#4063):
+//   Invalid state: sandboxed OpenClaw channel clients can send NVIDIA Build
+//   OpenAI-compatible chat-completions requests for DeepSeek V4 Pro / Kimi
+//   K2.6 without `chat_template_kwargs.thinking=false`, which routes simple
+//   channel prompts through the slow thinking path observed as multi-minute
+//   Discord and WeChat latency.
+//
+//   Source boundary: NemoClaw owns the sandbox entrypoint and preload layer,
+//   while the request origin may be OpenClaw, OpenAI-compatible SDKs, or other
+//   bundled channel clients that choose either http.request()/https.request()
+//   or Node's fetch()/undici transport. The NVIDIA endpoint chat-template
+//   contract is outside this repository.
+//
+//   Why not fix only at the origin: the same sandbox must protect multiple
+//   client transports and third-party SDK versions without vendoring OpenClaw
+//   or every OpenAI-compatible caller. A preload keeps the workaround local to
+//   sandboxed chat-completions traffic until the upstream clients/providers
+//   always emit the model-specific kwargs themselves.
+//
+//   Regression proof: test/nemotron-inference-fix.test.ts covers the helper
+//   logic, the http/https path, and a real Node fetch/undici request to a local
+//   OpenAI-compatible endpoint that rejects stale Content-Length unless this
+//   wrapper strips it and injects the DeepSeek/Kimi kwargs.
+//
+//   Removal condition: remove this preload branch once the upstream client or
+//   provider configuration always sends the required model-specific kwargs (or
+//   NVIDIA Build no longer requires them) and the DeepSeek/Kimi channel latency
+//   validation passes without the monkeypatch.
 
 (function () {
   'use strict';

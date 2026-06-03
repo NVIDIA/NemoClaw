@@ -1909,7 +1909,10 @@ fi
 # field silently ignore it (OpenAI-compatible contract).
 #
 # Scoped strictly to known affected models: unrelated requests pass through
-# completely untouched.
+# completely untouched. This sandbox preload is the source-boundary workaround
+# until upstream clients/providers always emit these model-specific kwargs; see
+# nemoclaw-blueprint/scripts/nemotron-inference-fix.js for the invalid state,
+# regression proof, and removal condition.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE"
