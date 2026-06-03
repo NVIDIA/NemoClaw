@@ -84,10 +84,16 @@ except Exception as exc:
         e2e_pass "expected-state.messaging.slack.hermes-platforms-enabled platforms.slack.enabled true in config.yaml"
         ;;
       yaml-missing)
-        if printf '%s\n' "${config_yaml}" | grep -E '^[[:space:]]*slack:[[:space:]]*$' -A2 | grep -qE '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$'; then
-          e2e_pass "expected-state.messaging.slack.hermes-platforms-enabled platforms.slack.enabled true (grep fallback; yaml module absent)"
+        if printf '%s\n' "${config_yaml}" | awk '
+          /^platforms:[[:space:]]*$/ { in_pl=1; next }
+          /^[^[:space:]#]/            { in_pl=0; in_sl=0 }
+          in_pl && /^[[:space:]]+slack:[[:space:]]*$/ { in_sl=1; next }
+          in_pl && /^[[:space:]]+[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*$/ { in_sl=0 }
+          in_sl && /^[[:space:]]+enabled:[[:space:]]*true[[:space:]]*$/ { print "match"; exit 0 }
+        ' | grep -q "match"; then
+          e2e_pass "expected-state.messaging.slack.hermes-platforms-enabled platforms.slack.enabled true (awk fallback; yaml module absent)"
         else
-          e2e_fail "expected-state.messaging.slack.hermes-platforms-enabled platforms.slack.enabled missing (grep fallback; yaml module absent)"
+          e2e_fail "expected-state.messaging.slack.hermes-platforms-enabled platforms.slack.enabled missing under platforms (awk fallback; yaml module absent)"
         fi
         ;;
       *)
@@ -99,7 +105,7 @@ except Exception as exc:
     if [[ -z "${gateway_log}" ]]; then
       e2e_fail "expected-state.messaging.slack.hermes-gateway-running could not read /sandbox/.hermes/logs/gateway.log"
     fi
-    if printf '%s\n' "${gateway_log}" | grep -qE 'Gateway running with [^1] platform\(s\)|Connecting to slack|\[Slack\] Socket Mode connected'; then
+    if printf '%s\n' "${gateway_log}" | grep -qE 'Connecting to slack|\[Slack\] Socket Mode connected|\[Slack\] Authenticated as|slack_bolt\.AsyncApp.*Bolt app is running'; then
       e2e_pass "expected-state.messaging.slack.hermes-gateway-running gateway booted slack platform"
     else
       e2e_fail "expected-state.messaging.slack.hermes-gateway-running gateway log shows slack platform never started (tail: ${gateway_log: -300})"
