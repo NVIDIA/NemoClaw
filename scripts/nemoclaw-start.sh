@@ -673,13 +673,17 @@ ensure_mutable_openclaw_config_hash() {
   # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
   # cannot bypass the sandbox-only write bit and the redirection
   # aborts with EACCES, so step down to the file's owner for the write.
-  local run_prefix=()
-  if [ "$(id -u)" -eq 0 ]; then
-    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
-  fi
-
   # shellcheck disable=SC2016  # positional params are expanded by the inner sh
-  if ! "${run_prefix[@]}" sh -c '
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
+      cd "$1" || exit 1
+      sha256sum openclaw.json >".config-hash" || exit 1
+      chmod 660 ".config-hash" 2>/dev/null || true
+    ' _ "$config_dir"; then
+      printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+      return 1
+    fi
+  elif ! sh -c '
     cd "$1" || exit 1
     sha256sum openclaw.json >".config-hash" || exit 1
     chmod 660 ".config-hash" 2>/dev/null || true
@@ -1898,14 +1902,17 @@ fi
 # thinking mode disabled for NemoClaw's OpenAI-compatible
 # chat-completions path.
 #
-# The preload wraps http.request() — the lowest common denominator every
-# HTTP client bottoms out at — buffers the JSON body for POST requests
-# to /v1/chat/completions, and injects model-specific kwargs for the affected
-# NVIDIA endpoint models. Backends that do not recognise the extra field
-# silently ignore it (OpenAI-compatible contract).
+# The preload wraps http.request()/https.request() plus fetch() because modern
+# OpenAI-compatible clients may use either transport. It buffers JSON bodies for
+# POST requests to /v1/chat/completions and injects model-specific kwargs for the
+# affected NVIDIA endpoint models. Backends that do not recognise the extra
+# field silently ignore it (OpenAI-compatible contract).
 #
 # Scoped strictly to known affected models: unrelated requests pass through
-# completely untouched.
+# completely untouched. This sandbox preload is the source-boundary workaround
+# until upstream clients/providers always emit these model-specific kwargs; see
+# nemoclaw-blueprint/scripts/nemotron-inference-fix.js for the invalid state,
+# regression proof, and removal condition.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE"
