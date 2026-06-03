@@ -376,39 +376,96 @@ ensure_hermes_state_dir() {
 ensure_hermes_history_file() {
   local file="$1"
   local mode="$2"
-  local nlinks
 
-  if [ -L "$file" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${file} is a symlink" >&2
-    return 1
-  fi
-  if [ -e "$file" ] && [ ! -f "$file" ]; then
-    echo "[SECURITY] Refusing Hermes layout repair because ${file} is not a regular file" >&2
-    return 1
-  fi
+  # Use a no-follow fd workflow instead of check-then-use shell path
+  # operations. /sandbox/.hermes is intentionally sandbox-writable while
+  # shields are down, so root must not validate the pathname and then later
+  # chown/chmod whatever an agent swaps into that path. Python gives us
+  # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
+  NEMOCLAW_HERMES_HISTORY_FILE="$file" \
+    NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
+    python3 - <<'PYHISTORY'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
 
-  # Reject hard-linked targets. An attacker who controls the sandbox user
-  # before shields-up can pre-create .hermes_history as a hard link to
-  # config.yaml or .env. Both -L and -f pass, so without this guard the
-  # subsequent chown sandbox:sandbox + chmod 660 would walk the shared
-  # inode and silently undo the shields-up root:root 0444 lock on the
-  # config file after verify_config_integrity has already passed.
-  if [ -e "$file" ]; then
-    nlinks="$(stat -c '%h' "$file" 2>/dev/null || stat -f '%l' "$file" 2>/dev/null || true)"
-    if [ "${nlinks:-}" != "1" ]; then
-      echo "[SECURITY] Refusing Hermes layout repair because ${file} has hard-link count ${nlinks:-unknown}" >&2
-      return 1
-    fi
-  fi
+path = os.environ["NEMOCLAW_HERMES_HISTORY_FILE"]
+mode_text = os.environ["NEMOCLAW_HERMES_HISTORY_MODE"]
+try:
+    mode = int(mode_text, 8)
+except ValueError:
+    print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
+    sys.exit(1)
 
-  if [ ! -e "$file" ]; then
-    : >"$file" || return 1
-  fi
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+    sys.exit(1)
 
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$file"
-  fi
-  chmod "$mode" "$file"
+flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+
+
+def describe_unsafe_existing_path() -> str:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "could not be opened safely"
+    if stat.S_ISLNK(st.st_mode):
+        return "is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a regular file"
+    return "could not be opened safely"
+
+try:
+    fd = os.open(path, flags, mode)
+except OSError as exc:
+    reason = describe_unsafe_existing_path()
+    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject hard-linked targets. An attacker who controls the sandbox user
+    # before shields-up can pre-create .hermes_history as a hard link to
+    # config.yaml or .env. O_NOFOLLOW and regular-file checks pass, so without
+    # this guard fchown/fchmod would walk the shared inode and silently undo
+    # the shields-up root:root 0444 lock on the config file after
+    # verify_config_integrity has already passed.
+    if st.st_nlink != 1:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {st.st_nlink}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.geteuid() == 0:
+        try:
+            uid = pwd.getpwnam("sandbox").pw_uid
+            gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        os.fchown(fd, uid, gid)
+    os.fchmod(fd, mode)
+
+    st = os.fstat(fd)
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.close(fd)
+PYHISTORY
 }
 
 repair_hermes_startup_layout() {

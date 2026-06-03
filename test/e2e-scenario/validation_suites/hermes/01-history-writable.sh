@@ -10,10 +10,13 @@
 # user can only succeed when the file exists as a sandbox-owned regular
 # file before shields-up engages. The probe reproduces the exact
 # open(filename, "ab") call against the running sandbox and asserts the
-# write succeeds in both shields-down and shields-up states. The step
-# leaves shields-up engaged on exit when it had to toggle, because the
-# hermes-specific suite runs last in the scenario plan and the scenario
-# teardown owns sandbox cleanup.
+# write succeeds in both shields-down and shields-up states. This is the
+# accepted scenario-level proxy for #2432's interactive `/exit` symptom: the
+# reported `/exit` loop was caused by this append failing after every input
+# buffer reset, while a full TUI pty+provider conversation would be much more
+# brittle in the generic scenario fan-out. The step leaves shields-up engaged
+# on exit when it had to toggle, because the hermes-specific suite runs last
+# in the scenario plan and the scenario teardown owns sandbox cleanup.
 
 set -euo pipefail
 
