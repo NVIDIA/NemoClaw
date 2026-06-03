@@ -66,7 +66,11 @@ clone_nemoclaw_ref() {
 
   git init --quiet "$dest"
   git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  git -C "$dest" fetch --quiet --depth 1 origin "$ref"
+  if ! git -C "$dest" fetch --quiet --depth 1 origin "$ref"; then
+    printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
+    printf "        Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+    exit 1
+  fi
   git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
 }
 
@@ -115,6 +119,8 @@ bootstrap_usage() {
   printf "  Environment:\n"
   printf "    NEMOCLAW_INSTALL_REF         Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: lkg)\n"
+  printf "                                 In curl pipes, set this on bash or export it first.\n"
+  printf "                                 Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"

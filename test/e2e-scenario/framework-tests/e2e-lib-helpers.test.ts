@@ -751,13 +751,16 @@ describe("Phase 1.C fixtures", () => {
   });
 
   it("older_base_image_should_emit_dockerfile_pointing_at_tagged_base", () => {
-    const r = runBash(`
+    const r = runBash(
+      `
       set -euo pipefail
       . "${FIXTURES}/older-base-image.sh"
       df="$(older_base_image_prepare v0.0.1-test)"
       echo "DF=$df"
       head -n1 "$df"
-    `);
+    `,
+      { E2E_DRY_RUN: "1" },
+    );
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/^FROM .*:v0\.0\.1-test/m);
   });

@@ -93,6 +93,8 @@ suites:
     steps:
     - id: hermes-health
       script: hermes/00-hermes-health.sh
+    - id: hermes-history-writable
+      script: hermes/01-history-writable.sh
   gateway-health:
     requires_state: *id001
     steps: *id002
