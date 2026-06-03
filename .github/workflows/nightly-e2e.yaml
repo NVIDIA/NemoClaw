@@ -257,6 +257,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -360,6 +361,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -428,6 +430,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -695,6 +698,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -767,6 +771,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -847,6 +852,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1103,6 +1109,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1601,6 +1608,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1702,6 +1710,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1720,7 +1729,6 @@ jobs:
             exit 0
           fi
           echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
-          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1760,6 +1768,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1778,7 +1787,6 @@ jobs:
             exit 0
           fi
           echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
-          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1818,6 +1826,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1836,7 +1845,6 @@ jobs:
             exit 0
           fi
           echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
-          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1876,6 +1884,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1894,7 +1903,6 @@ jobs:
             exit 0
           fi
           echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
-          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1935,6 +1943,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -1953,7 +1962,6 @@ jobs:
             exit 0
           fi
           echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
-          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1994,6 +2002,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -2055,6 +2064,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -2161,6 +2171,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -2238,6 +2249,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch
@@ -2311,6 +2323,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
 
       # Authenticate Docker Hub pulls for sandbox image builds when CI
       # credentials are configured. Withhold credentials from workflow_dispatch

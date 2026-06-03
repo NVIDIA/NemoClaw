@@ -99,10 +99,15 @@ describe("E2E reusable workflow contract", () => {
     ];
 
     for (const name of directE2eJobs) {
+      const checkoutStep = nightlyWorkflow.jobs[name].steps?.find((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
       const authStep = nightlyWorkflow.jobs[name].steps?.find(
         (step) => step.name === "Authenticate to Docker Hub",
       );
 
+      expect(checkoutStep?.with?.ref, name).toBe("${{ inputs.target_ref || github.ref }}");
+      expect(checkoutStep?.with?.["persist-credentials"], name).toBe(false);
       expect(authStep, name).toBeDefined();
       expect(authStep?.if, name).toBe(
         "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}",
@@ -114,6 +119,9 @@ describe("E2E reusable workflow contract", () => {
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
       );
       expect(authStep?.run, name).toContain("docker login docker.io");
+      expect(authStep?.run, name).not.toContain("persist-credentials:");
+      expect(authStep?.run, name).not.toContain("uses:");
+      expect(authStep?.run, name).not.toContain("with:");
     }
   });
 
