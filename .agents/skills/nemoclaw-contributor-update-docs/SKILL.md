@@ -116,6 +116,8 @@ Write the doc update following these conventions:
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
 - **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
+- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In shared OpenClaw/Hermes variant pages, write host CLI examples with the `$$nemoclaw` build-time placeholder so the docs build renders `nemoclaw` on OpenClaw pages and `nemohermes` on Hermes pages before Fern renders fenced code blocks.
+- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when the only difference is `nemoclaw` versus `nemohermes`; keep `<AgentOnly>` only when the surrounding text, flags, behavior, or setup steps actually differ.
 - **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
 - **Include the SPDX header** if creating a new page.
 - **Match existing frontmatter format** if creating a new page.

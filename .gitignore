@@ -7,6 +7,7 @@ __pycache__/
 coverage/
 dist/
 docs/_build/
+docs/**/*.generated.mdx
 node_modules/
 
 # OS metadata
