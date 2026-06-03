@@ -390,7 +390,12 @@ ensure_hermes_history_file() {
 
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    # The locked-root posture seals config.yaml/.env, not the dir, so we can
+    # still bring a missing prompt_toolkit history file into existence as a
+    # sandbox-owned regular file. Sandboxes built before the precreate landed
+    # would otherwise stay broken until the next `shields down` cycle.
+    echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660 || true
     return 0
   fi
 
