@@ -30,6 +30,12 @@ Do not rely on `host.docker.internal` as a general host-service path because it 
 See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
 </Note>
 
+<Warning>
+Adding a host to the egress policy permits the connection only after the endpoint, port, method, and binary rules match.
+OpenShell still applies SSRF protection separately, so a request can be denied if the final address resolves to a loopback, private, link-local, or otherwise blocked internal range.
+If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
+</Warning>
+
 ## Prerequisites
 
 - A running NemoClaw sandbox for dynamic changes, or the NemoClaw source repository for static changes.
