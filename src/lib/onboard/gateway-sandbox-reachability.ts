@@ -20,6 +20,11 @@ import {
   ensureProbeImageCached,
   isDockerDaemonUnreachable,
 } from "./preflight";
+import type { UfwAutoApplyResult } from "./ufw-auto-apply";
+import { isUfwAutoApplyOptedIn, tryAutoApplyUfwRule } from "./ufw-auto-apply";
+
+export type { UfwAutoApplyOptions, UfwAutoApplyResult } from "./ufw-auto-apply";
+export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
 const DEFAULT_PROBE_IMAGE =
   "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
@@ -461,18 +466,63 @@ export function formatSandboxBridgeUnreachableMessage(
   ].join("\n");
 }
 
+interface SandboxBridgeVerifierOptions {
+  skip?: boolean;
+  port?: number;
+  reachabilityImpl?: () => Promise<SandboxBridgeReachabilityResult> | SandboxBridgeReachabilityResult;
+  autoApplyImpl?: (
+    reach: SandboxBridgeReachabilityResult,
+  ) => Promise<UfwAutoApplyResult> | UfwAutoApplyResult;
+  autoApplyOptedInImpl?: () => boolean;
+}
+
+const SILENT_UFW_AUTO_APPLY_REASONS = new Set<UfwAutoApplyResult["reason"]>([
+  "not_opted_in",
+  "ufw_missing",
+  "ufw_inactive",
+]);
+
 export async function verifySandboxBridgeGatewayReachableOrExit(
   exitOnFailure: boolean,
-  options: { skip?: boolean } = {},
+  options: SandboxBridgeVerifierOptions = {},
 ): Promise<void> {
   if (options.skip) {
     console.log("  Docker-driver GPU host networking active; skipping sandbox bridge gateway reachability probe.");
     return;
   }
-  const reach = await isSandboxBridgeGatewayReachable();
+  const port = options.port ?? GATEWAY_PORT;
+  const reachability = options.reachabilityImpl ?? isSandboxBridgeGatewayReachable;
+  const autoApplyOptedIn = options.autoApplyOptedInImpl ?? isUfwAutoApplyOptedIn;
+  const autoApply =
+    options.autoApplyImpl ??
+    ((result: SandboxBridgeReachabilityResult) => tryAutoApplyUfwRule(result, { optedIn: true, port }));
+
+  let reach = await reachability();
   if (reach.ok) return;
 
-  const message = formatSandboxBridgeUnreachableMessage(reach);
+  // #4265: when operator opts in and the probe proved a bridge TCP failure,
+  // try to auto-apply the firewall rule and re-probe before surfacing the
+  // manual-fix message. Do not mutate firewall state for probe helper/DNS
+  // failures, even if route metadata is present.
+  if (reach.routeKind === "bridge_gateway" && reach.reason === "tcp_failed" && autoApplyOptedIn()) {
+    const autoApplyResult = await autoApply(reach);
+    if (autoApplyResult.applied) {
+      const ruleDescription = reach.subnet && reach.gatewayIp
+        ? `allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`
+        : `allow sandbox bridge traffic to port ${port}/tcp`;
+      console.log(
+        `  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): ${ruleDescription}`,
+      );
+      reach = await reachability();
+      if (reach.ok) return;
+    } else if (!SILENT_UFW_AUTO_APPLY_REASONS.has(autoApplyResult.reason)) {
+      console.warn(
+        `  ⚠ NEMOCLAW_AUTO_FIX_FIREWALL=1 set but could not auto-apply UFW rule (${autoApplyResult.reason}${autoApplyResult.detail ? `: ${autoApplyResult.detail}` : ""}); falling back to manual instructions.`,
+      );
+    }
+  }
+
+  const message = formatSandboxBridgeUnreachableMessage(reach, port);
   if (reach.reason === "probe_unavailable") {
     console.warn(message);
     return;

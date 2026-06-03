@@ -46,12 +46,20 @@ resolve_repo_root() {
   printf "%s\n" "$base"
 }
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
+DEFAULT_INSTALL_REF="lkg"
 TOTAL_STEPS=3
+
+is_mutable_install_ref() {
+  case "${1:-}" in
+    latest | lkg | refs/tags/latest | refs/tags/lkg) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 resolve_installer_version() {
   local repo_root
   repo_root="$(resolve_repo_root)"
-  if [[ -n "${NEMOCLAW_INSTALL_REF:-}" && "${NEMOCLAW_INSTALL_REF}" != "latest" ]]; then
+  if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]] && ! is_mutable_install_ref "${NEMOCLAW_INSTALL_REF}"; then
     printf "%s" "${NEMOCLAW_INSTALL_REF#v}"
     return
   fi
@@ -108,16 +116,16 @@ agent_display_name() {
 }
 
 # Resolve which Git ref to install from.
-# Priority: NEMOCLAW_INSTALL_TAG env var > "latest" tag.
+# Priority: NEMOCLAW_INSTALL_TAG env var > lkg tag.
 resolve_release_tag() {
   if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
     printf "%s" "${NEMOCLAW_INSTALL_REF}"
     return
   fi
   # Allow explicit override (for CI, pinning, or testing).
-  # Otherwise default to the "latest" tag, which we maintain to point at
-  # the commit we want everybody to install.
-  printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
+  # Otherwise default to the "lkg" tag, which we maintain to point at
+  # the last-known-good commit we want everybody to install.
+  printf "%s" "${NEMOCLAW_INSTALL_TAG:-$DEFAULT_INSTALL_REF}"
 }
 
 clone_nemoclaw_ref() {
@@ -125,7 +133,9 @@ clone_nemoclaw_ref() {
 
   git init --quiet "$dest"
   git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
-  git -C "$dest" fetch --quiet --depth 1 origin "$ref"
+  if ! git -C "$dest" fetch --quiet --depth 1 origin "$ref"; then
+    error "Requested install ref '$ref' is not available from https://github.com/NVIDIA/NemoClaw.git. Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again."
+  fi
   git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
 }
 
@@ -544,7 +554,10 @@ usage() {
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
-  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
+  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: lkg)\n"
+  printf "                                  In curl pipes, set this on bash or export it first.\n"
+  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
+  printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
   printf "                                  | hermes-provider\n"
@@ -1157,6 +1170,21 @@ ensure_supported_runtime() {
   info "Runtime OK: Node.js ${node_version}, npm ${npm_version}"
 }
 
+# Fail fast when a host dependency that scripts/install-openshell.sh relies on
+# is missing, before any clone/build/download work. install-openshell.sh uses
+# `strings` (binutils) to confirm the OpenShell CLI binary carries the
+# credential-rewrite endpoints; without it the install ran for ~5 minutes
+# (Node.js, clone, npm install, tsc build, OpenShell download + checksum)
+# only to abort at the final verification step (#4415). Skip when the OpenShell
+# install is deferred: that flag postpones all OpenShell work to a later phase
+# where install-openshell.sh runs the same `strings` check itself.
+ensure_openshell_build_deps() {
+  if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+    return 0
+  fi
+  command_exists strings || error "'strings' (from binutils) is required to install and verify OpenShell. Install it first (Debian/Ubuntu: sudo apt-get install -y binutils) and re-run the installer."
+}
+
 # ---------------------------------------------------------------------------
 # 1. Node.js
 # ---------------------------------------------------------------------------
@@ -1405,7 +1433,7 @@ install_nemoclaw() {
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
     fi
     info "Installing ${_CLI_DISPLAY} from GitHub…"
-    # Resolve the latest release tag so we never install raw main.
+    # Resolve the maintained install tag so we never install raw main.
     local release_ref
     release_ref="$(resolve_release_tag)"
     info "Resolved install ref: ${release_ref}"
@@ -2183,6 +2211,30 @@ ensure_docker() {
   fi
 
   if [ "$needs_group_refresh" = "1" ]; then
+    # #4414: in non-interactive mode, self-reactivate group membership via
+    # sg(1) and re-exec the installer so a single curl|bash finishes the
+    # install on a clean Ubuntu VM. Linux only loads group membership at
+    # login, so without this the rest of the script can't talk to the
+    # docker socket. The env-var guard prevents an infinite loop if sg
+    # ran but the docker daemon is still unreachable for some other reason.
+    if installer_non_interactive \
+      && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
+      && command -v sg >/dev/null 2>&1; then
+      local self="${BASH_SOURCE[0]:-$0}"
+      if [ -n "$self" ] && [ -f "$self" ]; then
+        info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
+        export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
+        local cmd
+        printf -v cmd 'exec bash %q' "$self"
+        if [ "${#_NEMOCLAW_INSTALLER_ARGS[@]}" -gt 0 ]; then
+          local arg
+          for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
+            printf -v cmd '%s %q' "$cmd" "$arg"
+          done
+        fi
+        exec sg docker -c "$cmd"
+      fi
+    fi
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
@@ -2363,6 +2415,11 @@ maybe_offer_express_install() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Capture the original argv so ensure_docker can forward it across a
+  # self re-exec under sg(1) when the docker group needs activating in a
+  # non-interactive run (#4414).
+  _NEMOCLAW_INSTALLER_ARGS=("$@")
+
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
@@ -2415,6 +2472,7 @@ main() {
   preflight_usage_notice_prompt
 
   ensure_docker
+  ensure_openshell_build_deps
 
   # Offer express install on supported platforms (DGX Spark / Station / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the

@@ -31,6 +31,14 @@ export interface VersionCheckResult {
 }
 
 /**
+ * Controls whether version checks may use cached metadata or must inspect the sandbox runtime.
+ */
+export interface VersionCheckOptions {
+  forceProbe?: boolean;
+  skipProbe?: boolean;
+}
+
+/**
  * Resolve the agent definition for a sandbox.
  * Falls back to "openclaw" when the sandbox has no agent set.
  */
@@ -55,6 +63,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (sshConfigResult.status !== 0) return null;
+  if (!sshConfigResult.output.trim()) return null;
 
   const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
@@ -89,7 +98,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
  */
 export function checkAgentVersion(
   sandboxName: string,
-  opts?: { forceProbe?: boolean; skipProbe?: boolean },
+  opts?: VersionCheckOptions,
 ): VersionCheckResult {
   const agent = resolveAgentForSandbox(sandboxName);
   const expectedVersion = agent.expectedVersion;

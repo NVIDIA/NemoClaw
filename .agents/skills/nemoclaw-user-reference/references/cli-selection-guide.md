@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# CLI Selection Guide
+# Choose Between NemoClaw and OpenShell CLIs
 
 NemoClaw uses two host-side CLIs.
 Use `nemoclaw` for NemoClaw-managed workflows.
@@ -21,52 +21,52 @@ Use `nemoclaw` for operations where NemoClaw adds product-specific state, safety
 
 - Install, onboard, or recreate a NemoClaw sandbox:
 
-  ```console
-  $ nemoclaw onboard
-  $ nemoclaw onboard --resume --recreate-sandbox
+  ```bash
+  nemoclaw onboard
+  nemoclaw onboard --resume --recreate-sandbox
   ```
 
 - List, connect to, check, or delete NemoClaw-managed sandboxes:
 
-  ```console
-  $ nemoclaw list
-  $ nemoclaw my-assistant connect
-  $ nemoclaw my-assistant status
-  $ nemoclaw my-assistant logs --follow
-  $ nemoclaw my-assistant destroy
+  ```bash
+  nemoclaw list
+  nemoclaw my-assistant connect
+  nemoclaw my-assistant status
+  nemoclaw my-assistant logs --follow
+  nemoclaw my-assistant destroy
   ```
 
 - Rebuild or upgrade while preserving workspace state:
 
-  ```console
-  $ nemoclaw my-assistant rebuild
-  $ nemoclaw upgrade-sandboxes --check
+  ```bash
+  nemoclaw my-assistant rebuild
+  nemoclaw upgrade-sandboxes --check
   ```
 
 - Snapshot, restore, or mount sandbox state:
 
-  ```console
-  $ nemoclaw my-assistant snapshot create --name before-change
-  $ nemoclaw my-assistant snapshot restore before-change
-  $ nemoclaw my-assistant share mount
+  ```bash
+  nemoclaw my-assistant snapshot create --name before-change
+  nemoclaw my-assistant snapshot restore before-change
+  nemoclaw my-assistant share mount
   ```
 
 - Add or remove NemoClaw policy presets:
 
-  ```console
-  $ nemoclaw my-assistant policy-add pypi --yes
-  $ nemoclaw my-assistant policy-list
-  $ nemoclaw my-assistant policy-remove pypi --yes
+  ```bash
+  nemoclaw my-assistant policy-add pypi --yes
+  nemoclaw my-assistant policy-list
+  nemoclaw my-assistant policy-remove pypi --yes
   ```
 
 - Manage NemoClaw messaging channels, credentials, diagnostics, and cleanup:
 
-  ```console
-  $ nemoclaw my-assistant channels add slack
-  $ nemoclaw credentials list
-  $ nemoclaw credentials reset nvidia-prod
-  $ nemoclaw debug --sandbox my-assistant
-  $ nemoclaw gc --dry-run
+  ```bash
+  nemoclaw my-assistant channels add slack
+  nemoclaw credentials list
+  nemoclaw credentials reset nvidia-prod
+  nemoclaw debug --sandbox my-assistant
+  nemoclaw gc --dry-run
   ```
 
 ## Use `openshell` For OpenShell Operations
@@ -75,40 +75,40 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
 
 - Open the OpenShell TUI for network approvals and live activity:
 
-  ```console
-  $ openshell term
+  ```bash
+  openshell term
   ```
 
 - Manage dashboard or service port forwards:
 
-  ```console
-  $ openshell forward start --background <port> <sandbox-name>
-  $ openshell forward list
+  ```bash
+  openshell forward start --background <port> <sandbox-name>
+  openshell forward list
   ```
 
 - Inspect the underlying sandbox state:
 
-  ```console
-  $ openshell sandbox list
-  $ openshell sandbox get <sandbox-name>
-  $ openshell logs <sandbox-name> -n 20
-  $ openshell doctor check
+  ```bash
+  openshell sandbox list
+  openshell sandbox get <sandbox-name>
+  openshell logs <sandbox-name> -n 20
+  openshell doctor check
   ```
 
 - Run one-off commands or move files without starting a NemoClaw chat session:
 
-  ```console
-  $ openshell sandbox exec -n <sandbox-name> -- ls -la /sandbox
-  $ openshell sandbox upload <sandbox-name> ./local-file /sandbox/
-  $ openshell sandbox download <sandbox-name> /sandbox/output ./output
+  ```bash
+  openshell sandbox exec -n <sandbox-name> -- ls -la /sandbox
+  openshell sandbox upload <sandbox-name> ./local-file /sandbox/
+  openshell sandbox download <sandbox-name> /sandbox/output ./output
   ```
 
 - Inspect or replace raw OpenShell policy:
 
-  ```console
-  $ openshell policy get --full <sandbox-name> > live-policy.yaml
-  $ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
-  $ openshell policy set --policy live-policy.yaml <sandbox-name>
+  ```bash
+  openshell policy get --full <sandbox-name> > live-policy.yaml
+  openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+  openshell policy set --policy live-policy.yaml <sandbox-name>
   ```
 
 `openshell policy update` merges specific endpoint and rule changes into the live sandbox policy.
@@ -136,8 +136,8 @@ Use `openshell sandbox connect <name>` only when you intentionally want the raw 
 
 For a one-off command, use `openshell sandbox exec` instead of opening an interactive shell.
 
-```console
-$ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
+```bash
+openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
 ```
 
 ### Check Health or Logs
@@ -159,27 +159,27 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
 
-```console
-$ nemoclaw inference get
-$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+```bash
+nemoclaw inference get
+nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/config.yaml` without a rebuild or restart:
 
-```console
-$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
+```bash
+nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
 For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
-```console
-$ nemoclaw onboard --resume --recreate-sandbox
+```bash
+nemoclaw onboard --resume --recreate-sandbox
 ```
 
 Verify either path with:
 
-```console
-$ nemoclaw <name> status
+```bash
+nemoclaw <name> status
 ```
 
 ### Update Network Policy
