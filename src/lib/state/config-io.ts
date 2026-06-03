@@ -145,6 +145,39 @@ export function rejectSymlinksOnPath(dirPath: string): void {
   }
 }
 
+/**
+ * Tighten group/world bits on every regular file directly inside `dirPath`.
+ * Symlinks are skipped (we use `lstat`; a chmod on a symlink follows to the
+ * target, which would mutate something outside the config dir). Subdirectories
+ * are skipped — this is intentionally root-level only, matching the issue's
+ * acceptance criteria (#4546). Best-effort: a single file's chmod failure
+ * does not abort the walk.
+ */
+function healRootLevelFiles(dirPath: string): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    // If we can't list (e.g. dir does not exist), nothing to heal.
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || !entry.isFile()) continue;
+    const full = path.join(dirPath, entry.name);
+    try {
+      // lstat (not stat) so a TOCTOU-swapped symlink between readdir and
+      // chmod doesn't trick us into chmodding a target outside the dir.
+      const st = fs.lstatSync(full);
+      if (!st.isFile()) continue;
+      if ((st.mode & 0o077) !== 0) {
+        fs.chmodSync(full, 0o600);
+      }
+    } catch {
+      // Best effort — keep walking.
+    }
+  }
+}
+
 export function ensureConfigDir(dirPath: string): void {
   // SECURITY: Block symlink attacks before creating or writing to the directory.
   rejectSymlinksOnPath(dirPath);
@@ -181,6 +214,15 @@ export function ensureConfigDir(dirPath: string): void {
     }
     throw error;
   }
+
+  // Heal every root-level file in the dir, not just the one being read.
+  // Issue #4546 expects auto-repair across all root-level files
+  // (sandboxes.json, onboard-session.json, ollama-auth-proxy.pid,
+  // ollama-proxy-token, usage-notice.json, etc.) — most of which are written
+  // by code paths that don't flow through readConfigFile/writeConfigFile.
+  // Doing the walk here means every nemoclaw invocation that touches the
+  // config dir restores the entire root level to mode 600.
+  healRootLevelFiles(dirPath);
 }
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
@@ -198,9 +240,12 @@ export function readConfigFile<T>(filePath: string, fallback: T): T {
     const content = parseJson<T>(fs.readFileSync(filePath, "utf-8"));
 
     // Heal file-level permission drift: tighten group/world bits.
+    // lstat (not stat) so we don't chmod through a symlink to a target
+    // outside the config dir — defensive duplicate of healRootLevelFiles
+    // for read paths whose dirname differs from what ensureConfigDir saw.
     try {
-      const stat = fs.statSync(filePath);
-      if ((stat.mode & 0o077) !== 0) {
+      const st = fs.lstatSync(filePath);
+      if (st.isFile() && (st.mode & 0o077) !== 0) {
         fs.chmodSync(filePath, 0o600);
       }
     } catch {
