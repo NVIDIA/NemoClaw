@@ -449,7 +449,7 @@ EOF
           'echo "SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS"',
           'rm -rf "$TMP"',
         ].join("\n"),
-        { env: { NEMOCLAW_CAPS_DROPPED: "" } },
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
       );
       expect(stdout).toContain("CAP_SETPCAP not available — cannot drop bounding-set caps via capsh");
       expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
