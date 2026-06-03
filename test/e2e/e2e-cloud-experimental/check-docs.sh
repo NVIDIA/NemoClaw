@@ -44,7 +44,7 @@ WITH_SKILLS=0
 usage() {
   cat <<'EOF'
 Documentation checks: Markdown/MDX links + nemoclaw --help vs commands reference
-+ install.sh --help vs canonical provider list + TBD/editorial-placeholder scan.
++ install.sh --help vs canonical provider list + standalone TBD marker scan.
 
 Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md/.mdx ...]
 
@@ -53,7 +53,7 @@ Options:
   --only-cli       Run only the CLI help vs docs/reference/commands.mdx check
                    (includes both command-level and flag-level parity).
   --only-install   Run only the install.sh --help vs canonical provider check.
-  --only-tbd       Run only the TBD/editorial-placeholder content scan.
+  --only-tbd       Run only the standalone TBD marker content scan.
   --local-only     Do not curl http(s) URLs (same as CHECK_DOC_LINKS_REMOTE=0).
   --with-skills    Also scan .agents/skills/**/*.md (link check).
   --verbose        Log each URL while curling (link check).
@@ -630,9 +630,11 @@ run_install_check() {
 # --- TBD content scan -----------------------------------------------------------
 #
 # Flags standalone \bTBD\b (case-insensitive) in .md/.mdx files outside of
-# code fences and HTML comments. "TBD" is an editorial placeholder that should
-# never reach published documentation. The check skips fenced code blocks and
-# JSX/MDX comments ({/* … */}) so legitimate code examples are not flagged.
+# code fences and comments. "TBD" is an editorial placeholder that should
+# never reach published documentation. The check skips fenced code blocks,
+# inline backtick spans, and both single- and multi-line HTML comments
+# (<!-- … -->) and JSX/MDX comments ({/* … */}) so legitimate code examples
+# and intentionally commented-out content are not flagged.
 
 run_tbd_check() {
   local -a DOC_FILES
@@ -687,19 +689,44 @@ run_tbd_check() {
         next;
       }
 
-      my $line = $_;
+      # Strip HTML comments (<!-- ... -->) and JSX/MDX block comments
+      # ({/* ... */}), tracking open state across lines so multi-line
+      # comments are skipped too (not just same-line ones).
+      my $text = $_;
+      my $visible = "";
 
-      # Strip HTML comments <!-- ... -->
-      $line =~ s/<!--.*?-->//g;
+      while (length $text) {
+        if ($in_html_comment) {
+          if ($text =~ s/^.*?-->//s) { $in_html_comment = 0; next; }
+          $text = ""; next;
+        }
+        if ($in_mdx_comment) {
+          if ($text =~ s/^.*?\*\/\}//s) { $in_mdx_comment = 0; next; }
+          $text = ""; next;
+        }
 
-      # Strip JSX/MDX block comments {/* ... */}
-      $line =~ s/\{\/\*.*?\*\/\}//g;
+        my $hpos = index($text, "<!--");
+        my $mpos = index($text, "{/*");
+
+        if ($hpos < 0 && $mpos < 0) { $visible .= $text; last; }
+
+        if ($mpos < 0 || ($hpos >= 0 && $hpos < $mpos)) {
+          $visible .= substr($text, 0, $hpos);
+          $text = substr($text, $hpos + 4);
+          $in_html_comment = 1;
+        } else {
+          $visible .= substr($text, 0, $mpos);
+          $text = substr($text, $mpos + 3);
+          $in_mdx_comment = 1;
+        }
+      }
 
       # Strip inline code spans (backtick-delimited) so `TBD` in code is not flagged
-      $line =~ s/`[^`]+`//g;
+      $visible =~ s/`[^`]+`//g;
 
-      if ($line =~ /\bTBD\b/i) {
-        print "$ARGV:$.: $line";
+      $visible =~ s/[\r\n]+$//;
+      if ($visible =~ /\bTBD\b/i) {
+        print "$ARGV:$.: $visible\n";
       }
     ' -- "$md")"
 

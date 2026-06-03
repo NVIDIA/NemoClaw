@@ -296,6 +296,73 @@ describe("check-docs TBD content scan", () => {
     expect(result.status).toBe(0);
   });
 
+  it("passes when TBD spans a multi-line HTML comment", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-mlhtml-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "<!--",
+        "TBD: write this section",
+        "-->",
+        "",
+        "Final content here.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("passes when TBD spans a multi-line JSX/MDX block comment", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-mlmdx-"));
+    const mdPath = path.join(tempDir, "guide.mdx");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "{/*",
+        "TBD: write this section",
+        "*/}",
+        "",
+        "Final content here.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(0);
+  });
+
+  it("still fails when TBD appears after a closed multi-line comment", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-mlafter-"));
+    const mdPath = path.join(tempDir, "guide.mdx");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "{/*",
+        "commented out",
+        "*/}",
+        "",
+        "This section is TBD.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocsTbd(mdPath);
+
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain("TBD marker");
+  });
+
   it("passes for docs that use 'placeholder' only in a technical context", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-tbd-ph-"));
     const mdPath = path.join(tempDir, "guide.md");
