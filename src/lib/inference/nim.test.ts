@@ -260,6 +260,25 @@ describe("nim", () => {
         restore();
       }
     });
+
+    it("falls back to a plain tag pull when dockerManifestInspect throws (#3885)", () => {
+      const run = vi.fn();
+      const runCapture = vi.fn(() => {
+        throw new Error("docker manifest unavailable");
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(findCall(run, "pull")).toEqual([
+          "docker",
+          "pull",
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+        expect(findCall(run, "tag")).toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
   });
 
   describe("parseServedModelId", () => {

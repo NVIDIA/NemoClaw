@@ -720,6 +720,9 @@ function pullImageResolvingPlatform(image: string): void {
     ? selectPlatformManifestDigest(manifestJson, nodeArchToOci(process.arch))
     : null;
   if (!digest) {
+    // No resolvable multi-arch index — plain tag pull. On Docker 29.x this can
+    // re-hit the NGC attestation failure (#3885); surface the path taken.
+    console.log(`  No platform manifest resolved; pulling ${image} by tag.`);
     dockerPull(image);
     return;
   }
