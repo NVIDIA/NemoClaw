@@ -258,10 +258,13 @@ These patterns are common in LLM-generated text and erode trust with technical r
   Put only the command text in copyable blocks:
 
   ```bash
-  nemoclaw onboard
+  $$nemoclaw onboard
   ```
 
-- For command examples that differ only by the host CLI binary, write `$$nemoclaw` in the shared source page and let `scripts/sync-agent-variant-docs.ts` render `nemoclaw` or `nemohermes` for Fern.
+- Use `$$nemoclaw` for NemoClaw host CLI command examples in shared variant pages.
+  The docs build resolves it to `nemoclaw` for OpenClaw pages and `nemohermes` for Hermes pages before Fern renders code blocks.
+  This preserves Fern's native fenced-code UI while keeping one source sample.
+- Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
   Use `<AgentOnly>` blocks only when the surrounding content differs between the OpenClaw and Hermes variants.
 
 - Use `powershell` for Windows PowerShell commands.
