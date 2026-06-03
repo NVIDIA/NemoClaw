@@ -22,6 +22,7 @@ chat transcript.
 """
 
 import atexit
+import inspect
 import ipaddress
 import json
 import os
@@ -1149,17 +1150,40 @@ def _install_messaging_response_patch():
     if agent_cls is None or getattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, False):
         return False
 
+    raw_original = inspect.getattr_static(agent_cls, "_strip_think_blocks", None)
     original = getattr(agent_cls, "_strip_think_blocks", None)
     if not callable(original):
         return False
 
-    def _strip_think_blocks(content):
-        return _normalize_raw_messaging_tool_response(
-            original(content),
-            current_platform=_get_current_messaging_platform(),
-        )
+    if isinstance(raw_original, staticmethod):
+        original_func = raw_original.__func__
 
-    agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
+        def _strip_think_blocks(content):
+            return _normalize_raw_messaging_tool_response(
+                original_func(content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
+    elif isinstance(raw_original, classmethod):
+        original_func = raw_original.__func__
+
+        def _strip_think_blocks(cls, content):
+            return _normalize_raw_messaging_tool_response(
+                original_func(cls, content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = classmethod(_strip_think_blocks)
+    else:
+        def _strip_think_blocks(self, content):
+            return _normalize_raw_messaging_tool_response(
+                original(self, content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = _strip_think_blocks
+
     setattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, True)
     return True
 
