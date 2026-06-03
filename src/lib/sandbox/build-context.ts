@@ -50,6 +50,7 @@ function stageLegacySandboxBuildContext(
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
   return {
     buildCtx,
@@ -83,6 +84,7 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
   fs.copyFileSync(
@@ -128,8 +130,12 @@ function stageOptimizedSandboxBuildContext(
   );
   // OpenClaw config generator extracted in #2449 (fixed in #2565)
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "generate-openclaw-config.py"),
-    path.join(stagedScriptsDir, "generate-openclaw-config.py"),
+    path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
+    path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-build-messaging-plugins.py"),
+    path.join(stagedScriptsDir, "openclaw-build-messaging-plugins.py"),
   );
   // WeChat-account seed for the @tencent-weixin/openclaw-weixin plugin —
   // runs at image build time when WeChat is enabled to skip the upstream
@@ -141,6 +147,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.js"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
+    path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
   );
 
   return { buildCtx, stagedDockerfile };

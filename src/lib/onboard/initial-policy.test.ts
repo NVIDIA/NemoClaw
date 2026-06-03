@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 vi.mock("../policy", () => ({
@@ -23,7 +23,34 @@ import {
   prepareInitialSandboxCreatePolicy,
 } from "./initial-policy";
 
+const BASE_POLICY_FIXTURE = `
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+    - /proc
+  read_write:
+    - /tmp
+network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints: []
+`;
+
 const tmpRoots: string[] = [];
+const originalOtelEnv = {
+  enabled: process.env.NEMOCLAW_OPENCLAW_OTEL,
+  endpoint: process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
+  serviceName: process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME,
+  sampleRate: process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE,
+};
+
+beforeEach(() => {
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+});
 
 function tmpPolicy(content: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-initial-policy-test-"));
@@ -37,16 +64,20 @@ afterEach(() => {
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  if (originalOtelEnv.enabled === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL;
+  else process.env.NEMOCLAW_OPENCLAW_OTEL = originalOtelEnv.enabled;
+  if (originalOtelEnv.endpoint === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
+  else process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = originalOtelEnv.endpoint;
+  if (originalOtelEnv.serviceName === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  else process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = originalOtelEnv.serviceName;
+  if (originalOtelEnv.sampleRate === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+  else process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = originalOtelEnv.sampleRate;
 });
 
 describe("initial sandbox policy helpers", () => {
   it("removes /proc from direct GPU create policy so OpenShell can own GPU enrichment", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "..", "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
-    const baseDoc = YAML.parse(basePolicy);
+    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
+    const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
     const gpuDoc = YAML.parse(gpuPolicy);
 
     // /proc is added at runtime by OpenShell's GPU enrichment;
@@ -58,11 +89,7 @@ describe("initial sandbox policy helpers", () => {
   });
 
   it("adds /proc read-write when Docker GPU patch must own GPU enrichment", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "..", "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy, { procReadWrite: true });
+    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, { procReadWrite: true });
     const gpuDoc = YAML.parse(gpuPolicy);
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
@@ -227,6 +254,21 @@ network_policies:
     });
 
     expect(prepared.appliedPresets).toEqual(["slack", "nous-web"]);
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "openclaw",
+    });
+
+    expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
     expect(prepared.cleanup?.()).toBe(true);
   });
 });

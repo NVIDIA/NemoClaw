@@ -14,7 +14,22 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
-import { envInt } from "./env";
+import {
+  type DockerGpuSupervisorReconnectDeps,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "./docker-gpu-supervisor-reconnect";
+export {
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+};
+export type { DockerGpuSupervisorReconnectDeps };
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -23,9 +38,6 @@ const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
-const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
-export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
-  "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 const GPU_ENV_KEYS = new Set([
@@ -66,9 +78,19 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /** Injectable directory lister for unit testing CDI spec discovery. */
+  readDir?: (dirPath: string) => string[] | null;
+  /** Injectable file reader for unit testing CDI spec content checks. */
+  readFile?: (filePath: string) => string | null;
+  /**
+   * Forwarded to the supervisor-reconnect wait. See
+   * `DockerGpuSupervisorReconnectDeps.errorPhaseDebouncePolls`.
+   */
+  errorPhaseDebouncePolls?: number;
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {
   kind: DockerGpuPatchModeKind;
@@ -110,6 +132,53 @@ export type DockerGpuCloneRunOptions = {
 export type DockerGpuPatchDiagnostics = {
   dir: string;
   cleanupCommands: string[];
+  summaryLines: string[];
+};
+
+/**
+ * Subset of `docker inspect --format '{{json .State}}'` fields surfaced when
+ * the patched GPU sandbox container fails to become executable. We capture
+ * just the runtime/exit/health state — not the full inspect — because that
+ * is what tells the user *why* the patched create option broke (e.g. a
+ * non-zero ExitCode with `Error: "could not select device driver"`).
+ */
+export type DockerContainerState = {
+  Status?: string;
+  Running?: boolean;
+  Paused?: boolean;
+  Restarting?: boolean;
+  OOMKilled?: boolean;
+  Dead?: boolean;
+  ExitCode?: number;
+  Error?: string;
+  StartedAt?: string;
+  FinishedAt?: string;
+  Health?: { Status?: string; FailingStreak?: number } | null;
+};
+
+/**
+ * Snapshot of "is the patched sandbox even runnable?" — sandbox phase from
+ * OpenShell plus the patched Docker container's State. This is the data the
+ * caller needs to tell the user whether the failure is at the OpenShell
+ * sandbox layer (Error phase) vs. the Docker container layer (non-zero exit
+ * with a driver/runtime error) — see #4316.
+ */
+export type DockerGpuPatchSandboxSnapshot = {
+  sandboxPhase: string | null;
+  sandboxListLine: string | null;
+  patchedContainerState: DockerContainerState | null;
+};
+
+export type DockerGpuPatchFailureKind =
+  | "patched_container_failed"
+  | "sandbox_error_phase"
+  | "supervisor_unreachable"
+  | "proof_failure"
+  | "unknown";
+
+export type DockerGpuPatchFailureClassification = {
+  kind: DockerGpuPatchFailureKind;
+  headline: string;
   summaryLines: string[];
 };
 
@@ -294,7 +363,11 @@ function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
   return `nvidia.com/gpu=${dockerDevice || "all"}`;
 }
 
-export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string | null): DockerGpuPatchMode {
+export function buildDockerGpuMode(
+  kind: DockerGpuPatchModeKind,
+  device?: string | null,
+  options: { backend?: DockerGpuPatchBackend } = {},
+): DockerGpuPatchMode {
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;
@@ -306,11 +379,15 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
     };
   }
   if (kind === "nvidia-runtime") {
+    const args = ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`];
+    if (options.backend === "jetson") {
+      args.push("--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility");
+    }
     return {
       kind,
       label: `--runtime nvidia (NVIDIA_VISIBLE_DEVICES=${dockerDevice})`,
       device: dockerDevice,
-      args: ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`],
+      args,
     };
   }
   const cdiDevice = normalizeGpuDeviceForCdi(device);
@@ -324,12 +401,12 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
 
 export function buildDockerGpuModeCandidates(
   device?: string | null,
-  options: { cdiAvailable?: boolean } = {},
+  options: { cdiAvailable?: boolean; backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode[] {
-  const candidates = [
-    buildDockerGpuMode("gpus", device),
-    buildDockerGpuMode("nvidia-runtime", device),
-  ];
+  if (options.backend === "jetson") {
+    return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
+  }
+  const candidates = [buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device)];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
   return candidates;
 }
@@ -618,15 +695,65 @@ function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
   }
 }
 
-function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
-  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+/**
+ * Docker's well-known default CDI spec directories. Docker reads CDI specs
+ * from these paths even when `docker info` reports an empty `CDISpecDirs`
+ * (for example, on Docker 29 hosts with `nvidia-container-toolkit` installed
+ * but no `/etc/docker/daemon.json`). Scanning them lets us detect that the
+ * `cdi` GPU mode is viable when the docker-info detection alone would miss
+ * it (NemoClaw issue #3575).
+ */
+export const DEFAULT_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"] as const;
+
+function readCdiSpecContent(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): string | null {
+  if (readFile) return readFile(filePath);
   try {
-    return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(
-      fs.readFileSync(filePath, "utf-8"),
-    );
+    return fs.readFileSync(filePath, "utf-8");
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isLikelyNvidiaCdiSpecFile(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): boolean {
+  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+  const content = readCdiSpecContent(filePath, readFile);
+  if (content === null) return false;
+  return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(content);
+}
+
+function listDirEntries(
+  dirPath: string,
+  readDir?: (p: string) => string[] | null,
+): string[] | null {
+  if (readDir) return readDir(dirPath);
+  try {
+    return fs.readdirSync(dirPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the set of directories to scan for CDI specs: those reported by
+ * `docker info` (if any), plus Docker's well-known defaults. Deduplicated
+ * so a host that surfaces `/etc/cdi` explicitly is not scanned twice.
+ */
+function resolveCdiScanDirs(reportedDirs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const dir of [...reportedDirs, ...DEFAULT_DOCKER_CDI_SPEC_DIRS]) {
+    const trimmed = dir.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
+  return ordered;
 }
 
 export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): boolean {
@@ -638,16 +765,14 @@ export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): bo
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
   } catch {
-    return false;
+    // `docker info` failed, but the default CDI dirs may still hold a valid
+    // spec (e.g. issue #3575). Continue with the defaults below.
   }
-  for (const dir of parseDockerCdiSpecDirs(raw)) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry)))) {
+  const reported = parseDockerCdiSpecDirs(raw);
+  for (const dir of resolveCdiScanDirs(reported)) {
+    const entries = listDirEntries(dir, deps.readDir);
+    if (!entries) continue;
+    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry), deps.readFile))) {
       return true;
     }
   }
@@ -685,12 +810,15 @@ function probeDockerGpuMode(
 }
 
 export function selectDockerGpuPatchMode(
-  options: { image: string; device?: string | null },
+  options: { image: string; device?: string | null; backend?: DockerGpuPatchBackend },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
-  const cdiAvailable = dockerReportsNvidiaCdiDevices(deps);
+  const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
-  for (const mode of buildDockerGpuModeCandidates(options.device, { cdiAvailable })) {
+  for (const mode of buildDockerGpuModeCandidates(options.device, {
+    cdiAvailable,
+    backend: options.backend,
+  })) {
     const result = probeDockerGpuMode(mode, options.image, deps);
     const attempt = { mode, ok: result.ok, error: result.error };
     attempts.push(attempt);
@@ -722,44 +850,6 @@ function waitForNewContainerId(
   return null;
 }
 
-function waitForOpenShellSandboxExec(
-  sandboxName: string,
-  timeoutSecs: number,
-  deps: DockerGpuPatchDeps,
-): boolean {
-  if (!deps.runOpenshell) return true;
-  const d = depsWithDefaults(deps);
-  const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
-  while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-    );
-    if (isZeroStatus(result)) return true;
-    d.sleep(2);
-  }
-  return false;
-}
-
-export const waitForOpenShellSupervisorReconnect = waitForOpenShellSandboxExec;
-
-export function getDockerGpuSupervisorReconnectTimeoutSecs(
-  sandboxReadyTimeoutSecs: number,
-  env: Record<string, string | undefined> = process.env,
-): number {
-  const readyTimeoutSecs = Number.isFinite(sandboxReadyTimeoutSecs)
-    ? Math.max(1, Math.round(sandboxReadyTimeoutSecs))
-    : 1;
-  const fallback = Math.max(
-    readyTimeoutSecs,
-    DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS,
-  );
-  return Math.max(
-    1,
-    envInt(DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV, fallback, env),
-  );
-}
-
 function decoratePatchError<T extends Error>(
   error: T,
   context: DockerGpuPatchFailureContext,
@@ -784,6 +874,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    backend?: DockerGpuPatchBackend;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -807,13 +898,17 @@ export function recreateOpenShellDockerSandboxWithGpu(
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
     const selection = selectDockerGpuPatchMode(
-      { image, device: options.gpuDevice },
+      { image, device: options.gpuDevice, backend: options.backend },
       deps,
     );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
-      throw new Error("Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.");
+      const modeMessage =
+        options.backend === "jetson"
+          ? "Docker did not accept the Jetson NVIDIA runtime GPU mode."
+          : "Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.";
+      throw new Error(modeMessage);
     }
 
     const originalName = dockerContainerName(inspect);
@@ -873,7 +968,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     });
 
     if (options.waitForSupervisor !== false) {
-      const execReady = waitForOpenShellSandboxExec(
+      const execReady = waitForOpenShellSupervisorReconnect(
         options.sandboxName,
         options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
         deps,
@@ -928,26 +1023,67 @@ export function applyDockerGpuPatchOrExit(
   }
 }
 
+function printDockerGpuPatchClassificationLines(
+  classification: DockerGpuPatchFailureClassification | null,
+): void {
+  if (!classification) return;
+  if (classification.headline) console.error(`  ${classification.headline}`);
+  for (const line of classification.summaryLines) console.error(`    ${line}`);
+}
+
+function patchedContainerIdFromContext(
+  context?: DockerGpuPatchFailureContext | null,
+): string | null {
+  // Snapshot only the newly created GPU-enabled container. Falling back to
+  // `oldContainerId` here would inspect the original (or its renamed backup)
+  // and mis-attribute its State as the patched container's — see #4316
+  // review feedback.
+  if (!context) return null;
+  return context.newContainerId || null;
+}
+
+function snapshotInspectDeps(
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture">,
+): Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> {
+  // `depsWithDefaults` spreads the caller's `deps`, so passing an explicit
+  // `dockerCapture: undefined` would shadow the module's default Docker
+  // adapter and disable downstream `docker ps`/`inspect`/`logs` capture.
+  // Build the inner deps object with only the keys the caller actually
+  // supplied so defaults stay in place.
+  const inner: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> = {};
+  if (deps.runCaptureOpenshell) inner.runCaptureOpenshell = deps.runCaptureOpenshell;
+  if (deps.dockerCapture) inner.dockerCapture = deps.dockerCapture;
+  return inner;
+}
+
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell"> & {
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
   },
 ): never {
+  const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
+  const selectedMode = deps.selectedMode || context?.selectedMode || null;
+  const inspectDeps = snapshotInspectDeps(deps);
+  const snapshot = captureDockerGpuPatchSandboxSnapshot(
+    sandboxName,
+    { patchedContainerId: patchedContainerIdFromContext(context) },
+    inspectDeps,
+  );
+  const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, context: deps.context, selectedMode: deps.selectedMode },
-    {
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-    },
+    { error, context, selectedMode, snapshot, classification },
+    inspectDeps,
   );
   console.error("");
   console.error("  Docker GPU patch failed.");
   if (error instanceof Error && error.message) {
     console.error(`  ${error.message}`);
   }
+  printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
@@ -959,15 +1095,24 @@ export function printDockerGpuPatchFailureAndExit(
 export function printDockerGpuReadinessFailure(
   sandboxName: string,
   selectedMode: DockerGpuPatchMode | null,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
+    context?: DockerGpuPatchFailureContext | null;
+  },
 ): void {
+  const context = deps.context ?? null;
+  const inspectDeps = snapshotInspectDeps(deps);
+  const snapshot = captureDockerGpuPatchSandboxSnapshot(
+    sandboxName,
+    { patchedContainerId: patchedContainerIdFromContext(context) },
+    inspectDeps,
+  );
+  const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { selectedMode },
-    {
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-    },
+    { selectedMode, context, snapshot, classification },
+    inspectDeps,
   );
+  printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {
     console.error(`  Docker GPU diagnostics saved: ${diagnostics.dir}`);
   }
@@ -978,15 +1123,26 @@ export function printDockerGpuProofFailure(
   sandboxName: string,
   error: unknown,
   selectedMode: DockerGpuPatchMode | null,
-  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell">,
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
+    context?: DockerGpuPatchFailureContext | null;
+  },
 ): void {
+  const context = deps.context ?? null;
+  const inspectDeps = snapshotInspectDeps(deps);
+  const snapshot = captureDockerGpuPatchSandboxSnapshot(
+    sandboxName,
+    { patchedContainerId: patchedContainerIdFromContext(context) },
+    inspectDeps,
+  );
+  const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode, {
+    proofError: error,
+  });
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, selectedMode },
-    {
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-    },
+    { error, selectedMode, context, snapshot, classification },
+    inspectDeps,
   );
+  printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
@@ -1057,12 +1213,255 @@ export function formatDockerInspectNetworkSummary(
   return lines.join("\n");
 }
 
+const SANDBOX_FAILURE_PHASE_TOKENS = new Set([
+  "Error",
+  "Failed",
+  "CrashLoopBackOff",
+]);
+
+const SANDBOX_LIVE_PHASE_TOKENS = new Set(["Ready", "Running"]);
+
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function stripAnsi(value: string): string {
+  return value.replace(ANSI_RE, "");
+}
+
+function parseSandboxRowForName(output: string, sandboxName: string): string[] | null {
+  if (typeof output !== "string") return null;
+  for (const line of stripAnsi(output).split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] === sandboxName) return cols;
+  }
+  return null;
+}
+
+function findSandboxListLine(output: string, sandboxName: string): string | null {
+  if (typeof output !== "string") return null;
+  for (const line of stripAnsi(output).split("\n")) {
+    if (line.trim().split(/\s+/)[0] === sandboxName) return line.trim();
+  }
+  return null;
+}
+
+function parseSandboxPhaseFromGetOutput(output: string): string | null {
+  if (typeof output !== "string") return null;
+  const match = stripAnsi(output).match(/^\s*Phase:\s+(\S+)/m);
+  return match ? match[1] : null;
+}
+
+function parseSandboxPhaseFromListOutput(output: string, sandboxName: string): string | null {
+  const cols = parseSandboxRowForName(output, sandboxName);
+  if (!cols) return null;
+  return (
+    cols.find((col) => SANDBOX_FAILURE_PHASE_TOKENS.has(col)) ??
+    cols.find((col) => SANDBOX_LIVE_PHASE_TOKENS.has(col)) ??
+    cols[1] ??
+    null
+  );
+}
+
+function isFailurePhase(phase: string | null | undefined): boolean {
+  return typeof phase === "string" && SANDBOX_FAILURE_PHASE_TOKENS.has(phase);
+}
+
+function parseDockerContainerState(json: string): DockerContainerState | null {
+  if (!json.trim()) return null;
+  try {
+    const parsed = JSON.parse(json);
+    // `docker inspect --format '{{json .State}}'` returns the State object
+    // directly; `docker inspect <id>` returns an array of full container
+    // descriptors with `.State` nested. Accept both shapes.
+    if (parsed && typeof parsed === "object") {
+      if ("Status" in parsed || "ExitCode" in parsed || "Running" in parsed) {
+        return parsed as DockerContainerState;
+      }
+      const first = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (first && typeof first === "object" && "State" in first) {
+        const state = (first as { State?: unknown }).State;
+        if (state && typeof state === "object") return state as DockerContainerState;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+/**
+ * Capture the current sandbox phase from OpenShell and the patched
+ * container's runtime State from Docker. Either field may be null when the
+ * external CLI is unavailable or the named target no longer exists; callers
+ * (notably `classifyDockerGpuPatchFailure`) treat null defensively.
+ *
+ * When `deps.dockerCapture` is not supplied, this helper falls back to the
+ * module's default Docker adapter so the patched-container State is still
+ * captured in production paths that only thread `runCaptureOpenshell`
+ * through (e.g. `applyDockerGpuPatchOrExit`).
+ */
+export function captureDockerGpuPatchSandboxSnapshot(
+  sandboxName: string,
+  options: {
+    patchedContainerId?: string | null;
+  } = {},
+  deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> = {},
+): DockerGpuPatchSandboxSnapshot {
+  let sandboxPhase: string | null = null;
+  let sandboxListLine: string | null = null;
+  if (deps.runCaptureOpenshell) {
+    try {
+      const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      sandboxPhase = parseSandboxPhaseFromGetOutput(getOutput);
+    } catch {
+      /* best effort */
+    }
+    try {
+      const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      sandboxListLine = findSandboxListLine(listOutput, sandboxName);
+      // Prefer the `sandbox list` phase whenever the named row is present.
+      // The list row is the operator-facing gateway state and avoids letting
+      // a stale `sandbox get` response drive the Docker-GPU failure
+      // classification (#4316 CodeRabbit feedback).
+      if (sandboxListLine) {
+        const listPhase = parseSandboxPhaseFromListOutput(listOutput, sandboxName);
+        if (listPhase) sandboxPhase = listPhase;
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
+  let patchedContainerState: DockerContainerState | null = null;
+  const target = String(options.patchedContainerId || "").trim();
+  if (target) {
+    const capture = deps.dockerCapture ?? dockerCapture;
+    try {
+      const stateJson = capture(
+        ["inspect", "--format", "{{json .State}}", target],
+        { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+      );
+      patchedContainerState = parseDockerContainerState(stateJson);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  return { sandboxPhase, sandboxListLine, patchedContainerState };
+}
+
+function describePatchedContainerState(state: DockerContainerState | null): string[] {
+  if (!state) return [];
+  const lines: string[] = [];
+  if (state.Status) lines.push(`patched_container_status=${state.Status}`);
+  if (typeof state.ExitCode === "number") lines.push(`patched_container_exit_code=${state.ExitCode}`);
+  if (state.OOMKilled) lines.push("patched_container_oom_killed=true");
+  if (state.Error) lines.push(`patched_container_error=${state.Error}`);
+  if (state.Health?.Status) lines.push(`patched_container_health=${state.Health.Status}`);
+  if (state.FinishedAt && state.FinishedAt !== "0001-01-01T00:00:00Z") {
+    lines.push(`patched_container_finished_at=${state.FinishedAt}`);
+  }
+  return lines;
+}
+
+function patchedContainerLooksFailed(state: DockerContainerState | null): boolean {
+  if (!state) return false;
+  if (state.Dead === true) return true;
+  if (state.OOMKilled === true) return true;
+  if (typeof state.ExitCode === "number" && state.ExitCode !== 0) return true;
+  if (state.Error && state.Error.length > 0) return true;
+  // `exited`/`dead`/`removing` indicate a container that did not stay up.
+  // `running` and `restarting` are live states we do not classify as failed.
+  if (typeof state.Status === "string") {
+    const status = state.Status.toLowerCase();
+    if (status === "exited" || status === "dead" || status === "removing") return true;
+  }
+  return false;
+}
+
+/**
+ * Turn the snapshot + selected GPU mode into a user-facing classification
+ * that distinguishes "the patched container itself died" from "the sandbox
+ * never reached a live phase" from "the OpenShell supervisor cannot reach
+ * the container" from "the GPU proof itself reported a runtime failure".
+ *
+ * This is the contract NemoClaw uses to tell users *which* part of the
+ * GPU patch path broke — not just "something failed" (#4316).
+ */
+export function classifyDockerGpuPatchFailure(
+  snapshot: DockerGpuPatchSandboxSnapshot,
+  selectedMode: DockerGpuPatchMode | null,
+  options: { proofError?: unknown } = {},
+): DockerGpuPatchFailureClassification {
+  const lines: string[] = [];
+  if (snapshot.sandboxPhase) lines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
+  if (snapshot.sandboxListLine) lines.push(`sandbox_list_row=${snapshot.sandboxListLine}`);
+  lines.push(...describePatchedContainerState(snapshot.patchedContainerState));
+  if (selectedMode) lines.push(`patched_create_option=${selectedMode.label}`);
+
+  const containerFailed = patchedContainerLooksFailed(snapshot.patchedContainerState);
+  const sandboxInErrorPhase = isFailurePhase(snapshot.sandboxPhase);
+  const sandboxNotLive =
+    !!snapshot.sandboxPhase && !SANDBOX_LIVE_PHASE_TOKENS.has(snapshot.sandboxPhase);
+
+  let kind: DockerGpuPatchFailureKind = "unknown";
+  let headline: string;
+  if (containerFailed) {
+    kind = "patched_container_failed";
+    const exit = snapshot.patchedContainerState?.ExitCode;
+    const opt = selectedMode ? ` (${selectedMode.label})` : "";
+    headline =
+      typeof exit === "number" && exit !== 0
+        ? `Patched GPU container exited with code ${exit}${opt}.`
+        : `Patched GPU container is not running${opt}.`;
+  } else if (sandboxInErrorPhase) {
+    kind = "sandbox_error_phase";
+    headline = `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`;
+  } else if (sandboxNotLive && (snapshot.patchedContainerState || options.proofError)) {
+    // Cover the non-live-but-non-terminal case (e.g. Provisioning / NotReady)
+    // BEFORE the proof-error branch — a proof failing while the sandbox
+    // never reached Ready/Running is really a lifecycle failure, not a
+    // proof failure. Classifying it as proof_failure would tell users
+    // `nvidia-smi` failed inside an executable sandbox, which is the
+    // wrong story (#4316 review feedback).
+    //
+    // Gate this on evidence that the patched container actually existed
+    // (either we inspected its State, or we got far enough to attempt the
+    // proof). Otherwise an early patch failure (e.g. mode probes rejected,
+    // detached `docker run` failing) would mislabel a still-Provisioning
+    // original sandbox as a supervisor reconnect issue.
+    kind = "supervisor_unreachable";
+    headline = `OpenShell supervisor did not reach Ready (last phase: ${snapshot.sandboxPhase}).`;
+  } else if (options.proofError) {
+    kind = "proof_failure";
+    headline = "GPU proof failed inside an executable sandbox.";
+  } else {
+    headline = "Docker GPU patch did not complete successfully.";
+  }
+
+  if (options.proofError) {
+    const proofText =
+      options.proofError instanceof Error
+        ? options.proofError.message
+        : String(options.proofError);
+    if (proofText) lines.push(`proof_error=${proofText}`);
+  }
+  return { kind, headline, summaryLines: lines };
+}
+
 export function collectDockerGpuPatchDiagnostics(
   sandboxName: string,
   options: {
     error?: unknown;
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
+    snapshot?: DockerGpuPatchSandboxSnapshot | null;
+    classification?: DockerGpuPatchFailureClassification | null;
   } = {},
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchDiagnostics | null {
@@ -1089,6 +1488,8 @@ export function collectDockerGpuPatchDiagnostics(
         ? String(options.error)
         : "none";
   const selectedMode = options.selectedMode || context?.selectedMode || null;
+  const snapshot = options.snapshot ?? null;
+  const classification = options.classification ?? null;
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${sandboxName}`,
@@ -1108,7 +1509,23 @@ export function collectDockerGpuPatchDiagnostics(
       );
     }
   }
+  if (classification) {
+    summaryLines.push(`failure_kind=${classification.kind}`);
+    if (classification.headline) summaryLines.push(`failure_headline=${classification.headline}`);
+  }
+  if (snapshot) {
+    if (snapshot.sandboxPhase) summaryLines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
+    if (snapshot.sandboxListLine) summaryLines.push(`sandbox_list_row=${snapshot.sandboxListLine}`);
+    summaryLines.push(...describePatchedContainerState(snapshot.patchedContainerState));
+  }
   writeTextFile(dir, "summary.txt", summaryLines.join("\n"));
+  if (snapshot?.patchedContainerState) {
+    writeTextFile(
+      dir,
+      "patched-container-state.json",
+      JSON.stringify(snapshot.patchedContainerState, null, 2),
+    );
+  }
 
   try {
     const ps = d.dockerCapture(

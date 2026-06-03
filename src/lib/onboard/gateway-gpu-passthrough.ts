@@ -118,6 +118,7 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   error(`    openshell gateway remove ${gatewayName}`);
   error("    # For OpenShell releases that still expose lifecycle commands:");
   error(`    openshell gateway destroy -g ${gatewayName}`);
+  error("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
   error("    nemoclaw onboard --gpu");
   exit(1);
 }
@@ -134,18 +135,12 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   gpuPassthrough,
   gatewayName,
   currentSandboxName,
-  hostGpuPlatform = null,
   recreateSandbox,
   confirmedDockerDriverGateway,
   stopDashboardForwards,
   retireLegacyGatewayForDockerDriverUpgrade,
   destroyGatewayRuntimeForGpuReuse,
 }: GatewayGpuReuseReconcileOptions): GatewayReuseState {
-  if (gpuPassthrough && hostGpuPlatform === "jetson") {
-    reportGpuPassthroughRecovery(console.error, () => [], { unsupportedPlatform: "jetson" });
-    process.exit(1);
-  }
-
   if (!shouldInspectLegacyGatewayGpuPassthrough(
     gatewayReuseState,
     gpuPassthrough,

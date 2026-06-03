@@ -52,7 +52,7 @@
   "$defs": {
     "networkPolicyEntry": {
       "type": "object",
-      "required": ["name", "endpoints"],
+      "required": ["name", "endpoints", "binaries"],
       "properties": {
         "name": { "type": "string" },
         "endpoints": {
@@ -62,7 +62,8 @@
         },
         "binaries": {
           "type": "array",
-          "items": { "$ref": "#/$defs/binary" }
+          "items": { "$ref": "#/$defs/binary" },
+          "minItems": 1
         }
       }
     },

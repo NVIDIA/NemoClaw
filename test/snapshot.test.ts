@@ -1044,6 +1044,134 @@ process.exit(0);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it("treats audit-find exit 1 with empty stdout as a successful audit", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-perm-denied-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "extensions", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Simulate a permission-denied subdir: when the audit cmd lacks the
+  // \`|| true\` tolerance wrapper (pre-fix shape), exit non-zero so the
+  // caller treats it as audit failure. The post-fix shape wraps each
+  // \`find\` with \`|| true\` and joins with \`;\`, so the audit cmd as a
+  // whole exits 0 even though a remote \`find\` would have exited 1.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/extensions/nemoclaw': Permission denied\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.error).toBeUndefined();
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects violations from readable dirs even if a sibling find exits non-zero", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-perm-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      // `agents` simulates perm-denied (no rows emitted); `workspace` emits
+      // a symlink that is not in the audit allow-list, which must still be
+      // caught even when a sibling find exits non-zero.
+      const auditLines = [
+        "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Match real-shell behaviour: without the \`|| true\` tolerance wrapper
+  // the perm-denied sibling \`find\` would have aborted the chain. The
+  // post-fix audit cmd still emits the violation stdout because \`;\`
+  // joins each per-dir block so the readable sibling's output is
+  // preserved.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/agents/main': Permission denied\\n");
+    process.exit(1);
+  }
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/workspace\/leak/);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Hermes durable state files", () => {
@@ -1060,6 +1188,7 @@ describe("Hermes durable state files", () => {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "original soul\n");
+      fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "original history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "original sqlite backup\n");
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "token: should-not-copy\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "API_TOKEN=should-not-copy\n");
@@ -1109,6 +1238,10 @@ if (cmd.includes("SOUL.md") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(hermesDir, "SOUL.md")));
   process.exit(0);
 }
+if (cmd.includes(".hermes_history") && cmd.includes("cat --")) {
+  process.stdout.write(fs.readFileSync(path.join(hermesDir, ".hermes_history")));
+  process.exit(0);
+}
 if (cmd.includes("nemoclaw-sqlite-restore")) {
   fs.mkdirSync(path.join(hermesDir, "runtime"), { recursive: true });
   fs.writeFileSync(path.join(hermesDir, "runtime", "state.db"), readStdin());
@@ -1116,6 +1249,10 @@ if (cmd.includes("nemoclaw-sqlite-restore")) {
 }
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("SOUL.md")) {
   fs.writeFileSync(path.join(hermesDir, "SOUL.md"), readStdin());
+  process.exit(0);
+}
+if (cmd.includes(".nemoclaw-restore") && cmd.includes(".hermes_history")) {
+  fs.writeFileSync(path.join(hermesDir, ".hermes_history"), readStdin());
   process.exit(0);
 }
 process.exit(0);
@@ -1145,14 +1282,18 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);
-      expect(backup.backedUpFiles).toEqual(["SOUL.md", "runtime/state.db"]);
+      expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.stateFiles).toEqual([
         { path: "SOUL.md", strategy: "copy" },
+        { path: ".hermes_history", strategy: "copy" },
         { path: "runtime/state.db", strategy: "sqlite_backup" },
       ]);
       expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "SOUL.md"), "utf-8")).toBe(
         "original soul\n",
+      );
+      expect(fs.readFileSync(path.join(backup.manifest!.backupPath, ".hermes_history"), "utf-8")).toBe(
+        "original history\n",
       );
       expect(
         fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db"), "utf-8"),
@@ -1162,11 +1303,15 @@ process.exit(0);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "auth.json"))).toBe(false);
 
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "changed soul\n");
+      fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "changed history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "changed db\n");
       const restore = sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
-      expect(restore.restoredFiles).toEqual(["SOUL.md", "runtime/state.db"]);
+      expect(restore.restoredFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(fs.readFileSync(path.join(hermesDir, "SOUL.md"), "utf-8")).toBe("original soul\n");
+      expect(fs.readFileSync(path.join(hermesDir, ".hermes_history"), "utf-8")).toBe(
+        "original history\n",
+      );
       expect(fs.readFileSync(path.join(runtimeDir, "state.db"), "utf-8")).toBe(
         "original sqlite backup\n",
       );

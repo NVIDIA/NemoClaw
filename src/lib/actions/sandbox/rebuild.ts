@@ -41,6 +41,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -59,6 +60,8 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
+import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -437,6 +440,20 @@ export async function rebuildSandbox(
     }
   }
 
+  const rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+
+  const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
+    relockRebuildShieldsWindow(
+      sandboxName,
+      rebuildShieldsWindow,
+      sandboxStillExists,
+      CLI_NAME,
+    );
+
+  let sandboxStillExists = true;
+
+  try {
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -455,6 +472,7 @@ export async function rebuildSandbox(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return;
   }
@@ -462,6 +480,7 @@ export async function rebuildSandbox(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return;
   }
@@ -514,9 +533,11 @@ export async function rebuildSandbox(
   if (deleteResult.status !== 0 && !alreadyGone) {
     console.error("  Failed to delete sandbox. Aborting rebuild.");
     console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    relockShieldsIfNeeded(true);
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  sandboxStillExists = false;
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -656,20 +677,21 @@ export async function rebuildSandbox(
     throw err;
   }) as typeof process.exit;
 
+  // Reaching here means the user already consented to the destructive
+  // rebuild (either via --yes/--force or by answering "y" at the prompt).
+  // Propagate that consent so the size-confirm gate inside the
+  // non-interactive onboard does not abort after the old sandbox has
+  // been deleted. The recreate path also inherits the original sandbox's
+  // no-GPU intent so the inner `onboard --resume` does not enforce the
+  // Docker CDI GPU preflight on hosts without an NVIDIA GPU.
+  const recreateOpts = buildRebuildRecreateOnboardOpts({
+    sb,
+    rebuildAgent,
+    storedFromDockerfile,
+    autoYes: skipConfirm || rebuildConfirmed,
+  });
   try {
-    await onboard({
-      resume: true,
-      nonInteractive: true,
-      recreateSandbox: true,
-      agent: rebuildAgent,
-      fromDockerfile: storedFromDockerfile,
-      // Reaching here means the user already consented to the destructive
-      // rebuild (either via --yes/--force or by answering "y" at the prompt).
-      // Propagate that consent so the size-confirm gate inside the
-      // non-interactive onboard does not abort after the old sandbox has
-      // been deleted (#2639 follow-up).
-      autoYes: skipConfirm || rebuildConfirmed,
-    });
+    await onboard(recreateOpts);
     log("onboard() returned successfully");
   } catch (err) {
     onboardFailed = true;
@@ -680,6 +702,10 @@ export async function rebuildSandbox(
     }
   } finally {
     process.exit = _savedExit;
+  }
+
+  if (!onboardFailed) {
+    sandboxStillExists = true;
   }
 
   if (onboardFailed) {
@@ -714,7 +740,9 @@ export async function rebuildSandbox(
     console.error(
       `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
     );
+    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
     console.error("");
+    relockShieldsIfNeeded(false);
     bail(
       `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`,
       onboardExitCode,
@@ -760,7 +788,10 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  const savedPresets = pruneDisabledMessagingPolicyPresets(
+    backupManifest.policyPresets || [],
+    rebuildDisabledChannels,
+  );
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");
@@ -851,6 +882,8 @@ export async function rebuildSandbox(
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
+  if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+
   console.log("");
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
@@ -862,5 +895,10 @@ export async function rebuildSandbox(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
     );
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
+  }
+  } finally {
+    if (!rebuildShieldsWindow.relocked) {
+      relockShieldsIfNeeded(sandboxStillExists);
+    }
   }
 }

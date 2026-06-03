@@ -3,10 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { GpuDetection } from "../../../inference/nim";
+import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
-type Gpu = { type: string } | null;
+type Gpu = GpuDetection | null;
 type SandboxEntry = { sandboxGpuEnabled?: boolean };
 type Host = { cdiNvidiaGpuSpecMissing?: boolean };
 
@@ -50,6 +52,7 @@ function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, 
       }),
       validateSandboxGpuPreflight: vi.fn(),
       skippedStepMessage: vi.fn(),
+      recordStateSkipped: vi.fn(async () => session),
       startRecordedStep: vi.fn(async () => undefined),
       recordStepComplete: vi.fn(async () => session),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -105,6 +108,26 @@ describe("handlePreflightState", () => {
     expect(result.gpuPassthrough).toBe(true);
   });
 
+  it("keeps sandbox GPU disabled when N1X spoof detection yields no NVIDIA GPU", async () => {
+    const harness = createDeps({
+      runPreflight: vi.fn(async () => null),
+      resolveSandboxGpuConfig,
+    });
+
+    const result = await handlePreflightState({
+      ...baseOptions(harness.deps),
+    });
+
+    expect(harness.deps.runPreflight).toHaveBeenCalledWith({ optedOutGpuPassthrough: false });
+    expect(result.gpu).toBeNull();
+    expect(result.sandboxGpuConfig).toMatchObject({
+      mode: "auto",
+      hostGpuDetected: false,
+      sandboxGpuEnabled: false,
+    });
+    expect(result.gpuPassthrough).toBe(false);
+  });
+
   it("skips full preflight on resume but re-detects GPU and revalidates CDI/sandbox GPU", async () => {
     const session = createSession();
     session.steps.preflight.status = "complete";
@@ -125,15 +148,49 @@ describe("handlePreflightState", () => {
     });
 
     expect(harness.deps.skippedStepMessage).toHaveBeenCalledWith("preflight", "cached");
+    expect(harness.deps.recordStateSkipped).toHaveBeenCalledWith("preflight", {
+      reason: "resume",
+      validation: "gpu-cdi",
+    });
     expect(harness.deps.detectGpu).toHaveBeenCalledOnce();
     expect(harness.deps.runPreflight).not.toHaveBeenCalled();
     expect(harness.deps.startRecordedStep).not.toHaveBeenCalled();
     expect(harness.deps.assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
       { cdiNvidiaGpuSpecMissing: false },
       true,
+      undefined,
     );
     expect(harness.deps.validateSandboxGpuPreflight).toHaveBeenCalledOnce();
     expect(result.resumePreflight).toBe(true);
+  });
+
+  it("passes host GPU platform into the resumed CDI guard", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertCdiNvidiaGpuSpecPresent = vi.fn();
+    const harness = createDeps({
+      assertCdiNvidiaGpuSpecPresent,
+      resolveSandboxGpuConfig: vi.fn(
+        (_gpu: Gpu, opts: { flag: "enable" | "disable" | null; device: string | null | undefined }) => ({
+          sandboxGpuEnabled: opts.flag === "enable",
+          mode: opts.flag === "enable" ? "1" : "0",
+          sandboxGpuDevice: opts.device,
+          hostGpuPlatform: "jetson",
+        }),
+      ),
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      explicitSandboxGpuFlag: "enable",
+    });
+
+    expect(assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
+      { cdiNvidiaGpuSpecMissing: false },
+      true,
+      "jetson",
+    );
   });
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {
