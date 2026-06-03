@@ -261,7 +261,7 @@ These patterns are common in LLM-generated text and erode trust with technical r
   $$nemoclaw onboard
   ```
 
-- Use `$$nemoclaw` for NemoClaw host CLI command examples in shared variant pages.
+- Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
   The docs build resolves it to `nemoclaw` for OpenClaw pages and `nemohermes` for Hermes pages before Fern renders code blocks.
   This preserves Fern's native fenced-code UI while keeping one source sample.
 - Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
