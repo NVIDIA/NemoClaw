@@ -25,6 +25,7 @@ Create a local Markdown draft. Do not create or update a GitHub Discussion; the 
 - `gh` must be authenticated for `NVIDIA/NemoClaw`.
 - The release tag should already exist. If the user is still cutting the tag, use `nemoclaw-maintainer-cut-release-tag` first.
 - Use live GitHub and remote tag state, not memory or a stale local branch.
+- If `<release-dir>/notes-data.json` exists from `npm run release:notes-data`, use it as the starting source of truth and query GitHub only to fill missing fields.
 
 ## Step 1: Verify the Release Range
 
@@ -46,7 +47,7 @@ Confirm:
 
 ## Step 2: Collect the Shipped Surface
 
-Use the compare API as the first source of truth:
+If `notes-data.json` exists, read it first. Otherwise, use the compare API as the first source of truth:
 
 ```bash
 gh api repos/NVIDIA/NemoClaw/compare/<previous-version>...<current-version> \

@@ -9,18 +9,18 @@ user_invocable: true
 
 # Cut Release Tag
 
-Create one annotated semver tag on an already-merged `origin/main` commit. The tag is the release. Do not bump version files, open a release PR, push `latest`, or touch `lkg` from this skill.
+Use the release scripts only. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-A GitHub workflow moves `latest` after the semver tag is pushed. Release admins promote `lkg` manually after validation.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation.
 
 ## Hard Rules
 
-- Tag only commits reachable from `origin/main`.
-- Ask the maintainer to confirm the exact commit before creating or pushing a tag.
-- Create annotated tags (`git tag -a`), never lightweight tags.
-- Push only the semver tag (`vX.Y.Z`). Never push `latest` or `lkg`.
-- If a remote semver tag already exists, stop. Do not move, delete, or force-push it unless the maintainer explicitly starts a remediation flow.
-- Draft release notes locally after tagging. Do not create the GitHub Discussion; the maintainer does that.
+- Tag only the commit captured in a generated release plan.
+- Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
+- Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
+- Never push `latest` or `lkg` from this skill.
+- Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
+- Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
 
 ## Workflow
 
@@ -28,144 +28,121 @@ Copy this checklist and update it as you proceed:
 
 ```text
 Release Progress:
-- [ ] Step 1: Verify repository and remote state
-- [ ] Step 2: Choose the next semver tag
-- [ ] Step 3: Confirm the exact origin/main commit with the maintainer
-- [ ] Step 4: Create and push the annotated semver tag
-- [ ] Step 5: Verify the semver tag and workflow-managed latest tag
-- [ ] Step 6: Draft release notes for maintainer review
-- [ ] Step 7: Hand off announcement and sharing steps
+- [ ] Step 1: Generate release plan
+- [ ] Step 2: Show plan and exact confirmation phrase
+- [ ] Step 3: Cut the semver tag from the confirmed plan
+- [ ] Step 4: Wait for workflow-managed latest
+- [ ] Step 5: Generate release-note data and draft Markdown
+- [ ] Step 6: Hand off announcement steps
 ```
 
-### Step 1: Verify Repository and Remote State
+### Step 1: Generate Release Plan
+
+Run exactly one of:
 
 ```bash
-git rev-parse --show-toplevel
-git remote get-url origin
-git status --short
-git fetch origin main --tags --force
+npm run release:plan -- --bump patch
+npm run release:plan -- --bump minor
+npm run release:plan -- --bump major
 ```
 
-Continue only if:
+Patch is the default if the maintainer says "yes", "go", or similar without choosing.
 
-- the repo is `NVIDIA/NemoClaw`,
-- the worktree is clean,
-- `origin/main` is fetched.
-
-Find the latest remote semver tag from the remote, not local tag state:
-
-```bash
-git ls-remote --tags origin 'v*' \
-  | awk '{print $2}' \
-  | sed 's#refs/tags/##; s#\^{}##' \
-  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-  | sort -Vr \
-  | head -1
-```
-
-### Step 2: Choose the Next Semver Tag
-
-Present patch/minor/major choices with patch as default. Example:
+The script writes a plan outside the checkout root, for example:
 
 ```text
-Current release: v0.0.56
-
-Which version bump?
-1. Patch → v0.0.57 (default)
-2. Minor → v0.1.0
-3. Major → v1.0.0
+../nemoclaw-release-v0.0.58/plan.json
 ```
 
-If the maintainer says "yes", "go", or similar without choosing, use the patch default.
+### Step 2: Show Plan and Ask for Exact Confirmation
 
-Before continuing, verify the remote tag does not already exist:
+Read the generated `plan.json` and show the maintainer:
 
-```bash
-if git ls-remote --exit-code --tags origin <new-version> >/dev/null; then
-  echo "Tag already exists: <new-version>" >&2
-  exit 1
-fi
-```
+- previous tag,
+- next tag,
+- target `origin/main` commit and headline,
+- plan hash,
+- forbidden operations,
+- exact confirmation phrase.
 
-### Step 3: Confirm the Exact Commit
-
-Show the target commit and changelog:
-
-```bash
-git log --oneline origin/main -1
-git log --oneline <previous-version>..origin/main
-```
-
-Ask:
+Ask the maintainer to paste the exact phrase:
 
 ```text
-Confirm: create annotated tag <new-version> pointing at origin/main commit <sha>?
+CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
 ```
 
-Do not tag until the maintainer confirms the exact commit.
+Do not proceed on a generic "yes" at this step.
 
-### Step 4: Create and Push the Semver Tag
+### Step 3: Cut the Semver Tag
 
-Use the confirmed commit SHA, not a branch name that can move:
+Run the cut script with the plan and the maintainer's exact phrase:
 
 ```bash
-target=<confirmed-origin-main-sha>
-tag=<new-version>
-
-git fetch origin main --tags --force
-git cat-file -e "${target}^{commit}"
-git merge-base --is-ancestor "$target" origin/main
-
-git tag -a "$tag" "$target" -m "$tag"
-git push origin "refs/tags/$tag"
+npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
 ```
 
-If any command fails, stop and report the failure.
-
-### Step 5: Verify Tags
-
-Verify the semver tag immediately:
-
-```bash
-git ls-remote --tags origin <new-version> 'refs/tags/<new-version>^{}'
-```
-
-Then wait for the GitHub workflow that updates `latest`, and verify both tags peel to the confirmed commit:
-
-```bash
-git ls-remote --tags origin \
-  <new-version> 'refs/tags/<new-version>^{}' \
-  latest 'refs/tags/latest^{}'
-```
-
-Use `gh run list --workflow release-latest-tag.yaml --limit 3` if you need the workflow status.
-
-If `latest` does not update, report the workflow URL/status and stop. Do not move `latest` manually from this skill.
-
-### Step 6: Draft Release Notes
-
-Draft release notes from live GitHub data using the release range `<previous-version>...<new-version>`. Save the local draft outside the checkout root, for example:
+The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state. It writes:
 
 ```text
-../nemoclaw-<new-version>-release-note-draft.md
+<release-dir>/cut-result.json
 ```
 
-Follow the release-note style from `nemoclaw-maintainer-release-notes`, but stop after producing the local draft. Do not create or update a GitHub Discussion.
+If the script fails, stop and report the error. Do not improvise git commands.
 
-### Step 7: Hand Off Announcement
+### Step 4: Wait for Workflow-Managed `latest`
+
+Run:
+
+```bash
+npm run release:wait-latest -- --plan <plan.json>
+```
+
+The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned commit and verifies `lkg` did not change from the plan. It writes:
+
+```text
+<release-dir>/latest-result.json
+```
+
+If it fails, report the failed workflow/status. Do not manually move `latest`.
+
+### Step 5: Generate Release-Note Data and Draft Markdown
+
+Collect deterministic release-note input:
+
+```bash
+npm run release:notes-data -- --plan <plan.json>
+```
+
+This writes:
+
+```text
+<release-dir>/notes-data.json
+```
+
+Draft release notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
+
+```text
+<release-dir>/release-note-draft.md
+```
+
+Do not create or update a GitHub Discussion.
+
+### Step 6: Hand Off Announcement
 
 Return:
 
 - release tag,
 - confirmed release commit,
-- `latest` verification status,
+- plan path and plan hash,
+- `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
 - Markdown draft path,
 - suggested discussion title: `NemoClaw <new-version> is out`,
 - reminder: maintainer creates the Announcement discussion and shares its link in external channels.
 
 ## Recovery
 
-- Remote semver tag already exists: stop. Do not retag unless the maintainer explicitly asks for protected-tag remediation.
-- Semver tag pushed but `latest` workflow fails: report the failed workflow. Do not manually update `latest`.
-- Confirmed commit is not reachable from `origin/main`: stop; ask the maintainer for the correct commit.
-- Wrong tag was pushed: stop; protected-tag remediation requires explicit maintainer/admin instruction.
+- Plan generation fails: fix the named precondition, then regenerate the plan.
+- `origin/main` moved after plan generation: regenerate the plan and ask for the new exact confirmation phrase.
+- Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
+- `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
+- `lkg` changed: stop and escalate to a release admin.
