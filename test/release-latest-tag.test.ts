@@ -425,6 +425,36 @@ describe("release-latest-tag.sh", () => {
     expect(cutResult.stderr).toContain("planHash mismatch");
   });
 
+  it("verifies unchanged lightweight lkg tags", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "lkg", fixture.firstCommit, false);
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    expect(plan.lkgBefore).toMatchObject({
+      objectSha: fixture.firstCommit,
+      tag: "lkg",
+    });
+    expect(plan.lkgBefore.peeledSha).toBeUndefined();
+    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(
+      0,
+    );
+    expect(runReleaseLatest(fixture, "v0.0.2").status).toBe(0);
+
+    const waitResult = waitForLatest(fixture, planPath);
+
+    expect(waitResult.status).toBe(0);
+    expect(
+      readJson(path.join(fixture.root, "release", "latest-result.json")),
+    ).toMatchObject({
+      tag: "v0.0.2",
+      targetCommit: releaseCommit,
+      lkgPeeledCommitBefore: fixture.firstCommit,
+      lkgPeeledCommitAfter: fixture.firstCommit,
+    });
+  });
+
   it("detects lkg creation after a plan captured lkg as absent", () => {
     const fixture = createFixture();
     pushTag(fixture, "v0.0.1", fixture.firstCommit);
