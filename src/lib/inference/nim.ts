@@ -22,6 +22,7 @@ const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
+import { isSafeModelId } from "../validation";
 import {
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
@@ -347,15 +348,18 @@ export function getServedModelId(port = VLLM_PORT): string | null {
   return out ? parseServedModelId(out) : null;
 }
 
-// Route to the id NIM serves (from its image config), which can differ from the
-// catalog name; the catalog id 404s on validation/routing. See #3885.
+// Adopt the id NIM serves (from /v1/models) when it differs from the catalog
+// name and is safe; the catalog id otherwise 404s on validation. See #3885.
 export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT): string | null {
   const served = getServedModelId(port);
-  if (served && served !== catalogModel) {
-    console.log(`  NIM serves "${served}" (catalog "${catalogModel}"); using served id.`);
-    return served;
+  if (!served || served === catalogModel) return catalogModel;
+  // /v1/models is local-controlled — refuse an unsafe id; don't echo it (log-injection).
+  if (!isSafeModelId(served)) {
+    console.error(`  NIM reported an invalid model id; keeping "${catalogModel}".`);
+    return catalogModel;
   }
-  return catalogModel;
+  console.log(`  NIM serves "${served}" (catalog "${catalogModel}"); using served id.`);
+  return served;
 }
 
 export function detectGpu(): GpuDetection | null {

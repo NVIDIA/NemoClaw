@@ -342,6 +342,19 @@ describe("nim", () => {
         down.restore();
       }
     });
+
+    it("ignores an unsafe served id and keeps the catalog value (#3885)", () => {
+      const m = loadNimWithMockedRunner(
+        vi.fn(() => JSON.stringify({ data: [{ id: "bad id; rm -rf /" }] })),
+      );
+      try {
+        expect(m.nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano-30b-a3b",
+        );
+      } finally {
+        m.restore();
+      }
+    });
   });
 
   describe("containerName", () => {
