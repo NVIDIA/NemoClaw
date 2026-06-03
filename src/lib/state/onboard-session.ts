@@ -300,8 +300,9 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
  *     leaking into the runtime.
  *
  * This defensive parse can be removed only when the session schema gains a
- * version check that hard-fails on unknown shapes — see #4674 for the DDG
- * rollout that surfaced the multi-version case.
+ * version check that hard-fails on unknown shapes; until then it is the only
+ * guard against multi-provider rollouts leaving an unrecognised value in the
+ * session file.
  */
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   if (!isObject(value) || value.fetchEnabled !== true) return null;

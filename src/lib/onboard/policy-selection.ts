@@ -198,13 +198,13 @@ export function preparePolicyPresetResumeSelection(
     supportOptions,
     customPolicyPresetNames,
   );
-  const isStaleBuiltinBrave = (name: string) =>
+  const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
     });
   let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinBrave(name)),
+    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinWebSearch(name)),
     options.disabledChannels,
   );
   const recordedPolicyPresetsNeedReconcile =
@@ -217,7 +217,7 @@ export function preparePolicyPresetResumeSelection(
       supportOptions,
       customPolicyPresetNames,
     )
-    .filter((name) => !isStaleBuiltinBrave(name));
+    .filter((name) => !isStaleBuiltinWebSearch(name));
   const disabledMessagingPolicyPresetApplied = hasDisabledMessagingPolicyPreset(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
@@ -289,12 +289,12 @@ async function setupPoliciesWithSelectionInner(
     supportOptions,
     customPresetNames,
   );
-  const isStaleBuiltinBrave = (name: string) =>
+  const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, { webSearchConfig, customPresetNames });
   const appliedForPreservation = pruneDisabledMessagingPolicyPresets(
     applied,
     disabledChannels,
-  ).filter((name) => !isStaleBuiltinBrave(name));
+  ).filter((name) => !isStaleBuiltinWebSearch(name));
   const pruneDisabledPresets = (presetNames: string[]) =>
     pruneDisabledMessagingPolicyPresets(presetNames, disabledChannels);
   const filterSupportedPresetNames = (presetNames: string[]) =>
@@ -400,7 +400,7 @@ async function setupPoliciesWithSelectionInner(
       const preserved: string[] = [];
       for (const name of appliedForPreservation) {
         if (chosenSet.has(name)) continue;
-        if (isStaleBuiltinBrave(name)) continue;
+        if (isStaleBuiltinWebSearch(name)) continue;
         chosen.push(name);
         chosenSet.add(name);
         preserved.push(name);

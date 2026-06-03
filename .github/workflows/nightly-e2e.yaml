@@ -617,6 +617,7 @@ jobs:
       github_token: true
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   kimi-inference-compat-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
