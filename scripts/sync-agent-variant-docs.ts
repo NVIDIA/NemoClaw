@@ -9,12 +9,17 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
 const lifecyclePath = path.join(repoRoot, "docs/manage-sandboxes/lifecycle.mdx");
+const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
 const agentVariants = ["openclaw", "hermes"] as const;
 
 type AgentVariant = (typeof agentVariants)[number];
 type RenderedFile = {
   path: string;
   contents: string;
+};
+type RenderAgentVariantOptions = {
+  outputPath?: string;
+  sourcePath?: string;
 };
 
 const GENERATED_NOTICE =
@@ -118,9 +123,13 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   );
 }
 
-export function renderAgentVariantPage(source: string, variant: AgentVariant): string {
+export function renderAgentVariantPage(
+  source: string,
+  variant: AgentVariant,
+  options: RenderAgentVariantOptions = {},
+): string {
   const { frontmatter, body } = splitFrontmatter(source);
-  const renderedBody = stripAgentOnlyBlocksForVariant(
+  let renderedBody = stripAgentOnlyBlocksForVariant(
     body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
     variant,
   )
@@ -128,17 +137,67 @@ export function renderAgentVariantPage(source: string, variant: AgentVariant): s
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
+  if (options.sourcePath && options.outputPath) {
+    renderedBody = rewriteRelativeMarkdownLinks(
+      renderedBody,
+      path.dirname(options.sourcePath),
+      path.dirname(options.outputPath),
+    );
+  }
+
   return `${frontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(/\s*$/, "\n");
 }
 
 function renderGeneratedAgentVariantPages(): RenderedFile[] {
   const source = readFileSync(lifecyclePath, "utf8");
-  const sourceDirectory = path.dirname(lifecyclePath);
   const basename = path.basename(lifecyclePath, ".mdx");
-  return agentVariants.map((variant) => ({
-    path: path.join(sourceDirectory, `${basename}.${variant}.generated.mdx`),
-    contents: renderAgentVariantPage(source, variant),
-  }));
+  const relativeSourceDirectory = path.relative(
+    path.join(repoRoot, "docs"),
+    path.dirname(lifecyclePath),
+  );
+  return agentVariants.map((variant) => {
+    const outputPath = path.join(
+      generatedDocsRoot,
+      relativeSourceDirectory,
+      `${basename}.${variant}.generated.mdx`,
+    );
+    return {
+      path: outputPath,
+      contents: renderAgentVariantPage(source, variant, {
+        outputPath,
+        sourcePath: lifecyclePath,
+      }),
+    };
+  });
+}
+
+function rewriteRelativeMarkdownLinks(
+  body: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  return body.replace(/(!?\[[^\]]+\]\()([^)]+)(\))/g, (_match, prefix, target, suffix) => {
+    if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
+    return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
+  });
+}
+
+function shouldKeepLinkTarget(target: string): boolean {
+  return target.startsWith("#") || target.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(target);
+}
+
+function rewriteRelativeLinkTarget(
+  target: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  const match = target.match(/^([^?#]*)([?#].*)?$/);
+  if (!match || !match[1]) return target;
+
+  const absoluteTarget = path.resolve(sourceDirectory, match[1]);
+  const relativeTarget = path.relative(outputDirectory, absoluteTarget).replaceAll(path.sep, "/");
+  const normalizedTarget = relativeTarget.startsWith(".") ? relativeTarget : `./${relativeTarget}`;
+  return `${normalizedTarget}${match[2] ?? ""}`;
 }
 
 function writeGeneratedFiles(files: RenderedFile[]): void {

@@ -23,7 +23,7 @@ $$nemoclaw list
 `;
 
 describe("agent variant docs", () => {
-  it("renders OpenClaw sentinel code and content", () => {
+  it("renders OpenClaw placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "openclaw");
 
     expect(rendered).toContain("OpenClaw only.");
@@ -33,7 +33,7 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("AgentOnly");
   });
 
-  it("renders Hermes sentinel code and content", () => {
+  it("renders Hermes placeholder code and content", () => {
     const rendered = renderAgentVariantPage(source, "hermes");
 
     expect(rendered).not.toContain("OpenClaw only.");
@@ -41,5 +41,20 @@ describe("agent variant docs", () => {
     expect(rendered).toContain("nemohermes list");
     expect(rendered).not.toContain("$$nemoclaw");
     expect(rendered).not.toContain("AgentOnly");
+  });
+
+  it("rewrites relative links for generated build output", () => {
+    const rendered = renderAgentVariantPage(
+      `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n`,
+      "hermes",
+      {
+        outputPath:
+          "/repo/docs/_build/agent-variants/manage-sandboxes/lifecycle.hermes.generated.mdx",
+        sourcePath: "/repo/docs/manage-sandboxes/lifecycle.mdx",
+      },
+    );
+
+    expect(rendered).toContain("[Commands](../../../reference/commands#nemohermes-list)");
+    expect(rendered).toContain("[Backup](../../../manage-sandboxes/backup-restore)");
   });
 });

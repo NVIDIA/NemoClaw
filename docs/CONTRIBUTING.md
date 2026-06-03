@@ -142,6 +142,21 @@ The preview watcher uses the current Git branch name as the Fern preview ID and 
 
 Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
 
+## Agent Variant Generation
+
+Some Fern pages appear in both the OpenClaw and Hermes guide variants.
+When the page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
+Do not duplicate fenced code blocks or inline command examples only to switch between `nemoclaw` and `nemohermes`.
+
+The `scripts/sync-agent-variant-docs.ts` script renders variant-specific pages before Fern validates or publishes the site.
+For the sandbox lifecycle guide, the source page remains at `docs/manage-sandboxes/lifecycle.mdx`.
+The generated OpenClaw and Hermes pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
+Navigation in `docs/index.yml` points Fern at those generated pages so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
+
+Run `npm run docs:sync-agent-variants` after editing a shared variant source page.
+Run `npm run docs` before opening a PR to verify the generated pages, rewritten relative links, and Fern navigation.
+If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
+
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.
