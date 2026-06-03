@@ -18,6 +18,7 @@ import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -205,7 +206,7 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
       label: "Docker container",
       status: "fail",
       detail: `${containerName} not found or not inspectable`,
-      hint: "run `docker ps --filter name=openshell-cluster-nemoclaw`",
+      hint: `run \`docker ps --filter name=${containerName}\``,
     });
     return checks;
   }
@@ -514,6 +515,23 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
   };
 }
 
+/**
+ * Decide whether to inspect the legacy k3s gateway container
+ * (`openshell-cluster-<name>`). That container only exists for the legacy
+ * Kubernetes gateway driver. The current Linux/arm64 Docker-driver gateway runs
+ * as a host process (or a separate `nemoclaw-openshell-gateway` compatibility
+ * container), so inspecting `openshell-cluster-nemoclaw` there always fails and
+ * produces a false doctor failure even when OpenShell reports the named gateway
+ * as connected (#4502). Prefer the sandbox's recorded driver; fall back to
+ * platform detection for older registry entries that predate the field.
+ */
+function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
+  const driver = sb?.openshellDriver;
+  if (driver === "docker" || driver === "vm") return false;
+  if (driver === "kubernetes") return true;
+  return !isLinuxDockerDriverGatewayEnabled();
+}
+
 type RunSandboxDoctorOptions = {
   quietJson?: boolean;
 };
@@ -588,7 +606,9 @@ export async function runSandboxDoctor(
     hint: openshellBin ? undefined : "install OpenShell before using sandbox commands",
   });
 
-  checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
+  if (shouldInspectLegacyGatewayContainer(sb)) {
+    checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
+  }
 
   let openshellConnected = false;
   if (openshellBin) {

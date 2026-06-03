@@ -48,7 +48,9 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
     #   - systemctl exits cleanly so the daemon-start branch is a no-op
     #   - user is non-root, not in docker group via NSS, not in active group list
     #   - sudo is a no-op so usermod doesn't actually run
-    #   - is_wsl_host returns 1 so we don't bail out early
+    #   - uname reports Linux and is_wsl_host returns 1 so platform guards
+    #     don't bail out early when the test suite runs on macOS
+    uname() { printf 'Linux\n'; }
     docker() { return 1; }
     systemctl() { return 0; }
     sudo() { return 0; }

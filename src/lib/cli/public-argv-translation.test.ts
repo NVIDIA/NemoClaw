@@ -4,9 +4,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
-  type PublicTranslationResult,
 } from "./public-argv-translation";
 import { SANDBOX_ROUTE_OVERRIDES, sandboxRouteTokens } from "./public-route-metadata";
 
@@ -253,5 +253,98 @@ describe("translatePublicSandboxArgv", () => {
       kind: "unknownPublicAction",
       action: "bogus",
     });
+  });
+
+  it("routes the sessions passthrough parent for empty or flag-only args", () => {
+    // sandbox:sessions is a non-strict passthrough; empty and flag-leading
+    // actionArgs both belong to the parent, not to a fabricated
+    // `sandbox:sessions:<flag>` dispatch that oclif cannot resolve.
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", []),
+      "sandbox:sessions",
+      ["alpha"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--json"]),
+      "sandbox:sessions",
+      ["alpha", "--json"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--all-agents"]),
+      "sandbox:sessions",
+      ["alpha", "--all-agents"],
+    );
+  });
+
+  it("routes registered sessions subcommands to their native ids", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["list"]),
+      "sandbox:sessions:list",
+      ["alpha"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["reset", "abc123"]),
+      "sandbox:sessions:reset",
+      ["alpha", "abc123"],
+    );
+  });
+
+  it("routes sessions help tokens to parent help", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["--help"]),
+      "sandbox:sessions",
+      ["--help"],
+      ["sandbox", "sessions", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "sessions", ["help"]),
+      "sandbox:sessions",
+      ["--help"],
+      ["sandbox", "sessions", "--help"],
+    );
+  });
+
+  it("routes agents to the non-strict parent command for empty or flag-only args", () => {
+    // sandbox:agents is a non-strict parent that owns the help screen itself;
+    // the translator must dispatch to the registered parent command id rather
+    // than synthesising a `sandbox:agents:--<flag>` subcommand that oclif
+    // cannot resolve.
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", []),
+      "sandbox:agents",
+      ["alpha"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["--json"]),
+      "sandbox:agents",
+      ["alpha", "--json"],
+    );
+  });
+
+  it("routes agents help tokens to parent help", () => {
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["--help"]),
+      "sandbox:agents",
+      ["--help"],
+      ["sandbox", "agents", "--help"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "agents", ["help"]),
+      "sandbox:agents",
+      ["--help"],
+      ["sandbox", "agents", "--help"],
+    );
+  });
+
+  it("requires sandbox:agents to be a registered non-strict oclif parent", async () => {
+    // Dispatch guard: translator returns `sandbox:agents` for parent
+    // invocations; oclif must be able to resolve that id and run the parent
+    // command. A regression that deletes `src/commands/sandbox/agents.ts`
+    // would make every `nemoclaw <name> agents`/`agents --help` invocation
+    // fail with an unknown-command error.
+    const metadataModule = await import("./oclif-metadata");
+    const metadata = metadataModule.getRegisteredOclifCommandMetadata("sandbox:agents");
+    expect(metadata, "sandbox:agents must be a registered oclif command").not.toBeNull();
+    expect(metadata?.strict).toBe(false);
   });
 });
