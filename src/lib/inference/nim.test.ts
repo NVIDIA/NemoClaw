@@ -138,11 +138,6 @@ describe("nim", () => {
       },
     ],
   });
-  const DIGEST_BY_ARCH: Record<string, string> = {
-    amd64: "sha256:amd64image",
-    arm64: "sha256:arm64image",
-  };
-
   describe("nodeArchToOci", () => {
     it("maps x64 to amd64 and passes other arches through", () => {
       expect(nim.nodeArchToOci("x64")).toBe("amd64");
@@ -205,6 +200,7 @@ describe("nim", () => {
     }
 
     it("resolves the host-arch manifest digest, pulls by digest, then tags back (#3885)", () => {
+      const origArch = Object.getOwnPropertyDescriptor(process, "arch");
       const run = vi.fn();
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (Array.isArray(cmd) && cmd.includes("manifest") && cmd.includes("inspect")) {
@@ -214,13 +210,11 @@ describe("nim", () => {
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
       try {
+        Object.defineProperty(process, "arch", { value: "x64", configurable: true });
         const image = nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
         expect(image).toBe("nvcr.io/nim/nvidia/nemotron-3-nano:latest");
 
-        const ociArch = nimModule.nodeArchToOci(process.arch);
-        const expectedDigest = DIGEST_BY_ARCH[ociArch];
-        expect(expectedDigest).toBeDefined();
-        const expectedRef = `nvcr.io/nim/nvidia/nemotron-3-nano@${expectedDigest}`;
+        const expectedRef = "nvcr.io/nim/nvidia/nemotron-3-nano@sha256:amd64image";
 
         // Pull the per-arch digest, never the bare :latest index (the index pull
         // is what triggers the attestation-manifest fetch).
@@ -240,6 +234,7 @@ describe("nim", () => {
           "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
         ]);
       } finally {
+        if (origArch) Object.defineProperty(process, "arch", origArch);
         restore();
       }
     });
