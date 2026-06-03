@@ -145,9 +145,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 21 presets", () => {
+    it("returns all 22 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(21);
+      expect(presets.length).toBe(22);
     });
 
     it("each preset has name and description", () => {
@@ -167,6 +167,7 @@ describe("policies", () => {
         "brew",
         "claude-code",
         "discord",
+        "duckduckgo",
         "github",
         "huggingface",
         "jira",

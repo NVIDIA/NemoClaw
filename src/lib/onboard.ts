@@ -7027,7 +7027,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       hermesToolGateways,
       stagedLegacyKeys,
       migratedLegacyKeys,
-      webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
+      webSearchEnabled: webSearchConfig?.fetchEnabled === true,
       deps: {
         ensureAgentDashboardForward,
         verifyWebSearchInsideSandbox,

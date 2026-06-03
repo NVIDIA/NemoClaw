@@ -420,7 +420,7 @@ describe("configureWebSearch (interactive)", () => {
     expect(payload.errors).toEqual([]);
     expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
     expect(
-      payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
+      payload.prompts.filter((entry) => /Enable Web Search\?/.test(entry.message)),
     ).toHaveLength(2);
     expect(
       payload.prompts.some(

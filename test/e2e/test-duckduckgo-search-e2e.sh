@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# DuckDuckGo Search E2E (Issue #4559)
+# DuckDuckGo Search E2E
 #
-# Verifies the issue's acceptance end-to-end:
+# Verifies the DuckDuckGo Web Search backend end-to-end:
 #   D1   Non-interactive onboard with NEMOCLAW_EXPERIMENTAL=1 +
 #        NEMOCLAW_WEB_SEARCH_PROVIDER=duckduckgo succeeds
 #   D2a  duckduckgo network policy preset is applied
@@ -318,7 +318,7 @@ trap destroy_sandbox_best_effort EXIT
 
 echo ""
 echo "============================================================"
-echo "  DuckDuckGo Search E2E (#4559)"
+echo "  DuckDuckGo Search E2E"
 echo "  $(date)"
 echo "============================================================"
 

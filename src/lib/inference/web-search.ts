@@ -8,7 +8,7 @@ export const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ["brave", "duc
 export const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = "brave";
 
 export function isWebSearchProvider(value: unknown): value is WebSearchProvider {
-  return value === "brave" || value === "duckduckgo";
+  return WEB_SEARCH_PROVIDERS.includes(value as WebSearchProvider);
 }
 
 export function normalizeWebSearchProvider(value: unknown): WebSearchProvider {

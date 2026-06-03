@@ -6,7 +6,7 @@ import { runCurlProbe } from "../adapters/http/probe";
 import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue, saveCredential } from "../credentials/store";
 import type { WebSearchConfig, WebSearchProvider } from "../inference/web-search";
-import { BRAVE_API_KEY_ENV } from "../inference/web-search";
+import { BRAVE_API_KEY_ENV, normalizeWebSearchProvider } from "../inference/web-search";
 import { ROOT } from "../runner";
 import { classifyValidationFailure } from "../validation";
 import { getTransportRecoveryMessage } from "../validation-recovery";
@@ -208,7 +208,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
 
     const duckDuckGoRequested =
       isDuckDuckGoExperimentalEnabled() &&
-      (process.env.NEMOCLAW_WEB_SEARCH_PROVIDER || "").toLowerCase() === "duckduckgo";
+      normalizeWebSearchProvider(
+        (process.env.NEMOCLAW_WEB_SEARCH_PROVIDER || "").toLowerCase(),
+      ) === "duckduckgo";
 
     if (deps.isNonInteractive()) {
       if (duckDuckGoRequested) {
