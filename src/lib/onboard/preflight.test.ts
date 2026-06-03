@@ -479,6 +479,23 @@ describe("assessHost", () => {
     expect(result.requiresHostCgroupnsFix).toBe(false);
   });
 
+  it("detects stale global host cgroupns daemon configuration", () => {
+    const result = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "29.3.1",
+        OperatingSystem: "Ubuntu 24.04",
+        CgroupVersion: "2",
+      }),
+      readFileImpl: () => '{"default-cgroupns-mode":"host"}',
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerDefaultCgroupnsMode).toBe("host");
+    expect(result.dockerDefaultCgroupnsModeFile).toBe("/etc/docker/daemon.json");
+  });
+
   it("marks WSL in notes when the environment indicates it", () => {
     const result = assessHost({
       platform: "linux",
@@ -911,6 +928,83 @@ describe("planHostRemediation", () => {
     expect(actions[0].commands[1]).toContain("newgrp docker");
     expect(actions[0].commands[2]).toBe("nemoclaw onboard");
     expect(actions[0].reason).toContain("docker group");
+  });
+
+  it("warns when Docker has a stale global host cgroup namespace default", () => {
+    const assessment = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "29.3.1",
+        OperatingSystem: "Ubuntu 24.04",
+        CgroupVersion: "2",
+      }),
+      readFileImpl: () => '{"default-cgroupns-mode":"host"}',
+      commandExistsImpl: (name: string) => name === "docker",
+      runCaptureImpl: () => "",
+    });
+    const action = planHostRemediation(assessment).find(
+      (entry) => entry.id === "stale_docker_cgroupns_host",
+    );
+
+    expect(action).toBeTruthy();
+    expect(action?.blocking).toBe(false);
+    expect(action?.commands).toContain("sudo systemctl restart docker");
+    expect(action?.commands[0]).toContain("/etc/docker/daemon.json");
+    expect(action?.reason).not.toContain("CUDA");
+  });
+
+  it("blocks stale global host cgroupns on cgroup v2 GPU hosts", () => {
+    const assessment = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "29.3.1",
+        OperatingSystem: "Ubuntu 24.04",
+        CgroupVersion: "2",
+      }),
+      readFileImpl: () => '{"default-cgroupns-mode":"host"}',
+      commandExistsImpl: (name: string) => name === "docker",
+      gpuProbeImpl: () => true,
+      runCaptureImpl: () => "",
+    });
+    const action = planHostRemediation(assessment).find(
+      (entry) => entry.id === "stale_docker_cgroupns_host",
+    );
+
+    expect(action).toBeTruthy();
+    expect(action?.blocking).toBe(true);
+    expect(action?.reason).toContain("CUDA");
+  });
+
+  it("targets the rootless Docker daemon config when that file set host cgroupns", () => {
+    const assessment = assessHost({
+      platform: "linux",
+      env: {},
+      dockerInfoOutput: JSON.stringify({
+        ServerVersion: "29.3.1",
+        OperatingSystem: "Ubuntu 24.04",
+        CgroupVersion: "2",
+      }),
+      readFileImpl: (filePath: string) => {
+        if (filePath === "/home/rootless/.config/docker/daemon.json") {
+          return '{"default-cgroupns-mode":"host"}';
+        }
+        throw new Error("not found");
+      },
+      commandExistsImpl: (name: string) => name === "docker",
+      runCaptureImpl: () => "",
+    });
+    const action = planHostRemediation(assessment).find(
+      (entry) => entry.id === "stale_docker_cgroupns_host",
+    );
+
+    expect(assessment.dockerDefaultCgroupnsModeFile).toBe(
+      "/home/rootless/.config/docker/daemon.json",
+    );
+    expect(action?.kind).toBe("manual");
+    expect(action?.commands[0]).toContain("/home/rootless/.config/docker/daemon.json");
+    expect(action?.commands).toContain("systemctl --user restart docker");
   });
 
   it("warns that podman is unsupported on macOS without blocking onboarding", () => {

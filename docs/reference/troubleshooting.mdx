@@ -261,6 +261,24 @@ nemoclaw list
 
 Older NemoClaw releases relied on a Docker cgroup workaround on Ubuntu 24.04, DGX Spark, and WSL2.
 Current OpenShell releases handle that behavior themselves, so NemoClaw no longer requires a Spark-specific setup step.
+If a host previously ran an older Spark setup script, `/etc/docker/daemon.json` may still contain `default-cgroupns-mode: host`.
+That stale daemon-wide setting can break CUDA initialization in GPU containers even when `nvidia-smi` works.
+Current onboarding detects the setting, prints the daemon config path, and warns before continuing.
+To remove it manually, back up the Docker daemon config, delete only `default-cgroupns-mode`, and restart Docker:
+
+```bash
+sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/etc/docker/daemon.json")
+data = json.loads(path.read_text())
+data.pop("default-cgroupns-mode", None)
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+sudo systemctl restart docker
+```
 
 If onboarding reports that Docker is missing or unreachable, fix Docker first and retry onboarding:
 

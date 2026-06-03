@@ -112,6 +112,7 @@ export interface HostAssessment {
   dockerInfoSummary?: string;
   dockerCgroupVersion?: "v1" | "v2" | "unknown";
   dockerDefaultCgroupnsMode?: "host" | "private" | "unknown";
+  dockerDefaultCgroupnsModeFile?: string | null;
   dockerStorageDriver?: string;
   dockerUsesContainerdSnapshotter?: boolean;
   dockerCpus?: number;
@@ -413,8 +414,9 @@ export function isDockerUnderProvisioned(
 
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): "host" | "private" | "unknown" {
+): { mode: "host" | "private" | "unknown"; filePath: string | null } {
   const paths = ["/etc/docker/daemon.json", "/home/rootless/.config/docker/daemon.json"];
+  let privateResult: { mode: "private"; filePath: string } | null = null;
   for (const filePath of paths) {
     try {
       const raw = readFileImpl(filePath, "utf-8");
@@ -422,12 +424,14 @@ function readDockerDefaultCgroupnsMode(
         ["default-cgroupns-mode"]?: string;
       } = JSON.parse(raw);
       const mode = parsed["default-cgroupns-mode"];
-      if (mode === "host" || mode === "private") return mode;
+      if (mode === "host") return { mode, filePath };
+      if (mode === "private" && !privateResult) privateResult = { mode, filePath };
     } catch {
       // Try next path
     }
   }
-  return "unknown";
+  if (privateResult) return privateResult;
+  return { mode: "unknown", filePath: null };
 }
 
 function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
@@ -595,7 +599,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     runtime === "docker" &&
     dockerStorageDriver === "overlayfs" &&
     dockerUsesContainerdSnapshotter;
-  const dockerDefaultCgroupnsMode = readDockerDefaultCgroupnsMode(readFileImpl);
+  const dockerDefaultCgroupns = readDockerDefaultCgroupnsMode(readFileImpl);
+  const dockerDefaultCgroupnsMode = dockerDefaultCgroupns.mode;
   const dockerServiceActive =
     platform === "linux" && systemctlAvailable && dockerInstalled
       ? parseSystemctlState(
@@ -624,6 +629,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerInfoSummary: parseDockerInfoSummary(dockerInfoOutput),
     dockerCgroupVersion,
     dockerDefaultCgroupnsMode,
+    dockerDefaultCgroupnsModeFile: dockerDefaultCgroupns.filePath,
     dockerStorageDriver,
     dockerUsesContainerdSnapshotter,
     dockerCpus,
@@ -726,6 +732,32 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         blocking: true,
       });
     }
+  }
+
+  if (
+    assessment.dockerReachable &&
+    assessment.dockerDefaultCgroupnsMode === "host" &&
+    assessment.dockerCgroupVersion !== "v1"
+  ) {
+    const daemonJsonPath = assessment.dockerDefaultCgroupnsModeFile ?? "/etc/docker/daemon.json";
+    const needsSudo = daemonJsonPath.startsWith("/etc/");
+    const sudo = needsSudo ? "sudo " : "";
+    const blocking = assessment.hasNvidiaGpu && assessment.dockerCgroupVersion === "v2";
+    const reason = assessment.hasNvidiaGpu
+      ? "Docker is globally configured with default-cgroupns-mode=host. On cgroup v2 GPU hosts, that stale daemon-wide setting can break CUDA initialization in GPU containers; OpenShell scopes host cgroup namespaces to the gateway container instead."
+      : "Docker is globally configured with default-cgroupns-mode=host. NemoClaw no longer requires this Spark-era daemon-wide setting; removing it restores Docker's default cgroup namespace behavior.";
+    actions.push({
+      id: "stale_docker_cgroupns_host",
+      title: "Remove global Docker cgroup namespace override",
+      kind: needsSudo ? "sudo" : "manual",
+      reason,
+      commands: [
+        `${sudo}cp ${JSON.stringify(daemonJsonPath)} ${JSON.stringify(`${daemonJsonPath}.bak`)}`,
+        `${sudo}python3 -c 'import json, pathlib; p=pathlib.Path(${JSON.stringify(daemonJsonPath)}); d=json.loads(p.read_text()); d.pop("default-cgroupns-mode", None); p.write_text(json.dumps(d, indent=2) + "\\n")'`,
+        needsSudo ? "sudo systemctl restart docker" : "systemctl --user restart docker",
+      ],
+      blocking,
+    });
   }
 
   if (assessment.dockerReachable && assessment.isContainerRuntimeUnderProvisioned) {
