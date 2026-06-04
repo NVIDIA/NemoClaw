@@ -323,7 +323,8 @@ For predictable build performance:
 - Order Dockerfile layers from least-changing to most-changing work: base image, OS/package installs, dependency manifests, dependency install, then source files. This makes warm rebuilds reuse cached layers.
 - Expect a fresh host or fresh base image tag to spend time pulling and resolving layers. A warm rebuild with the same pinned base image and unchanged dependency layers should be much faster, but NemoClaw does not guarantee exact timings.
 
-Set `NEMOCLAW_TRACE=1` before onboarding when diagnosing slow builds. The trace separates context staging, Docker build, image upload/import, sandbox readiness, and dashboard readiness phases so you can distinguish a cold-cache download from a stalled sandbox.
+Set `NEMOCLAW_TRACE=1` before onboarding when diagnosing slow builds.
+The trace separates context staging, Docker build, image upload/import, sandbox readiness, and dashboard readiness phases so you can distinguish a cold-cache download from a stalled sandbox.
 
 ```bash
 $$nemoclaw onboard --from path/to/Dockerfile
