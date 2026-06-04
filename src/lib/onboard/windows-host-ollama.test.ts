@@ -40,4 +40,25 @@ describe("detectWindowsHostOllama", () => {
       loopbackOnly: false,
     });
   });
+
+  it("returns uninstalled when not on WSL", () => {
+    vi.mocked(isWsl).mockReturnValue(false);
+
+    expect(detectWindowsHostOllama()).toEqual({
+      installed: false,
+      installedPath: "",
+      loopbackOnly: false,
+    });
+    expect(runCapture).not.toHaveBeenCalled();
+  });
+
+  it("returns uninstalled when all Windows Ollama probes miss", () => {
+    runCapture.mockImplementation(() => "");
+
+    expect(detectWindowsHostOllama()).toEqual({
+      installed: false,
+      installedPath: "",
+      loopbackOnly: false,
+    });
+  });
 });
