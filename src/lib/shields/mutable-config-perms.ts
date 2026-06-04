@@ -35,6 +35,11 @@ export interface MutableConfigTarget {
   configDir: string;
   configPath: string;
   configFile: string;
+  // Files re-permissioned alongside the main config by unlockAgentConfig
+  // (e.g. .config-hash, .env). Listed here so inspect surfaces drift on the
+  // same set that repair will touch — otherwise the user-facing "Config
+  // permissions" check would silently underreport.
+  sensitiveFiles?: string[];
 }
 
 export type MutableConfigPermsInspection =
@@ -157,6 +162,27 @@ export function inspectMutableConfigPerms(
     issues.push(
       `${target.configFile} owner ${file.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
     );
+  }
+  // Mirror the file contract over the sensitive-file set that unlockAgentConfig
+  // touches. Missing files are tolerated (e.g. .config-hash is only created
+  // after the first shields-up cycle); we only flag actual drift.
+  for (const sensitivePath of target.sensitiveFiles || []) {
+    let sensitive: { mode: string; owner: string };
+    try {
+      sensitive = parseStatModeOwner(statModeOwner(sensitivePath));
+    } catch {
+      continue;
+    }
+    if (!fileSatisfiesMutableContract(sensitive.mode)) {
+      issues.push(
+        `${sensitivePath} mode ${sensitive.mode} (expected ${MUTABLE_OPENCLAW_FILE_MODE} group-writable)`,
+      );
+    }
+    if (sensitive.owner !== MUTABLE_OPENCLAW_OWNER) {
+      issues.push(
+        `${sensitivePath} owner ${sensitive.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
+      );
+    }
   }
   return {
     applies: true,

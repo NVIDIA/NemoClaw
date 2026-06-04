@@ -183,6 +183,51 @@ describe("inspectMutableConfigPerms (#4538)", () => {
     expect(result.applies).toBe(false);
     if (!result.applies) expect(result.reason).toContain("could not stat");
   });
+
+  it("flags sensitive-file drift the user-facing check would otherwise miss", () => {
+    const target: MutableConfigTarget = {
+      ...OPENCLAW_TARGET,
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    };
+    const result = inspectMutableConfigPerms(
+      target,
+      "mutable_default",
+      statFromMap({
+        "/sandbox/.openclaw": "2770 sandbox:sandbox",
+        "/sandbox/.openclaw/openclaw.json": "660 sandbox:sandbox",
+        "/sandbox/.openclaw/.config-hash": "644 root:root",
+      }),
+    );
+    expect(result.applies).toBe(true);
+    if (result.applies) {
+      expect(result.ok).toBe(false);
+      expect(result.issues).toEqual([
+        "/sandbox/.openclaw/.config-hash mode 644 (expected 660 group-writable)",
+        "/sandbox/.openclaw/.config-hash owner root:root (expected sandbox:sandbox)",
+      ]);
+    }
+  });
+
+  it("tolerates a missing sensitive file (e.g. .config-hash before first lock cycle)", () => {
+    const target: MutableConfigTarget = {
+      ...OPENCLAW_TARGET,
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    };
+    const result = inspectMutableConfigPerms(
+      target,
+      "mutable_default",
+      statFromMap({
+        "/sandbox/.openclaw": "2770 sandbox:sandbox",
+        "/sandbox/.openclaw/openclaw.json": "660 sandbox:sandbox",
+        // .config-hash intentionally absent
+      }),
+    );
+    expect(result.applies).toBe(true);
+    if (result.applies) {
+      expect(result.ok).toBe(true);
+      expect(result.issues).toEqual([]);
+    }
+  });
 });
 
 describe("repairMutableConfigPerms (#4538)", () => {
