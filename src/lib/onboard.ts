@@ -3563,6 +3563,23 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  // Pin OpenClaw's home, state, and default workspace dirs inside the
+  // sandbox so `openclaw skills install` and `openclaw skills list` resolve
+  // the same paths regardless of the sandbox HOME the base image was built
+  // with. Without this, the upstream skill loader can fall back to a
+  // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from where install
+  // wrote, leaving workspace-installed skills invisible to `skills list`.
+  // Tracks NVIDIA/NemoClaw#4709; upstream fixes openclaw/openclaw#90089 and
+  // openclaw/openclaw#89767. Remove once the bundled OpenClaw absorbs both.
+  // The OPENCLAW_* env vars are namespace-prefixed and ignored by non-OpenClaw
+  // agents (e.g. Hermes), so injecting them unconditionally is safe.
+  const openclawConfigDir = agent?.configPaths?.dir || "/sandbox/.openclaw";
+  const openclawHomeDir = path.posix.dirname(openclawConfigDir);
+  envArgs.push(formatEnvAssignment("OPENCLAW_HOME", openclawHomeDir));
+  envArgs.push(formatEnvAssignment("OPENCLAW_STATE_DIR", openclawConfigDir));
+  envArgs.push(
+    formatEnvAssignment("OPENCLAW_WORKSPACE_DIR", `${openclawConfigDir}/workspace`),
+  );
   onboardHermesDashboard.appendHermesDashboardEnvArgs(
     envArgs,
     hermesDashboardState,
