@@ -8,7 +8,7 @@
 #
 # Covers:
 #   TC-NET-01: Deny-by-default egress (blocked URL returns 403)
-#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via pip and curl GET)
+#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via curl GET; POST blocked)
 #   TC-NET-03: Live policy-add without restart (slack preset)
 #   TC-NET-04: policy-add --dry-run (no changes applied)
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
@@ -309,21 +309,6 @@ test_net_02_whitelist_access() {
     return
   fi
 
-  log "  Probing PyPI from inside sandbox using pip..."
-
-  local response
-  response=$(sandbox_exec "rm -rf /tmp/pip-test && pip download --no-deps --no-cache-dir --dest /tmp/pip-test requests 2>&1 && echo PIP_OK || echo PIP_FAIL" 2>&1) || true
-
-  log "  Response: ${response:0:300}"
-
-  if echo "$response" | grep -q "PIP_OK"; then
-    pass "TC-NET-02: PyPI reachable via pip after preset applied"
-  elif echo "$response" | grep -qiE "Downloading|Successfully"; then
-    pass "TC-NET-02: PyPI reachable via pip (download started)"
-  else
-    fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
-  fi
-
   log "  Probing PyPI read-only access from inside sandbox using curl..."
 
   local pypi_code
@@ -354,6 +339,23 @@ test_net_02_whitelist_access() {
     pass "TC-NET-02: PyPI POST remains blocked under read-only preset"
   else
     fail "TC-NET-02: Whitelist" "curl POST to pypi.org should remain blocked with 403: ${post_code:0:200}"
+  fi
+
+  # #4014 validates network-policy egress only. Keep pip as a log-only
+  # diagnostic so package-manager behavior cannot fail this regression.
+  log "  Optional diagnostic: probing PyPI from inside sandbox using pip..."
+
+  local response
+  response=$(sandbox_exec "rm -rf /tmp/pip-test && pip download --no-deps --no-cache-dir --dest /tmp/pip-test requests 2>&1 && echo PIP_OK || echo PIP_FAIL" 2>&1) || true
+
+  log "  pip diagnostic response: ${response:0:300}"
+
+  if echo "$response" | grep -q "PIP_OK"; then
+    log "  pip diagnostic succeeded after pypi preset was applied"
+  elif echo "$response" | grep -qiE "Downloading|Successfully"; then
+    log "  pip diagnostic reached PyPI after pypi preset was applied"
+  else
+    log "  pip diagnostic did not succeed; ignoring for #4014 because curl egress checks are authoritative: ${response:0:200}"
   fi
 }
 

@@ -1812,6 +1812,56 @@ exit 1
       expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
     });
 
+    it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string; path?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      expect(pypiPolicy).toBeTruthy();
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining([
+          "/usr/bin/curl",
+          "/usr/local/bin/curl",
+          "/usr/local/bin/pip3",
+          "/usr/bin/python3*",
+          "/opt/hermes/.venv/bin/python",
+        ]),
+      );
+
+      const endpoints = pypiPolicy?.endpoints ?? [];
+      expect(endpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+        "files.pythonhosted.org",
+        "pypi.org",
+      ]);
+
+      for (const endpoint of endpoints) {
+        expect(endpoint).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+        });
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET"]);
+        expect(methods).not.toContain("POST");
+        expect(methods).not.toContain("PUT");
+        expect(methods).not.toContain("DELETE");
+      }
+    });
+
     it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
       const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const githubPolicy = parsed.network_policies?.github as
