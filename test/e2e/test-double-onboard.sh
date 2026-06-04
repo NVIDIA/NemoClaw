@@ -729,6 +729,12 @@ else
   fail "Stale sandbox status exited $status_exit (expected 1)"
 fi
 
+if grep -q "No local registry entry was removed" <<<"$status_output"; then
+  pass "Stale sandbox status emitted non-destructive guidance (#4578)"
+else
+  fail "Stale sandbox status did not emit non-destructive guidance (#4578)"
+fi
+
 # #4497: neither status nor connect may delete the stale local entry — the
 # metadata is what `rebuild` / `onboard --recreate-sandbox` need to recover.
 if grep -q "Removed stale local registry entry" <<<"$status_output"; then
@@ -867,12 +873,10 @@ stop_gateway_runtime
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true
 
-# Force registry reconciliation: when the gateway is in a degraded state
-# (stopped in Phase 6), `nemoclaw destroy` may delete the sandbox from
-# OpenShell but fail to clean its own registry entry. Running `status` for
-# each sandbox triggers the stale-entry reconciliation path.
-run_nemoclaw "$SANDBOX_A" status 2>/dev/null || true
-run_nemoclaw "$SANDBOX_B" status 2>/dev/null || true
+# `status` and `connect` intentionally preserve stale registry entries (#4497),
+# so final cleanup relies on the explicit `destroy --yes` calls above. Do not
+# run a post-destroy status probe here: it can restart the gateway without
+# removing registry state.
 
 if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
   fail "Sandbox '$SANDBOX_A' still exists after cleanup"

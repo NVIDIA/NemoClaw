@@ -101,6 +101,16 @@ describe("registry", () => {
     expect(registry.updateSandbox("nope", {})).toBe(false);
   });
 
+  it("registerSandbox does not inherit a finalized policy marker (#4621)", () => {
+    // Snapshot restore spreads the source entry (possibly finalized) but resets
+    // policies; the clone must not carry a stale finalized marker.
+    registry.registerSandbox({ name: "clone", policies: [], policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBeUndefined();
+    // The marker is set only by the post-policy registry write.
+    registry.updateSandbox("clone", { policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBe(true);
+  });
+
   it("updateSandbox rejects name changes", () => {
     registry.registerSandbox({ name: "orig" });
     expect(registry.updateSandbox("orig", { name: "renamed" })).toBe(false);

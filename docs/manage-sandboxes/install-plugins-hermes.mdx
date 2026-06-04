@@ -105,8 +105,8 @@ If a plugin calls an external API at runtime, add a policy preset for the requir
 Hermes uses Python for plugin execution, so policy entries usually need to allow the Hermes Python runtime, such as `/opt/hermes/.venv/bin/python`, in addition to any command-line wrapper your plugin starts.
 For package downloads during sandbox runtime, use the `pypi` preset or a custom preset that allows the package hosts you need.
 
-For policy concepts, see [Network Policies](../reference/network-policies).
-For custom preset workflows, see [Customize Network Policy](../network-policy/customize-network-policy).
+For policy concepts, refer to [Network Policies](../reference/network-policies).
+For custom preset workflows, refer to [Customize Network Policy](../network-policy/customize-network-policy).
 
 ## Common Mistakes
 
@@ -116,7 +116,7 @@ These are the most common places where Hermes plugin installation gets mixed up 
 - Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
 - Do not remove `/sandbox/.hermes/plugins/nemoclaw`; NemoClaw depends on that plugin for managed Hermes behavior.
 - Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
-- Do not assume Python package downloads during runtime are allowed by default; sandbox egress still follows OpenShell policy.
+- Do not assume OpenShell policy allows Python package downloads during runtime by default.
 
 ## Next Steps
 

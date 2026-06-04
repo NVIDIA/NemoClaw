@@ -25,6 +25,27 @@ export function isDenylistedNvidiaGpuName(name: string): boolean {
   return NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name);
 }
 
+// Result of a bounded Docker `--gpus` CUDA proof. `passed` is true only when a
+// real CUDA workload (not just nvidia-smi) succeeded — that is the signal that
+// distinguishes a genuine Windows-ARM N1X + WSL2 + Docker Desktop GPU (#4565)
+// from the Windows-on-ARM Snapdragon nvidia-smi shim (#3988/#4424), which has
+// no usable NVIDIA device and so cannot pass the workload.
+export interface DockerGpuProofResult {
+  passed: boolean;
+  timedOut: boolean;
+  exitCode: number | null;
+  diagnostic: string;
+}
+
+// Optional accept-path used by `detectGpu()` when an ARM64 Linux host reports a
+// denylisted `JMJWOA-Generic-*` placeholder. The prover returns `null` when the
+// host is not a proof candidate (not ARM64 WSL Docker Desktop), preserving the
+// #3988 fail-closed default; otherwise it returns the bounded Docker GPU proof
+// outcome so a passing real GPU can be trusted without trusting the name alone.
+export type Arm64WslDockerDesktopGpuProver = (
+  gpuNames: string[],
+) => DockerGpuProofResult | null;
+
 export function isPlausibleNvidiaGpuName(name: string): boolean {
   return !!name && !isDenylistedNvidiaGpuName(name) && NVIDIA_GPU_NAME_PATTERN.test(name);
 }

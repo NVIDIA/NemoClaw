@@ -184,7 +184,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-slack"),
     expectedStateId: "cloud-hermes-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-resume",
