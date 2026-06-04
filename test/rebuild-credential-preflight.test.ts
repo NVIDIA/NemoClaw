@@ -537,13 +537,13 @@ describe("Issue #2273: atomic rebuild", () => {
     );
 
     it(
-      "uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_API_KEY (#3895)",
+      "uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_API_KEY",
       { timeout: 60_000 },
       () => {
-        // Repro of #3895: after `nemohermes channels add wechat` the rebuild
-        // preflight aborted because NVIDIA_API_KEY was not set in the
-        // environment, even though `nvidia-prod` was already registered in
-        // the OpenShell gateway. Reuse the gateway-registered credential.
+        // After `nemohermes channels add wechat` the rebuild preflight used to
+        // abort because NVIDIA_API_KEY was not set in the environment, even
+        // though `nvidia-prod` was already registered in the OpenShell
+        // gateway. Reuse the gateway-stored credential instead.
         const f = createFixture({
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_API_KEY",
@@ -561,12 +561,12 @@ describe("Issue #2273: atomic rebuild", () => {
     );
 
     it(
-      "still aborts when nvidia-prod is missing from the gateway AND the env (#3895)",
+      "still aborts when nvidia-prod is missing from the gateway AND the env",
       { timeout: 60_000 },
       () => {
-        // Negative gate for #3895: if the gateway also lost the provider
-        // (cold install, gateway state lost) and the env is empty, the
-        // preflight must still bail so the sandbox is preserved.
+        // Negative gate on gateway-credential reuse: if the gateway also lost
+        // the provider (cold install, gateway state lost) and the env is
+        // empty, the preflight must still bail so the sandbox is preserved.
         const f = createFixture({
           provider: "nvidia-prod",
           credentialEnv: "NVIDIA_API_KEY",

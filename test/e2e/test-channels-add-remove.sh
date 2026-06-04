@@ -323,15 +323,15 @@ section "Phase 3: channels add telegram + rebuild"
 # the operator decides to add a channel and exports the token first.
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 
-# #3895 regression gate. Before the fix, the rebuild preflight aborted with
-# "provider credential not found" when NVIDIA_API_KEY was unset in the host
-# env even though the inference provider was already registered in the
-# OpenShell gateway. Drop the key from the env around `channels add` +
-# rebuild so the post-add rebuild has to reuse the gateway-stored
+# Gateway-credential reuse gate. Before the fix, the rebuild preflight
+# aborted with "provider credential not found" when NVIDIA_API_KEY was unset
+# in the host env even though the inference provider was already registered
+# in the OpenShell gateway. Drop the key from the env around `channels add`
+# + rebuild so the post-add rebuild has to reuse the gateway-stored
 # credential instead of demanding it back on the host.
 NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
 unset NVIDIA_API_KEY
-info "NVIDIA_API_KEY unset for #3895 regression gate; gateway must hold the credential"
+info "NVIDIA_API_KEY unset for gateway-credential-reuse gate; gateway must hold the credential"
 
 if nemoclaw "$SANDBOX_NAME" channels add telegram >/tmp/nc-add.log 2>&1; then
   add_rc=0
@@ -360,12 +360,12 @@ else
   print_summary
 fi
 
-# #3895 regression assertion: the rebuild must not have aborted with the
-# "provider credential not found" error.
+# Gateway-credential reuse assertion: the rebuild must not have aborted with
+# the "provider credential not found" error.
 if grep -q "provider credential not found" /tmp/nc-rebuild-add.log; then
-  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential (#3895)"
+  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
 else
-  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_API_KEY (#3895)"
+  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_API_KEY"
 fi
 
 # Restore for the remaining phases — `channels remove` + rebuild should

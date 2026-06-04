@@ -372,11 +372,11 @@ export async function rebuildSandbox(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
     if (!credentialValue) {
-      // #3895: when the inference provider is already registered in the
-      // OpenShell gateway, the recreate step does not need a host env value —
-      // the gateway is the source of truth for the secret. Skip the env-only
-      // preflight in that case so flows like `channels add` + rebuild work
-      // when the user has logged out of the original shell.
+      // When the inference provider is already registered in the OpenShell
+      // gateway, the recreate step does not need a host env value — the
+      // gateway is the source of truth for the secret. Skip the env-only
+      // preflight in that case so flows like `channels add` + rebuild keep
+      // working when the user has logged out of the original shell.
       if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
         log(
           `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,

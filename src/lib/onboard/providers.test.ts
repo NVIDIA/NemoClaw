@@ -168,7 +168,7 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
   });
 
-  it("omits --credential from the update args when the env value is empty (#3895)", () => {
+  it("omits --credential from the update args when the env value is empty", () => {
     const commands: string[] = [];
     const result = upsertProvider(
       "nvidia-prod",

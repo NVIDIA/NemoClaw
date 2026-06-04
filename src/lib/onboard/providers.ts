@@ -239,7 +239,7 @@ function getRequestedModelHint(nonInteractive) {
  *   `provider update` path when the host env does not carry the credential and
  *   the gateway already holds it (no rotation needed). OpenShell's CLI rejects
  *   `--credential KEY` when the local env var is empty, so passing the flag
- *   would fail before reaching the gateway. See #3895.
+ *   would fail before reaching the gateway.
  * @returns {string[]} Argument array for runOpenshell().
  */
 function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
@@ -313,11 +313,11 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";
-  // #3895: on the update path, the OpenShell CLI's `--credential KEY` form
-  // reads the value from the host env and aborts when empty. If the caller did
-  // not stage a credential value (rebuild after `channels add` with the
-  // original env unset), drop the flag so `provider update` becomes a no-op
-  // merge — the gateway already holds the secret.
+  // On the update path, the OpenShell CLI's `--credential KEY` form reads the
+  // value from the host env and aborts when empty. If the caller did not stage
+  // a credential value (rebuild after `channels add` with the original env
+  // unset), drop the flag so `provider update` becomes a no-op merge — the
+  // gateway already holds the secret.
   const credentialValueAvailable =
     !!credentialEnv && typeof env[credentialEnv] === "string" && env[credentialEnv].length > 0;
   const includeCredential = action === "create" || credentialValueAvailable;
