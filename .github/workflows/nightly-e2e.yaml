@@ -4,6 +4,8 @@
 # Nightly E2E tests:
 #
 #   cloud-e2e                Cloud inference (NVIDIA Endpoint API) on ubuntu-latest.
+#   agent-turn-latency-e2e   Times one real OpenClaw turn and one real Hermes
+#                            turn through the configured NVIDIA Build model.
 #   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
 #                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
 #                            exercises OpenShell provider-shaped alias resolution (#2085 follow-up).
@@ -91,6 +93,7 @@ on:
         description: >-
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
+          agent-turn-latency-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           openclaw-slack-pairing-e2e,
           openclaw-tui-chat-correlation-e2e,
@@ -215,6 +218,24 @@ jobs:
       artifact_name: "install-log-cloud-inference"
       artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-inference"}'
+      nvidia_api_key: true
+    secrets: *nightly-e2e-default-secrets
+  agent-turn-latency-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',agent-turn-latency-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-agent-turn-latency-e2e.sh
+      timeout_minutes: 120
+      artifact_name: "agent-turn-latency-logs"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-openclaw-turn-latency-install.log
+        /tmp/nemoclaw-e2e-hermes-turn-latency-install.log
+        /tmp/nemoclaw-e2e-agent-turn-latency.json
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_TURN_LATENCY_MODEL":"nvidia/nemotron-3-ultra-550b-a55b"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   skill-agent-e2e:
@@ -1898,6 +1919,7 @@ jobs:
         cloud-e2e,
         cloud-onboard-e2e,
         cloud-inference-e2e,
+        agent-turn-latency-e2e,
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
@@ -2006,6 +2028,7 @@ jobs:
         cloud-e2e,
         cloud-onboard-e2e,
         cloud-inference-e2e,
+        agent-turn-latency-e2e,
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
@@ -2171,6 +2194,7 @@ jobs:
         cloud-e2e,
         cloud-onboard-e2e,
         cloud-inference-e2e,
+        agent-turn-latency-e2e,
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
