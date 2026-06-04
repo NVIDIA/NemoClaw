@@ -882,7 +882,8 @@ reconcile_agent_model_with_provider() {
 
   local gateway_model=""
   if command -v openshell >/dev/null 2>&1; then
-    gateway_model="$(python3 - <<'PYPROBE'
+    gateway_model="$(
+      python3 - <<'PYPROBE'
 import json, subprocess
 try:
     result = subprocess.run(
