@@ -472,6 +472,10 @@ If the sandbox or gateway cannot be verified, the command exits non-zero instead
 When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
+When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state.
+It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
+Failed proofs include remediation guidance for the detected platform.
+
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 
@@ -603,6 +607,11 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavio
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
+If the live policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
+Fix the gateway or policy read problem, then rerun the command.
+For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
+Recover or re-onboard the sandbox, then re-apply the custom preset.
 
 | Flag | Description |
 |------|-------------|
