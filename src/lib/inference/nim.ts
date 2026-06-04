@@ -32,6 +32,7 @@ import {
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
+export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
 
 export interface NimModel {
   name: string;
@@ -870,8 +871,7 @@ export interface WaitForNimHealthOptions {
 
 export function waitForNimHealth(
   port = VLLM_PORT,
-  // First load (weight download + warmup) takes minutes, longer for big models.
-  timeout = 1200,
+  timeout = DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS,
   opts: WaitForNimHealthOptions = {},
 ): boolean {
   const start = Date.now();
@@ -902,8 +902,8 @@ export function waitForNimHealth(
       /* ignored */
     }
     // Short-circuit if the container has already exited — typically NGC auth
-    // failure or OOM during model load — instead of polling the full timeout
-    // against a dead container. See #3333.
+    // failure or OOM during model load. Without this, the wizard polls the
+    // full timeout (default 1200s) against a dead container. See #3333.
     if (container) {
       const state = dockerContainerInspectFormat("{{.State.Status}}", container, {
         ignoreError: true,
