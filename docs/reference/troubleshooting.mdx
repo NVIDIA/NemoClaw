@@ -875,6 +875,12 @@ gosu gateway sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
 
 Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
 
+A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw`; `700/600` is not one of them:
+
+- **Mutable default (shields down):** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
+- **Shields up (locked from the host with `nemoclaw <sandbox> shields up`):** `openclaw.json` becomes `444 root:root` and the config dir becomes `755 root:root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
+- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+
 ### Discord bot logs in, but the channel still does not work
 
 Separate the problem into two parts:

@@ -16,6 +16,10 @@
 // be unit-tested without a live sandbox. The sandbox-bound wrappers live in
 // ./index.ts.
 
+// #4538 describes the user-expected contract as 2775/664. NemoClaw uses
+// 2770/660 because the gateway shares the sandbox group; dropping the "other"
+// bit keeps writes accessible to (sandbox UID, gateway UID) only and matches
+// the pre-doctor state baked into the sandbox image.
 export const MUTABLE_OPENCLAW_DIR_MODE = "2770";
 export const MUTABLE_OPENCLAW_FILE_MODE = "660";
 export const MUTABLE_OPENCLAW_OWNER = "sandbox:sandbox";
