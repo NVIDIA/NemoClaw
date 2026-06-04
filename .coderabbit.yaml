@@ -440,6 +440,25 @@ reviews:
     - path: "test/openclaw-tui-chat-correlation.test.ts"
       instructions: *e2e-openclaw-tui-chat-correlation
 
+    - path: "test/e2e/test-issue-4434-tui-unreachable-inference.sh"
+      instructions: &e2e-issue-4434-tui-unreachable-inference |
+        This script is the privileged live repro for #4434. Changes affect
+        the Linux-only NVIDIA endpoint firewall block, OpenClaw TUI error
+        visibility, and active-spinner shutdown proof.
+
+        **E2E test recommendation:**
+        - `issue-4434-tui-unreachable-inference-e2e` - opt-in live proof
+          that unreachable NVIDIA inference surfaces a visible TUI error and
+          stops the active spinner
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-4434-tui-unreachable-inference-e2e
+        ```
+
+    - path: "test/issue-4434-tui-unreachable-inference.test.ts"
+      instructions: *e2e-issue-4434-tui-unreachable-inference
+
     - path: "test/e2e/test-openclaw-slack-pairing.sh"
       instructions: |
         This script validates OpenClaw Slack DM pairing across the gateway
