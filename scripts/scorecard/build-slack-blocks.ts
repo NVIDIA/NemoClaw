@@ -176,21 +176,21 @@ function getStatusColor(data: ScorecardData): SlackStatusColor {
   return "warning";
 }
 
-type SlackChannel = "ci" | "preview" | "situation-room";
+type SlackChannel = "daily" | "fullrun" | "preview";
 
 /**
  * Routes the Slack post to a channel based on run mode. Production runs
  * always land in one of the first two channels:
- *   "Scheduled full nightly" → "situation-room" (daily ops alerts)
- *   "Manual full run"        → "ci"             (team-wide CI channel)
+ *   "Scheduled full nightly" → "daily"   (daily ops alerts)
+ *   "Manual full run"        → "fullrun" (team-wide CI channel)
  *
  * Selective dispatch returns "preview", reserved for dev testing only.
  *
  * The caller maps the returned tag to a webhook URL secret.
  */
 function getSlackChannel(data: ScorecardData): SlackChannel {
-  if (data.runMode === "Scheduled full nightly") return "situation-room";
-  if (data.runMode === "Manual full run") return "ci";
+  if (data.runMode === "Scheduled full nightly") return "daily";
+  if (data.runMode === "Manual full run") return "fullrun";
   return "preview";
 }
 

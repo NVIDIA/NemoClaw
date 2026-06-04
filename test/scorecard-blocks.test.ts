@@ -20,7 +20,7 @@ type TestSlackBlock = {
 type SlackBuilder = {
   buildBlocks: (data: ScorecardData) => TestSlackBlock[];
   buildFallbackText: (data: ScorecardData) => string;
-  getSlackChannel: (data: ScorecardData) => "ci" | "preview" | "situation-room";
+  getSlackChannel: (data: ScorecardData) => "daily" | "fullrun" | "preview";
   getStatusColor: (data: ScorecardData) => "danger" | "good" | "warning";
 };
 
@@ -236,12 +236,12 @@ describe("getStatusColor", () => {
 });
 
 describe("getSlackChannel", () => {
-  it("routes scheduled nightly runs to the situation-room channel", () => {
-    expect(getSlackChannel(makeData())).toBe("situation-room");
+  it("routes scheduled nightly runs to the daily channel", () => {
+    expect(getSlackChannel(makeData())).toBe("daily");
   });
 
-  it("routes manual full runs (workflow_dispatch, empty jobs) to the ci channel", () => {
-    expect(getSlackChannel(makeData({ runMode: "Manual full run" }))).toBe("ci");
+  it("routes manual full runs (workflow_dispatch, empty jobs) to the fullrun channel", () => {
+    expect(getSlackChannel(makeData({ runMode: "Manual full run" }))).toBe("fullrun");
   });
 
   it("routes selective dispatches to the preview channel", () => {

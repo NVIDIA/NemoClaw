@@ -2446,8 +2446,8 @@ jobs:
 
       # ── Slack notification ────────────────────────────
       # Production routes (always post; runMode is computed by the generate step):
-      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
-      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #   "Scheduled full nightly" → SLACK_WEBHOOK_URL_DAILY
+      #   "Manual full run"        → SLACK_WEBHOOK_URL_FULLRUN
       #
       # Selective dispatch is skipped by default. Devs may opt into the
       # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
@@ -2455,8 +2455,8 @@ jobs:
         if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
-          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_DAILY: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+          SLACK_WEBHOOK_URL_FULLRUN: ${{ secrets.SLACK_WEBHOOK_URL_FULLRUN }}
           SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
           POST_TO_SLACK: ${{ inputs.post_to_slack }}
@@ -2483,8 +2483,8 @@ jobs:
             }
 
             const envByChannel = {
-              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
-              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'daily': 'SLACK_WEBHOOK_URL_DAILY',
+              'fullrun': 'SLACK_WEBHOOK_URL_FULLRUN',
               'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const webhookUrl = process.env[envByChannel[channel]];
