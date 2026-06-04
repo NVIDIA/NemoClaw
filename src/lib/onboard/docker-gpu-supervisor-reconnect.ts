@@ -29,10 +29,12 @@ import { envInt } from "./env";
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // Default consecutive Error-phase polls required before fast-fail. With a
-// 2-second poll interval this is ~10s of sustained Error, which absorbs the
-// transient Error reported during container recreation while still bailing
-// fast on a patched container that crashed on startup.
-const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 5;
+// 2-second poll interval this is ~30s of sustained Error, leaving headroom
+// for slower hosts (Docker Desktop on WSL2, DGX Spark cached re-onboard)
+// whose sandbox list cache divergence was observed at ~12s in the original
+// repro. Hosts that genuinely crashed on startup hit the rollback path in
+// applyDockerGpuPatch rather than waiting out the full window.
+const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 15;
 
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";

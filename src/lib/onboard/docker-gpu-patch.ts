@@ -12,6 +12,7 @@ import {
   dockerRm,
   dockerRun,
   dockerRunDetached,
+  dockerStart,
   dockerStop,
 } from "../adapters/docker";
 import {
@@ -70,6 +71,7 @@ export type DockerGpuPatchDeps = {
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
   dockerRm?: DockerContainerFn;
+  dockerStart?: DockerContainerFn;
   dockerStop?: DockerContainerFn;
   dockerLogs?: DockerLogsFn;
   runOpenshell?: (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
@@ -112,6 +114,7 @@ export type DockerGpuPatchFailureContext = {
   backupContainerName?: string | null;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
+  rolledBack?: boolean;
 };
 
 export type DockerGpuPatchResult = {
@@ -245,6 +248,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
+    | "dockerStart"
     | "dockerStop"
     | "dockerLogs"
     | "sleep"
@@ -260,6 +264,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     dockerRunDetached,
     dockerRename,
     dockerRm,
+    dockerStart,
     dockerStop,
     dockerLogs,
     sleep: (seconds: number) => {
@@ -867,6 +872,37 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
+// Tear down the newly-created GPU container and put the pre-patch backup
+// container back in its place. Used when supervisor reconnect cannot confirm
+// the GPU container is reachable — keeps the user on the CPU-only sandbox
+// they had before the patch attempt rather than a deleted-backup / failed-new
+// state that requires manual cleanup.
+function rollbackToBackupContainer(
+  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  d: {
+    dockerStop: DockerContainerFn;
+    dockerRm: DockerContainerFn;
+    dockerRename: DockerRenameFn;
+    dockerStart: DockerContainerFn;
+  },
+): boolean {
+  const containerOpts = {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+  };
+  d.dockerStop(refs.newContainerId, containerOpts);
+  d.dockerRm(refs.newContainerId, containerOpts);
+  const restored = d.dockerRename(
+    refs.backupContainerName,
+    refs.originalName,
+    containerOpts,
+  );
+  if (!isZeroStatus(restored)) return false;
+  d.dockerStart(refs.originalName, containerOpts);
+  return true;
+}
+
 export function recreateOpenShellDockerSandboxWithGpu(
   options: {
     sandboxName: string;
@@ -961,22 +997,33 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
+    const execReady =
+      options.waitForSupervisor === false
+        ? true
+        : waitForOpenShellSupervisorReconnect(
+            options.sandboxName,
+            options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+            deps,
+          );
+
+    if (!execReady) {
+      const rolledBack = rollbackToBackupContainer(
+        { newContainerId, backupContainerName, originalName },
+        d,
+      );
+      context.rolledBack = rolledBack;
+      throw new Error(
+        rolledBack
+          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the GPU-enabled container; rollback to backup container failed.",
+      );
+    }
+
     d.dockerRm(backupContainerName, {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-
-    if (options.waitForSupervisor !== false) {
-      const execReady = waitForOpenShellSupervisorReconnect(
-        options.sandboxName,
-        options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
-        deps,
-      );
-      if (!execReady) {
-        throw new Error("OpenShell supervisor did not reconnect to the GPU-enabled container.");
-      }
-    }
 
     return {
       applied: true,
@@ -1498,6 +1545,7 @@ export function collectDockerGpuPatchDiagnostics(
     `old_container_id=${context?.oldContainerId ?? "unknown"}`,
     `new_container_id=${context?.newContainerId ?? "unknown"}`,
     `backup_container_name=${context?.backupContainerName ?? "none"}`,
+    `rolled_back=${context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     "cleanup_commands:",
     ...cleanupCommands.map((command) => `  ${command}`),
   ];

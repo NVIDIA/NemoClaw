@@ -2358,6 +2358,21 @@ try:
     if cleaned == lines:
         sys.exit(0)
 
+    # When the rc file is not owned by us (and we are not root) we cannot
+    # safely rewrite it: fchmod would raise EPERM without CAP_FOWNER, and
+    # the in-place reopen via /proc/self/fd would fail anyway. The legacy
+    # shim line we would have removed is functionally inert (it sources
+    # /tmp/nemoclaw-proxy-env.sh only if that file exists), so leaving it
+    # in place is safer than crashing the container under errexit. A later
+    # root-mode boot can finish the cleanup.
+    if uid != 0 and st.st_uid != uid:
+        print(
+            f"[SECURITY] skipping rc cleanup for {rc_path}: not owned by uid={uid} "
+            f"(file uid={st.st_uid}); legacy shim left in place",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
     try:
         rewrite_open_rc_file(fd, st, cleaned)
     except OSError as exc:
