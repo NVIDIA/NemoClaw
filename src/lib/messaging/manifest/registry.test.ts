@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import { ChannelManifestRegistry, createChannelManifestRegistry } from "./index";
 import type { ChannelManifest } from "./index";
+import { ChannelManifestRegistry, createChannelManifestRegistry } from "./index";
 
 function makeManifest(
   id: string,
