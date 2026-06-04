@@ -81,7 +81,7 @@ Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
 
 ```bash
-NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+NEMOCLAW_POLICY_TIER=open $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 If the value does not match a known tier, onboarding exits with an error listing the valid options.
@@ -116,7 +116,7 @@ This opens a split tmux session with the TUI on the left and the agent on the ri
 Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run the onboard wizard:
 
 ```bash
-nemoclaw onboard
+$$nemoclaw onboard
 ```
 
 ### Dynamic Changes

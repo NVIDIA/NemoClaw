@@ -91,7 +91,7 @@ on:
         description: >-
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
-          skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
+          skill-agent-e2e, openclaw-skill-cli-e2e, docs-validation-e2e, messaging-providers-e2e,
           openclaw-slack-pairing-e2e,
           openclaw-tui-chat-correlation-e2e,
           issue-3600-gpu-proof-optional-e2e,
@@ -230,6 +230,21 @@ jobs:
       artifact_name: "install-log-skill-agent"
       artifact_path: "/tmp/nemoclaw-e2e-skill-agent-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-skill-agent"}'
+      nvidia_api_key: true
+    secrets: *nightly-e2e-default-secrets
+  openclaw-skill-cli-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-skill-cli-e2e.sh
+      timeout_minutes: 25
+      artifact_name: "install-log-openclaw-skill-cli"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-skill-cli-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-skill-cli"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   docs-validation-e2e:
@@ -1899,6 +1914,7 @@ jobs:
         cloud-onboard-e2e,
         cloud-inference-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
@@ -2007,6 +2023,7 @@ jobs:
         cloud-onboard-e2e,
         cloud-inference-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
@@ -2172,6 +2189,7 @@ jobs:
         cloud-onboard-e2e,
         cloud-inference-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,

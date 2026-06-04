@@ -125,4 +125,4 @@ The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`, environme
 
 Prefer NemoClaw host commands for generated configuration such as model, provider, messaging, and policy settings.
 Direct edits to `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` can be overwritten by rebuilds.
-Use `nemohermes <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
+Use `nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.

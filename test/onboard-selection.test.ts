@@ -4783,6 +4783,14 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake openshell: report the inference provider as absent so the
+    // gateway-credential-reuse fallback does NOT swallow the missing-key
+    // error path under test.
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}\nprocess.exit(1);\n`,
+      { mode: 0o755 },
+    );
 
     const script = String.raw`
 const fs = require("fs");

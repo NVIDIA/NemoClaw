@@ -75,6 +75,8 @@ export function detectWindowsHostOllama(): WindowsHostOllamaState {
     return { installed: false, installedPath: "", loopbackOnly: false };
   }
   const installedPath = probeInstalledPath();
+  // `installed` reflects binary presence on disk, not a live daemon. Onboard
+  // still gates Start/Restart on reachability and loopback binding (#3949).
   const installed = installedPath.length > 0;
   const loopbackOnly = installed ? probeLoopbackOnly() : false;
   return { installed, installedPath, loopbackOnly };
