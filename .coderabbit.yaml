@@ -731,6 +731,41 @@ reviews:
         gh workflow run regression-e2e.yaml --ref <branch> -f 'jobs=gateway-health-honest-e2e'
         ```
 
+    - path: "test/e2e/test-sessions-agents-cli.sh"
+      instructions: &e2e-sessions-agents-cli |
+        This script exercises the host-side `nemoclaw <name> sessions` and
+        `nemoclaw <name> agents` subcommand groups end-to-end: gateway RPC
+        envelope round-trip for `sessions reset` / `sessions delete`, plus
+        passthrough for `sessions list` and `agents add` / `agents delete`.
+        These flows are invisible to unit tests because the wrapper layer
+        depends on `openshell sandbox exec` and a live OpenClaw gateway.
+
+        **E2E test recommendation:**
+        - `sessions-agents-cli-e2e` — sessions + agents CLI wrapper coverage
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sessions-agents-cli-e2e
+        ```
+
+    - path: "src/lib/actions/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/lib/actions/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
+
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect

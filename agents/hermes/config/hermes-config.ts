@@ -43,6 +43,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     default: settings.model,
     provider: "custom",
     base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
   };
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
@@ -114,7 +115,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // API server — internal port only.
   // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
   // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
-  config.platforms = {
+  const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
       extra: {
@@ -123,6 +124,12 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       },
     },
   };
+
+  if (settings.messaging.enabledChannels.has("slack")) {
+    platforms.slack = { enabled: true };
+  }
+
+  config.platforms = platforms;
 
   return config;
 }

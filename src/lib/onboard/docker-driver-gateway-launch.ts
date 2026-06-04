@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -73,6 +73,11 @@ type BuildGatewayLaunchOptions = {
   env?: NodeJS.ProcessEnv;
   hostGlibcVersion?: string | null;
   requiredGlibcVersions?: string[];
+  // Default compatibility container name when NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME
+  // is unset. Callers pass a per-gateway-port name so a second sandbox's compat
+  // container (and its pre-launch `docker rm`) cannot tear down the first
+  // sandbox's gateway container (#4422).
+  compatContainerName?: string;
 };
 
 export function compareDottedVersions(a: string, b: string): number {
@@ -287,9 +292,13 @@ export function buildDockerDriverGatewayLaunch(
   env.OPENSHELL_GATEWAY_CONFIG = configPath;
 
   const image = safeDockerImage(env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_IMAGE, DEFAULT_COMPAT_IMAGE);
+  // The per-port compatContainerName wins so a process-wide
+  // NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME cannot collapse two sandboxes
+  // back onto one compat container (and its pre-launch `docker rm`) (#4422). The
+  // env override still applies when no per-port name is supplied.
   const containerName = safeDockerName(
-    env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME,
-    DEFAULT_COMPAT_CONTAINER_NAME,
+    options.compatContainerName,
+    safeDockerName(env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME, DEFAULT_COMPAT_CONTAINER_NAME),
   );
   const dockerHost = safeDockerHost(env.DOCKER_HOST);
   if (dockerHost) {
@@ -362,6 +371,25 @@ export function buildDockerDriverGatewayRuntimeIdentity(
     driftGatewayBin: launch.processGatewayBin,
     identityGatewayBin: launch.processGatewayBin || options.gatewayBin,
   };
+}
+
+/**
+ * Resolve the gateway binary used for the `/proc/<pid>/exe` drift comparison.
+ *
+ * In containerized Docker-compat mode the gateway runs as a host-side
+ * `docker run ... /opt/nemoclaw/openshell-gateway` parent, so the parent
+ * process's executable is `/usr/bin/docker`, not the host openshell-gateway
+ * binary. `buildDockerDriverGatewayRuntimeIdentity()` encodes that with
+ * `driftGatewayBin: null` to mean "skip the executable check". Callers must
+ * preserve that deliberate `null` — coalescing it back to the host binary with
+ * `??` makes the drift check compare `/usr/bin/docker` against the host
+ * gateway path and falsely mark a healthy compat gateway as stale (#4520).
+ */
+export function resolveDriftGatewayBin(
+  runtimeIdentity: DockerDriverGatewayRuntimeIdentity | null,
+  gatewayBin: string | null,
+): string | null {
+  return runtimeIdentity ? runtimeIdentity.driftGatewayBin : gatewayBin;
 }
 
 export function prepareAndLogDockerDriverGatewayLaunch(

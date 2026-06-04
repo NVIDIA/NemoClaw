@@ -23,10 +23,12 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
-  LOCAL_INFERENCE_PROVIDERS: string[];
-  REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
-};
+const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG, providerExistsInGateway } =
+  require("../../onboard/providers") as {
+    LOCAL_INFERENCE_PROVIDERS: string[];
+    REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
+    providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
+  };
 
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -61,6 +63,7 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
 import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
+import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -369,18 +372,29 @@ export async function rebuildSandbox(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
     if (!credentialValue) {
-      console.error("");
-      console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
-      console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
-      console.error("  but it is not set in the environment.");
-      console.error("");
-      console.error("  To fix, do one of:");
-      console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
-      console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
-      console.error("");
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(`Missing credential: ${rebuildCredentialEnv}`);
-      return;
+      // When the inference provider is already registered in the OpenShell
+      // gateway, the recreate step does not need a host env value — the
+      // gateway is the source of truth for the secret. Skip the env-only
+      // preflight in that case so flows like `channels add` + rebuild keep
+      // working when the user has logged out of the original shell.
+      if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+        log(
+          `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
+        );
+      } else {
+        console.error("");
+        console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+        console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+        console.error("  but it is not set in the environment.");
+        console.error("");
+        console.error("  To fix, do one of:");
+        console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+        console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
+        console.error("");
+        console.error("  Sandbox is untouched — no data was lost.");
+        bail(`Missing credential: ${rebuildCredentialEnv}`);
+        return;
+      }
     }
   } else {
     // No credentialEnv in session — local inference (Ollama/vLLM) or
@@ -676,20 +690,21 @@ export async function rebuildSandbox(
     throw err;
   }) as typeof process.exit;
 
+  // Reaching here means the user already consented to the destructive
+  // rebuild (either via --yes/--force or by answering "y" at the prompt).
+  // Propagate that consent so the size-confirm gate inside the
+  // non-interactive onboard does not abort after the old sandbox has
+  // been deleted. The recreate path also inherits the original sandbox's
+  // no-GPU intent so the inner `onboard --resume` does not enforce the
+  // Docker CDI GPU preflight on hosts without an NVIDIA GPU.
+  const recreateOpts = buildRebuildRecreateOnboardOpts({
+    sb,
+    rebuildAgent,
+    storedFromDockerfile,
+    autoYes: skipConfirm || rebuildConfirmed,
+  });
   try {
-    await onboard({
-      resume: true,
-      nonInteractive: true,
-      recreateSandbox: true,
-      agent: rebuildAgent,
-      fromDockerfile: storedFromDockerfile,
-      // Reaching here means the user already consented to the destructive
-      // rebuild (either via --yes/--force or by answering "y" at the prompt).
-      // Propagate that consent so the size-confirm gate inside the
-      // non-interactive onboard does not abort after the old sandbox has
-      // been deleted (#2639 follow-up).
-      autoYes: skipConfirm || rebuildConfirmed,
-    });
+    await onboard(recreateOpts);
     log("onboard() returned successfully");
   } catch (err) {
     onboardFailed = true;

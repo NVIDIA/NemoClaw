@@ -517,7 +517,7 @@ describe("permissive sandbox policy", () => {
 describe("Hermes sandbox policy", () => {
   const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
 
-  it("regression #4230: managed_inference allows Anthropic Messages API requests", () => {
+  function expectManagedInferenceAllowsAnthropicMessages(): void {
     const np = policy.network_policies ?? {};
     const endpoints = np.managed_inference?.endpoints ?? [];
     const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
@@ -529,6 +529,10 @@ describe("Hermes sandbox policy", () => {
       (r) => r.allow?.method?.toUpperCase() === "POST" && r.allow?.path === "/v1/messages",
     );
     expect(hasMessagesPost).toBe(true);
+  }
+
+  it("regression #4230: managed_inference allows Anthropic Messages API requests", () => {
+    expectManagedInferenceAllowsAnthropicMessages();
   });
 });
 

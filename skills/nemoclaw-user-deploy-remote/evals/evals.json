@@ -1,0 +1,74 @@
+[
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-001",
+    "question": "I'm deploying NemoClaw to a remote GPU instance. Help me move the sandboxed assistant off my local machine so I can support persistent or GPU-backed operation.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user move the sandboxed assistant off my local machine and gives enough concrete guidance, decision criteria, verification steps, or risk framing to support persistent or GPU-backed operation."
+  },
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-002",
+    "question": "I'm using the legacy Brev compatibility flow. Help me understand what the flow still does and where it is deprecated so I can avoid depending on an outdated path blindly.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the flow still does and where it is deprecated and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid depending on an outdated path blindly."
+  },
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-003",
+    "question": "I'm after remote deployment succeeds. Help me find the connection, operation, and recovery details so I can operate the sandbox after initial setup.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find the connection, operation, and recovery details and gives enough concrete guidance, decision criteria, verification steps, or risk framing to operate the sandbox after initial setup."
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-001",
+    "question": "I'm launching NemoClaw from the Brev web UI. Help me avoid local CLI setup and local GPU requirements so I can start a hosted sandbox quickly.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user avoid local CLI setup and local GPU requirements and gives enough concrete guidance, decision criteria, verification steps, or risk framing to start a hosted sandbox quickly."
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-002",
+    "question": "I'm reviewing hosted launch choices. Help me understand each web UI option before creating the instance so I can choose settings that match my expected sandbox workflow.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand each web UI option before creating the instance and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose settings that match my expected sandbox workflow."
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-003",
+    "question": "I'm the hosted sandbox is created. Help me confirm where to connect and how to start using it so I can move from provisioning to actual agent work.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm where to connect and how to start using it and gives enough concrete guidance, decision criteria, verification steps, or risk framing to move from provisioning to actual agent work."
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-001",
+    "question": "I'm installing an OpenClaw plugin in a NemoClaw-managed sandbox. Help me add a new agent capability inside the sandbox so I can extend the assistant without weakening the host boundary.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user add a new agent capability inside the sandbox and gives enough concrete guidance, decision criteria, verification steps, or risk framing to extend the assistant without weakening the host boundary."
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-002",
+    "question": "I'm deciding where to install a plugin. Help me distinguish host environment changes from sandbox environment changes so I can modify the right filesystem and runtime.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user distinguish host environment changes from sandbox environment changes and gives enough concrete guidance, decision criteria, verification steps, or risk framing to modify the right filesystem and runtime."
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-003",
+    "question": "I'm verifying a plugin installation. Help me confirm the agent can discover and use the plugin so I can trust that the capability works inside NemoClaw's security model.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm the agent can discover and use the plugin and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust that the capability works inside NemoClaw's security model."
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-001",
+    "question": "I'm reviewing sandbox image hardening. Help me understand which container risks NemoClaw reduces so I can decide whether unattended agents are acceptable in my environment.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand which container risks NemoClaw reduces and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether unattended agents are acceptable in my environment."
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-002",
+    "question": "I'm mapping NemoClaw to an organizational security baseline. Help me identify capability drops, least privilege, and runtime protections so I can document how the sandbox meets or misses required controls.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user identify capability drops, least privilege, and runtime protections and gives enough concrete guidance, decision criteria, verification steps, or risk framing to document how the sandbox meets or misses required controls."
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-003",
+    "question": "I'm considering production use. Help me see the limitations and residual risks of the hardened image so I can avoid overstating what container hardening guarantees.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see the limitations and residual risks of the hardened image and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid overstating what container hardening guarantees."
+  }
+]
