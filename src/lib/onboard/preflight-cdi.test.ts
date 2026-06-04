@@ -254,7 +254,9 @@ describe("planHostRemediation — CDI", () => {
     expect(action).toBeTruthy();
     expect(action?.kind).toBe("sudo");
     expect(action?.blocking).toBe(true);
-    expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(true);
+    expect(action?.commands.some((command) => command.includes("--output='/etc/cdi"))).toBe(
+      true,
+    );
     expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(true);
   });
 
@@ -275,9 +277,9 @@ describe("planHostRemediation — CDI", () => {
       "sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
     );
     expect(action?.commands[1]).toBe("sudo systemctl start nvidia-cdi-refresh.service");
-    expect(action?.commands.some((command) => command.includes("sudo rm -f /etc/cdi/nvidia.yaml"))).toBe(
-      true,
-    );
+    expect(
+      action?.commands.some((command) => command.includes("sudo rm -f '/etc/cdi/nvidia.yaml'")),
+    ).toBe(true);
     expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(false);
     expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(
       false,
