@@ -32,7 +32,7 @@ import {
 } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT } from "../../runner";
+import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -694,6 +694,9 @@ function readConnectAutoPairPolicyModule(): string | null {
   try {
     return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
   } catch {
+    // The approval pass is best-effort, so a packaging/layout regression must
+    // not block connect. Build-context and package `files` coverage keep this
+    // helper present in supported installs.
     return null;
   }
 }
@@ -703,22 +706,29 @@ function runConnectAutoPairApprovalPass(sandboxName: string): void {
   if (!approvalPolicyModule) {
     return;
   }
+  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
   const script = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-cat > /tmp/openclaw_device_approval_policy.py <<'NEMOCLAW_APPROVAL_POLICY_PY'
-${approvalPolicyModule}
-NEMOCLAW_APPROVAL_POLICY_PY
-OPENCLAW_BIN="$(command -v openclaw)" python3 - <<'PYAPPROVE'
+OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
+import base64
 import json
 import os
 import subprocess
 import sys
 
-sys.path.insert(0, '/tmp')
-from openclaw_device_approval_policy import approval_request_decision, gateway_approval_env
+try:
+    policy_source = base64.b64decode(
+        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
+    ).decode('utf-8')
+    policy_globals = {}
+    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
+    approval_request_decision = policy_globals['approval_request_decision']
+    gateway_approval_env = policy_globals['gateway_approval_env']
+except Exception:
+    sys.exit(0)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}

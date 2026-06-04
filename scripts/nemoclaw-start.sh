@@ -1725,15 +1725,28 @@ start_auto_pair() {
   fi
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
+import importlib.util
 import os
+import stat
 import subprocess
-import sys
 import time
 
-APPROVAL_POLICY_DIR = os.environ.get('NEMOCLAW_APPROVAL_POLICY_DIR', '/usr/local/lib/nemoclaw')
-if APPROVAL_POLICY_DIR:
-    sys.path.insert(0, APPROVAL_POLICY_DIR)
-from openclaw_device_approval_policy import approval_request_decision, gateway_approval_env
+APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
+
+
+def load_approval_policy(path):
+    mode = os.stat(path).st_mode
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RuntimeError('approval policy helper is writable by group or other')
+    spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('approval policy helper could not be loaded')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.approval_request_decision, module.gateway_approval_env
+
+
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 

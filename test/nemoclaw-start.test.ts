@@ -62,8 +62,10 @@ function startScriptHeredoc(src: string, marker: string): string {
 
 function localApprovalPolicyPythonScript(src: string): string {
   return startScriptHeredoc(src, "PYAUTOPAIR").replace(
-    "APPROVAL_POLICY_DIR = os.environ.get('NEMOCLAW_APPROVAL_POLICY_DIR', '/usr/local/lib/nemoclaw')",
-    `APPROVAL_POLICY_DIR = ${JSON.stringify(APPROVAL_POLICY_DIR)}`,
+    "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+    `APPROVAL_POLICY_FILE = ${JSON.stringify(
+      path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"),
+    )}`,
   );
 }
 
@@ -1502,17 +1504,6 @@ setImmediate(function () {
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("loads the shared OpenClaw approval policy helper", () => {
-    const autoPairScript = startScriptHeredoc(src, "PYAUTOPAIR");
-
-    expect(autoPairScript).toContain(
-      "from openclaw_device_approval_policy import approval_request_decision, gateway_approval_env",
-    );
-    expect(autoPairScript).not.toContain("ALLOWED_CLIENTS =");
-    expect(autoPairScript).not.toContain("ALLOWED_SCOPES =");
-    expect(autoPairScript).not.toContain("def requested_scopes");
-  });
-
   it("approves only whitelisted clients and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
@@ -1854,6 +1845,7 @@ exit 2
   it("rejects disallowed CLI admin scope requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-admin-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const maliciousPolicyDir = path.join(tmpDir, "malicious-policy");
     const approveLog = path.join(tmpDir, "approvals.log");
     const adminPending = JSON.stringify({
       pending: [
@@ -1867,6 +1859,18 @@ exit 2
       paired: [],
     });
 
+    fs.mkdirSync(maliciousPolicyDir);
+    fs.writeFileSync(
+      path.join(maliciousPolicyDir, "openclaw_device_approval_policy.py"),
+      [
+        "def approval_request_decision(_device):",
+        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+        "",
+        "def gateway_approval_env(source_env=None):",
+        "    return dict(source_env or {})",
+        "",
+      ].join("\n"),
+    );
     fs.writeFileSync(
       fakeOpenclaw,
       `#!/usr/bin/env bash
@@ -1892,6 +1896,7 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_APPROVAL_POLICY_DIR: maliciousPolicyDir,
           NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
