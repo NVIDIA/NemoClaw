@@ -21,6 +21,33 @@ export type NvidiaCdiRepairAssessment = {
   systemctlAvailable?: boolean;
 };
 
+export type NvidiaCdiHostAssessmentOpts = {
+  dockerInfoOutput?: string;
+  dockerReachable: boolean;
+  hasNvidiaGpu: boolean;
+  isWsl: boolean;
+  nvidiaContainerToolkitInstalled: boolean;
+  platform: NodeJS.Platform | string;
+  readFileImpl: (filePath: string, encoding: BufferEncoding) => string;
+  readdirImpl: (dir: string) => string[];
+  runCaptureImpl: RunCaptureFn;
+  runtime: string;
+  systemctlAvailable?: boolean;
+};
+
+export type NvidiaCdiHostAssessment = {
+  dockerCdiSpecDirs: string[];
+  cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecStale: boolean;
+  cdiNvidiaGpuSpecMismatch?: string;
+  cdiNvidiaGpuRefreshUnhealthy: boolean;
+  cdiNvidiaGpuSpecNeedsRepair: boolean;
+  nvidiaCdiRefreshPathActive: boolean | null;
+  nvidiaCdiRefreshPathEnabled: boolean | null;
+  nvidiaCdiRefreshServiceEnabled: boolean | null;
+  nvidiaCdiRefreshServiceFailed: boolean | null;
+};
+
 type DeviceNumbers = { major: number; minor: number };
 
 type CdiDeviceNode = DeviceNumbers & {
@@ -253,6 +280,106 @@ export function findCdiDeviceNodeMismatch(
     return `${node.filePath} ${node.path}=${node.major}:${node.minor}, live=${liveDevice.major}:${liveDevice.minor}`;
   }
   return null;
+}
+
+function parseSystemctlState(value = ""): boolean | null {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "active" || normalized === "enabled") return true;
+  if (
+    normalized === "inactive" ||
+    normalized === "failed" ||
+    normalized === "disabled" ||
+    normalized === "masked"
+  ) {
+    return false;
+  }
+  return null;
+}
+
+function parseSystemctlFailedState(value = ""): boolean | null {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "failed") return true;
+  if (normalized === "active" || normalized === "inactive") return false;
+  return null;
+}
+
+export function assessNvidiaCdiHost(opts: NvidiaCdiHostAssessmentOpts): NvidiaCdiHostAssessment {
+  const dockerCdiSpecDirs = opts.dockerReachable
+    ? parseDockerCdiSpecDirs(opts.dockerInfoOutput)
+    : [];
+  const cdiSpecPresenceApplies =
+    opts.platform === "linux" && opts.hasNvidiaGpu && dockerCdiSpecDirs.length > 0;
+  const cdiSpecRepairApplies =
+    cdiSpecPresenceApplies && !(opts.isWsl && opts.runtime === "docker-desktop");
+  const cdiNvidiaGpuSpecPresent =
+    cdiSpecPresenceApplies &&
+    hasNvidiaCdiSpec(dockerCdiSpecDirs, opts.readdirImpl, opts.readFileImpl);
+  const cdiNvidiaGpuSpecMissing = cdiSpecPresenceApplies && !cdiNvidiaGpuSpecPresent;
+  const refreshHealthApplies =
+    cdiSpecRepairApplies &&
+    Boolean(opts.systemctlAvailable) &&
+    opts.nvidiaContainerToolkitInstalled;
+  const nvidiaCdiRefreshPathEnabled = refreshHealthApplies
+    ? parseSystemctlState(
+        opts.runCaptureImpl(["systemctl", "is-enabled", "nvidia-cdi-refresh.path"], {
+          ignoreError: true,
+        }),
+      )
+    : null;
+  const nvidiaCdiRefreshPathActive = refreshHealthApplies
+    ? parseSystemctlState(
+        opts.runCaptureImpl(["systemctl", "is-active", "nvidia-cdi-refresh.path"], {
+          ignoreError: true,
+        }),
+      )
+    : null;
+  const nvidiaCdiRefreshServiceEnabled = refreshHealthApplies
+    ? parseSystemctlState(
+        opts.runCaptureImpl(["systemctl", "is-enabled", "nvidia-cdi-refresh.service"], {
+          ignoreError: true,
+        }),
+      )
+    : null;
+  const nvidiaCdiRefreshServiceFailed = refreshHealthApplies
+    ? parseSystemctlFailedState(
+        opts.runCaptureImpl(["systemctl", "is-failed", "nvidia-cdi-refresh.service"], {
+          ignoreError: true,
+        }),
+      )
+    : null;
+  const cdiNvidiaGpuRefreshUnhealthy =
+    nvidiaCdiRefreshPathEnabled === false ||
+    nvidiaCdiRefreshPathActive === false ||
+    nvidiaCdiRefreshServiceFailed === true;
+  const cdiNvidiaGpuSpecMismatch =
+    cdiSpecRepairApplies && cdiNvidiaGpuSpecPresent
+      ? findCdiDeviceNodeMismatch(
+          dockerCdiSpecDirs,
+          opts.readdirImpl,
+          opts.readFileImpl,
+          opts.runCaptureImpl,
+        )
+      : null;
+  const cdiNvidiaGpuSpecStale = Boolean(cdiNvidiaGpuSpecMismatch);
+
+  return {
+    dockerCdiSpecDirs,
+    cdiNvidiaGpuSpecMissing,
+    cdiNvidiaGpuSpecStale,
+    cdiNvidiaGpuSpecMismatch: cdiNvidiaGpuSpecMismatch ?? undefined,
+    cdiNvidiaGpuRefreshUnhealthy,
+    cdiNvidiaGpuSpecNeedsRepair: cdiNvidiaGpuSpecMissing || cdiNvidiaGpuSpecStale,
+    nvidiaCdiRefreshPathActive,
+    nvidiaCdiRefreshPathEnabled,
+    nvidiaCdiRefreshServiceEnabled,
+    nvidiaCdiRefreshServiceFailed,
+  };
 }
 
 export function buildNvidiaCdiRepairCommands(

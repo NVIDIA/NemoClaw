@@ -17,6 +17,7 @@ import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
 import {
+  assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
   buildNvidiaCdiRepairCommands,
   buildStaleCdiManualWarnCommands,
@@ -24,10 +25,7 @@ import {
   explainNvidiaCdiRepairReason,
   explainStaleCdiReason,
   extractCdiMismatchFilePath,
-  findCdiDeviceNodeMismatch,
   getNvidiaCdiSpecPath,
-  hasNvidiaCdiSpec,
-  parseDockerCdiSpecDirs,
 } from "./docker-cdi";
 import {
   isWslDockerDesktopRuntime,
@@ -307,16 +305,6 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   return /io\.containerd\.snapshotter\.v1/.test(info);
 }
 
-function parseSystemctlFailedState(value = ""): boolean | null {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (!normalized) return null;
-  if (normalized === "failed") return true;
-  if (normalized === "active" || normalized === "inactive") return false;
-  return null;
-}
-
 export function parseDockerInfoCpus(info = ""): number | undefined {
   const jsonMatch = info.match(/"NCPU"\s*:\s*(\d+)/);
   if (jsonMatch) {
@@ -522,67 +510,19 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerMemTotalBytes = dockerReachable
     ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
     : undefined;
-  // CDI spec gap: Docker 25+ on hosts with `nvidia-container-toolkit` installed
-  // typically advertises `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` in its
-  // info output. OpenShell's `gateway start --gpu` then opportunistically
-  // selects CDI mode and tries to inject `nvidia.com/gpu=all`. If no spec has
-  // been generated yet (`/etc/cdi/nvidia.yaml` is missing), the gateway start
-  // fails with `unresolvable CDI devices nvidia.com/gpu=all`. Detect this up
-  // front so preflight can point the user at `nvidia-ctk cdi generate` before
-  // we waste minutes downloading the gateway image. See issue #3152.
-  const dockerCdiSpecDirs = dockerReachable ? parseDockerCdiSpecDirs(dockerInfoOutput) : [];
-  const cdiSpecPresenceApplies =
-    platform === "linux" && hasNvidiaGpu && dockerCdiSpecDirs.length > 0;
-  const cdiSpecRepairApplies =
-    cdiSpecPresenceApplies && !(isWslHost && runtime === "docker-desktop");
-  const cdiNvidiaGpuSpecPresent =
-    cdiSpecPresenceApplies && hasNvidiaCdiSpec(dockerCdiSpecDirs, readdirImpl, readFileImpl);
-  const cdiNvidiaGpuSpecMissing = cdiSpecPresenceApplies && !cdiNvidiaGpuSpecPresent;
-  const refreshHealthApplies =
-    cdiSpecRepairApplies && systemctlAvailable && nvidiaContainerToolkitInstalled;
-  const nvidiaCdiRefreshPathEnabled = refreshHealthApplies
-    ? parseSystemctlState(
-        runCaptureImpl(["systemctl", "is-enabled", "nvidia-cdi-refresh.path"], {
-          ignoreError: true,
-        }),
-      )
-    : null;
-  const nvidiaCdiRefreshPathActive = refreshHealthApplies
-    ? parseSystemctlState(
-        runCaptureImpl(["systemctl", "is-active", "nvidia-cdi-refresh.path"], {
-          ignoreError: true,
-        }),
-      )
-    : null;
-  const nvidiaCdiRefreshServiceEnabled = refreshHealthApplies
-    ? parseSystemctlState(
-        runCaptureImpl(["systemctl", "is-enabled", "nvidia-cdi-refresh.service"], {
-          ignoreError: true,
-        }),
-      )
-    : null;
-  const nvidiaCdiRefreshServiceFailed = refreshHealthApplies
-    ? parseSystemctlFailedState(
-        runCaptureImpl(["systemctl", "is-failed", "nvidia-cdi-refresh.service"], {
-          ignoreError: true,
-        }),
-      )
-    : null;
-  const cdiNvidiaGpuRefreshUnhealthy =
-    nvidiaCdiRefreshPathEnabled === false ||
-    nvidiaCdiRefreshPathActive === false ||
-    nvidiaCdiRefreshServiceFailed === true;
-  const cdiNvidiaGpuSpecMismatch =
-    cdiSpecRepairApplies && cdiNvidiaGpuSpecPresent
-      ? findCdiDeviceNodeMismatch(
-          dockerCdiSpecDirs,
-          readdirImpl,
-          readFileImpl,
-          runCaptureImpl,
-        )
-      : null;
-  const cdiNvidiaGpuSpecStale = Boolean(cdiNvidiaGpuSpecMismatch);
-  const cdiNvidiaGpuSpecNeedsRepair = cdiNvidiaGpuSpecMissing || cdiNvidiaGpuSpecStale;
+  const cdiAssessment = assessNvidiaCdiHost({
+    dockerInfoOutput,
+    dockerReachable,
+    hasNvidiaGpu,
+    isWsl: isWslHost,
+    nvidiaContainerToolkitInstalled,
+    platform,
+    readFileImpl,
+    readdirImpl,
+    runCaptureImpl,
+    runtime,
+    systemctlAvailable,
+  });
   const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
     dockerCpus,
     dockerMemTotalBytes,
@@ -647,16 +587,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     hasNvidiaGpu,
-    dockerCdiSpecDirs,
-    cdiNvidiaGpuSpecMissing,
-    cdiNvidiaGpuSpecStale,
-    cdiNvidiaGpuSpecMismatch: cdiNvidiaGpuSpecMismatch ?? undefined,
-    cdiNvidiaGpuRefreshUnhealthy,
-    cdiNvidiaGpuSpecNeedsRepair,
-    nvidiaCdiRefreshPathActive,
-    nvidiaCdiRefreshPathEnabled,
-    nvidiaCdiRefreshServiceEnabled,
-    nvidiaCdiRefreshServiceFailed,
+    ...cdiAssessment,
     nvidiaContainerToolkitInstalled,
     notes: [],
   };
