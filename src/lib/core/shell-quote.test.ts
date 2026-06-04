@@ -23,7 +23,7 @@ describe('shellQuote', () => {
 
     it("handles words with special characters", () => {
         expect(shellQuote("hello$world")).toBe("'hello$world'");
-    }); 
+    });
     it("handles strings with only single quotes", () => {
         expect(shellQuote("''")).toBe("''\\'''\\'''");
     });
