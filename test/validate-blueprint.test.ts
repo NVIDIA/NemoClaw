@@ -517,22 +517,38 @@ describe("permissive sandbox policy", () => {
 describe("Hermes sandbox policy", () => {
   const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
 
-  function expectManagedInferenceAllowsAnthropicMessages(): void {
+  function expectManagedInferenceSecurityShape(): void {
     const np = policy.network_policies ?? {};
-    const endpoints = np.managed_inference?.endpoints ?? [];
-    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
-    expect(inferenceEp).toBeDefined();
-    expect(inferenceEp?.port).toBe(443);
+    const managedInference = np.managed_inference;
+    expect(managedInference?.name).toBe("managed_inference");
+    expect(managedInference?.binaries?.map((b) => b.path)).toEqual([
+      "/usr/local/bin/hermes",
+      "/usr/bin/python3.11",
+      "/opt/hermes/.venv/bin/python",
+    ]);
 
-    const rules = inferenceEp?.rules ?? [];
-    const hasMessagesPost = rules.some(
-      (r) => r.allow?.method?.toUpperCase() === "POST" && r.allow?.path === "/v1/messages",
-    );
-    expect(hasMessagesPost).toBe(true);
+    const endpoints = managedInference?.endpoints ?? [];
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0]).toMatchObject({
+      host: "inference.local",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+    });
+    expect(endpoints[0].access).toBeUndefined();
+    expect(endpoints[0].rules).toEqual([
+      { allow: { method: "POST", path: "/v1/chat/completions" } },
+      { allow: { method: "POST", path: "/v1/messages" } },
+      { allow: { method: "POST", path: "/v1/responses" } },
+      { allow: { method: "POST", path: "/v1/completions" } },
+      { allow: { method: "POST", path: "/v1/embeddings" } },
+      { allow: { method: "GET", path: "/v1/models" } },
+      { allow: { method: "GET", path: "/v1/models/**" } },
+    ]);
   }
 
-  it("regression #4230: managed_inference allows Anthropic Messages API requests", () => {
-    expectManagedInferenceAllowsAnthropicMessages();
+  it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
+    expectManagedInferenceSecurityShape();
   });
 });
 

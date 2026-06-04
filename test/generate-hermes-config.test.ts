@@ -146,6 +146,17 @@ describe("agents/hermes/generate-config.ts", () => {
     });
   });
 
+  it("fails fast for unsupported Hermes inference API values", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_INFERENCE_API: "graphql",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      "Unsupported Hermes inference API: graphql",
+    );
+  });
+
   it("emits a model.api_key placeholder that satisfies the LiteLLM sk- prefix gate", () => {
     const { config } = runConfigScript();
 

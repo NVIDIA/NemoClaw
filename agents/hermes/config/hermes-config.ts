@@ -27,13 +27,20 @@ const API_SERVER_TOOLSETS = [
 ];
 
 function hermesApiMode(inferenceApi: string): string | null {
+  // Source of truth: the host-side inference selector and Dockerfile patcher
+  // only write the closed set below into NEMOCLAW_INFERENCE_API. Fail fast for
+  // any other non-empty value so host/sandbox routing contract drift does not
+  // silently fall back to Hermes' default OpenAI-compatible mode.
   switch (inferenceApi) {
+    case "":
+    case "openai-completions":
+      return null;
     case "anthropic-messages":
       return "anthropic_messages";
     case "openai-responses":
       return "codex_responses";
     default:
-      return null;
+      throw new Error(`Unsupported Hermes inference API: ${inferenceApi}`);
   }
 }
 
