@@ -702,9 +702,14 @@ MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
 
 
 def requested_scopes(device):
-    scopes = device.get('scopes') or device.get('requestedScopes') or []
-    if not isinstance(scopes, list):
+    if 'scopes' in device:
+        scopes = device.get('scopes')
+    elif 'requestedScopes' in device:
+        scopes = device.get('requestedScopes')
+    else:
         return set()
+    if not isinstance(scopes, list):
+        return None
     return {str(scope).strip() for scope in scopes if str(scope or '').strip()}
 
 try:
@@ -741,7 +746,7 @@ for device in pending:
     if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
         continue
     scopes = requested_scopes(device)
-    if scopes and not scopes.issubset(ALLOWED_SCOPES):
+    if scopes is None or (scopes and not scopes.issubset(ALLOWED_SCOPES)):
         continue
     seen_request_ids.add(request_id)
     approve_env = os.environ.copy()

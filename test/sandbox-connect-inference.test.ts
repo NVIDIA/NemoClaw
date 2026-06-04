@@ -1344,7 +1344,8 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       expect(script).toContain("cli");
       expect(script).toContain("operator.read");
       expect(script).toContain("operator.write");
-      expect(script).toContain("not scopes.issubset(ALLOWED_SCOPES)");
+      expect(script).toContain("return None");
+      expect(script).toContain("if scopes is None or (scopes and not scopes.issubset(ALLOWED_SCOPES))");
       expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
         script.indexOf("approve_env = os.environ.copy()"),
       );

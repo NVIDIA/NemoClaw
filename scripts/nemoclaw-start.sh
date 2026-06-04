@@ -1766,9 +1766,14 @@ ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
 
 
 def requested_scopes(device):
-    scopes = device.get('scopes') or device.get('requestedScopes') or []
-    if not isinstance(scopes, list):
+    if 'scopes' in device:
+        scopes = device.get('scopes')
+    elif 'requestedScopes' in device:
+        scopes = device.get('requestedScopes')
+    else:
         return set()
+    if not isinstance(scopes, list):
+        return None
     return {str(scope).strip() for scope in scopes if str(scope or '').strip()}
 
 
@@ -1846,6 +1851,10 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             scopes = requested_scopes(device)
+            if scopes is None:
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
+                continue
             if scopes and not scopes.issubset(ALLOWED_SCOPES):
                 HANDLED.add(request_id)
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
