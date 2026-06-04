@@ -96,8 +96,10 @@ describe("check-docs link validation", () => {
   });
 
   it("rejects .md/.mdx suffixes for links that resolve as Fern routes", () => {
-    const tempPath = path.join(REPO_ROOT, "docs", "check-docs-route-suffix-temp.mdx");
-    const navPath = path.join(os.tmpdir(), `nemoclaw-check-docs-nav-${process.pid}.yml`);
+    const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-route-suffix-"));
+    const tempPath = path.join(tempDir, "temp.mdx");
+    const navPath = path.join(tempDir, "index.yml");
+    const tempNavPath = path.relative(path.join(REPO_ROOT, "docs"), tempPath);
     try {
       fs.writeFileSync(
         tempPath,
@@ -121,7 +123,7 @@ describe("check-docs link validation", () => {
           "        slug: openclaw",
           "        layout:",
           '          - page: "Temp"',
-          "            path: check-docs-route-suffix-temp.mdx",
+          `            path: ${tempNavPath}`,
           "            slug: temp",
           '          - section: "Deployment"',
           "            slug: deployment",
@@ -143,8 +145,7 @@ describe("check-docs link validation", () => {
         `broken local link in ${tempPath}:6 -> deployment/deploy-to-remote-gpu`,
       );
     } finally {
-      fs.rmSync(tempPath, { force: true });
-      fs.rmSync(navPath, { force: true });
+      fs.rmSync(tempDir, { force: true, recursive: true });
     }
   });
 
