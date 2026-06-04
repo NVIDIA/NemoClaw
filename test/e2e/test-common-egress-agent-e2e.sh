@@ -104,6 +104,14 @@ except Exception as exc:
 '
 }
 
+http_status_from_response() {
+  sed -n 's/^__NEMOCLAW_HTTP_STATUS__=//p' | tail -1
+}
+
+http_body_from_response() {
+  sed '/^__NEMOCLAW_HTTP_STATUS__=/d'
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
@@ -245,7 +253,8 @@ run_openclaw_agent_assertion() {
   local label="$2"
   local prompt="$3"
   local expected="$4"
-  local ssh_cfg raw reply rc=0 session_id remote_cmd
+  local ssh_cfg raw reply rc=0 session_id remote_cmd stderr_file log_file attempt last_fail
+  log_file="/tmp/nemoclaw-e2e-common-egress-${sandbox}-agent.log"
 
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$sandbox" >"$ssh_cfg" 2>/dev/null; then
@@ -254,37 +263,57 @@ run_openclaw_agent_assertion() {
     return
   fi
 
-  session_id="e2e-common-egress-$(date +%s)-$$"
-  remote_cmd="openclaw agent --agent main --json --session-id $(quote_for_remote_sh "$session_id") -m $(quote_for_remote_sh "$prompt")"
-  raw=$(run_with_timeout 180 ssh -F "$ssh_cfg" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -o LogLevel=ERROR \
-    "openshell-${sandbox}" \
-    "$remote_cmd" \
-    2>&1) || rc=$?
+  last_fail=""
+  for attempt in 1 2 3; do
+    rc=0
+    stderr_file="$(mktemp)"
+    session_id="e2e-common-egress-$(date +%s)-$$-${attempt}"
+    remote_cmd="rm -f /sandbox/.openclaw/agents/main/sessions/$(quote_for_remote_sh "${session_id}.jsonl.lock") /sandbox/.openclaw/agents/main/sessions/$(quote_for_remote_sh "${session_id}.trajectory.jsonl") 2>/dev/null || true; openclaw agent --agent main --json --thinking off --session-id $(quote_for_remote_sh "$session_id") -m $(quote_for_remote_sh "$prompt")"
+    raw=$(run_with_timeout 180 ssh -F "$ssh_cfg" \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o ConnectTimeout=10 \
+      -o LogLevel=ERROR \
+      "openshell-${sandbox}" \
+      "$remote_cmd" \
+      2>"$stderr_file") || rc=$?
+    {
+      printf '=== %s attempt=%s rc=%s ===\n' "$label" "$attempt" "$rc"
+      printf '%s\n' '--- stdout ---'
+      printf '%s\n' "$raw"
+      printf '%s\n' '--- stderr ---'
+      cat "$stderr_file" 2>/dev/null || true
+    } >>"$log_file"
+    rm -f "$stderr_file"
+
+    if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error"; then
+      rm -f "$ssh_cfg"
+      fail "${label}: agent hit policy/transport error (exit ${rc}): ${raw:0:300}"
+      return
+    fi
+
+    reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
+    if [ "$rc" -eq 0 ] && grep -Fq "$expected" <<<"$reply"; then
+      rm -f "$ssh_cfg"
+      pass "${label}: OpenClaw agent returned ${expected}"
+      return
+    fi
+    last_fail="reply='${reply:0:240}' (exit ${rc}, raw='${raw:0:240}')"
+    [ "$attempt" -ge 3 ] || sleep 5
+  done
+
   rm -f "$ssh_cfg"
-
-  if printf '%s' "$raw" | grep -qiE "SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error"; then
-    fail "${label}: agent hit policy/transport error (exit ${rc}): ${raw:0:300}"
-    return
-  fi
-
-  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
-  if [ "$rc" -eq 0 ] && grep -Fq "$expected" <<<"$reply"; then
-    pass "${label}: OpenClaw agent returned ${expected}"
-  else
-    fail "${label}: expected ${expected}, got reply='${reply:0:240}' (exit ${rc}, raw='${raw:0:240}')"
-  fi
+  fail "${label}: expected ${expected}, got ${last_fail}"
 }
 
 run_hermes_agent_assertion() {
-  local label="$1"
-  local prompt="$2"
-  local expected="$3"
-  local payload response reply rc=0 model
+  local sandbox="$1"
+  local label="$2"
+  local prompt="$3"
+  local expected="$4"
+  local payload response reply rc=0 model remote attempt last_fail http_code body log_file
   model="${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
+  log_file="/tmp/nemoclaw-e2e-common-egress-${sandbox}-agent.log"
   payload=$(
     MODEL="$model" PROMPT="$prompt" python3 - <<'PY'
 import json
@@ -297,16 +326,30 @@ print(json.dumps({
 }))
 PY
   )
-  response=$(run_with_timeout 240 curl -sS --max-time 210 \
-    -X POST http://127.0.0.1:8642/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d "$payload" 2>&1) || rc=$?
-  reply=$(printf '%s' "$response" | parse_chat_content 2>/dev/null) || true
-  if [ "$rc" -eq 0 ] && grep -Fq "$expected" <<<"$reply"; then
-    pass "${label}: Hermes agent returned ${expected}"
-  else
-    fail "${label}: expected ${expected}, got reply='${reply:0:240}' (exit ${rc}, raw='${response:0:240}')"
-  fi
+  remote="set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=\$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d $(quote_for_remote_sh "$payload")); else code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d $(quote_for_remote_sh "$payload")); fi; rc=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"\$rc\""
+  last_fail=""
+
+  for attempt in 1 2 3; do
+    rc=0
+    response=$(run_with_timeout 150 openshell sandbox exec --name "$sandbox" -- sh -lc "$remote" 2>&1) || rc=$?
+    http_code=$(printf '%s' "$response" | http_status_from_response)
+    [ -n "$http_code" ] || http_code="000"
+    body=$(printf '%s' "$response" | http_body_from_response)
+    reply=$(printf '%s' "$body" | parse_chat_content 2>/dev/null) || true
+    {
+      printf '=== %s attempt=%s rc=%s http=%s ===\n' "$label" "$attempt" "$rc" "$http_code"
+      printf '%s\n' "$response"
+    } >>"$log_file"
+
+    if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && grep -Fq "$expected" <<<"$reply"; then
+      pass "${label}: Hermes agent returned ${expected}"
+      return
+    fi
+    last_fail="exit ${rc}, HTTP ${http_code}, reply='${reply:0:240}', raw='${body:0:240}'"
+    [ "$attempt" -ge 3 ] || sleep 5
+  done
+
+  fail "${label}: expected ${expected}, got ${last_fail}"
 }
 
 trap cleanup_all EXIT
@@ -353,17 +396,9 @@ if [ "${NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW:-}" != "1" ]; then
   assert_policy_absent "$OPENCLAW_BALANCED_SANDBOX" "C1 balanced scope" "restcountries.com"
   WEATHER_AGENT_PROMPT=$(
     cat <<'PROMPT'
-Use your terminal tool to run this Python check exactly once:
-python3 - <<'PY'
-import json
-import urllib.request
-
-url = "https://api.open-meteo.com/v1/forecast?latitude=47.4979&longitude=19.0402&current=temperature_2m"
-with urllib.request.urlopen(url, timeout=20) as response:
-    doc = json.load(response)
-print("WEATHER_AGENT_OK" if doc.get("current", {}).get("temperature_2m") is not None else "WEATHER_AGENT_BAD")
-PY
-After the command completes, reply exactly WEATHER_AGENT_OK if that exact token appeared. Do not fetch any other URL.
+Use the web_fetch tool to fetch exactly this URL:
+https://api.open-meteo.com/v1/forecast?latitude=47.4979&longitude=19.0402&current=temperature_2m
+After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response contains temperature_2m. Do not fetch any other URL.
 PROMPT
   )
   run_openclaw_agent_assertion "$OPENCLAW_BALANCED_SANDBOX" "C1 agent weather" "$WEATHER_AGENT_PROMPT" "WEATHER_AGENT_OK"
@@ -374,19 +409,9 @@ PROMPT
   assert_policy_contains "$OPENCLAW_OPEN_SANDBOX" "C2 policy" "restcountries.com" "nominatim.openstreetmap.org" "query.wikidata.org"
   REFERENCE_AGENT_PROMPT=$(
     cat <<'PROMPT'
-Use your terminal tool to run this Python check exactly once:
-python3 - <<'PY'
-import json
-import urllib.request
-
-url = "https://restcountries.com/v3.1/alpha/US?fields=name,cca3"
-with urllib.request.urlopen(url, timeout=20) as response:
-    doc = json.load(response)
-country = doc[0] if isinstance(doc, list) else doc
-ok = country.get("name", {}).get("common") == "United States" and country.get("cca3") == "USA"
-print("REFERENCE_AGENT_OK" if ok else "REFERENCE_AGENT_BAD")
-PY
-After the command completes, reply exactly REFERENCE_AGENT_OK if that exact token appeared. Do not fetch any other URL.
+Use the web_fetch tool to fetch exactly this URL:
+https://restcountries.com/v3.1/alpha/US?fields=name,cca3
+After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched response says the common name is United States and cca3 is USA. Do not fetch any other URL.
 PROMPT
   )
   run_openclaw_agent_assertion "$OPENCLAW_OPEN_SANDBOX" "C2 agent reference" "$REFERENCE_AGENT_PROMPT" "REFERENCE_AGENT_OK"
@@ -417,7 +442,7 @@ PY
 After the command completes, reply exactly HERMES_REFERENCE_AGENT_OK if that exact token appeared. Do not fetch any other URL.
 PROMPT
   )
-  run_hermes_agent_assertion "C3 agent reference" "$HERMES_REFERENCE_AGENT_PROMPT" "HERMES_REFERENCE_AGENT_OK"
+  run_hermes_agent_assertion "$HERMES_SANDBOX" "C3 agent reference" "$HERMES_REFERENCE_AGENT_PROMPT" "HERMES_REFERENCE_AGENT_OK"
 else
   skip "Hermes common-egress phase skipped by NEMOCLAW_COMMON_EGRESS_SKIP_HERMES=1"
 fi
