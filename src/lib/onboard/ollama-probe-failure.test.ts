@@ -92,7 +92,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     try {
       const action = handleOllamaProbeFailure(
         { ok: false, message: "model runner has unexpectedly stopped", daemonFailure: true },
-        "qwen2.5:7b",
+        "qwen3.5:9b",
         () => false,
       );
       expect(action).toBe("back-to-selection");
@@ -122,7 +122,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
     try {
       const action = handleOllamaProbeFailure(
         { ok: false, message: "model requires more system memory" },
-        "qwen2.5:7b",
+        "qwen3.5:9b",
         () => false,
       );
       expect(action).toBe("continue");
@@ -153,13 +153,13 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       expect(() =>
         handleOllamaProbeFailure(
           { ok: false, message: "model requires more system memory" },
-          "qwen2.5:7b",
+          "qwen3.5:9b",
           () => true,
         ),
       ).toThrow(/process\.exit:1/);
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
-        errLines.some((l) => l.includes("Aborting: Ollama model 'qwen2.5:7b' unavailable")),
+        errLines.some((l) => l.includes("Aborting: Ollama model 'qwen3.5:9b' unavailable")),
       ).toBe(true);
     } finally {
       errSpy.mockRestore();

@@ -16,6 +16,7 @@ python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user -
 
 What it does:
   1. Scans a docs directory for Markdown or Fern MDX files with YAML frontmatter.
+     Pages with ``exclude-from-skills-gen: true`` are skipped.
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of two strategies:
@@ -43,8 +44,8 @@ Naming:
   override specific names when the heuristic doesn't produce the right result.
 
 Usage:
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
     python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user --doc-platform fern-mdx
     python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview --doc-platform fern-mdx
     python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --exclude "release-notes.mdx" --doc-platform fern-mdx
@@ -291,6 +292,15 @@ def _as_list(value: object) -> list[str]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
+
+
+def _as_bool(value: object) -> bool:
+    """Normalize common YAML boolean spellings parsed by the minimal parser."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def _title_from_body(body: str, fallback: str) -> str:
@@ -1452,18 +1462,6 @@ SKIP_SKILL_SECTIONS = frozenset({"prerequisites", "before you begin", "troublesh
 RELATED_SKILL_SECTIONS = frozenset({"related topics", "next steps"})
 SKILL_FRONTMATTER_LICENSE = "Apache-2.0"
 
-
-def markdown_spdx_header() -> str:
-    """Return the SPDX header for generated Markdown files."""
-    return "\n".join(
-        [
-            "<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->",
-            "<!-- SPDX-License-Identifier: Apache-2.0 -->",
-            "",
-        ]
-    )
-
-
 _SECTION_HEADING_RE = re.compile(r"(?m)^(#{2,6})\s+(.+)$")
 
 
@@ -1649,8 +1647,6 @@ def generate_skill(
     lines.append(f"license: {yaml_scalar(SKILL_FRONTMATTER_LICENSE)}")
     lines.append("---")
     lines.append("")
-    lines.append(markdown_spdx_header().rstrip("\n"))
-    lines.append("")
 
     skill_title = (
         primary_page.title
@@ -1787,7 +1783,6 @@ def generate_skill(
         )
         _copy_skill_images(skill_dir, skill_md_images)
 
-        spdx_ref = markdown_spdx_header()
         refs_dir = skill_dir / "references"
         if ref_files:
             refs_dir.mkdir(exist_ok=True)
@@ -1796,7 +1791,7 @@ def generate_skill(
                     existing.unlink()
             for fname, content in ref_files.items():
                 (refs_dir / fname).write_text(
-                    spdx_ref + content.rstrip("\n") + "\n", encoding="utf-8"
+                    content.rstrip("\n") + "\n", encoding="utf-8"
                 )
                 _copy_skill_images(refs_dir, ref_images.get(fname, []))
         elif refs_dir.is_dir():
@@ -1899,6 +1894,14 @@ def _is_excluded_doc(path: Path, doc_platform: str) -> bool:
     return False
 
 
+def _is_excluded_from_skills_gen(page: DocPage) -> bool:
+    """Return whether a parsed page opted out of skill generation."""
+    return _as_bool(
+        page.frontmatter.get("exclude-from-skills-gen")
+        or page.frontmatter.get("exclude_from_skills_gen")
+    )
+
+
 def scan_docs(docs_dir: Path, doc_platform: str = "myst-md") -> list[DocPage]:
     """Recursively scan a directory for documentation markdown files."""
     pages: list[DocPage] = []
@@ -1924,6 +1927,8 @@ def scan_docs(docs_dir: Path, doc_platform: str = "myst-md") -> list[DocPage]:
 
         try:
             page = parse_doc(doc_path, doc_platform=doc_platform)
+            if _is_excluded_from_skills_gen(page):
+                continue
             pages.append(page)
         except Exception as e:
             print(f"  warning: failed to parse {doc_path}: {e}", file=sys.stderr)

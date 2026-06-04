@@ -100,7 +100,7 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   // this fake curl. Returning a tag matching the bootstrap fallback
   // (smallest registry entry) keeps the menu deterministic with gpu=null
   // and ensures the picked model is already-installed (no pull prompt).
-  const tagsBody = '{"models":[{"name":"qwen2.5:7b"}]}';
+  const tagsBody = '{"models":[{"name":"qwen3.5:9b"}]}';
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash

@@ -3,90 +3,9 @@
     "id": "docs-manage-sandboxes-lifecycle-001",
     "question": "I'm managing a NemoClaw sandbox. Help me check status, health, logs, ports, providers, upgrades, and uninstall paths so I can operate the sandbox safely after quickstart.",
     "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user check status, health, logs, ports, providers, upgrades, and uninstall paths and gives enough concrete guidance, decision criteria, verification steps, or risk framing to operate the sandbox safely after quickstart."
-  },
-  {
-    "id": "docs-manage-sandboxes-lifecycle-002",
-    "question": "I'm choosing a lifecycle command. Help me understand which commands inspect, restart, rebuild, or destroy state so I can avoid accidental data loss.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand which commands inspect, restart, rebuild, or destroy state and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid accidental data loss."
-  },
-  {
-    "id": "docs-manage-sandboxes-lifecycle-003",
-    "question": "I'm planning an upgrade, rebuild, or uninstall. Help me know when to preserve workspace files first so I can recover useful agent state after disruptive changes.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user know when to preserve workspace files first and gives enough concrete guidance, decision criteria, verification steps, or risk framing to recover useful agent state after disruptive changes."
-  },
-  {
-    "id": "docs-manage-sandboxes-runtime-controls-001",
-    "question": "I'm changing a running sandbox. Help me know which controls can change without rebuild or re-onboarding so I can make safe adjustments with minimal downtime.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user know which controls can change without rebuild or re-onboarding and gives enough concrete guidance, decision criteria, verification steps, or risk framing to make safe adjustments with minimal downtime."
-  },
-  {
-    "id": "docs-manage-sandboxes-runtime-controls-002",
-    "question": "I'm reviewing a runtime control. Help me classify it as hot-reloadable, rebuild-only, or onboarding-only so I can choose the correct operational path.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user classify it as hot-reloadable, rebuild-only, or onboarding-only and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose the correct operational path."
-  },
-  {
-    "id": "docs-manage-sandboxes-runtime-controls-003",
-    "question": "I'm responding to an incident or risky agent behavior. Help me tighten or inspect sandbox runtime controls without confusion.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user tighten or inspect sandbox runtime controls and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid accidental downtime or data loss."
-  },
-  {
-    "id": "docs-manage-sandboxes-backup-restore-001",
-    "question": "I'm backing up workspace files before a destructive operation. Help me preserve agent memory, identity, and useful configuration so I can rebuild or migrate without losing important state.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user preserve agent memory, identity, and useful configuration and gives enough concrete guidance, decision criteria, verification steps, or risk framing to rebuild or migrate without losing important state."
-  },
-  {
-    "id": "docs-manage-sandboxes-backup-restore-002",
-    "question": "I'm handling a workspace archive. Help me understand credential stripping and integrity checks so I can trust the archive without exposing secrets.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand credential stripping and integrity checks and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust the archive without exposing secrets."
-  },
-  {
-    "id": "docs-manage-sandboxes-backup-restore-003",
-    "question": "I'm restoring workspace files. Help me verify the agent's useful memory returned so I can continue work without reintroducing sensitive host data.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user verify the agent's useful memory returned and gives enough concrete guidance, decision criteria, verification steps, or risk framing to continue work without reintroducing sensitive host data."
-  },
-  {
-    "id": "docs-manage-sandboxes-workspace-files-001",
-    "question": "I'm inspecting workspace files. Help me understand where personality, identity, and configuration live so I can predict how the agent will behave across sessions.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand where personality, identity, and configuration live and gives enough concrete guidance, decision criteria, verification steps, or risk framing to predict how the agent will behave across sessions."
-  },
-  {
-    "id": "docs-manage-sandboxes-workspace-files-002",
-    "question": "I'm adding durable instructions for the agent. Help me know which files persist and who owns them so I can put guidance in the right place.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user know which files persist and who owns them and gives enough concrete guidance, decision criteria, verification steps, or risk framing to put guidance in the right place."
-  },
-  {
-    "id": "docs-manage-sandboxes-workspace-files-003",
-    "question": "I'm restarting, rebuilding, or migrating a sandbox. Help me understand how each action affects workspace state so I can avoid losing or duplicating important files.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand how each action affects workspace state and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid losing or duplicating important files."
-  },
-  {
-    "id": "docs-manage-sandboxes-messaging-channels-001",
-    "question": "I'm connecting a messaging channel. Help me let users reach the sandboxed agent through Telegram, Discord, Slack, or another channel so I can support real-world always-on interactions.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user let users reach the sandboxed agent through Telegram, Discord, Slack, or another channel and gives enough concrete guidance, decision criteria, verification steps, or risk framing to support real-world always-on interactions."
-  },
-  {
-    "id": "docs-manage-sandboxes-messaging-channels-002",
-    "question": "I'm configuring channel credentials and processes. Help me understand what OpenShell supervises and where secrets live so I can trust the messaging integration operationally.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand what OpenShell supervises and where secrets live and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust the messaging integration operationally."
-  },
-  {
-    "id": "docs-manage-sandboxes-messaging-channels-003",
-    "question": "I'm testing a new messaging channel. Help me send and receive a message through the full path so I can prove the channel, gateway, and sandboxed agent are wired correctly.",
-    "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user send and receive a message through the full path and gives enough concrete guidance, decision criteria, verification steps, or risk framing to prove the channel, gateway, and sandboxed agent are wired correctly."
+    "ground_truth": "A NemoClaw-specific answer that helps the user check status, health, logs, ports, providers, upgrades, and uninstall paths and gives enough concrete guidance, decision criteria, verification steps, or risk framing to operate the sandbox safely after quickstart.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
   }
 ]

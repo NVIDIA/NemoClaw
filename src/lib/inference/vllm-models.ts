@@ -94,7 +94,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
     label: "Qwen3.6 35B-A3B NVFP4",
     envValue: "qwen3.6-35b-a3b-nvfp4",
-    maxModelLen: 65536,
+    maxModelLen: 131072,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
     // --data-parallel-size (all 1 — harmless on a single Spark node),

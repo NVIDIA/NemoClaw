@@ -2815,7 +2815,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
     assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
     assert.ok(
       payload.lines.some((line: string) =>
@@ -2823,9 +2823,9 @@ const { setupNim } = require(${onboardPath});
       ),
     );
     assert.ok(
-      payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen2.5:7b")),
+      payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen3.5:9b")),
     );
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
   });
 
   it("reprompts inside the Ollama model flow when a pull fails", () => {
@@ -2861,7 +2861,7 @@ printf '%s' "$status"
       `#!/usr/bin/env bash
 if [ "$1" = "pull" ]; then
   echo "$2" >> ${JSON.stringify(pullLog)}
-  if [ "$2" = "qwen2.5:7b" ]; then
+  if [ "$2" = "qwen3.5:9b" ]; then
     exit 1
   fi
   exit 0
@@ -2933,7 +2933,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "llama3.2:3b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Failed to pull Ollama model 'qwen2.5:7b'"),
+        line.includes("Failed to pull Ollama model 'qwen3.5:9b'"),
       ),
     );
     assert.ok(
@@ -2945,7 +2945,7 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message: string) => /Ollama model id:/.test(message)).length,
       1,
     );
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b\nllama3.2:3b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b\nllama3.2:3b");
   });
 
   it("re-prompts for a model when the user declines the size confirmation", () => {
@@ -3045,14 +3045,14 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Skipped pulling Ollama model 'qwen2.5:7b'"),
+        line.includes("Skipped pulling Ollama model 'qwen3.5:9b'"),
       ),
     );
     // Pull only happened on the second confirmation, not on the declined first attempt.
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     const downloadPrompts = payload.messages.filter((message: string) =>
       /Download Ollama model/.test(message),
     );
@@ -3163,8 +3163,8 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     // No "Download Ollama model 'X'?" prompt was issued — the env var bypassed it.
     assert.equal(
       payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
@@ -3175,7 +3175,7 @@ const { setupNim } = require(${onboardPath});
     // includes a size label or the "size unknown" fallback.
     const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
     const pullingLine = payload.lines.find((line: string) =>
-      /Pulling Ollama model 'qwen2.5:7b'/.test(line),
+      /Pulling Ollama model 'qwen3.5:9b'/.test(line),
     );
     assert.ok(pullingLine, "expected a 'Pulling Ollama model' log line under NEMOCLAW_YES=1");
     assert.match(pullingLine, sizePattern);
