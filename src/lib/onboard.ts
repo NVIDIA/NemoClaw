@@ -4432,14 +4432,21 @@ async function setupNim(
           if (isNonInteractive()) {
             const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
             if (!resolvedNvidiaKey) {
-              logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-              process.exit(1);
-            }
-            const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-            if (keyError) {
-              console.error(keyError);
-              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-              process.exit(1);
+              // #3895: skip the env requirement when the provider is already
+              // registered in the gateway (rebuild flow after `channels add`).
+              // upsertProvider drops `--credential` from the `provider update`
+              // call when the host env is empty and the provider exists.
+              if (!providerExistsInGateway(provider)) {
+                logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
+                process.exit(1);
+              }
+            } else {
+              const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
+              if (keyError) {
+                console.error(keyError);
+                console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
+                process.exit(1);
+              }
             }
           } else {
             await ensureApiKey();
@@ -4504,10 +4511,17 @@ async function setupNim(
           }
           if (isNonInteractive()) {
             if (!resolveProviderCredential(selectedCredentialEnv)) {
-              console.error(
-                `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
-              );
-              process.exit(1);
+              // #3895: skip the env requirement when the provider is already
+              // registered in the gateway. upsertProvider drops `--credential`
+              // from the `provider update` call when the host env is empty and
+              // the provider exists; the recreate step does not need to rotate
+              // the secret.
+              if (!providerExistsInGateway(provider)) {
+                console.error(
+                  `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
+                );
+                process.exit(1);
+              }
             }
           } else {
             const credentialResult = await ensureNamedCredential(
