@@ -3,18 +3,9 @@
     "id": "docs-monitoring-monitor-sandbox-activity-001",
     "question": "I'm monitoring sandbox activity. Help me understand what the agent and sandbox are doing now so I can detect unhealthy or unexpected behavior early.",
     "expected_skill": "nemoclaw-user-monitor-sandbox",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the agent and sandbox are doing now and gives enough concrete guidance, decision criteria, verification steps, or risk framing to detect unhealthy or unexpected behavior early."
-  },
-  {
-    "id": "docs-monitoring-monitor-sandbox-activity-002",
-    "question": "I'm diagnosing a runtime failure. Help me use health, logs, and traces to locate the failing layer so I can separate host, gateway, sandbox, policy, and inference issues.",
-    "expected_skill": "nemoclaw-user-monitor-sandbox",
-    "ground_truth": "A NemoClaw-specific answer that helps the user use health, logs, and traces to locate the failing layer and gives enough concrete guidance, decision criteria, verification steps, or risk framing to separate host, gateway, sandbox, policy, and inference issues."
-  },
-  {
-    "id": "docs-monitoring-monitor-sandbox-activity-003",
-    "question": "I'm collecting debugging evidence. Help me gather enough information without weakening controls so I can investigate safely and share useful diagnostics.",
-    "expected_skill": "nemoclaw-user-monitor-sandbox",
-    "ground_truth": "A NemoClaw-specific answer that helps the user gather enough information without weakening controls and gives enough concrete guidance, decision criteria, verification steps, or risk framing to investigate safely and share useful diagnostics."
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the agent and sandbox are doing now and gives enough concrete guidance, decision criteria, verification steps, or risk framing to detect unhealthy or unexpected behavior early.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
   }
 ]

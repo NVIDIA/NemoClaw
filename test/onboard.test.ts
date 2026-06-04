@@ -1489,7 +1489,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1522,7 +1522,7 @@ proxy.persistAndProbeOllamaProxy = async (token) => {
 const { setupInference } = require(${onboardPath});
 
 (async () => {
-  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   console.log(JSON.stringify({ commands, proxyCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1628,7 +1628,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1654,7 +1654,7 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   try {
-    await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+    await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   } catch (err) {
     if (!err || !err.__exit) {
       origErr("[TEST] outer error:", err && err.message);

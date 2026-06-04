@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
+import type { OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
@@ -39,6 +40,7 @@ export class OnboardRuntimeBoundary {
       recordStateSkipped: this.recordStateSkipped.bind(this),
       recordRepairEvent: this.recordRepairEvent.bind(this),
       recordResumeConflict: this.recordResumeConflict.bind(this),
+      recordStateResult: this.recordStateResult.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
@@ -83,6 +85,10 @@ export class OnboardRuntimeBoundary {
     metadata: Record<string, unknown> | null = null,
   ): Promise<Session> {
     return this.getRuntime().markSkipped(state, metadata);
+  }
+
+  async recordStateResult(result: OnboardStateResult): Promise<Session> {
+    return this.getRuntime().applyResult(result);
   }
 
   async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {

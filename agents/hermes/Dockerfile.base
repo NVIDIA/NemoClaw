@@ -26,7 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Calver tag v2026.5.16 = Hermes Agent v0.14.0.
 ARG HERMES_VERSION=v2026.5.16
 ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
-ARG HERMES_UV_EXTRAS="messaging web pty"
+ARG HERMES_UV_EXTRAS="anthropic messaging web pty"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -157,11 +157,13 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp),
-# web (API health/UI runtime), and pty (optional browser TUI bridge).
-# New Hermes integrations should be installed
-# by the agent workflow when they are enabled rather than shipped in the
-# base image by default.
+# integrations: anthropic (native Anthropic Messages routing), messaging
+# (Telegram, Discord, Slack, WeChat, WhatsApp), web (API health/UI runtime),
+# and pty (optional browser TUI bridge). These extras are resolved from the
+# selected Hermes release's uv.lock via `uv sync --frozen`, so dependency
+# changes remain tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review.
+# New Hermes integrations should be installed by the agent workflow when they
+# are enabled rather than shipped in the base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \

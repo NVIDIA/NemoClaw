@@ -127,7 +127,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--enable-auto-tool-choice");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     expect(cmd).toContain("--reasoning-parser qwen3");
-    expect(cmd).toContain("--max-model-len 65536");
+    expect(cmd).toContain("--max-model-len 131072");
     expect(cmd).toContain(
       `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
     );
