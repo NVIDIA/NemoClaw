@@ -28,8 +28,8 @@ RUN npm ci && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG OPENCLAW_VERSION=2026.5.22
-ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
+ARG OPENCLAW_VERSION=2026.5.27
+ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -110,7 +110,7 @@ RUN set -eu; \
         echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
     EXPECTED_INTEGRITY=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
     if [ -n "$EXPECTED_INTEGRITY" ]; then \
         REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
         if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
@@ -287,7 +287,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
-    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # Reviewed against openclaw@2026.5.27 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
@@ -379,7 +379,7 @@ RUN set -eu; \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Patch OpenClaw's pinned 2026.5.22 compiled selection runtime to expose a
+# Patch OpenClaw's pinned 2026.5.27 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
