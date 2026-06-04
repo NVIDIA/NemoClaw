@@ -899,8 +899,8 @@ function rollbackToBackupContainer(
     containerOpts,
   );
   if (!isZeroStatus(restored)) return false;
-  d.dockerStart(refs.originalName, containerOpts);
-  return true;
+  const started = d.dockerStart(refs.originalName, containerOpts);
+  return isZeroStatus(started);
 }
 
 export function recreateOpenShellDockerSandboxWithGpu(
