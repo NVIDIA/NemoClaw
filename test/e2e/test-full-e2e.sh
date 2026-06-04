@@ -268,9 +268,10 @@ fi
 # drop path/npm-origin plugins from plugins[], which removes the /nemoclaw TUI
 # command surface. The startup refresh should restore the registry before users
 # interact with the sandbox. This non-interactive E2E cannot drive OpenClaw's
-# terminal autocomplete directly, so it validates the runtime slash alias that
-# the TUI consumes plus the direct command help path that fails when the plugin
-# is missing from the refreshed registry.
+# terminal autocomplete directly; the interactive TUI/chat surface is owned by
+# the openclaw-tui-chat-correlation-e2e scenario. Here we validate the runtime
+# slash alias that the TUI consumes plus the direct command help path that fails
+# when the plugin is missing from the refreshed registry.
 info "[PLUGIN] verifying NemoClaw plugin registry entry, slash alias, and command help..."
 ssh_config="$(mktemp)"
 plugin_check_output=""
@@ -285,7 +286,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
       -o ConnectTimeout=10 \
       -o LogLevel=ERROR \
       "openshell-${SANDBOX_NAME}" \
-      "HOME=/sandbox openclaw plugins inspect nemoclaw >/tmp/nemoclaw-e2e-plugin-inspect.log 2>&1 && HOME=/sandbox openclaw nemoclaw --help >/tmp/nemoclaw-e2e-plugin-help.log 2>&1 && grep -Eq '\"name\"[[:space:]]*:[[:space:]]*\"nemoclaw\"' /sandbox/.openclaw/extensions/nemoclaw/openclaw.plugin.json && grep -Eq '\"kind\"[[:space:]]*:[[:space:]]*\"runtime-slash\"' /sandbox/.openclaw/extensions/nemoclaw/openclaw.plugin.json && printf 'plugin-ok'" \
+      "inspect_log=/tmp/nemoclaw-e2e-plugin-inspect.log; help_log=/tmp/nemoclaw-e2e-plugin-help.log; manifest=/sandbox/.openclaw/extensions/nemoclaw/openclaw.plugin.json; if ! HOME=/sandbox openclaw plugins inspect nemoclaw >\"\$inspect_log\" 2>&1; then printf 'inspect failed: '; head -c 600 \"\$inspect_log\"; exit 1; fi; if ! HOME=/sandbox openclaw nemoclaw --help >\"\$help_log\" 2>&1; then printf 'help failed: '; head -c 600 \"\$help_log\"; exit 1; fi; if ! grep -Eq '\"name\"[[:space:]]*:[[:space:]]*\"nemoclaw\"' \"\$manifest\"; then printf 'manifest missing nemoclaw name'; exit 1; fi; if ! grep -Eq '\"kind\"[[:space:]]*:[[:space:]]*\"runtime-slash\"' \"\$manifest\"; then printf 'manifest missing runtime-slash alias'; exit 1; fi; printf 'plugin-ok'" \
       2>&1) || true
     grep -Fq "plugin-ok" <<<"$plugin_check_output" && break
     [ "$plugin_attempt" -lt 5 ] && sleep 3

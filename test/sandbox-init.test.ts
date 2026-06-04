@@ -244,21 +244,29 @@ EOF
     });
 
     it("rejects a symlinked plugin refresh log", () => {
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
       const target = join(workDir, "plugin-refresh-target.log");
       writeFileSync(target, "do not truncate");
-      symlinkSync(target, "/tmp/nemoclaw-plugin-refresh.log");
+      symlinkSync(target, pluginRefreshLog);
 
-      const { stderr } = runWithLib("validate_tmp_permissions", { expectFail: true });
-      expect(stderr).toContain("/tmp/nemoclaw-plugin-refresh.log is a symlink");
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} is a symlink`);
       expect(readFileSync(target, "utf-8")).toBe("do not truncate");
     });
 
     it("keeps the plugin refresh log private", () => {
-      writeFileSync("/tmp/nemoclaw-plugin-refresh.log", "refresh output");
-      chmodSync("/tmp/nemoclaw-plugin-refresh.log", 0o644);
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
+      writeFileSync(pluginRefreshLog, "refresh output");
+      chmodSync(pluginRefreshLog, 0o644);
 
-      const { stderr } = runWithLib("validate_tmp_permissions", { expectFail: true });
-      expect(stderr).toContain("/tmp/nemoclaw-plugin-refresh.log has unexpected permissions");
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} has unexpected permissions`);
       expect(stderr).toContain("expected 600");
     });
   });

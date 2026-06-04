@@ -122,8 +122,11 @@ validate_tmp_permissions() {
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
   # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
   # log is written after privilege drop as sandbox, so keep it private and
-  # reject symlinks/non-regular files before launching services.
-  for f in /tmp/gateway.log /tmp/auto-pair.log /tmp/nemoclaw-plugin-refresh.log; do
+  # reject symlinks/non-regular files before launching services. OpenClaw's
+  # entrypoint sets PLUGIN_REFRESH_LOG; shared tests can override it while
+  # production keeps the fixed /tmp path.
+  local plugin_refresh_log="${PLUGIN_REFRESH_LOG:-/tmp/nemoclaw-plugin-refresh.log}"
+  for f in /tmp/gateway.log /tmp/auto-pair.log "$plugin_refresh_log"; do
     [ -e "$f" ] || [ -L "$f" ] || continue
     if [ -L "$f" ]; then
       echo "[SECURITY] $f is a symlink (expected regular log file)" >&2

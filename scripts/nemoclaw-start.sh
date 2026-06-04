@@ -2918,7 +2918,12 @@ start_plugin_registry_refresh() {
   (
     local ready=0
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-      if "$OPENCLAW" gateway status >/dev/null 2>&1; then
+      if [ "$(id -u)" -eq 0 ]; then
+        if "${STEP_DOWN_PREFIX_SANDBOX[@]}" env HOME=/sandbox "$OPENCLAW" gateway status >/dev/null 2>&1; then
+          ready=1
+          break
+        fi
+      elif env HOME=/sandbox "$OPENCLAW" gateway status >/dev/null 2>&1; then
         ready=1
         break
       fi
@@ -3301,10 +3306,12 @@ start_auto_pair
 # A `plugins registry --refresh` repopulates plugins[] from installRecords.
 # Backgrounded so the gateway-wait loop is unblocked; failure is non-fatal.
 # Source boundary: the lossy policy-changed rebuild lives in OpenClaw's registry
-# regeneration path, outside NemoClaw. NemoClaw can only heal the post-start
-# registry from persisted installRecords until upstream preserves path/npm-origin
-# plugins itself. Remove this workaround after openclaw/openclaw#89606 ships and
-# the full onboard E2E still proves /nemoclaw registration without the refresh.
+# regeneration path, outside NemoClaw. NemoClaw can only heal the initial
+# post-start registry from persisted installRecords until upstream preserves
+# path/npm-origin plugins itself. Later runtime policy mutations are owned by
+# OpenClaw's upstream fix, not by this one-shot startup workaround. Remove this
+# workaround after openclaw/openclaw#89606 ships and the full onboard E2E still
+# proves /nemoclaw registration without the refresh.
 start_plugin_registry_refresh
 
 # NOTE: PIDs are collected after launch; a signal arriving between trap

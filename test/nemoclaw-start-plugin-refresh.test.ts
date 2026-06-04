@@ -55,6 +55,8 @@ function runRefreshBlock(
   refreshLog: string;
   envLog: string;
   callLog: string;
+  preRefreshState: string;
+  registryState: string;
   tmpDir: string;
 } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-refresh-"));
@@ -63,24 +65,49 @@ function runRefreshBlock(
   const callLog = path.join(tmpDir, "calls.log");
   const envLog = path.join(tmpDir, "env.log");
   const refreshLog = path.join(tmpDir, "refresh.txt");
+  const preRefreshState = path.join(tmpDir, "registry-state.pre.txt");
+  const registryState = path.join(tmpDir, "registry-state.txt");
   const readyCounter = path.join(tmpDir, "ready-counter");
+  fs.writeFileSync(
+    registryState,
+    [
+      "installRecords:nemoclaw,stale-plugin",
+      "plugins:",
+      "slash:",
+      "allowedSlash:/nemoclaw",
+      "staleSlash:",
+      "",
+    ].join("\n"),
+  );
 
   // Stub `openclaw`: counts `gateway status` calls and only succeeds after
-  // `gatewayReadyAfter` invocations. Records every other invocation +
-  // critical env vars (HOME, USER) so the test can verify them.
+  // `gatewayReadyAfter` invocations. Gateway readiness deliberately requires
+  // HOME=/sandbox, matching the sandbox config location and preventing the
+  // root-entrypoint regression where readiness probes inherited HOME=/root and
+  // skipped the refresh even though the gateway was running.
   fs.writeFileSync(
     stubBin,
     [
       "#!/usr/bin/env bash",
       `echo "$@" >> ${JSON.stringify(callLog)}`,
       `if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then`,
+      `  printf 'CALL=gateway status HOME=%s STEP_DOWN_USER=%s USER=%s\\n' "$HOME" "\${STEP_DOWN_USER:-}" "$(id -un)" >> ${JSON.stringify(envLog)}`,
+      `  [ "$HOME" = "/sandbox" ] || exit 1`,
       `  count=$(cat ${JSON.stringify(readyCounter)} 2>/dev/null || echo 0)`,
       `  count=$((count + 1))`,
       `  printf '%s' "$count" > ${JSON.stringify(readyCounter)}`,
       `  if [ "$count" -ge ${opts.gatewayReadyAfter} ]; then exit 0; else exit 1; fi`,
       "fi",
       `if [ "$1" = "plugins" ] && [ "$2" = "registry" ] && [ "$3" = "--refresh" ]; then`,
-      `  printf 'HOME=%s\\nSTEP_DOWN_USER=%s\\nUSER=%s\\n' "$HOME" "\${STEP_DOWN_USER:-}" "$(id -un)" > ${JSON.stringify(envLog)}`,
+      `  printf 'CALL=plugins registry --refresh HOME=%s STEP_DOWN_USER=%s USER=%s\\n' "$HOME" "\${STEP_DOWN_USER:-}" "$(id -un)" >> ${JSON.stringify(envLog)}`,
+      `  cp ${JSON.stringify(registryState)} ${JSON.stringify(preRefreshState)}`,
+      `  cat > ${JSON.stringify(registryState)} <<'REGISTRY_STATE'`,
+      "installRecords:nemoclaw,stale-plugin",
+      "plugins:nemoclaw",
+      "slash:/nemoclaw",
+      "allowedSlash:/nemoclaw",
+      "staleSlash:",
+      "REGISTRY_STATE",
       `  printf 'refreshed' > ${JSON.stringify(refreshLog)}`,
       "  exit 0",
       "fi",
@@ -134,7 +161,7 @@ function runRefreshBlock(
     env: { ...process.env, HOME: "/root", USER: "root" }, // adversarial: parent has wrong HOME
   });
 
-  return { result, refreshLog, envLog, callLog, tmpDir };
+  return { result, refreshLog, envLog, callLog, preRefreshState, registryState, tmpDir };
 }
 
 describe("plugin refresh log preparation", () => {
@@ -245,13 +272,15 @@ describe("plugin registry refresh workaround (#2021, openclaw/openclaw#89606)", 
 
   it("forces HOME=/sandbox even when parent env has HOME=/root", () => {
     // The bug class this protects against: running as root with HOME=/root
-    // installs to /root/.openclaw/extensions and does NOT repopulate the
-    // runtime plugins[]. The block must override the inherited HOME.
+    // reads /root/.openclaw for gateway readiness and installs/refreshes under
+    // /root, which skips the refresh or fails to repopulate runtime plugins[].
+    // Both the readiness probe and refresh must override the inherited HOME.
     const { result, envLog, tmpDir } = runRefreshBlock();
     try {
       expect(result.status).toBe(0);
       const envCapture = fs.readFileSync(envLog, "utf-8");
-      expect(envCapture).toContain("HOME=/sandbox");
+      expect(envCapture).toMatch(/CALL=gateway status HOME=\/sandbox/m);
+      expect(envCapture).toMatch(/CALL=plugins registry --refresh HOME=\/sandbox/m);
       expect(envCapture).not.toContain("HOME=/root");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -264,6 +293,33 @@ describe("plugin registry refresh workaround (#2021, openclaw/openclaw#89606)", 
       expect(result.status).toBe(0);
       const envCapture = fs.readFileSync(envLog, "utf-8");
       expect(envCapture).toContain("STEP_DOWN_USER=sandbox");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("heals the installRecords-present/plugins-missing slash-router shape without enabling stale records", () => {
+    // Regression contract for #2021: the invalid OpenClaw state has persisted
+    // installRecords while the runtime plugins/slash-router view forgets the
+    // path-origin NemoClaw plugin after policy-changed regeneration. The real
+    // registry implementation is upstream; this harness captures the state
+    // boundary NemoClaw relies on and proves this startup hook runs the refresh
+    // that restores /nemoclaw without treating unrelated stale records as newly
+    // allowed slash commands.
+    const { result, preRefreshState, registryState, tmpDir } = runRefreshBlock();
+    try {
+      expect(result.status).toBe(0);
+      const before = fs.readFileSync(preRefreshState, "utf-8");
+      expect(before).toContain("installRecords:nemoclaw,stale-plugin");
+      expect(before).toMatch(/^plugins:$/m);
+      expect(before).toMatch(/^slash:$/m);
+
+      const after = fs.readFileSync(registryState, "utf-8");
+      expect(after).toContain("plugins:nemoclaw");
+      expect(after).toContain("slash:/nemoclaw");
+      expect(after).toContain("allowedSlash:/nemoclaw");
+      expect(after).toMatch(/^staleSlash:$/m);
+      expect(after).not.toContain("/stale-plugin");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
