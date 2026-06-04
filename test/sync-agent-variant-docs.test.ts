@@ -38,6 +38,7 @@ The gateway state path is \`~/.local/state/nemoclaw\`.
 `);
 
     expect(rendered).toContain("### `nemohermes list`");
+    expect(rendered).toContain("exclude-from-skills-gen: true");
     expect(rendered).toContain("nemohermes list");
     expect(rendered).toContain("NEMOCLAW_PROVIDER=routed nemohermes onboard --non-interactive");
     expect(rendered).toContain("URL=$(nemohermes my-assistant dashboard-url --quiet)");
