@@ -4,8 +4,6 @@ description: "Explains operational tasks after the quickstart: listing sandboxes
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Manage Sandbox Lifecycle
 

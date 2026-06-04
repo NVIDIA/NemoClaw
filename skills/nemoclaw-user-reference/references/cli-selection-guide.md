@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Choose Between NemoClaw and OpenShell CLIs
 
 NemoClaw uses two host-side CLIs.

@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Install OpenClaw Plugins
 
 OpenClaw plugins extend the OpenClaw runtime with hooks, services, tools, or provider integrations.

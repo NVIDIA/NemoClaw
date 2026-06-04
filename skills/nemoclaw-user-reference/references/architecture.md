@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Architecture Details
 
 NemoClaw combines a host CLI, an in-sandbox integration layer, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.

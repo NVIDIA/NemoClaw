@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Customize the Sandbox Network Policy: Details
 
 ## Remove a Custom Preset
