@@ -51,6 +51,7 @@ function makeData(overrides: Partial<ScorecardData> = {}): ScorecardData {
   return {
     today: "May 25",
     runMode: "Scheduled full nightly",
+    actor: "",
     isSelectiveDispatch: false,
     requestedJobs: [],
     total: 51,
@@ -78,6 +79,11 @@ describe("buildBlocks — perfect scheduled run", () => {
 
   it("does not include a header block inside the attachment", () => {
     expect(blocks.some((block) => block.type === "header")).toBe(false);
+  });
+
+  it("does not append an actor suffix for scheduled runs", () => {
+    const withActor = renderBlocks(makeData({ actor: "hple" }));
+    expect(elementText(withActor[0], 0)).not.toContain("(by");
   });
 
   it("leads the stats line with 'Total ran: <ran>/<total>'", () => {
@@ -192,9 +198,37 @@ describe("buildBlocks — selective dispatch", () => {
     expect(elementText(blocks[0], 1)).toContain("`hermes-slack-e2e`");
   });
 
+  it("appends actor suffix on selective dispatch when actor is present", () => {
+    const withActor = renderBlocks(
+      makeData({
+        runMode: "Selective dispatch",
+        isSelectiveDispatch: true,
+        requestedJobs: ["cloud-e2e"],
+        actor: "hple",
+      }),
+    );
+    expect(elementText(withActor[0], 0)).toContain("(by `hple`)");
+  });
+
   it("keeps the 'not shown' trend text from the generator", () => {
     const trendCtx = blocks.filter((block) => block.type === "context").pop();
     expect(elementText(trendCtx, 0)).toContain("Not shown");
+  });
+});
+
+describe("buildBlocks — manual full run with actor", () => {
+  it("appends actor suffix in the run-mode context line", () => {
+    const blocks = renderBlocks(
+      makeData({ runMode: "Manual full run", actor: "hple" }),
+    );
+    expect(elementText(blocks[0], 0)).toContain("Manual full run (by `hple`)");
+  });
+
+  it("omits actor suffix when actor is empty", () => {
+    const blocks = renderBlocks(
+      makeData({ runMode: "Manual full run", actor: "" }),
+    );
+    expect(elementText(blocks[0], 0)).toBe("*Run mode:* Manual full run");
   });
 });
 

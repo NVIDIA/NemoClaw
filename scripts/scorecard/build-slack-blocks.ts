@@ -17,6 +17,8 @@ type ScorecardData = {
   /** Display date, e.g. "May 25". */
   today: string;
   runMode: ScorecardRunMode;
+  /** GitHub actor (username) who triggered the run. Empty/undefined for schedule. */
+  actor?: string;
   isSelectiveDispatch: boolean;
   /** Populated only when isSelectiveDispatch is true. */
   requestedJobs: string[];
@@ -81,8 +83,15 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
   // attachment stays under Slack's truncation threshold.
   const blocks: SlackBlock[] = [];
 
+  // Append actor suffix for dispatch-based runs (manual full / selective).
+  // Schedule runs skip the suffix because github.actor there is the workflow
+  // file author, not a meaningful trigger.
+  const showActor = data.runMode !== "Scheduled full nightly" && Boolean(data.actor);
+  const runModeText = showActor
+    ? `${data.runMode} (by \`${data.actor}\`)`
+    : data.runMode;
   const contextElements: SlackMrkdwnText[] = [
-    { type: "mrkdwn", text: `*Run mode:* ${data.runMode}` },
+    { type: "mrkdwn", text: `*Run mode:* ${runModeText}` },
   ];
   if (data.isSelectiveDispatch && data.requestedJobs.length > 0) {
     const jobList = data.requestedJobs.map((name) => `\`${name}\``).join(", ");

@@ -2427,9 +2427,11 @@ jobs:
 
             // Structured data for the Slack step.
             // Contract: scripts/scorecard/build-slack-blocks.ts
+            const actor = context.actor || '';
             core.setOutput('scorecardData', JSON.stringify({
               today,
               runMode,
+              actor,
               isSelectiveDispatch,
               requestedJobs,
               total,
