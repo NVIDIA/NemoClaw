@@ -3,6 +3,7 @@
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withSandboxPhaseTrace } from "../../tracing";
+import { branchTo, type OnboardStateTransitionResult } from "../result";
 
 export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
   resume: boolean;
@@ -97,6 +98,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 function sameEffectiveTelegramRequireMention(left: boolean | null, right: boolean | null): boolean {
@@ -335,5 +337,12 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     selectedMessagingChannels,
     webSearchSupported,
     session,
+    stateResult: branchTo(agent ? "agent_setup" : "openclaw", {
+      metadata: {
+        state: "sandbox",
+        sandboxName: completedSandboxName,
+        agent: (agent as { name?: string } | null)?.name ?? "openclaw",
+      },
+    }),
   };
 }

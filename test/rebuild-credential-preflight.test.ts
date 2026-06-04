@@ -317,9 +317,11 @@ describe("Issue #2273: atomic rebuild", () => {
       "aborts rebuild BEFORE destroying sandbox when credential is missing",
       { timeout: 60_000 },
       () => {
-        // No credential in env or credentials.json
+        // No credential in env or credentials.json AND no gateway-registered
+        // provider — preflight must still abort so the sandbox is preserved.
         const f = createFixture({
           credentialEnv: "NVIDIA_API_KEY",
+          providerRegistered: false,
           // no savedCredential
         });
 
@@ -474,10 +476,12 @@ describe("Issue #2273: atomic rebuild", () => {
       "preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)",
       { timeout: 60_000 },
       () => {
-        // OpenAI provider with no credential — should abort
+        // OpenAI provider with no credential AND no gateway registration —
+        // should abort.
         const f = createFixture({
           provider: "openai-api",
           credentialEnv: "OPENAI_API_KEY",
+          providerRegistered: false,
           // no savedCredential
         });
 
@@ -529,6 +533,54 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).not.toContain("Missing credential: NOUS_API_KEY");
         expect(output).not.toContain("provider credential not found");
         expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_API_KEY",
+      { timeout: 60_000 },
+      () => {
+        // After `nemohermes channels add wechat` the rebuild preflight used to
+        // abort because NVIDIA_API_KEY was not set in the environment, even
+        // though `nvidia-prod` was already registered in the OpenShell
+        // gateway. Reuse the gateway-stored credential instead.
+        const f = createFixture({
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_API_KEY",
+          providerRegistered: true,
+          // no savedCredential — host env has no NVIDIA_API_KEY
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: NVIDIA_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "still aborts when nvidia-prod is missing from the gateway AND the env",
+      { timeout: 60_000 },
+      () => {
+        // Negative gate on gateway-credential reuse: if the gateway also lost
+        // the provider (cold install, gateway state lost) and the env is
+        // empty, the preflight must still bail so the sandbox is preserved.
+        const f = createFixture({
+          provider: "nvidia-prod",
+          credentialEnv: "NVIDIA_API_KEY",
+          providerRegistered: false,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("preflight failed");
+        expect(output).toContain("NVIDIA_API_KEY");
+        expect(output).toContain("untouched");
+        expect(registryHasSandbox(f)).toBe(true);
       },
     );
 
@@ -598,11 +650,13 @@ describe("Issue #2273: atomic rebuild", () => {
       "preflight failure exits non-zero when credential is missing",
       { timeout: 60_000 },
       () => {
-        // Verifies that missing credentials cause rebuild to exit non-zero.
-        // This is the observable CLI behavior — the preflight check fails
-        // and bail() calls process.exit with a non-zero code.
+        // Verifies that missing credentials cause rebuild to exit non-zero
+        // when no fallback exists in the gateway either. This is the
+        // observable CLI behavior — the preflight check fails and bail()
+        // calls process.exit with a non-zero code.
         const f = createFixture({
           credentialEnv: "NVIDIA_API_KEY",
+          providerRegistered: false,
           // No credential — preflight will fail and exit non-zero
         });
 
