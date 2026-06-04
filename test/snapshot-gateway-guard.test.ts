@@ -142,6 +142,52 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
   };
 }
 
+// VM-driver env with an `imageTag` set in the sandbox registry so the
+// `resolveSrcPodImage()` fast path returns the image without falling back to
+// the docker/kubectl probe.
+function makeVmRestoreToEnv(
+  prefix: string,
+  entry: Record<string, unknown> = { imageTag: "openshell/sandbox-from:fast-path-test" },
+): Record<string, string> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home, "alpha", {
+    openshellDriver: "vm",
+    ...entry,
+  });
+
+  const cloneReadyMarker = path.join(home, "clone-1-ready");
+  writeExecutable(path.join(localBin, "openshell"), [
+    'case "$1 $2" in',
+    '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
+    `  "sandbox list") if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
+    '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
+    `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
+    "esac",
+    'if [ "$1" = "status" ]; then exit 0; fi',
+    "exit 0",
+  ]);
+
+  writeExecutable(path.join(localBin, "ssh"), ["exit 0"]);
+
+  // `docker exec` must never run: if the fast path regresses,
+  // resolveSrcPodImage falls into the kubectl-via-docker probe and this
+  // marker shows up in the captured output.
+  writeExecutable(path.join(localBin, "docker"), [
+    'if [ "$1" = "exec" ]; then',
+    '  echo "kubectl-must-not-run"',
+    "  exit 1",
+    "fi",
+    "exit 0",
+  ]);
+
+  return {
+    HOME: home,
+    PATH: `${localBin}:${process.env.PATH ?? ""}`,
+  };
+}
+
 describe("snapshot gateway guard (#2673)", () => {
   it("snapshot restore rejects when gateway container is stopped", () => {
     const env = makeStoppedGatewayEnv("nemoclaw-snap-gw-restore-");
@@ -165,5 +211,35 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Snapshot v1 name=baseline created");
     expect(r.out).not.toContain("Failed to query live sandbox state");
+  });
+
+  // `snapshot restore --to <new>` on VM driver must use the registered
+  // imageTag, not the legacy `docker exec ... kubectl` probe.
+  it("snapshot restore --to uses registered imageTag for VM-driver auto-create instead of kubectl probe", () => {
+    const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-");
+
+    const seed = runCli("alpha snapshot create --name baseline", env);
+    expect(seed.code).toBe(0);
+    expect(seed.out).toContain("Snapshot v1 name=baseline created");
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("could not resolve");
+    expect(r.out).not.toContain("kubectl-must-not-run");
+    expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
+  });
+
+  it("snapshot restore --to fails closed for VM-driver entries missing imageTag", () => {
+    const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-missing-image-", {
+      imageTag: null,
+    });
+
+    const seed = runCli("alpha snapshot create --name baseline", env);
+    expect(seed.code).toBe(0);
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Cannot resolve image");
+    expect(r.out).not.toContain("kubectl-must-not-run");
   });
 });

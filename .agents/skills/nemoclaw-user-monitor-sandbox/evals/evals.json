@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-monitoring-monitor-sandbox-activity-001",
+    "question": "I'm monitoring sandbox activity. Help me understand what the agent and sandbox are doing now so I can detect unhealthy or unexpected behavior early.",
+    "expected_skill": "nemoclaw-user-monitor-sandbox",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the agent and sandbox are doing now and gives enough concrete guidance, decision criteria, verification steps, or risk framing to detect unhealthy or unexpected behavior early.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

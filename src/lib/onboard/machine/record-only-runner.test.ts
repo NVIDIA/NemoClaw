@@ -69,10 +69,14 @@ function createHarness() {
         current.steps[stepName].status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message) =>
+    markStepFailed: (stepName, message, options) =>
       updateSession((current) => {
         current.steps[stepName].status = "failed";
-        current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
+        if (options?.updateMachine !== false) {
+          current.status = "failed";
+          current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
+          maybeLegacyTransition("failed", options);
+        }
         return current;
       }),
     completeSession: (updates: SessionUpdates = {}) =>
@@ -101,6 +105,7 @@ describe("record-only onboard runner", () => {
   it("lets handlers record steps while the runner owns machine transitions", async () => {
     const harness = createHarness();
     const recorders = harness.boundary.recorders();
+    expect("recordStateResult" in recorders).toBe(false);
 
     const result = await runOnboardMachineWithRecordOnlySteps({
       boundary: harness.boundary,
@@ -144,5 +149,19 @@ describe("record-only onboard runner", () => {
     expect(result.context.visited).toContain("preflight");
     expect(result.context.visited).toContain("gateway");
     expect(harness.events.map((event) => event.type)).toContain("onboard.started");
+  });
+
+  it("records failed step status without marking the session or machine failed", async () => {
+    const harness = createHarness();
+    const recorders = harness.boundary.recorders();
+
+    await recorders.recordStepFailed("gateway", "Gateway failed");
+
+    expect(harness.getSession()).toMatchObject({
+      status: "in_progress",
+      failure: null,
+      machine: { state: "init", revision: 0 },
+      steps: { gateway: { status: "failed" } },
+    });
   });
 });

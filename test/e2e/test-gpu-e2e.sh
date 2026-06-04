@@ -285,6 +285,16 @@ if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
   else
     fail "Sandbox GPU is not enabled in status output"
   fi
+  # #4231: status must report proven CUDA usability, not a bare "enabled". On a
+  # working GPU host the onboarding cuInit proof passes, so status should carry
+  # the "(CUDA verified)" suffix rather than "(CUDA unverified)" or a failure.
+  if echo "$status_output" | grep -Fq "CUDA verified"; then
+    pass "Sandbox GPU status reports CUDA verified"
+  elif echo "$status_output" | grep -Eq "CUDA unverified|last CUDA proof failed"; then
+    fail "Sandbox GPU status shows CUDA not proven on a working GPU host"
+  else
+    skip "Sandbox GPU CUDA proof state not present in status output"
+  fi
 else
   fail "Could not read sandbox GPU status"
 fi
@@ -308,6 +318,21 @@ if grep -Fq "GPU proof passed: cuInit(0) via libcuda.so.1" "$INSTALL_LOG"; then
   pass "Onboard GPU proof passed: cuInit(0)"
 else
   fail "Onboard GPU proof missing: cuInit(0)"
+fi
+
+# 4d.1: Host-network local inference reachability gate (#4509). When the GPU
+# patch wires OpenClaw to the direct 127.0.0.1 sandbox URL, onboard must prove
+# the recreated host-network container can actually reach that endpoint before
+# declaring success — instead of leaving an unreachable loopback to surface as
+# an opaque ECONNREFUSED during the first agent prompt.
+if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
+  if grep -Fq "GPU host-network local inference reachable from sandbox" "$INSTALL_LOG"; then
+    pass "Onboard proved host-network local inference reachable before success"
+  else
+    fail "Onboard did not prove host-network local inference reachability (#4509 gate missing)"
+  fi
+else
+  skip "Host-network direct sandbox URL not active; inference reachability gate not exercised"
 fi
 
 # 4e: Inference provider is ollama-local

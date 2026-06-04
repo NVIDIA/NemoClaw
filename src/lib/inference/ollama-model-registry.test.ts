@@ -135,7 +135,7 @@ describe("modelFitsAvailableMemory", () => {
 
   it("returns true when a known model fits", () => {
     expect(
-      modelFitsAvailableMemory("qwen2.5:7b", {
+      modelFitsAvailableMemory("qwen3.5:9b", {
         type: "nvidia",
         totalMemoryMB: 131_072,
         availableMemoryMB: 12_000,

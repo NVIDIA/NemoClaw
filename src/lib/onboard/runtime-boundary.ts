@@ -4,7 +4,15 @@
 import type { Session, SessionUpdates, StepMutationOptions } from "../state/onboard-session";
 import type { OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
+import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
+
+function assertSkippableTransitionResult(result: OnboardStateResult): void {
+  if (result.type !== "transition" || !result.updates || Object.keys(result.updates).length === 0) {
+    return;
+  }
+  throw new Error("Cannot skip onboarding state result with context updates");
+}
 
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -97,21 +105,32 @@ export class OnboardRuntimeBoundary {
     const current = await runtime.session();
     if (result.type !== "transition") return runtime.applyResult(result);
 
-    if (current.machine.state === result.next) return current;
+    if (current.machine.state === result.next) {
+      assertSkippableTransitionResult(result);
+      return runtime.emitResultSkipped({
+        reason: "already_at_target",
+        currentState: current.machine.state,
+        targetState: result.next,
+        metadata: result.metadata,
+      });
+    }
 
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
-    if (sourceState && current.machine.state !== sourceState) return current;
+    if (sourceState && current.machine.state !== sourceState) {
+      assertSkippableTransitionResult(result);
+      return runtime.emitResultSkipped({
+        reason: "source_state_mismatch",
+        currentState: current.machine.state,
+        targetState: result.next,
+        metadata: { ...(result.metadata ?? {}), sourceState },
+      });
+    }
 
     return runtime.applyResult(result);
   }
 
-  async recordResumeConflict(conflict: {
-    field: string;
-    recorded?: unknown;
-    requested?: unknown;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<Session> {
+  async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     return this.getRuntime().emitResumeConflict(conflict);
   }
 
