@@ -24,7 +24,7 @@ function extractStartScriptHeredoc(src, marker) {
   throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
 }
 
-describe("NVIDIA endpoint inference fix preload (#1193, #2051)", () => {
+describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("entrypoint writes the preload and registers it in NODE_OPTIONS", () => {
@@ -148,5 +148,161 @@ console.log(JSON.stringify(records));
     expect(records[4].writes[0]).toBe("{not json");
     expect(JSON.parse(records[5].writes[0]).chat_template_kwargs).toBeUndefined();
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
+  });
+
+  it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const records = [];
+globalThis.fetch = async function (input, init) {
+  records.push({
+    input,
+    body: init && init.body,
+    headers: init && init.headers,
+    method: init && init.method,
+  });
+  return new Response('{}', { status: 200 });
+};
+${preload}
+async function main() {
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': '999' },
+    body: JSON.stringify({
+      model: 'deepseek-ai/deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json', 'content-length': '999' }),
+    body: JSON.stringify({
+      model: 'moonshotai/kimi-k2.6',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': '999' },
+    body: JSON.stringify({
+      model: 'other-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  console.log(JSON.stringify(records.map((record) => ({
+    method: record.method,
+    body: record.body,
+    contentLength:
+      record.headers instanceof Headers
+        ? record.headers.get('content-length')
+        : (record.headers && record.headers['content-length']) || null,
+  }))));
+}
+main().catch((err) => {
+  console.error(err && err.stack ? err.stack : String(err));
+  process.exit(1);
+});
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+    expect(JSON.parse(records[0].body).chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[0].contentLength).toBeNull();
+    expect(JSON.parse(records[1].body).chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[1].contentLength).toBeNull();
+    expect(JSON.parse(records[2].body).chat_template_kwargs).toBeUndefined();
+    expect(records[2].contentLength).toBe("999");
+  });
+
+  it("preload mutates real Node fetch/undici requests and refreshes Content-Length", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const records = [];
+const server = http.createServer((req, res) => {
+  const chunks = [];
+  req.on('data', (chunk) => chunks.push(chunk));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks).toString('utf8');
+    records.push({
+      method: req.method,
+      url: req.url,
+      headers: req.headers,
+      body,
+    });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{}');
+  });
+});
+function listen() {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+}
+function close() {
+  return new Promise((resolve) => server.close(resolve));
+}
+${preload}
+async function postJson(url, payload, headers) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error('unexpected response ' + response.status);
+}
+async function main() {
+  await listen();
+  try {
+    const url = 'http://127.0.0.1:' + server.address().port + '/v1/chat/completions';
+    await postJson(url, {
+      model: 'deepseek-ai/deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'ping' }],
+    }, { 'content-type': 'application/json', 'content-length': '999' });
+    await postJson(url, {
+      model: 'moonshotai/kimi-k2.6',
+      messages: [{ role: 'user', content: 'ping' }],
+    }, { 'content-type': 'application/json', 'content-length': '999' });
+    await postJson(url, {
+      model: 'other-model',
+      messages: [{ role: 'user', content: 'ping' }],
+    }, { 'content-type': 'application/json' });
+    console.log(JSON.stringify(records));
+  } finally {
+    await close();
+  }
+}
+main().catch((err) => {
+  console.error(err && err.stack ? err.stack : String(err));
+  process.exit(1);
+});
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+    expect(records).toHaveLength(3);
+
+    const deepSeekBody = JSON.parse(records[0].body);
+    expect(deepSeekBody.chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[0].headers["content-length"]).toBe(
+      String(Buffer.byteLength(records[0].body)),
+    );
+    expect(records[0].headers["content-length"]).not.toBe("999");
+
+    const kimiBody = JSON.parse(records[1].body);
+    expect(kimiBody.chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[1].headers["content-length"]).toBe(
+      String(Buffer.byteLength(records[1].body)),
+    );
+    expect(records[1].headers["content-length"]).not.toBe("999");
+
+    const otherBody = JSON.parse(records[2].body);
+    expect(otherBody.chat_template_kwargs).toBeUndefined();
   });
 });
