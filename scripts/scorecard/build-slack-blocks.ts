@@ -87,9 +87,7 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
   // Schedule runs skip the suffix because github.actor there is the workflow
   // file author, not a meaningful trigger.
   const showActor = data.runMode !== "Scheduled full nightly" && Boolean(data.actor);
-  const runModeText = showActor
-    ? `${data.runMode} (by *${data.actor}*)`
-    : data.runMode;
+  const runModeText = showActor ? `${data.runMode} (by *${data.actor}*)` : data.runMode;
   const contextElements: SlackMrkdwnText[] = [
     { type: "mrkdwn", text: `*Run mode:* ${runModeText}` },
   ];
