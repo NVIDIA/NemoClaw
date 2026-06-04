@@ -590,7 +590,10 @@ unset NVIDIA_API_KEY
 info "NVIDIA_API_KEY unset; gateway must hold the inference credential"
 
 HERMES_REBUILD_LOG="/tmp/nc-hermes-rebuild-noenv.log"
-if nemoclaw "$SANDBOX_NAME" rebuild --yes >"$HERMES_REBUILD_LOG" 2>&1; then
+# NEMOCLAW_REBUILD_VERBOSE=1 unlocks the rebuild's swallowed onboard error
+# stream so a failure here surfaces the real cause instead of just the
+# generic "Recreate failed" postmortem.
+if NEMOCLAW_REBUILD_VERBOSE=1 nemoclaw "$SANDBOX_NAME" rebuild --yes >"$HERMES_REBUILD_LOG" 2>&1; then
   rebuild_rc=0
 else
   rebuild_rc=$?
