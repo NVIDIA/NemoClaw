@@ -15,9 +15,10 @@ describe("appendOpenClawRuntimeEnvArgs", () => {
     ]);
   });
 
-  it("derives the env values from agent.configPaths.dir when supplied", () => {
+  it("derives the env values from agent.configPaths.dir when supplied for an OpenClaw agent", () => {
     const envArgs: string[] = [];
     appendOpenClawRuntimeEnvArgs(envArgs, {
+      name: "openclaw",
       configPaths: { dir: "/srv/agent-root/.openclaw" },
     });
     expect(envArgs).toEqual([
@@ -27,9 +28,9 @@ describe("appendOpenClawRuntimeEnvArgs", () => {
     ]);
   });
 
-  it("falls back to the default dir when the agent omits configPaths", () => {
+  it("falls back to the default dir when the OpenClaw agent omits configPaths", () => {
     const envArgs: string[] = [];
-    appendOpenClawRuntimeEnvArgs(envArgs, { configPaths: undefined });
+    appendOpenClawRuntimeEnvArgs(envArgs, { name: "openclaw", configPaths: undefined });
     expect(envArgs).toEqual([
       "OPENCLAW_HOME=/sandbox",
       "OPENCLAW_STATE_DIR=/sandbox/.openclaw",
@@ -42,5 +43,14 @@ describe("appendOpenClawRuntimeEnvArgs", () => {
     appendOpenClawRuntimeEnvArgs(envArgs, null);
     expect(envArgs[0]).toBe("CHAT_UI_URL=http://127.0.0.1:18789");
     expect(envArgs).toHaveLength(4);
+  });
+
+  it("skips injection for non-OpenClaw agents so OPENCLAW_* state cannot leak across agent runtimes", () => {
+    const envArgs: string[] = [];
+    appendOpenClawRuntimeEnvArgs(envArgs, {
+      name: "hermes",
+      configPaths: { dir: "/sandbox/.hermes" },
+    });
+    expect(envArgs).toEqual([]);
   });
 });
