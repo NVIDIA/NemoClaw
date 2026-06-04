@@ -123,6 +123,7 @@ on:
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
           channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
+          common-egress-agent-e2e,
           sessions-agents-cli-e2e
         required: false
         type: string
@@ -596,6 +597,22 @@ jobs:
       artifact_path: "/tmp/nemoclaw-e2e-brave-search-onboard.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-brave-search"}'
       brave_api_key: true
+      nvidia_api_key: true
+      github_token: true
+    secrets: *nightly-e2e-default-secrets
+  common-egress-agent-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',common-egress-agent-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-common-egress-agent-e2e.sh
+      timeout_minutes: 120
+      artifact_name: "common-egress-agent-e2e-logs"
+      artifact_path: "/tmp/nemoclaw-e2e-common-egress-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
@@ -1912,6 +1929,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2020,6 +2038,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2185,6 +2204,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
