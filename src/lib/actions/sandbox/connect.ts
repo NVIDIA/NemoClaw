@@ -156,6 +156,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    runConnectAutoPairApprovalPass(sandboxName);
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -167,6 +168,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.recovered) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
@@ -663,9 +665,11 @@ function ensureSandboxInferenceRouteOrExit(
 // `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
 // in-sandbox `openclaw devices list` invocation targets the running gateway
 // with its token. Approvals then use OpenClaw's local fallback by removing
-// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
-// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
-// modes. Unknown clients are ignored, not approved.
+// OPENCLAW_GATEWAY_URL, OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN from
+// the child env (matching the in-sandbox watcher and interactive `openclaw()`
+// wrapper), and apply the same allowlist as the startup watcher —
+// `openclaw-control-ui` clients plus `webchat`/`cli` modes. Unknown clients
+// are ignored, not approved.
 //
 // Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
 // semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
@@ -676,13 +680,19 @@ function ensureSandboxInferenceRouteOrExit(
 //
 // Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
 // unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
-// attempts) fit within the outer spawnSync cap, so a partial-completion
-// mid-loop kill cannot strand allowlisted requests within a normal batch.
-const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
-const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+// best-effort approval. The approve timeout matches the in-sandbox watcher's
+// RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh) so a scope-upgrade approve via the
+// local pairing fallback has the same budget. MAX_APPROVALS is 1 — the
+// realistic case is a single pending CLI/webchat scope upgrade. The outer
+// spawnSync cap must exceed the internal worst case (2s list + 10s × 1 = 12s)
+// PLUS shell/python startup, since the outer timer starts at `sh` spawn before
+// the proxy env is sourced and python3 launches; 15s leaves ~3s slack so a
+// legitimate slow 10s approve is never SIGKILLed mid-loop, which would strand
+// the allowlisted request (ref #4504).
+const CONNECT_AUTO_PAIR_MAX_APPROVALS = 1;
+const CONNECT_AUTO_PAIR_TIMEOUT_MS = 15_000;
 
-function runConnectAutoPairApprovalPass(sandboxName: string): void {
+export function runConnectAutoPairApprovalPass(sandboxName: string): void {
   const script = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -735,11 +745,13 @@ for device in pending:
     seen_request_ids.add(request_id)
     approve_env = os.environ.copy()
     approve_env.pop('OPENCLAW_GATEWAY_URL', None)
+    approve_env.pop('OPENCLAW_GATEWAY_PORT', None)
+    approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
     attempted_count += 1
     try:
         approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
+            capture_output=True, text=True, timeout=10, env=approve_env,
         )
         if approve_proc.returncode == 0:
             approved_count += 1
@@ -749,9 +761,10 @@ PYAPPROVE
 exit 0
 `;
   try {
-    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
-    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
-    // startup slack) so a wedged sandbox can never block the connect flow.
+    // Best-effort: discard stdout/stderr. Outer cap (15s) covers the internal
+    // budget (2s list + 10s × MAX_APPROVALS) plus shell/python startup slack so
+    // a legitimate slow approve is never killed mid-loop and a wedged sandbox
+    // can never block the connect flow.
     spawnSync(
       getOpenshellBinary(),
       ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],

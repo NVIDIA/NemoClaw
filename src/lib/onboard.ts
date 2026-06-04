@@ -7029,6 +7029,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             require("./actions/sandbox/process-recovery");
           processRecovery.checkAndRecoverSandboxProcesses(name, options);
         },
+        autoPairScopeApproval: (name) => {
+          const connect: typeof import("./actions/sandbox/connect") =
+            require("./actions/sandbox/connect");
+          connect.runConnectAutoPairApprovalPass(name);
+        },
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
