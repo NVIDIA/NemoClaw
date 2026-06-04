@@ -105,6 +105,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
     expect(config.platforms).toEqual({
       api_server: {
@@ -117,6 +118,15 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
+  });
+
+  it("emits a model.api_key placeholder that satisfies the LiteLLM sk- prefix gate", () => {
+    const { config } = runConfigScript();
+
+    expect(typeof config.model.api_key).toBe("string");
+    expect(config.model.api_key.startsWith("sk-")).toBe(true);
+    expect(config.model.api_key).not.toBe("no-key-required");
+    expect(config.model.api_key).toMatch(/OPENSHELL/);
   });
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
@@ -238,7 +248,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
-  it("does not emit generic platforms blocks for Telegram or Slack messaging tokens", () => {
+  it("enables Slack under platforms and keeps Telegram top-level only when messaging tokens are configured", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
@@ -253,7 +263,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toBeUndefined();
-    expect(config.platforms.slack).toBeUndefined();
+    expect(config.platforms.slack).toEqual({ enabled: true });
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
     expect(envFile).toContain(
@@ -266,6 +276,24 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
     expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
+  });
+
+  it("omits platforms.slack when Slack channel is not enabled", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
+    });
+
+    expect(config.platforms.slack).toBeUndefined();
+    expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+  });
+
+  it("enables Slack under platforms even when the slack token allowlist is empty", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+    });
+
+    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.api_server.enabled).toBe(true);
   });
 
   it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
@@ -367,6 +395,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "moonshotai/kimi-k2.6",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
     expect(config.kimi).toBeUndefined();
     expect(config.openclawPlugins).toBeUndefined();

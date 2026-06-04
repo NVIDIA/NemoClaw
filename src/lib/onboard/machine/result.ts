@@ -2,13 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SessionUpdates } from "../../state/onboard-session";
-import type { OnboardMachineTransitionKind } from "./types";
-import type { OnboardMachineState } from "./types";
+import type { OnboardMachineTransitionKind, OnboardNonTerminalMachineState } from "./types";
+
+export type OnboardStateResultTransitionKind = Exclude<OnboardMachineTransitionKind, "failure">;
+
+export interface OnboardStateTransitionOptions {
+  transitionKind?: OnboardStateResultTransitionKind;
+  updates?: SessionUpdates;
+  metadata?: Record<string, unknown> | null;
+}
+
+export type OnboardStateTransitionHelperOptions = Omit<
+  OnboardStateTransitionOptions,
+  "transitionKind"
+>;
 
 export interface OnboardStateTransitionResult {
   type: "transition";
-  next: OnboardMachineState;
-  transitionKind?: OnboardMachineTransitionKind;
+  next: OnboardNonTerminalMachineState;
+  transitionKind?: OnboardStateResultTransitionKind;
   updates?: SessionUpdates;
   metadata?: Record<string, unknown> | null;
 }
@@ -32,12 +44,8 @@ export type OnboardStateResult =
   | OnboardStateFailedResult;
 
 export function transitionTo(
-  next: OnboardMachineState,
-  options: {
-    transitionKind?: OnboardMachineTransitionKind;
-    updates?: SessionUpdates;
-    metadata?: Record<string, unknown> | null;
-  } = {},
+  next: OnboardNonTerminalMachineState,
+  options: OnboardStateTransitionOptions = {},
 ): OnboardStateTransitionResult {
   return {
     type: "transition",
@@ -49,22 +57,22 @@ export function transitionTo(
 }
 
 export function advanceTo(
-  next: OnboardMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  next: OnboardNonTerminalMachineState,
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "advance" });
 }
 
 export function retryTo(
-  next: OnboardMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  next: OnboardNonTerminalMachineState,
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "retry" });
 }
 
 export function branchTo(
-  next: OnboardMachineState,
-  options: Omit<Parameters<typeof transitionTo>[1], "transitionKind"> = {},
+  next: OnboardNonTerminalMachineState,
+  options: OnboardStateTransitionHelperOptions = {},
 ): OnboardStateTransitionResult {
   return transitionTo(next, { ...options, transitionKind: "branch" });
 }
