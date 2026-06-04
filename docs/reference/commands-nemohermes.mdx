@@ -252,9 +252,20 @@ Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw i
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
 Onboarding skips common large directories (`node_modules`, `.git`, `.venv`, and `__pycache__`) while staging this context.
 It also skips credential-style files and directories such as `.env*`, `.ssh/`, `.aws/`, `.netrc`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`.
-Other build outputs such as `dist/`, `target/`, or `build/` are still included.
-If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts.
+These built-in exclusions reduce accidental secret and cache staging, but they are not a substitute for a project-specific `.dockerignore`.
+Other build outputs such as `dist/`, `target/`, or `build/` are still included unless you ignore or move them.
+If the staged context is larger than 100 MB, onboarding prints a warning before the Docker build starts; respond by moving the Dockerfile into a smaller dedicated directory or adding `.dockerignore` entries for generated artifacts.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
+
+For predictable build performance:
+
+- Prefer a dedicated build directory over pointing `--from` at a Dockerfile in a broad repo or home directory.
+- Keep the context limited to files that Dockerfile `COPY` or `ADD` instructions need.
+- Use `.dockerignore` for project outputs, dependency caches, coverage reports, local datasets, downloaded models, and other large files that NemoClaw cannot infer safely.
+- Order Dockerfile layers from least-changing to most-changing work: base image, OS/package installs, dependency manifests, dependency install, then source files. This makes warm rebuilds reuse cached layers.
+- Expect a fresh host or fresh base image tag to spend time pulling and resolving layers. A warm rebuild with the same pinned base image and unchanged dependency layers should be much faster, but NemoClaw does not guarantee exact timings.
+
+Set `NEMOCLAW_TRACE=1` before onboarding when diagnosing slow builds. The trace separates context staging, Docker build, image upload/import, sandbox readiness, and dashboard readiness phases so you can distinguish a cold-cache download from a stalled sandbox.
 
 ```bash
 nemohermes onboard --from path/to/Dockerfile

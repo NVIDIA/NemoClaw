@@ -64,6 +64,20 @@ nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
 
 If you need a second sandbox alongside an existing one, use a dedicated build directory and rerun onboarding with the sandbox name and ports you intend to use.
 
+## Keep Custom Builds Fast
+
+Custom plugin images are normal Docker builds, so most build-time surprises come from the build context and Docker cache state rather than the plugin itself. Use a small, dedicated build directory for every custom image. The Dockerfile's parent directory is the context that NemoClaw stages before the Docker build starts; broad directories such as your home directory, `/tmp`, or a repo root with large generated artifacts can make onboarding look stuck while Docker is only preparing context.
+
+Use this checklist before running `nemoclaw onboard --from` or rebuilding a sandbox from a custom Dockerfile:
+
+- Keep the Dockerfile next to only the files it needs to `COPY`.
+- Add a `.dockerignore` for project-specific outputs such as `dist/`, `build/`, `target/`, coverage reports, caches, local datasets, and downloaded model artifacts. NemoClaw also applies its own safety exclusions for common credential files and directories, but `.dockerignore` is still the right place to describe your project's build context.
+- Put slow-changing dependency installation steps before frequently changing source-code `COPY` steps so warm rebuilds can reuse Docker layers.
+- Pin the base image or release ref intentionally. A cold first run may still need to pull or resolve the base image; later rebuilds are faster when the base and earlier layers are already cached locally.
+- Treat the first build on a fresh host differently from a warm rebuild. Cold downloads, package indexes, and base-image pulls can dominate wall-clock time even when NemoClaw is healthy.
+
+When a custom build feels slow, rerun with `NEMOCLAW_TRACE=1` or set `NEMOCLAW_TRACE_DIR` / `NEMOCLAW_TRACE_FILE` to capture onboard trace artifacts. The trace helps separate context staging, Docker build, image upload/import, sandbox readiness, and dashboard readiness time.
+
 ## Network Access
 
 Plugins still run inside the sandbox policy boundary.
