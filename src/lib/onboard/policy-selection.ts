@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../inference/web-search";
 import {
   HERMES_TOOL_GATEWAY_PRESET_NAMES,
+  allHermesToolGatewayPolicyPresets,
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
 import {
@@ -172,6 +173,9 @@ export function computeSetupPresetSuggestions(
   if (isOpenclawAgent(agent)) {
     add("openclaw-pricing");
     for (const preset of requiredOpenclawOtelPolicyPresets(agent, env)) add(preset);
+  }
+  if (tierName === "open" && typeof agent === "string" && agent.trim().toLowerCase() === "hermes") {
+    for (const preset of allHermesToolGatewayPolicyPresets()) add(preset);
   }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);

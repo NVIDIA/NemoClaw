@@ -180,9 +180,11 @@ describe("policies", () => {
         "openclaw-diagnostics-otel-local",
         "openclaw-pricing",
         "outlook",
+        "public-reference",
         "pypi",
         "slack",
         "telegram",
+        "weather",
         "wechat",
         "whatsapp",
       ];
@@ -1582,6 +1584,22 @@ exit 1
       expect(content.includes("method: PUT")).toBe(false);
       expect(content.includes("method: POST")).toBe(false);
       expect(content.includes("method: DELETE")).toBe(false);
+    });
+
+    it("weather and public-reference presets stay read-only and narrowly client-scoped", () => {
+      for (const preset of ["weather", "public-reference"]) {
+        const content = requirePresetContent(policies.loadPreset(preset));
+        expect(content).toContain("protocol: rest");
+        expect(content).toContain("method: GET");
+        expect(content).toContain("method: HEAD");
+        expect(content).not.toContain("method: POST");
+        expect(content).not.toContain("method: PUT");
+        expect(content).not.toContain("method: PATCH");
+        expect(content).not.toContain("method: DELETE");
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/opt/hermes/.venv/bin/python");
+        expect(content).toContain("/usr/bin/curl");
+      }
     });
 
     it("npm preset uses L4 tunnel for CONNECT compatibility (#2767)", () => {

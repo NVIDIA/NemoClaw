@@ -17,6 +17,7 @@ const {
       agent?: string | null;
       webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
       webSearchSupported?: boolean | null;
+      hermesToolGateways?: string[] | null;
       env?: NodeJS.ProcessEnv;
     },
   ) => string[];
@@ -45,6 +46,13 @@ describe("onboard policy preset suggestions", () => {
     "jira",
     "outlook",
     "local-inference",
+    "weather",
+    "public-reference",
+    "nous-web",
+    "nous-image",
+    "nous-audio",
+    "nous-browser",
+    "nous-code",
   ];
 
   it("uses explicit messaging selections for policy suggestions when provided", () => {
@@ -224,7 +232,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "weather"]);
   });
 
   it("adds Brave to balanced tier defaults only when web search is configured", () => {
@@ -234,7 +242,7 @@ describe("onboard policy preset suggestions", () => {
       webSearchConfig: { fetchEnabled: true },
       webSearchSupported: true,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave", "weather"]);
   });
 
   it("filters tier defaults to known presets for agent-specific onboarding", () => {
@@ -242,7 +250,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known.filter((name) => name !== "brave"),
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "weather"]);
   });
 
   it("omits Brave when web search is unsupported", () => {
@@ -263,7 +271,34 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: known,
       webSearchSupported: false,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "weather"]);
+  });
+
+  it("adds all Hermes Nous tool policy presets for Hermes open tier only", () => {
+    const knownWithPricing = [...known, "openclaw-pricing"];
+    const hermesOpen = computeSetupPresetSuggestions("open", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: "hermes",
+    });
+    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
+      expect(hermesOpen).toContain(preset);
+    }
+    expect(hermesOpen).toContain("weather");
+    expect(hermesOpen).toContain("public-reference");
+    expect(hermesOpen).not.toContain("openclaw-pricing");
+
+    const openclawOpen = computeSetupPresetSuggestions("open", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: "openclaw",
+    });
+    for (const preset of ["nous-web", "nous-image", "nous-audio", "nous-browser", "nous-code"]) {
+      expect(openclawOpen).not.toContain(preset);
+    }
+    expect(openclawOpen).toContain("openclaw-pricing");
+    expect(openclawOpen).toContain("weather");
+    expect(openclawOpen).toContain("public-reference");
   });
 
   it("forwards enabled messaging channels into tier suggestions", () => {

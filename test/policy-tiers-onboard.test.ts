@@ -135,7 +135,7 @@ console.log = () => {};
     assert.equal(payload.presets.length, 0);
   });
 
-  it("balanced tier resolves presets all with read-write access", () => {
+  it("balanced tier resolves dev presets read-write and weather read-only", () => {
     const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
@@ -152,10 +152,14 @@ console.log = () => {};
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "balanced");
-    assert.ok(payload.presets.length >= 5, "balanced tier must have at least 5 presets");
-    for (const p of payload.presets) {
-      assert.equal(p.access, "read-write", `preset ${p.name} in balanced should be read-write`);
+    assert.ok(payload.presets.length >= 6, "balanced tier must have at least 6 presets");
+    const accessByName = new Map(
+      payload.presets.map((p: { name: string; access: string }) => [p.name, p.access]),
+    );
+    for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
+      assert.equal(accessByName.get(name), "read-write", `${name} should be read-write`);
     }
+    assert.equal(accessByName.get("weather"), "read", "weather should be read-only");
   });
 
   it("open tier resolves presets including at least one social/messaging preset", () => {
@@ -783,9 +787,14 @@ ${body}
     const names = resolved.map((p) => p.name);
     assert.ok(names.includes("npm"), "npm should be included");
     assert.ok(names.includes("brave"), "brave should be included");
+    assert.ok(names.includes("weather"), "weather should be included");
     assert.ok(!names.includes("slack"), "slack should not be included in balanced");
     for (const p of resolved) {
-      assert.equal(p.access, "read-write", `${p.name} should default to read-write`);
+      if (p.name === "weather") {
+        assert.equal(p.access, "read", `${p.name} should default to read`);
+      } else {
+        assert.equal(p.access, "read-write", `${p.name} should default to read-write`);
+      }
     }
   });
 
@@ -842,7 +851,7 @@ ${body}
     assert.equal(result.status, 0, result.stderr);
     const resolved: Array<{ name: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
-    const tierNames = ["npm", "pypi", "huggingface", "brew", "brave"];
+    const tierNames = ["npm", "pypi", "huggingface", "brew", "brave", "weather"];
     const lastTierIdx = Math.max(...tierNames.map((n) => names.indexOf(n)));
     const slackIdx = names.indexOf("slack");
     assert.ok(slackIdx > lastTierIdx, "non-tier preset (slack) should appear after tier presets");
