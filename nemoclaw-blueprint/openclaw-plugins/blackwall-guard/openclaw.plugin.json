@@ -1,0 +1,45 @@
+{
+  "id": "nemoclaw-blackwall-guard",
+  "name": "BLACK_WALL Preflight Guardrail",
+  "description": "Pre-action risk check for OpenClaw tool calls. Hooks before_tool_call to call BLACK_WALL forecast(); in enforce mode, blocks STOP verdicts and surfaces CAUTION as approval prompts. Receipts are Ed25519-signed and verifiable offline.",
+  "version": "0.1.6",
+  "enabledByDefault": false,
+  "activation": {
+    "onStartup": true,
+    "onCapabilities": ["hook"]
+  },
+  "skills": ["./skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "description": "BLACK_WALL API key (bw_live_… / bw_test_…). Prefer the BLACKWALL_API_KEY env var over config."
+      },
+      "baseUrl": {
+        "type": "string",
+        "description": "BLACK_WALL API base URL. Defaults to https://blackwalltier.com."
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["observe", "enforce"],
+        "description": "observe = log verdicts but never block; enforce = block STOP, gate CAUTION. Defaults to observe."
+      },
+      "cautionAction": {
+        "type": "string",
+        "enum": ["approve", "block", "allow"],
+        "description": "What a CAUTION verdict does in enforce mode: approve = surface OpenClaw's approval prompt; block = veto; allow = proceed. Defaults to approve."
+      },
+      "failClosed": {
+        "type": "boolean",
+        "description": "enforce mode only: when the gate is unreachable, block the action instead of letting it run unscored. Defaults to false (fail open). Recommended true for security-positioned deployments (e.g. NemoClaw)."
+      },
+      "forecastTimeoutMs": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Per-call forecast timeout in milliseconds."
+      }
+    }
+  }
+}
