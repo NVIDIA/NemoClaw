@@ -194,6 +194,27 @@ describe("checkAgentVersion", () => {
     expect(result.detectionMethod).toBe("ssh-exec");
     expect(result.sandboxVersion).toBe("2026.5.22");
   });
+
+  it("force probe does not trust cached metadata when live version probing is unavailable", () => {
+    registry.registerSandbox({
+      name: "test-sb",
+      agent: null,
+      agentVersion: "2026.5.18",
+    });
+
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
+      status: 0,
+      output: "",
+    });
+    vi.mocked(spawnSync).mockClear();
+
+    const result = checkAgentVersion("test-sb", { forceProbe: true });
+
+    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.sandboxVersion).toBeNull();
+    expect(result.isStale).toBe(false);
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
 });
 
 describe("formatStalenessWarning", () => {

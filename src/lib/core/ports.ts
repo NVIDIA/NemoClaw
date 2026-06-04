@@ -116,8 +116,10 @@ export function parseGatewayPort(
   return port;
 }
 
+/** Default OpenShell gateway port when NEMOCLAW_GATEWAY_PORT is unset. */
+export const DEFAULT_GATEWAY_PORT = 8080;
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
-export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", 8080, {
+export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, {
   dashboardPort: DASHBOARD_PORT,
   dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
   dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,

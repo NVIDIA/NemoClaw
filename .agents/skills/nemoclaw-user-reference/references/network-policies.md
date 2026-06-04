@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Network Policies
 
 NemoClaw runs with a deny-by-default network policy.
@@ -66,13 +64,16 @@ After selecting a tier, a combined preset and access-mode screen lets you includ
 Tier-default presets are pre-selected; additional presets can be added from the full list.
 NemoClaw filters tier defaults by the active agent's supported integrations.
 For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+Claude Code direct egress is not included in any policy tier.
+If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
+Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER`:
 
-```console
-$ NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```bash
+NEMOCLAW_POLICY_TIER=open nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
 If the value does not match a known tier, onboarding exits with an error listing the valid options.
@@ -94,8 +95,8 @@ When the agent attempts to reach an endpoint not listed in the policy, OpenShell
 
 To try this, run the walkthrough:
 
-```console
-$ ./scripts/walkthrough.sh
+```bash
+./scripts/walkthrough.sh
 ```
 
 This opens a split tmux session with the TUI on the left and the agent on the right.
@@ -106,20 +107,20 @@ This opens a split tmux session with the TUI on the left and the agent on the ri
 
 Edit `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and re-run the onboard wizard:
 
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 
 ### Dynamic Changes
 
 Apply policy updates to a running sandbox without restarting:
 
-```console
-$ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+```bash
+openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
 ```
 
 To replace the live policy with a complete raw policy file, use `openshell policy set`:
 
-```console
-$ openshell policy set --policy <policy-file> <sandbox-name>
+```bash
+openshell policy set --policy <policy-file> <sandbox-name>
 ```

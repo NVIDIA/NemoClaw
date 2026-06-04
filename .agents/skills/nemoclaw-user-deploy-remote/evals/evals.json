@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-001",
+    "question": "I'm deploying NemoClaw to a remote GPU instance. Help me move the sandboxed assistant off my local machine so I can support persistent or GPU-backed operation.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user move the sandboxed assistant off my local machine and gives enough concrete guidance, decision criteria, verification steps, or risk framing to support persistent or GPU-backed operation.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

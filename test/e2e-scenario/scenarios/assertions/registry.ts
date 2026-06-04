@@ -250,7 +250,10 @@ export const validationSuiteGroups: AssertionGroup[] = [
   ]),
   suiteGroup("diagnostics", [probeStep("diagnostics.bundle", "runtime", "diagnosticsProbe")]),
   suiteGroup("docs-validation", [probeStep("docs.validation", "runtime", "docsValidationProbe")]),
-  suiteGroup("hermes-specific", [shellStep({ id: "runtime.hermes.health", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/00-hermes-health.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["gateway-transient"] } } })]),
+  suiteGroup("hermes-specific", [
+    shellStep({ id: "runtime.hermes.health", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/00-hermes-health.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["gateway-transient"] } } }),
+    shellStep({ id: "runtime.hermes.history-writable", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/01-history-writable.sh", reliability: { timeoutSeconds: 90, retry: { attempts: 2, on: ["gateway-transient"] } } }),
+  ]),
 ];
 
 export const assertionRegistry = {

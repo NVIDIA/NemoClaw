@@ -218,11 +218,12 @@ describe("config set nested URL SSRF enforcement", () => {
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    const appendAuditEntry = vi.fn();
     requireCache[shieldsAuditPath] = {
       id: shieldsAuditPath,
       filename: shieldsAuditPath,
       loaded: true,
-      exports: { appendAuditEntry: () => {} },
+      exports: { appendAuditEntry },
     } as any;
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
@@ -247,6 +248,13 @@ describe("config set nested URL SSRF enforcement", () => {
 
       expect(errorSpy).not.toHaveBeenCalled();
       expect(execSpy).toHaveBeenCalled();
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "config_set",
+          sandbox: "sandbox-ssrf-test",
+          reason: "config set openclaw:inference.endpoints",
+        }),
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
@@ -513,6 +521,116 @@ describe("config set nested URL SSRF enforcement", () => {
       else delete requireCache[shieldsAuditPath];
 
       restorePrivilegedExec();
+    }
+  });
+
+  it("records the config rotate-token audit action as rotate_token (not shields_down)", async () => {
+    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
+    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
+    const sessionPath = require.resolve("../dist/lib/state/onboard-session");
+    const credStorePath = require.resolve("../dist/lib/credentials/store");
+
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+    const priorSession = require.cache[sessionPath];
+    const priorCredStore = require.cache[credStorePath];
+
+    delete require.cache[sandboxConfigPath];
+
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      // provider update succeeds, so rotation never falls into the create path.
+      exports: {
+        captureOpenshellCommand: () => ({ status: 0, output: "" }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
+    } as any;
+
+    requireCache[sessionPath] = {
+      id: sessionPath,
+      filename: sessionPath,
+      loaded: true,
+      exports: {
+        loadSession: () => ({
+          sandboxName: "rotate-test",
+          credentialEnv: "NVIDIA_API_KEY",
+          provider: "nvidia-prod",
+          providerType: "openai",
+        }),
+      },
+    } as any;
+
+    const saveCredential = vi.fn();
+    requireCache[credStorePath] = {
+      id: credStorePath,
+      filename: credStorePath,
+      loaded: true,
+      exports: { saveCredential, promptSecret: vi.fn() },
+    } as any;
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const priorToken = process.env.ROTATE_NEW_TOKEN;
+    process.env.ROTATE_NEW_TOKEN = "nvapi-rotated-value";
+
+    try {
+      const { configRotateToken } = require("../dist/lib/sandbox/config");
+
+      await expect(
+        configRotateToken("rotate-test", { fromEnv: "ROTATE_NEW_TOKEN" }),
+      ).resolves.toBeUndefined();
+
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(saveCredential).toHaveBeenCalledWith("NVIDIA_API_KEY", "nvapi-rotated-value");
+      // Credential rotation is not a shields operation; its audit entry must
+      // use the rotate_token action so it does not inflate shields_down counts
+      // in the forensics log.
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "rotate_token",
+          sandbox: "rotate-test",
+          reason: "rotate-token openclaw:NVIDIA_API_KEY",
+        }),
+      );
+      expect(appendAuditEntry).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action: "shields_down" }),
+      );
+      expect(JSON.stringify(appendAuditEntry.mock.calls[0]?.[0])).not.toContain(
+        "nvapi-rotated-value",
+      );
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      logSpy.mockRestore();
+      if (priorToken === undefined) delete process.env.ROTATE_NEW_TOKEN;
+      else process.env.ROTATE_NEW_TOKEN = priorToken;
+
+      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
+      else delete requireCache[sandboxConfigPath];
+      if (priorOpenshell) requireCache[openshellPath] = priorOpenshell;
+      else delete requireCache[openshellPath];
+      if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
+      else delete requireCache[shieldsAuditPath];
+      if (priorSession) requireCache[sessionPath] = priorSession;
+      else delete requireCache[sessionPath];
+      if (priorCredStore) requireCache[credStorePath] = priorCredStore;
+      else delete requireCache[credStorePath];
     }
   });
 });

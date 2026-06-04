@@ -40,7 +40,7 @@ describe("installer plan actions", () => {
   it("marks unsupported providers and missing optional probes without failing plan construction", () => {
     const plan = buildInstallerPlan({ env: { NEMOCLAW_PROVIDER: "bad-provider" } });
 
-    expect(plan.installRef).toBe("latest");
+    expect(plan.installRef).toBe("lkg");
     expect(plan.provider).toMatchObject({ normalized: null, raw: "bad-provider", valid: false });
     expect(plan.runtime).toBeNull();
     expect(plan.npm).toBeNull();
