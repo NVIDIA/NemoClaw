@@ -585,6 +585,20 @@ section "Phase 8: Gateway-stored credential rebuild"
 # Rebuild with NVIDIA_API_KEY unset so the preflight is forced to reuse the
 # gateway-stored inference credential. Catches the Hermes regression that
 # motivated the gateway-aware credential check in setupNim + rebuild.
+
+# Phase 7's fake Discord Gateway leaves a root-owned scratch dir at
+# $REPO/.tmp/fake-discord.* via its Docker bind-mount. `nemoclaw rebuild`
+# recreates the sandbox by copying $REPO into a build context, which hits
+# EACCES on those files because the runner uid cannot read root-owned
+# bytes. Tear the container down and `sudo rm` the scratch before the
+# rebuild so the build context copy succeeds.
+if [ -n "${FAKE_DISCORD_GATEWAY_CONTAINER:-}" ]; then
+  docker rm -f "$FAKE_DISCORD_GATEWAY_CONTAINER" >/dev/null 2>&1 || true
+fi
+if [ -d "$REPO/.tmp" ]; then
+  sudo rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || true
+fi
+
 NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
 unset NVIDIA_API_KEY
 info "NVIDIA_API_KEY unset; gateway must hold the inference credential"
