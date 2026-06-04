@@ -3,20 +3,27 @@
 
 import { describe, expect, it } from "vitest";
 
-import { getSandboxDockerHealth } from "../../../../dist/lib/actions/sandbox/docker-health";
+import {
+  getSandboxDockerHealth,
+  getSandboxDockerRuntime,
+} from "../../../../dist/lib/actions/sandbox/docker-health";
 import type { SandboxEntry } from "../../../../dist/lib/state/registry";
 
 function fixture({
   driver = "docker",
   psNames = "openshell-cluster-nemoclaw\nopenshell-my-assistant-12ab\nopenshell-other-aa11",
   healthRaw = "unhealthy\n",
+  pausedRaw = "false\n",
   throwOnInspect = false,
+  throwOnPaused = false,
   knownSandboxes = ["my-assistant"],
 }: {
   driver?: string | null;
   psNames?: string;
   healthRaw?: string;
+  pausedRaw?: string;
   throwOnInspect?: boolean;
+  throwOnPaused?: boolean;
   knownSandboxes?: string[];
 } = {}) {
   const sandbox: Partial<SandboxEntry> = { name: "my-assistant", openshellDriver: driver };
@@ -27,6 +34,10 @@ function fixture({
     dockerInspectHealth: () => {
       if (throwOnInspect) throw new Error("docker inspect crashed");
       return healthRaw;
+    },
+    dockerInspectPaused: () => {
+      if (throwOnPaused) throw new Error("docker inspect paused crashed");
+      return pausedRaw;
     },
   };
 }
@@ -139,5 +150,64 @@ describe("getSandboxDockerHealth", () => {
     const result = getSandboxDockerHealth("my-assistant", deps);
     expect(result.state).toBe("unknown");
     expect(result.containerName).toBe("openshell-my-assistant-12ab");
+  });
+});
+
+describe("getSandboxDockerRuntime (#4495)", () => {
+  it("reports paused=true when the resolved docker-driver container is paused", () => {
+    const deps = fixture({ healthRaw: "healthy\n", pausedRaw: "true\n" });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "healthy",
+      paused: true,
+      containerName: "openshell-my-assistant-12ab",
+    });
+  });
+
+  it("reports paused=false for a running container", () => {
+    const deps = fixture({ healthRaw: "healthy\n", pausedRaw: "false\n" });
+    expect(getSandboxDockerRuntime("my-assistant", deps).paused).toBe(false);
+  });
+
+  it("normalizes whitespace and case in the .State.Paused value", () => {
+    const deps = fixture({ pausedRaw: "  True \n" });
+    expect(getSandboxDockerRuntime("my-assistant", deps).paused).toBe(true);
+  });
+
+  it("treats a non-boolean / empty paused value as not paused", () => {
+    const deps = fixture({ pausedRaw: "<no value>\n" });
+    expect(getSandboxDockerRuntime("my-assistant", deps).paused).toBe(false);
+  });
+
+  it("reports paused=false and does not throw when the paused inspect fails", () => {
+    const deps = fixture({ healthRaw: "unhealthy\n", throwOnPaused: true });
+    const result = getSandboxDockerRuntime("my-assistant", deps);
+    expect(result.paused).toBe(false);
+    expect(result.health).toBe("unhealthy");
+    expect(result.containerName).toBe("openshell-my-assistant-12ab");
+  });
+
+  it("returns health 'none', paused false for non-docker-driver sandboxes", () => {
+    const deps = fixture({ driver: "kubernetes" });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: null,
+    });
+  });
+
+  it("returns health 'none', paused false when no container is found", () => {
+    const deps = fixture({ psNames: "openshell-cluster-nemoclaw\n" });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: null,
+    });
+  });
+
+  it("reports health 'unknown' but still resolves paused when the health inspect throws", () => {
+    const deps = fixture({ throwOnInspect: true, pausedRaw: "true\n" });
+    const result = getSandboxDockerRuntime("my-assistant", deps);
+    expect(result.health).toBe("unknown");
+    expect(result.paused).toBe(true);
   });
 });

@@ -145,11 +145,14 @@ describe("onboard session", () => {
   });
 
   it("can record step boundaries without mutating the machine snapshot", () => {
+    const emitted: OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
     session.saveSession(session.createSession());
 
     session.markStepStarted("preflight", { updateMachine: false });
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("in_progress");
+    expect(loaded.status).toBe("in_progress");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
     session.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
@@ -161,9 +164,10 @@ describe("onboard session", () => {
     session.markStepFailed("gateway", "Gateway failed", { updateMachine: false });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("failed");
-    expect(loaded.status).toBe("failed");
-    expect(loaded.failure).toMatchObject({ step: "gateway", message: "Gateway failed" });
+    expect(loaded.status).toBe("in_progress");
+    expect(loaded.failure).toBeNull();
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+    expect(emitted.map((event) => event.type)).toEqual(["context.updated"]);
   });
 
   it("persists a compact machine snapshot across step boundaries", () => {

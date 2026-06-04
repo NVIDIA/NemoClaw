@@ -35,6 +35,9 @@ export interface StreamingProbeResult {
   message: string;
 }
 
+const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
+const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
+
 function validateTempPrefix(prefix: string): string {
   if (
     prefix.length === 0 ||
@@ -69,6 +72,45 @@ export function getCurlTimingArgs(): string[] {
   return ["--connect-timeout", "10", "--max-time", "60"];
 }
 
+function getCurlMaxTimeSeconds(argv: string[]): number | null {
+  let maxTimeSeconds: number | null = null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--max-time") {
+      const value = Number(argv[index + 1]);
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
+      continue;
+    }
+    if (arg.startsWith("--max-time=")) {
+      const value = Number(arg.slice("--max-time=".length));
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
+    }
+  }
+  return maxTimeSeconds;
+}
+
+function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): number {
+  if (opts.timeoutMs !== undefined) return opts.timeoutMs;
+  const maxTimeSeconds = getCurlMaxTimeSeconds(argv);
+  if (maxTimeSeconds === null) return DEFAULT_CURL_PROCESS_TIMEOUT_MS;
+  return Math.max(
+    DEFAULT_CURL_PROCESS_TIMEOUT_MS,
+    Math.ceil(maxTimeSeconds * 1000) + CURL_PROCESS_TIMEOUT_SLACK_MS,
+  );
+}
+
+function normalizeSpawnErrorCode(error: unknown): number {
+  if (isErrnoException(error) && error.code === "ETIMEDOUT") return -110;
+  const rawErrorCode = isErrnoException(error)
+    ? (error.errno ?? error.code)
+    : undefined;
+  return typeof rawErrorCode === "number" ? rawErrorCode : 1;
+}
+
 function sanitizeCurlUrl(value: string): string {
   try {
     const url = new URL(value);
@@ -92,7 +134,7 @@ function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Re
   return {
     "http.url": sanitizeCurlUrl(String(url)),
     "http.request.method": method,
-    "process.timeout_ms": opts.timeoutMs ?? 30_000,
+    "process.timeout_ms": resolveCurlProcessTimeoutMs(argv, opts),
   };
 }
 
@@ -173,22 +215,20 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl(
       "curl",
       [...args, "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: opts.timeoutMs ?? 30_000,
+        timeout,
         env: opts.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts.env },
       },
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const rawErrorCode = isErrnoException(result.error)
-        ? (result.error.errno ?? result.error.code)
-        : undefined;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorCode = normalizeSpawnErrorCode(result.error);
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
@@ -283,13 +323,14 @@ function runChatCompletionsStreamingProbeImpl(
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl(
       "curl",
       [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: opts.timeoutMs ?? 30_000,
+        timeout,
         env: {
           ...process.env,
           ...opts.env,
@@ -299,10 +340,7 @@ function runChatCompletionsStreamingProbeImpl(
 
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const rawErrorCode = isErrnoException(result.error)
-        ? (result.error.errno ?? result.error.code)
-        : undefined;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorCode = normalizeSpawnErrorCode(result.error);
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
@@ -405,10 +443,11 @@ function runStreamingEventProbeImpl(
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, String(url || "")], {
       cwd: opts.cwd ?? ROOT,
       encoding: "utf8",
-      timeout: opts.timeoutMs ?? 30_000,
+      timeout,
       env: {
         ...process.env,
         ...opts.env,
@@ -420,13 +459,14 @@ function runStreamingEventProbeImpl(
     if (result.error || (result.status !== null && result.status !== 0 && result.status !== 28)) {
       // curl exit 28 = timeout, which is expected — we cap with --max-time
       // and may still have collected enough events before the timeout.
+      const curlStatus = result.error ? normalizeSpawnErrorCode(result.error) : (result.status ?? 1);
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
       emitCurlResultTraceEvent({
         ok: false,
         missing_events_count: REQUIRED_STREAMING_EVENTS.length,
-        curl_status: result.status ?? 1,
+        curl_status: curlStatus,
       });
       return {
         ok: false,

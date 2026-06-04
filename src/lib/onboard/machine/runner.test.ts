@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  MACHINE_SNAPSHOT_VERSION,
   createSession,
   filterSafeUpdates,
   normalizeSession,
@@ -15,6 +16,7 @@ import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryT
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import {
   MissingOnboardStateHandlerError,
+  OnboardMachineTransitionLimitError,
   runOnboardMachine,
   type OnboardStateHandlers,
 } from "./runner";
@@ -144,6 +146,46 @@ describe("runOnboardMachine", () => {
     expect(policies).not.toHaveBeenCalled();
   });
 
+  it("returns immediately for terminal sessions", async () => {
+    const startedAt = "2026-05-28T00:00:00.000Z";
+    const completeSession = createSession({
+      resumable: false,
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: startedAt,
+        revision: 1,
+      },
+    });
+    completeSession.status = "complete";
+    const runtime = createRuntime(completeSession);
+    const init = vi.fn(() => advanceTo("preflight"));
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: { init },
+    });
+
+    expect(result.session).toMatchObject({ status: "complete", machine: { state: "complete" } });
+    expect(init).not.toHaveBeenCalled();
+  });
+
+  it("propagates runtime transition errors without updating context", async () => {
+    const runtime = createRuntime();
+    const updateContext = vi.fn(({ context }) => context);
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: { init: () => advanceTo("sandbox") },
+        updateContext,
+      }),
+    ).rejects.toThrow("Invalid onboarding machine transition");
+    expect(updateContext).not.toHaveBeenCalled();
+  });
+
   it("throws when a non-terminal state has no handler", async () => {
     const runtime = createRuntime();
 
@@ -154,5 +196,24 @@ describe("runOnboardMachine", () => {
         handlers: {},
       }),
     ).rejects.toThrow(MissingOnboardStateHandlerError);
+  });
+
+  it("throws when retry-capable handlers exceed the transition limit", async () => {
+    const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: {
+          init: () => advanceTo("preflight"),
+          preflight: () => advanceTo("gateway"),
+          gateway: () => advanceTo("provider_selection"),
+          provider_selection: () => advanceTo("inference"),
+          inference: () => retryTo("provider_selection"),
+        },
+        maxTransitions: 5,
+      }),
+    ).rejects.toThrow(OnboardMachineTransitionLimitError);
   });
 });

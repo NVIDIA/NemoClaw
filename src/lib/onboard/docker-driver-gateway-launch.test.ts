@@ -10,7 +10,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
+  buildDockerDriverGatewayRuntimeIdentity,
   parseGlibcVersionsFromBinaryText,
+  resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
 } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
 
@@ -168,6 +170,60 @@ describe("docker-driver-gateway-launch", () => {
       expect(launch.mode).toBe("container");
       expect(launch.env.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
     });
+  });
+
+  it("keeps the drift gateway binary null for the containerized compatibility gateway (#4520)", () => {
+    withTempBinaries(({ dir, gatewayBin, sandboxBin }) => {
+      const stateDir = path.join(dir, "state");
+      fs.mkdirSync(stateDir);
+      const identity = buildDockerDriverGatewayRuntimeIdentity({
+        gatewayBin,
+        sandboxBin,
+        stateDir,
+        platform: "linux",
+        env: { NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH: "1" },
+        gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+      });
+
+      expect(identity.launch?.mode).toBe("container");
+      // The compat gateway parent process is `/usr/bin/docker`, not the host
+      // binary, so the executable check must be skipped via a null drift bin.
+      expect(identity.driftGatewayBin).toBeNull();
+      // The identity bin still falls back to the host binary for listener PID
+      // matching, where the cmdline contains the gateway path.
+      expect(identity.identityGatewayBin).toBe(gatewayBin);
+
+      // Callers must preserve that deliberate null rather than coalescing it
+      // back to the host binary (the #4520 false-stale bug).
+      expect(resolveDriftGatewayBin(identity, gatewayBin)).toBeNull();
+      // `?? gatewayBin` would have wrongly restored the host path:
+      expect(identity.driftGatewayBin ?? gatewayBin).toBe(gatewayBin);
+    });
+  });
+
+  it("uses the host binary as the drift binary outside compatibility mode", () => {
+    withTempBinaries(({ dir, gatewayBin }) => {
+      const identity = buildDockerDriverGatewayRuntimeIdentity({
+        gatewayBin,
+        stateDir: dir,
+        platform: "linux",
+        env: {},
+        hostGlibcVersion: "2.39",
+        requiredGlibcVersions: ["2.39"],
+        gatewayEnv: { OPENSHELL_DRIVERS: "docker" },
+      });
+
+      expect(identity.launch?.mode).toBe("host");
+      expect(identity.driftGatewayBin).toBe(gatewayBin);
+      expect(resolveDriftGatewayBin(identity, gatewayBin)).toBe(gatewayBin);
+    });
+  });
+
+  it("falls back to the host binary when no runtime identity is available", () => {
+    expect(resolveDriftGatewayBin(null, "/opt/openshell/openshell-gateway")).toBe(
+      "/opt/openshell/openshell-gateway",
+    );
+    expect(resolveDriftGatewayBin(null, null)).toBeNull();
   });
 
   it("uses the host binary when the gateway ABI is compatible", () => {
