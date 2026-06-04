@@ -95,6 +95,13 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "provider_selection",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "gateway", gatewayReuseState: "missing" },
+    });
   });
 
   it("reuses healthy gateways on fresh runs", async () => {

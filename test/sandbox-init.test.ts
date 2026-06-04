@@ -195,7 +195,12 @@ EOF
   describe("validate_tmp_permissions", () => {
     let workDir: string;
     let tmpBackups: Record<string, string>;
-    const TMP_ARTIFACTS = ["/tmp/nemoclaw-proxy-env.sh", "/tmp/gateway.log", "/tmp/auto-pair.log"];
+    const TMP_ARTIFACTS = [
+      "/tmp/nemoclaw-proxy-env.sh",
+      "/tmp/gateway.log",
+      "/tmp/auto-pair.log",
+      "/tmp/nemoclaw-plugin-refresh.log",
+    ];
 
     beforeEach(() => {
       workDir = mkdtempSync(join(tmpdir(), "sandbox-init-validate-"));
@@ -236,6 +241,33 @@ EOF
         validate_tmp_permissions ${JSON.stringify(testFile)}
         echo "PASSED"
       `);
+    });
+
+    it("rejects a symlinked plugin refresh log", () => {
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
+      const target = join(workDir, "plugin-refresh-target.log");
+      writeFileSync(target, "do not truncate");
+      symlinkSync(target, pluginRefreshLog);
+
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} is a symlink`);
+      expect(readFileSync(target, "utf-8")).toBe("do not truncate");
+    });
+
+    it("keeps the plugin refresh log private", () => {
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
+      writeFileSync(pluginRefreshLog, "refresh output");
+      chmodSync(pluginRefreshLog, 0o644);
+
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} has unexpected permissions`);
+      expect(stderr).toContain("expected 600");
     });
   });
 

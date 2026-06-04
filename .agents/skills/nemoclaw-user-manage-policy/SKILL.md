@@ -4,9 +4,6 @@ description: "Adds, removes, or modifies allowed endpoints in the sandbox policy
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Customize the Sandbox Network Policy
 
 ## Gotchas

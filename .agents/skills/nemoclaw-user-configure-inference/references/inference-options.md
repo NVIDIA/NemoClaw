@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Inference Options
 
 import { AgentOnly } from "../_components/AgentGuide";
@@ -186,6 +184,242 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Local NVIDIA NIM | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe (same as NVIDIA Endpoints). |
+
+## Setup Details for Local and Compatible Providers
+
+The sections below collect the detailed setup prompts and environment variables for local and compatible inference providers.
+Use them when the quickstart or local inference guide points you here for exact command shapes.
+
+## OpenAI-Compatible Server
+
+This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
+For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
+This avoids a class of failures where local backends accept `/v1/responses` requests but silently drop the system prompt and tool definitions.
+To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` before running onboard.
+
+Start your model server.
+The examples below use vLLM, but any OpenAI-compatible server works.
+
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+```
+
+Run the onboard wizard.
+
+```bash
+nemoclaw onboard
+```
+
+When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
+Enter the base URL of your local server, for example `http://localhost:8000/v1`.
+
+The wizard prompts for an API key.
+If your server does not require authentication, enter any non-empty string (for example, `dummy`).
+
+NemoClaw validates the endpoint by sending a test inference request before continuing.
+The wizard probes `/v1/chat/completions` by default for the compatible-endpoint provider.
+If you set `NEMOCLAW_PREFERRED_API=openai-responses`, NemoClaw probes `/v1/responses` instead and only selects it when the response includes the streaming events OpenClaw requires.
+If a reasoning model returns only reasoning content before producing a final answer, NemoClaw retries the smoke request with a larger response budget.
+Route, configuration, and authentication failures still fail immediately.
+
+### Non-Interactive Setup
+
+Set the following environment variables for scripted or CI/CD deployments.
+
+```bash
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  COMPATIBLE_API_KEY=dummy \
+  nemoclaw onboard --non-interactive
+```
+
+| Variable | Purpose |
+|---|---|
+| `NEMOCLAW_PROVIDER` | Set to `custom` for an OpenAI-compatible endpoint. |
+| `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
+| `NEMOCLAW_MODEL` | Model ID as reported by the server. |
+| `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
+
+### Selecting the API Path
+
+For the compatible-endpoint provider, `/v1/chat/completions` is the default.
+NemoClaw tests streaming events during onboarding and uses chat completions
+without probing the Responses API.
+
+To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API` before running onboard:
+
+```bash
+NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
+```
+
+The wizard then probes `/v1/responses` and only selects it when streaming
+support is complete.
+If the probe fails, the wizard falls back to `/v1/chat/completions`
+automatically.
+You can use this variable in both interactive and non-interactive mode.
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `openai-responses` | `openai-completions` for compatible endpoints |
+
+If you already onboarded and the sandbox is failing at runtime, re-run `nemoclaw onboard` to re-probe the endpoint and bake the correct API path
+into the image.
+Refer to [Switch Inference Models](switch-inference-providers.md) for more information.
+
+## Anthropic-Compatible Server
+
+If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
+
+```bash
+nemoclaw onboard
+```
+
+For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
+
+```bash
+NEMOCLAW_PROVIDER=anthropicCompatible \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
+  NEMOCLAW_MODEL=my-model \
+  COMPATIBLE_ANTHROPIC_API_KEY=dummy \
+  nemoclaw onboard --non-interactive
+```
+
+## vLLM
+
+When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
+On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
+
+For an already-running vLLM server, run `nemoclaw onboard` and select **Local vLLM [experimental]** from the provider list.
+
+If vLLM is already running, NemoClaw detects the running model and validates the endpoint.
+When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
+If vLLM is not running and your host matches a DGX Spark or DGX Station managed profile, NemoClaw shows the **Install vLLM** or **Start vLLM** entry by default.
+Generic Linux NVIDIA GPU hosts still require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+If Docker pull output stops making progress, a watchdog stops the stalled pull instead of failing slow but active downloads on a fixed wall-clock timeout.
+If vLLM never becomes ready, NemoClaw prints a short tail of the vLLM container logs before exiting.
+The first run can take 10 to 30 minutes.
+Later runs reuse the cached image and model weights.
+
+Managed vLLM uses these profiles:
+
+| Host profile | Default model |
+|---|---|
+| DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
+| Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
+
+**Note:**
+
+NemoClaw forces the `chat/completions` API path for vLLM.
+The vLLM `/v1/responses` endpoint does not run the `--tool-call-parser`, so tool calls arrive as raw text.
+
+### Non-Interactive Setup
+
+Use an already-running vLLM server:
+
+```bash
+NEMOCLAW_PROVIDER=vllm \
+  nemoclaw onboard --non-interactive
+```
+
+Install or start managed vLLM when NemoClaw detects a supported profile.
+On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is enough for non-interactive runs; add `NEMOCLAW_EXPERIMENTAL=1` on generic Linux NVIDIA GPU hosts.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
+Start vLLM with the model you want before onboarding if you manage the server yourself.
+
+### Override the Managed-vLLM Model
+
+Managed vLLM serves the profile default unless you select a different registry entry.
+Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model from the registry.
+NemoClaw uses the matching `vllm serve` flags, including the reasoning parser, tool-call parser, and `--max-model-len`.
+Recognized slugs are:
+
+| Slug | Hugging Face model | Notes |
+|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on the DGX Station profile |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | Default on the DGX Spark profile |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
+
+The slug is case-insensitive; the full Hugging Face id is also accepted.
+An unrecognized value fails fast with a list of valid slugs.
+
+Gated models require a Hugging Face token; export it before onboarding so NemoClaw can forward it into the managed vLLM container:
+
+```bash
+export HF_TOKEN=<your-hf-token>
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw accepts `HUGGING_FACE_HUB_TOKEN` as an alternative.
+The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
+
+## NVIDIA NIM (Experimental)
+
+NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
+
+Set the experimental flag and run onboard.
+
+```bash
+NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
+```
+
+Select **Local NVIDIA NIM [experimental]** from the provider list.
+NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM so you can confirm which device class the model selection used.
+
+NVIDIA hosts NIM container images on `nvcr.io`, and `docker pull` requires NGC registry authentication.
+If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
+The prompt masks the key during input and retries one time on a bad key before failing.
+In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
+If `NGC_API_KEY` or `NVIDIA_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
+If the NIM container exits before the health endpoint becomes ready, onboarding stops early and prints the last container log lines.
+
+**Note:**
+
+NIM uses vLLM internally.
+The same `chat/completions` API path restriction applies.
+
+## Timeout Configuration
+
+Local inference requests use a default timeout of 180 seconds.
+Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for Ollama, vLLM, NIM, and compatible-endpoint setup.
+
+To override the timeout, set the `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` environment variable before onboarding:
+
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+nemoclaw onboard
+```
+
+The value is in seconds.
+NemoClaw bakes this setting into the sandbox at build time.
+Changing it after onboarding requires re-running `nemoclaw onboard`.
+
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only governs the inference-server validation probe.
+During local Ollama setup, NemoClaw treats host-side curl process timeouts as retryable probe failures and retries with a larger timeout before it reports a validation failure.
+NemoClaw also retries Docker runtime detection with a longer `docker info` timeout before it chooses the local inference route.
+The post-create readiness wait (image build, gateway upload, in-sandbox boot) has its own budget, `NEMOCLAW_SANDBOX_READY_TIMEOUT`, also defaulting to 180 seconds.
+On hosts where the sandbox image takes minutes to build or upload, raise both settings together.
+Examples include large quantized models, DGX Station first runs, and remote VMs over a slow link.
+
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+nemoclaw onboard
+```
+
+If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, refer to Troubleshooting (use the `nemoclaw-user-reference` skill).
 
 ## Next Steps
 

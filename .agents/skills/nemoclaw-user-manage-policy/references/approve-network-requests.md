@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Approve or Deny Agent Network Requests
 
 Review and act on network requests that the agent makes to endpoints not listed in the sandbox policy.

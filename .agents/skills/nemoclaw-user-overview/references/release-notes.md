@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Release Notes
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026.
@@ -15,7 +13,6 @@ NemoClaw v0.0.58 improves GPU proof reporting, local-inference metadata, policy 
 - Policy and sandbox hardening paths avoid misleading success. `policy-add` refuses to merge a preset when the live policy read returns unparseable output, custom preset application reports when the gateway accepted a preset but the sandbox registry could not record it, and `NEMOCLAW_REQUIRE_CAP_DROP=1` lets operators make entrypoint capability dropping fail closed. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - OpenClaw runtime diagnostics can export conversation traces through the `diagnostics-otel` plugin. Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to bake the plugin config and apply the local OTLP policy preset. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - Hermes sandboxes are more reliable across messaging, inference, and startup repair paths. Slack channel rebuilds enable the Hermes Slack platform block, `inference.local` routes include the placeholder API key LiteLLM expects, Telegram pseudo-tool text is normalized only for the active chat platform, the messaging response patch preserves Hermes method binding, retry markers are cleared before explicit command dispatch, and Hermes state repair preserves writable history and background dispatcher behavior in locked runtime state. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
-- Documentation generation now expands OpenClaw and Hermes variants from shared source pages, fixes generated variant route links, hides generated variant pages from navigation where appropriate, and documents remote deploy environment variables, one-off command guidance, SSRF egress interactions, and agent session state paths. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 
 ## v0.0.57
 

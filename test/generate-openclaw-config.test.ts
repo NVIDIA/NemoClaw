@@ -1394,9 +1394,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("enables supportsUsageInStreaming for Ollama provider keys (#2747)", () => {
     for (const providerKey of ["ollama", "ollama-local"]) {
       const config = runConfigScript({
-        NEMOCLAW_MODEL: "qwen2.5:7b",
+        NEMOCLAW_MODEL: "qwen3.5:9b",
         NEMOCLAW_PROVIDER_KEY: providerKey,
-        NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+        NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_INFERENCE_API: "openai-completions",
       });
@@ -1436,9 +1436,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // ollama-keyed default — including when a manifest opts the flag *off*.
   it("respects existing supportsUsageInStreaming from inference compat (#2747)", () => {
     const config = runConfigScript({
-      NEMOCLAW_MODEL: "qwen2.5:7b",
+      NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_PROVIDER_KEY: "ollama",
-      NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+      NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(

@@ -2174,6 +2174,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
+        "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
@@ -3207,6 +3208,7 @@ describe("Telegram diagnostics (#2766)", () => {
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const autoPairLog = path.join(tmpDir, "auto-pair.log");
+    const pluginRefreshLog = path.join(tmpDir, "nemoclaw-plugin-refresh.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(configPath, '{"channels":{"telegram":{}}}\n');
     fs.writeFileSync(
@@ -3245,6 +3247,8 @@ describe("Telegram diagnostics (#2766)", () => {
         'harden_auth_profiles() { :; }',
         'run_step_down_as_sandbox() { :; }',
         'setup_auth_profile_as_sandbox() { :; }',
+        `PLUGIN_REFRESH_LOG=${JSON.stringify(pluginRefreshLog)}`,
+        extractShellFunctionFromSource(src, "prepare_plugin_refresh_log"),
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',
@@ -3274,8 +3278,19 @@ describe("Telegram diagnostics (#2766)", () => {
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
     const preloadExists = fs.existsSync(preloadPath);
     const preloadMode = preloadExists ? (fs.statSync(preloadPath).mode & 0o777).toString(8) : "";
+    const pluginRefreshLogExists = fs.existsSync(pluginRefreshLog);
+    const pluginRefreshLogMode = pluginRefreshLogExists
+      ? (fs.statSync(pluginRefreshLog).mode & 0o777).toString(8)
+      : "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, preloadExists, preloadMode, preloadPath };
+    return {
+      result,
+      preloadExists,
+      preloadMode,
+      preloadPath,
+      pluginRefreshLogExists,
+      pluginRefreshLogMode,
+    };
   }
 
   it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
@@ -3494,6 +3509,8 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("ORDER:configure");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
+      expect(setup.pluginRefreshLogExists).toBe(true);
+      expect(setup.pluginRefreshLogMode).toBe("600");
     }
   });
 
