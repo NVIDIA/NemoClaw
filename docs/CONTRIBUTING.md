@@ -297,8 +297,11 @@ These patterns are common in LLM-generated text and erode trust with technical r
 
 - Use `powershell` for Windows PowerShell commands.
   Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
-  Reserve `console` blocks for terminal transcripts that include prompts, output, or interactive sessions.
+  Use `console` only when a command is shell-agnostic and intended to be copied as-is.
   Do not use prompt markers such as `$` in copyable command blocks.
+  Keep command and output in separate fenced code blocks.
+  For output blocks, use `json` when the output is valid JSON, otherwise use `text`.
+  For rare transcript-style examples that intentionally mix command and output, label the section as transcript-only so readers do not treat it as copy/paste input.
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.
