@@ -95,6 +95,59 @@ describe("check-docs link validation", () => {
     expect(slugAliasResult.status).toBe(0);
   });
 
+  it("rejects .md/.mdx suffixes for links that resolve as Fern routes", () => {
+    const tempPath = path.join(REPO_ROOT, "docs", "check-docs-route-suffix-temp.mdx");
+    const navPath = path.join(os.tmpdir(), `nemoclaw-check-docs-nav-${process.pid}.yml`);
+    try {
+      fs.writeFileSync(
+        tempPath,
+        [
+          "---",
+          'title: "Temporary Link Check Page"',
+          "---",
+          "",
+          "[Wrong](deployment/deploy-to-remote-gpu.mdx)",
+          "[Right](deployment/deploy-to-remote-gpu)",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        navPath,
+        [
+          "navigation:",
+          "  - tab: user-guide",
+          "    variants:",
+          "      - title: OpenClaw",
+          "        slug: openclaw",
+          "        layout:",
+          '          - page: "Temp"',
+          "            path: check-docs-route-suffix-temp.mdx",
+          "            slug: temp",
+          '          - section: "Deployment"',
+          "            slug: deployment",
+          "            contents:",
+          '              - page: "Deploy"',
+          "                path: deployment/deploy-to-remote-gpu.mdx",
+          "                slug: deploy-to-remote-gpu",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runCheckDocs(tempPath, { CHECK_DOCS_FERN_NAV_YML: navPath });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `route-style link should omit .md/.mdx extension in ${tempPath}:5 -> deployment/deploy-to-remote-gpu.mdx`,
+      );
+      expect(`${result.stdout}${result.stderr}`).not.toContain(
+        `broken local link in ${tempPath}:6 -> deployment/deploy-to-remote-gpu`,
+      );
+    } finally {
+      fs.rmSync(tempPath, { force: true });
+      fs.rmSync(navPath, { force: true });
+    }
+  });
+
   it("rejects broken Fern site routes", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-bad-fern-"));
     const mdPath = path.join(tempDir, "guide.mdx");
