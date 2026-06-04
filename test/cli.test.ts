@@ -3124,10 +3124,17 @@ describe("CLI dispatch", () => {
     // The docker invocation targeting the legacy gateway container must use
     // the `exec` subcommand. Without it, docker parses kubectl's `-n` as a
     // docker flag and exits 125 ("unknown shorthand flag: 'n' in -n"). The
-    // probe added for #4317 runs `docker ps ...` first, so check the
-    // subcommand position relative to `kubectl` rather than at index 0.
+    // legacy-gateway runtime probe runs `docker ps --format {{.Names}}`
+    // first, so check the subcommand position relative to `kubectl` rather
+    // than at index 0, and check that the probe argv has the expected
+    // unfiltered shape (no fragile `--filter name=^...$` regex anchors).
+    const psIndex = log.indexOf("ps");
+    expect(psIndex).toBe(0);
+    expect(log[psIndex + 1]).toBe("--format");
+    expect(log[psIndex + 2]).toBe("{{.Names}}");
+    expect(log).not.toContain("--filter");
     const kubectlIndex = log.indexOf("kubectl");
-    expect(kubectlIndex).toBeGreaterThan(1);
+    expect(kubectlIndex).toBeGreaterThan(psIndex);
     expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
     expect(log[kubectlIndex - 2]).toBe("exec");
     expect(log).toContain("patch");
@@ -3409,15 +3416,15 @@ describe("CLI dispatch", () => {
   }
 
   it(
-    "fails host alias commands with an actionable error when the legacy gateway container is not running (#4317 reopen)",
+    "fails host alias commands with an actionable error when the legacy gateway container is not running",
     testTimeoutOptions(30_000),
     () => {
-      // Reproduce the reopen case: a sandbox onboarded by an older NemoClaw
-      // release whose registry entry predates the openshellDriver field, on a
-      // host where the legacy `openshell-cluster-nemoclaw` k3s gateway is not
-      // running. Without the runtime probe, `docker exec openshell-cluster-
-      // nemoclaw kubectl ...` bubbles up an opaque `Error response from
-      // daemon: No such container: openshell-cluster-nemoclaw` to the user.
+      // A sandbox onboarded by an older NemoClaw release whose registry
+      // entry predates the openshellDriver field, on a host where the
+      // legacy `openshell-cluster-nemoclaw` k3s gateway is not running.
+      // Without the runtime probe, `docker exec openshell-cluster-nemoclaw
+      // kubectl ...` bubbles up an opaque `Error response from daemon: No
+      // such container: openshell-cluster-nemoclaw` to the user.
       const home = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-cli-hosts-no-gateway-"),
       );
@@ -3448,12 +3455,102 @@ describe("CLI dispatch", () => {
       }
 
       const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-      // Only the probe ran. No exec/get/patch reached the missing container.
-      expect(log).toContain("ps");
+      // Probe argv must be the unfiltered `docker ps --format {{.Names}}`
+      // shape. No exec/get/patch reached the missing container.
+      expect(log[0]).toBe("ps");
+      expect(log[1]).toBe("--format");
+      expect(log[2]).toBe("{{.Names}}");
+      expect(log).not.toContain("--filter");
       expect(log).not.toContain("exec");
       expect(log).not.toContain("kubectl");
       expect(log).not.toContain("get");
       expect(log).not.toContain("patch");
+    },
+  );
+
+  it(
+    "validates host alias arguments before probing the legacy gateway",
+    testTimeoutOptions(30_000),
+    () => {
+      // Arg validation (missing args, bad hostname, bad IP) must run before
+      // the legacy-gateway probe, so a missing legacy gateway never masks
+      // an invalid-input failure that would otherwise reach the user.
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-hosts-validate-first-"),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeHostAliasDockerStub(localBin, dockerLog, [], { gatewayRunning: false });
+      writeSandboxRegistry(home);
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+
+      const badHostnameAdd = runWithEnv("alpha hosts-add invalid_name!! 1.2.3.4", env);
+      expect(badHostnameAdd.code).toBe(1);
+      expect(badHostnameAdd.out).toContain("Invalid hostname 'invalid_name!!'");
+      expect(badHostnameAdd.out).not.toContain("Host aliases require the legacy");
+
+      const badIpAdd = runWithEnv("alpha hosts-add searxng.local not-an-ip", env);
+      expect(badIpAdd.code).toBe(1);
+      expect(badIpAdd.out).toContain("Invalid IP address 'not-an-ip'");
+      expect(badIpAdd.out).not.toContain("Host aliases require the legacy");
+
+      const badHostnameRemove = runWithEnv("alpha hosts-remove invalid_name!!", env);
+      expect(badHostnameRemove.code).toBe(1);
+      expect(badHostnameRemove.out).toContain("Invalid hostname 'invalid_name!!'");
+      expect(badHostnameRemove.out).not.toContain("Host aliases require the legacy");
+
+      // No docker probe runs when validation fails up front.
+      expect(fs.existsSync(dockerLog)).toBe(false);
+    },
+  );
+
+  it(
+    "classifies docker probe failures distinctly from a missing gateway",
+    testTimeoutOptions(30_000),
+    () => {
+      // When `docker ps` itself fails (daemon down, permission denied,
+      // timeout), the user must see a docker-probe-failed error rather than
+      // the legacy-gateway-missing error.
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-hosts-docker-down-"),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          `log_file=${JSON.stringify(dockerLog)}`,
+          'printf "%s\\n" "$@" >> "$log_file"',
+          'if [ "$1" = "ps" ]; then',
+          '  printf "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n" >&2',
+          "  exit 1",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeSandboxRegistry(home);
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env);
+      expect(list.code).toBe(1);
+      expect(list.out).toContain(
+        "Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
+      );
+      expect(list.out).toContain("Docker probe failed:");
+      expect(list.out).toContain("docker info");
+      expect(list.out).not.toContain(
+        "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
+      );
+
+      const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+      expect(log[0]).toBe("ps");
+      expect(log).not.toContain("exec");
+      expect(log).not.toContain("kubectl");
     },
   );
 
