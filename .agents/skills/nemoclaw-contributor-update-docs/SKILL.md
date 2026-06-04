@@ -178,7 +178,7 @@ If the user invoked this skill for release prep, finish the release-specific doc
 2. Refresh the NemoClaw user skills:
 
    ```bash
-   python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx
+   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
    ```
 
 ## Step 9: Build and Verify

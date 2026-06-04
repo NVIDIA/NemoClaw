@@ -11,7 +11,7 @@ Usage:
 Make sure to run this script using the following command to generate the skills and keep the locations and names consistent.
 
 ```bash
-python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx
+python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
 ```
 
 What it does:
@@ -32,10 +32,7 @@ What it does:
        - SKILL.md with frontmatter (name, description), the lead page body,
          a References section linking sibling pages, and Related Skills links.
        - references/ with full sibling page content for progressive disclosure.
-  5. When multiple output directories are provided, mirrors generated skill
-     directories from the first output directory to the later output directories
-     so auxiliary files such as eval datasets stay in sync.
-  6. Resolves all relative doc paths to repo-root-relative paths, and
+  5. Resolves all relative doc paths to repo-root-relative paths, and
      converts cross-references between docs into skill-to-skill pointers
      so agents can navigate between skills.
 
@@ -1803,23 +1800,6 @@ def generate_skill(
     return summary
 
 
-def mirror_generated_skill_outputs(output_dirs: list[Path], skill_names: list[str]) -> None:
-    """Mirror generated skill directories from the first output root to the rest."""
-    if len(output_dirs) < 2:
-        return
-
-    primary_root = output_dirs[0]
-    for skill_name in skill_names:
-        source_dir = primary_root / skill_name
-        if not source_dir.is_dir():
-            continue
-        for output_dir in output_dirs[1:]:
-            target_dir = output_dir / skill_name
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-            shutil.copytree(source_dir, target_dir)
-
-
 def _copy_skill_images(target_dir: Path, copies: list[tuple[Path, str]]) -> None:
     """Copy recorded image assets next to the skill file that references them.
 
@@ -2122,10 +2102,8 @@ def main():
     dirs_str = ", ".join(str(d) for d in args.output_dirs)
     print(f"\n{'[DRY RUN] ' if args.dry_run else ''}Generating skills to {dirs_str}")
     summaries: list[dict] = []
-    generated_skill_names: list[str] = []
     for group_name, group_pages in sorted(groups.items()):
         name = skill_names[group_name]
-        generated_skill_names.append(name)
         summary = generate_skill(
             name,
             group_pages,
@@ -2138,9 +2116,6 @@ def main():
             dry_run=args.dry_run,
         )
         summaries.append(summary)
-
-    if not args.dry_run:
-        mirror_generated_skill_outputs(args.output_dirs, generated_skill_names)
 
     # Ensure .claude/skills symlink exists
     if not args.dry_run:
