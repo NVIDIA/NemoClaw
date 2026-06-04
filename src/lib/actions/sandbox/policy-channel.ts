@@ -681,13 +681,12 @@ async function planSandboxChannelAdd(
   hydrateAddChannelEnvFromSession(sandboxName, channelId);
 
   try {
-    const plan = await planner.buildPlan({
+    const plan = await planner.buildChannelAddPlanFromSandboxEntry({
       sandboxName,
       agent: toMessagingAgentId(agent),
-      workflow: "add-channel",
       isInteractive: !isNonInteractive(),
-      configuredChannels: [channelId],
-      disabledChannels: [],
+      channelId,
+      sandboxEntry: registry.getSandbox(sandboxName),
       supportedChannelIds,
       credentialAvailability: buildCredentialAvailability([channelId]),
     });
@@ -698,6 +697,46 @@ async function planSandboxChannelAdd(
     console.error(`  ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
+}
+
+async function persistManifestChannelDisabledPlan(
+  sandboxName: string,
+  channelId: string,
+  disabled: boolean,
+): Promise<void> {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const context = {
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    channelId,
+    sandboxEntry: entry,
+    supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
+  };
+  const plan = disabled
+    ? await planner.buildChannelStopPlanFromSandboxEntry(context)
+    : await planner.buildChannelStartPlanFromSandboxEntry(context);
+  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+}
+
+async function persistManifestChannelRemovePlan(
+  sandboxName: string,
+  channelId: string,
+): Promise<void> {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    channelId,
+    sandboxEntry: entry,
+    supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
+  });
+  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 }
 
 function buildCredentialAvailability(channelIds: readonly string[]): Record<string, boolean> {
@@ -923,7 +962,7 @@ export async function addSandboxChannel(
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     persistManifestAddState(sandboxName, manifest);
-    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan, { mode: "merge" });
+    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
     if (help) console.log(`  ${help}`);
@@ -982,7 +1021,7 @@ export async function addSandboxChannel(
   }
 
   persistManifestAddState(sandboxName, manifest);
-  MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan, { mode: "merge" });
+  MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
@@ -1290,6 +1329,7 @@ export async function removeSandboxChannel(
   }
 
   removeChannelPresetIfPresent(sandboxName, canonical);
+  await persistManifestChannelRemovePlan(sandboxName, canonical);
 
   // Token-based channels: best-effort tidy of any leftover dir. Token
   // revocation already prevents the bot from authenticating, so a
@@ -1345,6 +1385,7 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
     process.exit(1);
   }
+  await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
   await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);

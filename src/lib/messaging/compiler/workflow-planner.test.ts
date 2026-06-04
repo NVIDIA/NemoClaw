@@ -195,9 +195,15 @@ describe("MessagingWorkflowPlanner", () => {
           const outputs: Record<string, { kind: "secret"; value: string }> = {};
           for (const output of context.outputDeclarations ?? []) {
             if (output.kind === "secret") {
+              const value =
+                context.channelId === "slack" && output.id === "botToken"
+                  ? "xoxb-test-slack-bot-token"
+                  : context.channelId === "slack" && output.id === "appToken"
+                    ? "xapp-test-slack-app-token"
+                    : `test-${context.channelId}-${output.id}`;
               outputs[output.id] = {
                 kind: "secret",
-                value: `test-${context.channelId}-${output.id}`,
+                value,
               };
             }
           }
@@ -248,6 +254,10 @@ describe("MessagingWorkflowPlanner", () => {
       {
         id: "common.configPrompt",
         handler: () => ({ outputs: {} }),
+      },
+      {
+        id: "slack.validateCredentials",
+        handler: () => ({}),
       },
     ]);
 
@@ -416,6 +426,253 @@ describe("MessagingWorkflowPlanner", () => {
       "discord",
       "wechat",
     ]);
+  });
+
+  it("adds one manifest channel into an existing sandbox entry plan", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: {
+        TELEGRAM_BOT_TOKEN: true,
+      },
+    });
+    const hooks = new MessagingHookRegistry([
+      {
+        id: "common.tokenPaste",
+        handler: (context) => {
+          if (context.channelId === "telegram") {
+            throw new Error("existing channels should not re-enroll");
+          }
+          const outputs: Record<string, { kind: "secret"; value: string }> = {};
+          for (const output of context.outputDeclarations ?? []) {
+            if (output.kind === "secret") {
+              const value =
+                context.channelId === "slack" && output.id === "botToken"
+                  ? "xoxb-test-slack-bot-token"
+                  : context.channelId === "slack" && output.id === "appToken"
+                    ? "xapp-test-slack-app-token"
+                    : `test-${context.channelId}-${output.id}`;
+              outputs[output.id] = {
+                kind: "secret",
+                value,
+              };
+            }
+          }
+          return { outputs };
+        },
+      },
+      {
+        id: "common.configPrompt",
+        handler: () => ({ outputs: {} }),
+      },
+      {
+        id: "slack.validateCredentials",
+        handler: () => ({}),
+      },
+    ]);
+
+    const plan = await new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      hooks,
+    ).buildChannelAddPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: existingPlan,
+        },
+      },
+      channelId: "slack",
+      isInteractive: true,
+      supportedChannelIds: ["telegram", "slack"],
+    });
+
+    expect(plan.workflow).toBe("add-channel");
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
+      "telegram",
+      "slack",
+    ]);
+    expect(plan.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
+      active: true,
+      configured: true,
+    });
+    expect(plan.channels.find((channel) => channel.channelId === "slack")).toMatchObject({
+      active: true,
+      configured: true,
+      disabled: false,
+    });
+    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
+      "telegram",
+      "slack",
+      "slack",
+    ]);
+  });
+
+  it("mutates disabled channel state in an existing sandbox entry plan", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram", "slack"],
+      credentialAvailability: {
+        TELEGRAM_BOT_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+        SLACK_APP_TOKEN: true,
+      },
+    });
+
+    const stopped = await planner().buildChannelStopPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: existingPlan,
+        },
+      },
+      channelId: "telegram",
+    });
+
+    expect(stopped?.workflow).toBe("stop-channel");
+    expect(stopped?.disabledChannels).toEqual(["telegram"]);
+    expect(stopped?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
+      active: false,
+      disabled: true,
+    });
+
+    const started = await planner().buildChannelStartPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: stopped!,
+        },
+      },
+      channelId: "telegram",
+    });
+
+    expect(started?.workflow).toBe("start-channel");
+    expect(started?.disabledChannels).toEqual([]);
+    expect(started?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
+      active: true,
+      disabled: false,
+    });
+  });
+
+  it("removes a channel and its dependent plan entries from an existing sandbox entry plan", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram", "slack"],
+      credentialAvailability: {
+        TELEGRAM_BOT_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+        SLACK_APP_TOKEN: true,
+      },
+    });
+
+    const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: existingPlan,
+        },
+      },
+      channelId: "telegram",
+    });
+
+    expect(removed?.workflow).toBe("remove-channel");
+    expect(removed?.channels.map((channel) => channel.channelId)).toEqual(["slack"]);
+    expect(removed?.disabledChannels).toEqual([]);
+    expect(
+      removed?.credentialBindings.some((binding) => binding.channelId === "telegram"),
+    ).toBe(false);
+    expect(
+      removed?.networkPolicy.entries.some((entry) => entry.channelId === "telegram"),
+    ).toBe(false);
+    expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
+  });
+
+  it("rebuilds from stored plan input values when config env is unavailable", async () => {
+    const existingPlan = await withEnv(
+      {
+        TELEGRAM_REQUIRE_MENTION: "1",
+      },
+      () =>
+        planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["telegram"],
+          credentialAvailability: {
+            TELEGRAM_BOT_TOKEN: true,
+          },
+        }),
+    );
+
+    await withEnv(
+      {
+        TELEGRAM_REQUIRE_MENTION: undefined,
+      },
+      async () => {
+        const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "openclaw",
+          sandboxEntry: {
+            name: "demo",
+            messagingChannels: ["telegram"],
+            messaging: {
+              schemaVersion: 1,
+              plan: existingPlan,
+            },
+          },
+        });
+
+        expect(rebuilt?.workflow).toBe("rebuild");
+        expect(
+          rebuilt?.channels
+            .find((channel) => channel.channelId === "telegram")
+            ?.inputs.find((input) => input.inputId === "requireMention"),
+        ).toMatchObject({
+          value: "1",
+        });
+        expect(rebuilt?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
+          active: true,
+          disabled: false,
+        });
+      },
+    );
+  });
+
+  it("does not compile a rebuild plan when the sandbox entry has no stored plan", async () => {
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: {
+          TELEGRAM_BOT_TOKEN: "sha256:test",
+        },
+      },
+    });
+
+    expect(rebuilt).toBeNull();
   });
 
   it("reports unsupported channels deterministically before compiling", async () => {
