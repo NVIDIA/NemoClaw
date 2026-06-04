@@ -1335,11 +1335,16 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       expect(script).toContain("approve");
       expect(script).toContain("approve_env = os.environ.copy()");
       expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_URL', None)");
+      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_PORT', None)");
+      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)");
       expect(script).toContain("env=approve_env");
       expect(script).toContain("if approve_proc.returncode == 0");
       expect(script).toContain("openclaw-control-ui");
       expect(script).toContain("webchat");
       expect(script).toContain("cli");
+      expect(script).toContain("operator.read");
+      expect(script).toContain("operator.write");
+      expect(script).toContain("not scopes.issubset(ALLOWED_SCOPES)");
       expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
         script.indexOf("approve_env = os.environ.copy()"),
       );

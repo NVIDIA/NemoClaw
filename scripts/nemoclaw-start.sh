@@ -1762,6 +1762,15 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # timeout reduction, and token cleanup for a more comprehensive fix.
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
 ALLOWED_MODES = {'webchat', 'cli'}
+ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
+
+
+def requested_scopes(device):
+    scopes = device.get('scopes') or device.get('requestedScopes') or []
+    if not isinstance(scopes, list):
+        return set()
+    return {str(scope).strip() for scope in scopes if str(scope or '').strip()}
+
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
@@ -1835,6 +1844,11 @@ while time.time() < DEADLINE:
             if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
                 HANDLED.add(request_id)
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
+                continue
+            scopes = requested_scopes(device)
+            if scopes and not scopes.issubset(ALLOWED_SCOPES):
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
@@ -2081,6 +2095,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
@@ -2110,8 +2125,90 @@ openclaw() {
   # the approval command itself. Approval calls temporarily drop the gateway
   # URL/port/token; other commands keep the full gateway environment.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
-    return $?
+    _nemoclaw_approve_request_id="${3:-}"
+    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+    _nemoclaw_approve_before=""
+    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
+      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+try:
+    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
+except Exception:
+    pending = {}
+if not isinstance(pending, dict):
+    pending = {}
+request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
+if request:
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": request.get("deviceId"),
+        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
+    }, sort_keys=True))
+PYAPPROVEBEFORE
+)"
+    fi
+    _nemoclaw_approve_errexit=0
+    case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
+    set +e
+    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    _nemoclaw_approve_rc=$?
+    if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
+    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
+      printf '%s\n' "$_nemoclaw_approve_output"
+      return 0
+    fi
+    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
+      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" python3 - <<'PYAPPROVEAFTER'; then
+import json
+import os
+from pathlib import Path
+
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+try:
+    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
+except Exception:
+    before = {}
+
+def load(name):
+    try:
+        value = json.loads((root / name).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+def norm(value):
+    return str(value or "").strip()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+requested = {norm(scope) for scope in (before.get("scopes") or []) if norm(scope)}
+device_id = norm(before.get("deviceId"))
+pending = load("pending.json")
+paired = load("paired.json")
+still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
+paired_entry = paired.get(device_id) if device_id else None
+if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(scopes(paired_entry)):
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": device_id,
+        "approvedScopes": sorted(requested),
+        "compatibility": "openclaw-approve-applied-after-nonzero",
+    }, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+PYAPPROVEAFTER
+        return 0
+      fi
+    fi
+    printf '%s\n' "$_nemoclaw_approve_output"
+    return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
     configure)

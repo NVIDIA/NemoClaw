@@ -1773,6 +1773,64 @@ exit 2
     }
   }, 40_000);
 
+  it("rejects disallowed CLI admin scope requests", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-admin-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const adminPending = JSON.stringify({
+      pending: [
+        {
+          requestId: "admin-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: ["operator.admin"],
+        },
+      ],
+      paired: [],
+    });
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf '%s\n' ${JSON.stringify(adminPending)}
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] rejected disallowed scopes=['operator.admin'] client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      expect(fs.existsSync(approveLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("falls back to fast-deadline transition when no convergence signal arrives", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-fastdl-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");

@@ -31,6 +31,11 @@ FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
 
+# OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
+# filesystem transform cache so source fragments that mention provider marker
+# names do not persist under /tmp/jiti inside the sandbox.
+ENV JITI_FS_CACHE=false
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
 # procps/e2fsprogs/tmux additions, leaving ps/chattr/tmux absent or auto-marked.

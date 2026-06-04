@@ -697,7 +697,15 @@ import sys
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
 ALLOWED_MODES = {'webchat', 'cli'}
+ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
 MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
+
+
+def requested_scopes(device):
+    scopes = device.get('scopes') or device.get('requestedScopes') or []
+    if not isinstance(scopes, list):
+        return set()
+    return {str(scope).strip() for scope in scopes if str(scope or '').strip()}
 
 try:
     proc = subprocess.run(
@@ -732,9 +740,14 @@ for device in pending:
     client_mode = device.get('clientMode', '')
     if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
         continue
+    scopes = requested_scopes(device)
+    if scopes and not scopes.issubset(ALLOWED_SCOPES):
+        continue
     seen_request_ids.add(request_id)
     approve_env = os.environ.copy()
     approve_env.pop('OPENCLAW_GATEWAY_URL', None)
+    approve_env.pop('OPENCLAW_GATEWAY_PORT', None)
+    approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
     attempted_count += 1
     try:
         approve_proc = subprocess.run(
