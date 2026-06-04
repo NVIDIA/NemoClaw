@@ -3507,6 +3507,87 @@ describe("CLI dispatch", () => {
   );
 
   it(
+    "classifies docker spawn ENOENT distinctly from a missing gateway",
+    testTimeoutOptions(30_000),
+    () => {
+      // When the docker binary is absent from PATH, spawnSync returns
+      // error.code === "ENOENT". The probe must surface a docker-could-
+      // not-launch error rather than the legacy-gateway-missing error.
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-hosts-docker-enoent-"),
+      );
+      const emptyBin = path.join(home, "nodocker");
+      fs.mkdirSync(emptyBin, { recursive: true });
+      // The shell that execSync forks needs to find `node`. Symlink the
+      // running node executable into the otherwise-empty bin so the shell
+      // can launch the CLI; docker remains absent from this PATH so the
+      // CLI's `spawnSync("docker", ...)` returns ENOENT.
+      fs.symlinkSync(process.execPath, path.join(emptyBin, "node"));
+      writeSandboxRegistry(home);
+
+      const env = { HOME: home, PATH: emptyBin };
+      const list = runWithEnv("alpha hosts-list", env);
+      expect(list.code).toBe(1);
+      expect(list.out).toContain(
+        "Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
+      );
+      expect(list.out).toContain("Docker probe failed:");
+      expect(list.out).toContain("could not launch");
+      expect(list.out).not.toContain(
+        "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
+      );
+    },
+  );
+
+  it(
+    "classifies docker probe timeouts distinctly from a missing gateway",
+    testTimeoutOptions(60_000),
+    () => {
+      // When `docker ps` hangs past the probe timeout, spawnSync kills it
+      // and reports ETIMEDOUT (or a terminating SIGTERM with no exit).
+      // The probe must surface a docker-timed-out error rather than the
+      // legacy-gateway-missing error.
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-hosts-docker-timeout-"),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          `log_file=${JSON.stringify(dockerLog)}`,
+          'printf "%s\\n" "$@" >> "$log_file"',
+          'if [ "$1" = "ps" ]; then',
+          "  sleep 20",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeSandboxRegistry(home);
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env, 45_000);
+      expect(list.code).toBe(1);
+      expect(list.out).toContain(
+        "Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
+      );
+      expect(list.out).toContain("Docker probe failed:");
+      expect(list.out).not.toContain(
+        "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
+      );
+
+      const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+      expect(log[0]).toBe("ps");
+      expect(log).not.toContain("exec");
+      expect(log).not.toContain("kubectl");
+    },
+  );
+
+  it(
     "classifies docker probe failures distinctly from a missing gateway",
     testTimeoutOptions(30_000),
     () => {
