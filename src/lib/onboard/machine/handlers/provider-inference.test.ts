@@ -164,6 +164,14 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-prod",
       preferredInferenceApi: "openai-responses",
     });
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "sandbox",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "inference", provider: "nvidia-prod", model: "nvidia/test" },
+    });
+    expect(result.retryStateResults).toEqual([]);
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
@@ -412,6 +420,21 @@ describe("handleProviderInferenceState", () => {
     expect(setupInference).toHaveBeenCalledTimes(2);
     expect(result.model).toBe("good");
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection");
+    expect(result.retryStateResults).toEqual([
+      {
+        type: "transition",
+        next: "provider_selection",
+        transitionKind: "retry",
+        updates: undefined,
+        metadata: {
+          state: "inference",
+          provider: "nvidia-prod",
+          model: "bad",
+          reason: "selection_retry",
+        },
+      },
+    ]);
+    expect(result.stateResult).toMatchObject({ next: "sandbox", transitionKind: "advance" });
   });
 
   it("aborts before inference setup when the configuration summary is rejected", async () => {
