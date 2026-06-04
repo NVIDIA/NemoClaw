@@ -56,6 +56,12 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 run_with_timeout() {
   local seconds="$1"
@@ -90,6 +96,11 @@ export NEMOCLAW_FRESH=1
 export NEMOCLAW_POLICY_TIER="${NEMOCLAW_POLICY_TIER:-open}"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && { is_fake_slack_token "$SLACK_TOKEN" || is_fake_slack_token "$SLACK_APP"; }; then
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
+fi
 
 openshell() {
   if [ "$OPENSHELL_BIN" = "openshell" ]; then

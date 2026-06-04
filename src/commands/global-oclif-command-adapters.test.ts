@@ -117,6 +117,51 @@ describe("global oclif command adapters", () => {
     );
   });
 
+  it("keeps list --json stdout clean while inventory recovery prints progress", async () => {
+    const report = {
+      schemaVersion: 1,
+      defaultSandbox: null,
+      recovery: { recoveredFromSession: false, recoveredFromGateway: 0 },
+      lastOnboardedSandbox: null,
+      sandboxes: [],
+    };
+    mocks.getSandboxInventory.mockImplementationOnce(async () => {
+      process.stdout.write("  Starting OpenShell gateway\n");
+      return report;
+    });
+
+    const out: string[] = [];
+    const err: string[] = [];
+    const origOut = process.stdout.write;
+    const origErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      out.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      err.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stderr.write;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await ListCommand.run(["--json"], rootDir);
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+
+    const stdout = out.join("");
+    expect(stdout).not.toContain("Starting OpenShell gateway");
+    expect(stdout).toBe("");
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(report);
+    expect(err.join("")).toContain("Starting OpenShell gateway");
+  });
+
   it("runs status through status helpers", async () => {
     await StatusCommand.run([], rootDir);
 

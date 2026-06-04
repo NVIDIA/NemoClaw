@@ -52,6 +52,12 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 run_with_timeout() {
   local seconds="$1"
@@ -159,6 +165,11 @@ export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX=1
 export SLACK_BOT_TOKEN="$SLACK_BOT"
 export SLACK_APP_TOKEN="$SLACK_APP"
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && { is_fake_slack_token "$SLACK_BOT" || is_fake_slack_token "$SLACK_APP"; }; then
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
+fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -327,8 +338,14 @@ config_text = Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")
 cfg = yaml.safe_load(config_text) or {}
 errors = []
 platforms = cfg.get("platforms")
-if isinstance(platforms, dict) and "slack" in platforms:
-    errors.append("platforms.slack present")
+if not isinstance(platforms, dict):
+    errors.append("platforms map missing or not a mapping")
+else:
+    slack = platforms.get("slack")
+    if not isinstance(slack, dict):
+        errors.append("platforms.slack missing or not a mapping")
+    elif slack.get("enabled") is not True:
+        errors.append(f"platforms.slack.enabled is not true ({slack!r})")
 if "SLACK_BOT_TOKEN" in config_text or "SLACK_APP_TOKEN" in config_text:
     errors.append("config.yaml contains Slack token env keys")
 if errors:
@@ -339,7 +356,7 @@ PY
 )
 
 if [ "$config_probe" = "OK" ]; then
-  pass "config.yaml has no generic platforms.slack block or Slack token keys"
+  pass "config.yaml enables platforms.slack and contains no Slack token keys"
 else
   fail "config.yaml check failed: ${config_probe:0:400}"
 fi

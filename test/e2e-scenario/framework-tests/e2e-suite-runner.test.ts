@@ -90,6 +90,7 @@ describe("Issue #3810 messaging suite wiring", () => {
         "telegram-injection-safety",
         "discord-gateway-path",
         "slack-provider-state",
+        "slack.runtime-discovery",
       ]) {
         expect(output).toContain(id);
       }

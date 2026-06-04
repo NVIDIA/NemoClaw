@@ -1,0 +1,92 @@
+[
+  {
+    "id": "docs-index-001",
+    "question": "I'm first arriving at the NemoClaw docs. Help me understand what NemoClaw helps me run and why it exists so I can decide whether it is worth installing before I spend time on setup.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what NemoClaw helps me run and why it exists and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether it is worth installing before I spend time on setup."
+  },
+  {
+    "id": "docs-index-002",
+    "question": "I'm evaluating whether an always-on assistant can run safely in my environment. Help me see the core safety, lifecycle, and inference-routing promises up front so I can judge whether the stack matches my risk tolerance.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see the core safety, lifecycle, and inference-routing promises up front and gives enough concrete guidance, decision criteria, verification steps, or risk framing to judge whether the stack matches my risk tolerance."
+  },
+  {
+    "id": "docs-index-003",
+    "question": "I'm considering the one-command install path. Help me know what the command will install, configure, and launch so I can take the next step without feeling like I am accepting an opaque shortcut.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user know what the command will install, configure, and launch and gives enough concrete guidance, decision criteria, verification steps, or risk framing to take the next step without feeling like I am accepting an opaque shortcut."
+  },
+  {
+    "id": "docs-about-overview-001",
+    "question": "I'm explaining NemoClaw to a teammate. Help me summarize the product, stack, and value in plain language so I can align on whether NemoClaw is relevant to our agent workflow.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user summarize the product, stack, and value in plain language and gives enough concrete guidance, decision criteria, verification steps, or risk framing to align on whether NemoClaw is relevant to our agent workflow."
+  },
+  {
+    "id": "docs-about-overview-002",
+    "question": "I'm worried about security, cost, or operations risks from unattended agents. Help me understand which guardrails NemoClaw adds so I can decide whether sandboxed execution addresses my main concerns.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand which guardrails NemoClaw adds and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether sandboxed execution addresses my main concerns."
+  },
+  {
+    "id": "docs-about-overview-003",
+    "question": "I'm comparing NemoClaw with direct OpenClaw or OpenShell usage. Help me see the capabilities NemoClaw owns so I can classify it as the right reference stack rather than generic setup glue.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see the capabilities NemoClaw owns and gives enough concrete guidance, decision criteria, verification steps, or risk framing to classify it as the right reference stack rather than generic setup glue."
+  },
+  {
+    "id": "docs-about-ecosystem-001",
+    "question": "I'm comparing OpenClaw, OpenShell, and NemoClaw. Help me understand the role of each layer so I can choose the right adoption path for my project.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand the role of each layer and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose the right adoption path for my project."
+  },
+  {
+    "id": "docs-about-ecosystem-002",
+    "question": "I'm deciding whether to use the reference integration. Help me identify when NemoClaw is enough versus when I need direct OpenShell integration so I can avoid unnecessary platform work.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user identify when NemoClaw is enough versus when I need direct OpenShell integration and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid unnecessary platform work."
+  },
+  {
+    "id": "docs-about-ecosystem-003",
+    "question": "I'm planning a deployment with multiple moving parts. Help me separate agent, runtime, and orchestration responsibilities so I can assign ownership and troubleshoot the right layer later.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user separate agent, runtime, and orchestration responsibilities and gives enough concrete guidance, decision criteria, verification steps, or risk framing to assign ownership and troubleshoot the right layer later."
+  },
+  {
+    "id": "docs-about-how-it-works-001",
+    "question": "I'm studying the NemoClaw architecture. Help me understand how the CLI, plugin, blueprint, and sandbox interact so I can reason about failures and maintenance work with confidence.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand how the CLI, plugin, blueprint, and sandbox interact and gives enough concrete guidance, decision criteria, verification steps, or risk framing to reason about failures and maintenance work with confidence."
+  },
+  {
+    "id": "docs-about-how-it-works-002",
+    "question": "I'm debugging a broken setup. Help me identify which lifecycle boundary owns the failure so I can fix the problem without changing unrelated layers.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user identify which lifecycle boundary owns the failure and gives enough concrete guidance, decision criteria, verification steps, or risk framing to fix the problem without changing unrelated layers."
+  },
+  {
+    "id": "docs-about-how-it-works-003",
+    "question": "I'm deciding whether blueprint-driven setup is repeatable enough. Help me see how versions, digests, and sandbox creation fit together so I can trust the process for team or fleet usage.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see how versions, digests, and sandbox creation fit together and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust the process for team or fleet usage."
+  },
+  {
+    "id": "docs-about-release-notes-001",
+    "question": "I'm reading NemoClaw release notes. Help me understand what changed since my installed version so I can assess upgrade risk before touching a working sandbox.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what changed since my installed version and gives enough concrete guidance, decision criteria, verification steps, or risk framing to assess upgrade risk before touching a working sandbox."
+  },
+  {
+    "id": "docs-about-release-notes-002",
+    "question": "I'm maintaining an existing sandbox. Help me spot compatibility notes, migrations, or behavior changes so I can decide whether to update now or wait.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user spot compatibility notes, migrations, or behavior changes and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether to update now or wait."
+  },
+  {
+    "id": "docs-about-release-notes-003",
+    "question": "I'm evaluating NemoClaw for a longer-running assistant workflow. Help me see the pace and nature of recent changes so I can judge whether the project feels stable enough for my use case.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see the pace and nature of recent changes and gives enough concrete guidance, decision criteria, verification steps, or risk framing to judge whether the project feels stable enough for my use case."
+  }
+]
