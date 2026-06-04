@@ -46,6 +46,12 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import {
+  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} from "./connect-autopair-budget";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   isDockerRuntimeDown,
@@ -206,6 +212,10 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
+    // path (#4504): the gateway is up, so deterministically clear any pending
+    // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
+    runConnectAutoPairApprovalPass(sandboxName);
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -217,6 +227,8 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.recovered) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Same defense-in-depth approval after a recovery (#4504); best-effort.
+    runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
@@ -773,11 +785,17 @@ function ensureSandboxInferenceRouteOrExit(
 //
 // Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
 // unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
-// attempts) fit within the outer spawnSync cap, so a partial-completion
-// mid-loop kill cannot strand allowlisted requests within a normal batch.
-const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
-const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+// best-effort approval. The approve timeout matches the in-sandbox watcher's
+// RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh) so a scope-upgrade approve via the
+// local pairing fallback has the same budget. MAX_APPROVALS is 1 — the
+// realistic case is a single pending CLI/webchat scope upgrade. The outer
+// spawnSync cap must exceed the internal worst case (2s list + 10s × 1 = 12s)
+// PLUS shell/python startup, since the outer timer starts at `sh` spawn before
+// the proxy env is sourced and python3 launches; 15s leaves ~3s slack so a
+// legitimate slow 10s approve is never SIGKILLed mid-loop, which would strand
+// the allowlisted request (ref #4504). Budget constants live in the
+// dependency-free ./connect-autopair-budget leaf so tests can assert the
+// invariant on the real values without importing this heavy module (#4504).
 const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
   ROOT,
   "scripts",
@@ -796,7 +814,7 @@ function readConnectAutoPairPolicyModule(): string | null {
   }
 }
 
-function runConnectAutoPairApprovalPass(sandboxName: string): void {
+export function runConnectAutoPairApprovalPass(sandboxName: string): void {
   const approvalPolicyModule = readConnectAutoPairPolicyModule();
   if (!approvalPolicyModule) {
     return;
@@ -831,7 +849,7 @@ MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=2,
+        capture_output=True, text=True, timeout=${CONNECT_AUTO_PAIR_LIST_TIMEOUT_S},
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     sys.exit(0)
@@ -866,7 +884,7 @@ for device in pending:
     try:
         approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
+            capture_output=True, text=True, timeout=${CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S}, env=approve_env,
         )
         if approve_proc.returncode == 0:
             approved_count += 1
@@ -877,8 +895,9 @@ exit 0
 `;
   try {
     // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
-    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
-    // startup slack) so a wedged sandbox can never block the connect flow.
+    // internal budget (CONNECT_AUTO_PAIR_LIST_TIMEOUT_S list +
+    // CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S × CONNECT_AUTO_PAIR_MAX_APPROVALS plus
+    // shell/python startup slack) so a wedged sandbox can never block connect.
     spawnSync(
       getOpenshellBinary(),
       ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
