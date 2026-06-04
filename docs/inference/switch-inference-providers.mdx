@@ -221,7 +221,12 @@ Use `$$nemoclaw inference get` to print the provider and model the gateway is cu
 Run it before `$$nemoclaw inference set` to confirm the starting state, or after a switch to verify the new route.
 
 ```console
-$ $$nemoclaw inference get
+$$nemoclaw inference get
+```
+
+Expected output:
+
+```text
 Provider: nvidia-prod
 Model:    nvidia/nemotron-3-super-120b-a12b
 ```
@@ -229,7 +234,12 @@ Model:    nvidia/nemotron-3-super-120b-a12b
 Pass `--json` for machine-readable output.
 
 ```console
-$ $$nemoclaw inference get --json
+$$nemoclaw inference get --json
+```
+
+Expected output:
+
+```json
 {
   "provider": "nvidia-prod",
   "model": "nvidia/nemotron-3-super-120b-a12b"

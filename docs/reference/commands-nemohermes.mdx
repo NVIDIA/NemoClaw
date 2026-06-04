@@ -499,7 +499,12 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 `nemohermes <name> status` prints the running Hermes version on the `Agent` line:
 
 ```console
-$ nemohermes my-assistant status
+nemohermes my-assistant status
+```
+
+Expected output:
+
+```text
 ...
     Agent:    Hermes v2026.5.16
 ...
@@ -1115,7 +1120,12 @@ Mount the sandbox filesystem on the host machine via SSHFS for bidirectional fil
 Files edited on the host appear instantly inside the sandbox, and vice versa.
 
 ```console
-$ nemohermes my-assistant share mount
+nemohermes my-assistant share mount
+```
+
+Expected output:
+
+```text
 ✓ Mounted /sandbox → ~/.nemoclaw/mounts/my-assistant
 ```
 
@@ -1155,7 +1165,12 @@ nemohermes my-assistant share unmount
 Check whether the sandbox filesystem is currently mounted.
 
 ```console
-$ nemohermes my-assistant share status
+nemohermes my-assistant share status
+```
+
+Expected output:
+
+```text
 ● Mounted at ~/.nemoclaw/mounts/my-assistant
 ```
 

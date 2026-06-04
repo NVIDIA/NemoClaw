@@ -1011,7 +1011,12 @@ First, make sure the host-side service listens on a non-loopback address.
 For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
 
 ```console
-$ curl -s http://10.0.0.5:50001/health
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1045,7 +1050,12 @@ $$nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
 After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
 
 ```console
-$ curl -s http://10.0.0.5:50001/health
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1136,9 +1146,22 @@ Depending on the platform, it may fail DNS resolution or resolve to an internal 
 The sandbox then sees a DNS failure or `connection refused`:
 
 ```console
-$ getent hosts host.docker.internal
+getent hosts host.docker.internal
+```
+
+Expected output:
+
+```text
 172.17.0.1      host.docker.internal host.openshell.internal
-$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+```console
+no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+Expected output:
+
+```text
 * connect to 172.17.0.1 port 11434 failed: Connection refused
 ```
 
@@ -1471,7 +1494,12 @@ A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothin
 Confirm the agent is healthy with the API health endpoint instead:
 
 ```console
-$ curl -sf http://127.0.0.1:8642/health
+curl -sf http://127.0.0.1:8642/health
+```
+
+Example output:
+
+```json
 {"status":"ok","platform":"hermes-agent"}
 ```
 
@@ -1493,8 +1521,8 @@ Pick a distinct sandbox name (the Hermes default is `hermes`; a common pattern i
 To convert an existing sandbox to Hermes instead, destroy and re-onboard:
 
 ```console
-$ $$nemoclaw <name> destroy
-$ NEMOCLAW_AGENT=hermes nemohermes onboard
+$$nemoclaw <name> destroy
+NEMOCLAW_AGENT=hermes nemohermes onboard
 ```
 
 ### `nemohermes: command not found` immediately after install
@@ -1505,15 +1533,15 @@ The installer drops the shim in the same directory as `$$nemoclaw`; if `$$nemocl
 Verify the install:
 
 ```console
-$ command -v nemoclaw
-$ command -v nemohermes
+command -v nemoclaw
+command -v nemohermes
 ```
 
 If only `$$nemoclaw` resolves, re-run the installer with `NEMOCLAW_AGENT=hermes` set so the shim is published:
 
 ```console
-$ export NEMOCLAW_AGENT=hermes
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+export NEMOCLAW_AGENT=hermes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Equivalently, every `nemohermes <cmd>` invocation is `NEMOCLAW_AGENT=hermes nemoclaw <cmd>`.
@@ -1526,14 +1554,14 @@ Pick OAuth when you have a Nous Portal account and an interactive terminal; pick
 Set the method explicitly so the wizard skips the prompt:
 
 ```console
-$ # OAuth (default; interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=oauth
-$ nemohermes onboard
+# OAuth (default; interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=oauth
+nemohermes onboard
 
-$ # API key (non-interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=api-key
-$ export NOUS_API_KEY=nous_...
-$ nemohermes onboard --non-interactive
+# API key (non-interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=api-key
+export NOUS_API_KEY=nous_...
+nemohermes onboard --non-interactive
 ```
 
 `NEMOCLAW_HERMES_AUTH_METHOD` accepts `oauth`, `nous-portal-oauth`, `api-key`, and `nous-api-key`.
@@ -1551,7 +1579,7 @@ Configure your OpenAI-compatible client to pass the Hermes API key in the `Autho
 Stored credentials (including `NOUS_API_KEY` and `OPENAI_API_KEY`) are listed by:
 
 ```console
-$ nemohermes credentials list
+nemohermes credentials list
 ```
 
 Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
@@ -1569,8 +1597,8 @@ This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
 For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
 
 ```console
-$ export TELEGRAM_BOT_TOKEN=...
-$ export DISCORD_BOT_TOKEN=...
-$ export SLACK_BOT_TOKEN=...
-$ nemohermes onboard --resume --non-interactive
+export TELEGRAM_BOT_TOKEN=...
+export DISCORD_BOT_TOKEN=...
+export SLACK_BOT_TOKEN=...
+nemohermes onboard --resume --non-interactive
 ```
