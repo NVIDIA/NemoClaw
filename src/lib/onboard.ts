@@ -6282,8 +6282,8 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
+const recordStateResult = onboardRuntimeBoundary.recordStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
-const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
 
 function skippedStepMessage(
   stepName: string,
@@ -6992,7 +6992,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     session = policiesResult.session;
     sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
 
-    await handleFinalizationState({
+    const finalizationResult = await handleFinalizationState({
       sandboxName,
       model,
       provider,
@@ -7008,7 +7008,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
-        recordSessionComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
@@ -7046,6 +7045,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
+    await recordStateResult(finalizationResult.stateResult);
     traceCompleted = true;
   } finally {
     releaseOnboardLock();

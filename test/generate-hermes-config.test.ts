@@ -120,6 +120,43 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
   });
 
+  it("regression #4230: configures Anthropic Messages routing for Hermes managed inference", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "anthropic",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local",
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+    });
+
+    expect(config.model).toEqual({
+      default: "test-model",
+      provider: "custom",
+      base_url: "https://inference.local",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
+      api_mode: "anthropic_messages",
+    });
+  });
+
+  it("maps OpenAI Responses routing to Hermes' codex_responses api mode", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_INFERENCE_API: "openai-responses",
+    });
+
+    expect(config.model).toMatchObject({
+      api_mode: "codex_responses",
+    });
+  });
+
+  it("fails fast for unsupported Hermes inference API values", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_INFERENCE_API: "graphql",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      "Unsupported Hermes inference API: graphql",
+    );
+  });
+
   it("emits a model.api_key placeholder that satisfies the LiteLLM sk- prefix gate", () => {
     const { config } = runConfigScript();
 

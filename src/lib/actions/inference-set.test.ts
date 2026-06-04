@@ -351,7 +351,7 @@ describe("runInferenceSet", () => {
     });
     expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "shields_down",
+        action: "inference_set",
         sandbox: "alpha",
         reason: "inference set openclaw:nvidia-prod:nvidia/nemotron-3-super-120b-a12b",
       }),
@@ -438,7 +438,7 @@ describe("runInferenceSet", () => {
     });
     expect(deps.calls.appendAuditEntry).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "shields_down",
+        action: "inference_set",
         sandbox: "hermes",
         reason: "inference set hermes:hermes-provider:openai/gpt-5.4-mini",
       }),

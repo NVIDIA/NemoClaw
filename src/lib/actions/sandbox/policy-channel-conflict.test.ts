@@ -535,8 +535,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
   // Scenario 11
   it("slack two-token channel: matching SLACK_BOT_TOKEN hash is detected", async () => {
-    const slackBot = "xoxb-1234-5678-abcdef";
-    const slackApp = "xapp-1-A0000-12345-abcdef";
+    const slackBot = "test-slack-bot-token";
+    const slackApp = "test-slack-app-token";
     const slackBotHash = hashCredential(slackBot) as string;
     arrangeRegistry({
       current: { name: "alpha", messagingChannels: [] },

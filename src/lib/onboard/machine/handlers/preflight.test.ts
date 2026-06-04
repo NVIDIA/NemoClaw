@@ -106,6 +106,13 @@ describe("handlePreflightState", () => {
       sandboxGpuDevice: "GPU-0",
     });
     expect(result.gpuPassthrough).toBe(true);
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "gateway",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "preflight", gpuPassthrough: true },
+    });
   });
 
   it("keeps sandbox GPU disabled when N1X spoof detection yields no NVIDIA GPU", async () => {
