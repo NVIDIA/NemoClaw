@@ -4,10 +4,9 @@
 #
 # OpenClaw skills install/list E2E — direct CLI roundtrip inside sandbox.
 #
-# Reproduces the bug shape from NVIDIA/NemoClaw#4709: when a user runs
-# `openclaw skills install <path>` directly inside a NemoClaw sandbox, the
-# installed skill must show up in `openclaw skills list` output. The mitigation
-# in src/lib/onboard.ts + scripts/nemoclaw-start.sh pins OPENCLAW_HOME,
+# Asserts that when a user runs `openclaw skills install <path>` directly
+# inside a NemoClaw sandbox, the installed skill is enumerated by
+# `openclaw skills list`. The sandbox onboard flow pins OPENCLAW_HOME,
 # OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR so install and list resolve
 # the same workspace dir.
 #
@@ -212,12 +211,31 @@ info "install output:"
 printf '%s\n' "$install_out"
 
 # ══════════════════════════════════════════════════════════════════════
-# Phase 4: List skills via 'openclaw skills list --json' and assert the
-# installed fixture is enumerated. This is the contract NVIDIA/NemoClaw#4709
-# reported as broken; passing here proves the host/runtime env pins close
-# the gap until the upstream openclaw/openclaw fixes ship.
+# Phase 4: Disk verification — install must land under the workspace dir
+# the runtime env pin advertises, NOT under the managed dir or a host
+# fallback. The reporter's repro on disk was ls /sandbox/.openclaw/workspace/skills/<id>.
 # ══════════════════════════════════════════════════════════════════════
-section "Phase 4: Verify 'openclaw skills list' surfaces the installed skill"
+section "Phase 4: Verify install landed under \${OPENCLAW_WORKSPACE_DIR}/skills/<id>"
+
+expected_disk_path="/sandbox/.openclaw/workspace/skills/${SKILL_ID}/SKILL.md"
+set +e
+disk_out=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "ls -1 \"\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/\" 2>&1 ; test -f \"\${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md\" && echo SKILL_MD_PRESENT" 2>&1)
+disk_rc=$?
+set -uo pipefail
+if [ "$disk_rc" -ne 0 ] || ! printf '%s' "$disk_out" | grep -Fq "SKILL_MD_PRESENT"; then
+  fail "Installed skill not present at \${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/SKILL.md (expected ${expected_disk_path})"
+  printf '%s\n' "$disk_out"
+  exit 1
+fi
+pass "SKILL.md present on disk at \${OPENCLAW_WORKSPACE_DIR}/skills/${SKILL_ID}/"
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 5: List skills via 'openclaw skills list --json' and assert the
+# installed fixture is enumerated. This is the contract the issue reports as
+# broken when the runtime env pin is missing; passing here proves the
+# install path and the list path agree on the workspace dir.
+# ══════════════════════════════════════════════════════════════════════
+section "Phase 5: Verify 'openclaw skills list' surfaces the installed skill"
 
 set +e
 list_out=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc 'openclaw skills list --json' 2>&1)
@@ -231,11 +249,76 @@ fi
 pass "openclaw skills list --json completed (exit 0)"
 
 if ! printf '%s' "$list_out" | grep -Fq "\"${SKILL_ID}\""; then
-  fail "Installed skill '${SKILL_ID}' did not appear in 'openclaw skills list --json' output (NVIDIA/NemoClaw#4709 regression)"
+  fail "Installed skill '${SKILL_ID}' did not appear in 'openclaw skills list --json' output"
   printf '%s\n' "$list_out" | tail -c 8000
   exit 1
 fi
 pass "Installed skill '${SKILL_ID}' is enumerated by 'openclaw skills list --json'"
+
+# Assert the list entry's source labels it as openclaw-workspace (not
+# openclaw-managed or openclaw-extra) so we know the skill came from the
+# workspace install path and not a fallback location.
+if ! printf '%s' "$list_out" | grep -Fq "openclaw-workspace"; then
+  fail "Expected at least one entry with source 'openclaw-workspace' in 'openclaw skills list --json' output"
+  printf '%s\n' "$list_out" | tail -c 8000
+  exit 1
+fi
+pass "list output includes an entry with source 'openclaw-workspace'"
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 6: 'openclaw skills info <id>' must resolve the same skill that
+# install wrote and report its on-disk location. This catches drift
+# between the install resolver and the per-skill info resolver.
+# ══════════════════════════════════════════════════════════════════════
+section "Phase 6: Verify 'openclaw skills info ${SKILL_ID}' resolves the workspace path"
+
+set +e
+info_out=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "openclaw skills info $(printf "%q" "$SKILL_ID") --json" 2>&1)
+info_rc=$?
+set -uo pipefail
+if [ "$info_rc" -ne 0 ]; then
+  fail "openclaw skills info ${SKILL_ID} --json failed (exit ${info_rc})"
+  printf '%s\n' "$info_out"
+  exit 1
+fi
+pass "openclaw skills info ${SKILL_ID} --json completed (exit 0)"
+
+if ! printf '%s' "$info_out" | grep -Fq "${SKILL_ID}"; then
+  fail "'openclaw skills info' output did not include the skill id"
+  printf '%s\n' "$info_out" | tail -c 8000
+  exit 1
+fi
+if ! printf '%s' "$info_out" | grep -Fq "/.openclaw/workspace/skills/${SKILL_ID}"; then
+  fail "'openclaw skills info' did not report the workspace install path"
+  printf '%s\n' "$info_out" | tail -c 8000
+  exit 1
+fi
+pass "'openclaw skills info' reports the skill at the workspace install path"
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7: 'openclaw skills check' is the eligibility report users run to
+# diagnose missing skills. The installed fixture must appear there too so
+# users do not see a partial view of their workspace.
+# ══════════════════════════════════════════════════════════════════════
+section "Phase 7: Verify 'openclaw skills check' includes the installed skill"
+
+set +e
+check_out=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc 'openclaw skills check --json' 2>&1)
+check_rc=$?
+set -uo pipefail
+if [ "$check_rc" -ne 0 ]; then
+  fail "openclaw skills check --json failed (exit ${check_rc})"
+  printf '%s\n' "$check_out"
+  exit 1
+fi
+pass "openclaw skills check --json completed (exit 0)"
+
+if ! printf '%s' "$check_out" | grep -Fq "\"${SKILL_ID}\""; then
+  fail "Installed skill '${SKILL_ID}' did not appear in 'openclaw skills check --json' output"
+  printf '%s\n' "$check_out" | tail -c 8000
+  exit 1
+fi
+pass "Installed skill '${SKILL_ID}' is enumerated by 'openclaw skills check --json'"
 
 # ══════════════════════════════════════════════════════════════════════
 # Summary
