@@ -463,6 +463,10 @@ If the sandbox or gateway cannot be verified, the command exits non-zero instead
 When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
+When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state.
+It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
+Failed proofs include remediation guidance for the detected platform.
+
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 
@@ -578,6 +582,11 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavio
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
+If the live policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
+Fix the gateway or policy read problem, then rerun the command.
+For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
+Recover or re-onboard the sandbox, then re-apply the custom preset.
 
 | Flag | Description |
 |------|-------------|
@@ -1496,6 +1505,10 @@ Set them before running `nemohermes onboard`.
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export through the `diagnostics-otel` plugin. Disabled by default. |
+| `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT` | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to `http://host.openshell.internal:4318` when `NEMOCLAW_OPENCLAW_OTEL=1`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME` | service name | Sets the OTEL `service.name` for OpenClaw gateway spans. Defaults to `openclaw-gateway`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE` | `0.0` to `1.0` | Sets OpenClaw's root-span sample rate for conversation diagnostics. Defaults to `1.0`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
@@ -1567,6 +1580,29 @@ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json nemohermes onboard
 
 Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
+
+### OpenClaw Conversation OTEL Diagnostics
+
+Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to enable runtime conversation traces through OpenClaw's `diagnostics-otel` plugin.
+This is separate from `NEMOCLAW_TRACE`, which records NemoClaw onboarding phases to a local JSON file.
+NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metrics and logs are disabled, and prompt/tool content capture is not enabled.
+
+For a local Jaeger collector:
+
+```bash
+docker run --rm --name nemoclaw-jaeger \
+    -e COLLECTOR_OTLP_ENABLED=true \
+    -p 16686:16686 \
+    -p 4318:4318 \
+    jaegertracing/all-in-one:1.57
+NEMOCLAW_OPENCLAW_OTEL=1 nemohermes onboard
+```
+
+Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `nemohermes <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
+
+Then open `http://localhost:16686` and select the `openclaw-gateway` service.
+The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
+For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
 
 ### Probe Timeouts
 

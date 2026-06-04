@@ -96,6 +96,7 @@ This can happen when the backend does not emit the streaming events OpenClaw req
 ```bash
 $$nemoclaw onboard
 ```
+
 Select the same provider and endpoint again.
 The updated streaming probe detects incomplete `/v1/responses` support and selects `/v1/chat/completions` automatically.
 
@@ -156,6 +157,7 @@ To change these values, set the corresponding environment variables before runni
 
 NemoClaw ignores invalid values and bakes the default into the image.
 For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
+For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 
 ```bash
