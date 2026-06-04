@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { scanForSecrets, isMemoryPath } from "./secret-scanner.js";
+import { describe, expect, it } from "vitest";
+import { isMemoryPath, scanForSecrets } from "./secret-scanner.js";
 
 // Test fixtures use synthetic values that look like real secrets but are not.
 // Assembled at runtime to avoid triggering gitleaks/detect-private-key hooks.
@@ -255,7 +255,62 @@ describe("isMemoryPath", () => {
     expect(isMemoryPath("/sandbox/my-project/workspace/readme.md")).toBe(false);
   });
 
-  it("does not match unanchored MEMORY.md in project paths", () => {
-    expect(isMemoryPath("/sandbox/my-project/MEMORY.md")).toBe(false);
+  it("matches MEMORY.md even outside the OpenClaw workspace", () => {
+    // Trades a narrow false-positive (project files named MEMORY.md get
+    // scanned for secrets) for closing the embedded-fallback bypass where
+    // agents write workspace files through bare basenames.
+    expect(isMemoryPath("/sandbox/my-project/MEMORY.md")).toBe(true);
+  });
+
+  it("returns false for non-string input rather than throwing", () => {
+    expect(isMemoryPath(undefined)).toBe(false);
+    expect(isMemoryPath(null)).toBe(false);
+    expect(isMemoryPath(42)).toBe(false);
+    expect(isMemoryPath({})).toBe(false);
+    expect(isMemoryPath("")).toBe(false);
+  });
+
+  it("matches canonical workspace basenames written through a relative path", () => {
+    expect(isMemoryPath("IDENTITY.md")).toBe(true);
+    expect(isMemoryPath("MEMORY.md")).toBe(true);
+    expect(isMemoryPath("SOUL.md")).toBe(true);
+    expect(isMemoryPath("USER.md")).toBe(true);
+    expect(isMemoryPath("AGENTS.md")).toBe(true);
+  });
+
+  it("matches canonical workspace basenames even when nested under a relative subdir", () => {
+    expect(isMemoryPath("workspace-main/IDENTITY.md")).toBe(true);
+  });
+
+  it("matches relative .openclaw and .nemoclaw prefixes", () => {
+    expect(isMemoryPath(".openclaw/memory/notes.md")).toBe(true);
+    expect(isMemoryPath(".nemoclaw/sandboxes.json")).toBe(true);
+  });
+
+  it("does not match unrelated relative files", () => {
+    expect(isMemoryPath("README.md")).toBe(false);
+    expect(isMemoryPath("src/index.ts")).toBe(false);
+  });
+
+  it("matches relative memory/ daily notes (workspace-relative writes)", () => {
+    expect(isMemoryPath("memory/notes.md")).toBe(true);
+    expect(isMemoryPath("memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("matches normalized-equivalent relative memory paths", () => {
+    expect(isMemoryPath("./memory/notes.md")).toBe(true);
+    expect(isMemoryPath("memory//2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("foo/../memory/2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("../memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("matches named-workspace daily memory paths", () => {
+    expect(isMemoryPath("workspace/memory/2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("workspace-main/memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("does not match unrelated relative memory subdirectories", () => {
+    expect(isMemoryPath("src/memory/notes.md")).toBe(false);
+    expect(isMemoryPath("foo/../src/memory/notes.md")).toBe(false);
   });
 });

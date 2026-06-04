@@ -211,4 +211,74 @@ describe("shields timer authorization", () => {
     expect(updatedState.shieldsDownAt).toBeNull();
     expect(fs.existsSync(markerPath)).toBe(false);
   });
+
+  it("persists chattrApplied and fileHashes from the auto-restore lock result", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "alpha";
+    const configPath = "/sandbox/.openclaw/openclaw.json";
+    const configDir = "/sandbox/.openclaw";
+    const sensitiveHashPath = `${configDir}/.config-hash`;
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: "tok",
+      }),
+    );
+
+    const sealedHashes = {
+      [configPath]:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      [sensitiveHashPath]:
+        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+    };
+
+    const lockMock = vi.fn(() => ({
+      chattrApplied: true,
+      fileHashes: sealedHashes,
+    }));
+    const sandboxConfigModule = await import("../sandbox/config");
+    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentName: "openclaw",
+      configPath,
+      configDir,
+      sensitiveFiles: [sensitiveHashPath],
+    });
+    const indexModule = await import("./index");
+    (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      "tok",
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+
+    expect(exitCode).toBe(0);
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(lockMock).toHaveBeenCalledTimes(1);
+    expect(updatedState.shieldsDown).toBe(false);
+    expect(updatedState.chattrApplied).toBe(true);
+    expect(updatedState.fileHashes).toEqual(sealedHashes);
+    expect(updatedState.fileHashes[sensitiveHashPath]).toBeDefined();
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
 });

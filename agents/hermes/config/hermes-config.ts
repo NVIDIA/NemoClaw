@@ -26,15 +26,38 @@ const API_SERVER_TOOLSETS = [
   "audio",
 ];
 
+function hermesApiMode(inferenceApi: string): string | null {
+  // Source of truth: the host-side inference selector and Dockerfile patcher
+  // only write the closed set below into NEMOCLAW_INFERENCE_API. Fail fast for
+  // any other non-empty value so host/sandbox routing contract drift does not
+  // silently fall back to Hermes' default OpenAI-compatible mode.
+  switch (inferenceApi) {
+    case "":
+    case "openai-completions":
+      return null;
+    case "anthropic-messages":
+      return "anthropic_messages";
+    case "openai-responses":
+      return "codex_responses";
+    default:
+      throw new Error(`Unsupported Hermes inference API: ${inferenceApi}`);
+  }
+}
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
   const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const modelConfig: Record<string, unknown> = {
+    default: settings.model,
+    provider: "custom",
+    base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+  };
+  const apiMode = hermesApiMode(settings.inferenceApi);
+  if (apiMode) modelConfig.api_mode = apiMode;
+
   const config: Record<string, unknown> = {
     _config_version: 12,
-    model: {
-      default: settings.model,
-      provider: "custom",
-      base_url: settings.baseUrl,
-    },
+    model: modelConfig,
     terminal: {
       backend: "local",
       timeout: 180,
@@ -99,7 +122,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // API server — internal port only.
   // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
   // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
-  config.platforms = {
+  const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
       extra: {
@@ -108,6 +131,12 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       },
     },
   };
+
+  if (settings.messaging.enabledChannels.has("slack")) {
+    platforms.slack = { enabled: true };
+  }
+
+  config.platforms = platforms;
 
   return config;
 }

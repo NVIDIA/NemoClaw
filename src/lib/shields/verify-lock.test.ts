@@ -189,4 +189,196 @@ describe("verifyShieldsLockState", () => {
     ) => unknown;
     expect(() => call("openclaw", target)).toThrow(/requires options\.exec/);
   });
+
+  // ---------------------------------------------------------------------------
+  // Content-seal drift. Perm-only verification cannot catch
+  // chmod-write-chmod cycles because the mode/owner end up identical to
+  // the locked baseline. The hash compare is the only way to flag a
+  // content tamper that restores the perms afterwards.
+  // ---------------------------------------------------------------------------
+
+  const CLEAN_OPENCLAW_HASH =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const CLEAN_CONFIG_HASH_HASH =
+    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+  const expectedHashes = {
+    "/sandbox/.openclaw/openclaw.json": CLEAN_OPENCLAW_HASH,
+    "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,
+  };
+
+  function makeStatPlusSha(perms: StatLookup, hashes: StatLookup) {
+    return (cmd: string[]): string => {
+      const file = cmd[cmd.length - 1];
+      if (cmd[0] === "stat" && file in perms) return perms[file];
+      if (cmd[0] === "sha256sum" && file in hashes) {
+        // sha256sum prints "<hash>  <path>"; mirror that shape.
+        return `${hashes[file]}  ${file}`;
+      }
+      return "";
+    };
+  }
+
+  it("flags content drift when chmod-write-chmod tamper leaves perms clean but hash changes", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = makeStatPlusSha(
+      {
+        "/sandbox/.openclaw/openclaw.json": "444 root:root",
+        "/sandbox/.openclaw/.config-hash": "444 root:root",
+        "/sandbox/.openclaw": "755 root:root",
+      },
+      {
+        // openclaw.json hash differs from the seal — the host-root tamper
+        // restored the perms after writing so only the content-seal check
+        // can catch it.
+        "/sandbox/.openclaw/openclaw.json":
+          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,
+      },
+    );
+
+    const result = verifyShieldsLockState("openclaw", target, {
+      exec,
+      expectedHashes,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.issues.some(
+        (issue: string) =>
+          issue.startsWith("/sandbox/.openclaw/openclaw.json content drifted"),
+      ),
+    ).toBe(true);
+    // The clean file must not show up as drifted.
+    expect(
+      result.issues.some(
+        (issue: string) =>
+          issue.startsWith("/sandbox/.openclaw/.config-hash content drifted"),
+      ),
+    ).toBe(false);
+  });
+
+  it("passes when perms are clean and hashes match the seal", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = makeStatPlusSha(
+      {
+        "/sandbox/.openclaw/openclaw.json": "444 root:root",
+        "/sandbox/.openclaw/.config-hash": "444 root:root",
+        "/sandbox/.openclaw": "755 root:root",
+      },
+      {
+        "/sandbox/.openclaw/openclaw.json": CLEAN_OPENCLAW_HASH,
+        "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,
+      },
+    );
+
+    const result = verifyShieldsLockState("openclaw", target, {
+      exec,
+      expectedHashes,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("flags a missing seal entry rather than silently passing when expectedHashes is given but a path is absent", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = makeStatPlusSha(
+      {
+        "/sandbox/.openclaw/openclaw.json": "444 root:root",
+        "/sandbox/.openclaw/.config-hash": "444 root:root",
+        "/sandbox/.openclaw": "755 root:root",
+      },
+      {
+        "/sandbox/.openclaw/openclaw.json": CLEAN_OPENCLAW_HASH,
+        "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,
+      },
+    );
+
+    const result = verifyShieldsLockState("openclaw", target, {
+      exec,
+      expectedHashes: {
+        // .config-hash deliberately omitted.
+        "/sandbox/.openclaw/openclaw.json": CLEAN_OPENCLAW_HASH,
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain(
+      "/sandbox/.openclaw/.config-hash content drifted (no seal recorded; expected SHA-256)",
+    );
+  });
+
+  it("flags sha256sum failures as drift instead of swallowing them", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = (cmd: string[]): string => {
+      if (cmd[0] === "stat") {
+        if (cmd[cmd.length - 1] === "/sandbox/.openclaw") return "755 root:root";
+        return "444 root:root";
+      }
+      if (cmd[0] === "sha256sum") {
+        throw new Error("sha256sum: I/O error");
+      }
+      return "";
+    };
+
+    const result = verifyShieldsLockState("openclaw", target, {
+      exec,
+      expectedHashes,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.issues.some((issue: string) =>
+        issue.includes("sha256sum failed: sha256sum: I/O error"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags unparsable sha256sum output rather than treating it as a match", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = (cmd: string[]): string => {
+      if (cmd[0] === "stat") {
+        if (cmd[cmd.length - 1] === "/sandbox/.openclaw") return "755 root:root";
+        return "444 root:root";
+      }
+      if (cmd[0] === "sha256sum") return "garbage output";
+      return "";
+    };
+
+    const result = verifyShieldsLockState("openclaw", target, {
+      exec,
+      expectedHashes,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.issues.some((issue: string) =>
+        issue.includes("sha256sum output unparsable"),
+      ),
+    ).toBe(true);
+  });
+
+  it("skips hash verification entirely when expectedHashes is undefined (legacy state)", async () => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    // sha256sum is wired to throw — if the verifier were to invoke it
+    // anyway, the call would surface in issues.
+    let sha256Calls = 0;
+    const exec = (cmd: string[]): string => {
+      if (cmd[0] === "stat") {
+        if (cmd[cmd.length - 1] === "/sandbox/.openclaw") return "755 root:root";
+        return "444 root:root";
+      }
+      if (cmd[0] === "sha256sum") {
+        sha256Calls++;
+        throw new Error("should not be called");
+      }
+      return "";
+    };
+
+    const result = verifyShieldsLockState("openclaw", target, { exec });
+
+    expect(sha256Calls).toBe(0);
+    expect(result.ok).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
 });

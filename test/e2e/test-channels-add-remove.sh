@@ -323,6 +323,16 @@ section "Phase 3: channels add telegram + rebuild"
 # the operator decides to add a channel and exports the token first.
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 
+# Gateway-credential reuse gate. Before the fix, the rebuild preflight
+# aborted with "provider credential not found" when NVIDIA_API_KEY was unset
+# in the host env even though the inference provider was already registered
+# in the OpenShell gateway. Drop the key from the env around `channels add`
+# + rebuild so the post-add rebuild has to reuse the gateway-stored
+# credential instead of demanding it back on the host.
+NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
+unset NVIDIA_API_KEY
+info "NVIDIA_API_KEY unset for gateway-credential-reuse gate; gateway must hold the credential"
+
 if nemoclaw "$SANDBOX_NAME" channels add telegram >/tmp/nc-add.log 2>&1; then
   add_rc=0
 else
@@ -342,8 +352,28 @@ if run_rebuild_with_live_log /tmp/nc-rebuild-add.log; then
 else
   fail "C3b: rebuild (post-add) failed"
   tail -100 /tmp/nc-rebuild-add.log 2>/dev/null || true
+  # Restore env before bailing so later phases (and operators rerunning
+  # the script interactively) still see the original key.
+  if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+    export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+  fi
   print_summary
 fi
+
+# Gateway-credential reuse assertion: the rebuild must not have aborted with
+# the "provider credential not found" error.
+if grep -q "provider credential not found" /tmp/nc-rebuild-add.log; then
+  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
+else
+  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_API_KEY"
+fi
+
+# Restore for the remaining phases — `channels remove` + rebuild should
+# work in the normal env-present case too.
+if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+  export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+fi
+unset NVIDIA_API_KEY_BACKUP
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Post-add assertions (Test 2 acceptance, regression #3437)

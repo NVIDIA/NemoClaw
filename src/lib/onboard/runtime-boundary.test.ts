@@ -108,14 +108,23 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events.map((event) => event.type)).toEqual([
       "state.exited",
       "state.entered",
+      "state.result.skipped",
       "state.exited",
       "state.entered",
     ]);
     expect(harness.events[1]).toMatchObject({ state: "preflight" });
-    expect(harness.events[3]).toMatchObject({ state: "gateway" });
+    expect(harness.events[2]).toMatchObject({
+      state: "preflight",
+      metadata: {
+        reason: "already_at_target",
+        currentState: "preflight",
+        targetState: "preflight",
+      },
+    });
+    expect(harness.events[4]).toMatchObject({ state: "gateway" });
   });
 
-  it("ignores stale compatible state results when legacy tests leave the machine behind", async () => {
+  it("emits diagnostics for stale compatible state results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
@@ -125,7 +134,32 @@ describe("OnboardRuntimeBoundary", () => {
 
     await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
 
-    expect(harness.events).toEqual([]);
+    expect(harness.events).toHaveLength(1);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.skipped",
+      state: "init",
+      metadata: {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        targetState: "gateway",
+        sourceState: "preflight",
+      },
+    });
+  });
+
+  it("rejects skipped transition results that carry context updates", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await expect(
+      boundary.recordStateResultWithStepCompatibility(
+        advanceTo("preflight", { metadata: { state: "missing" }, updates: { provider: "nvidia" } }),
+      ),
+    ).rejects.toThrow("Cannot skip onboarding state result with context updates");
   });
 
   it("records resume conflict diagnostics through the runtime", async () => {
