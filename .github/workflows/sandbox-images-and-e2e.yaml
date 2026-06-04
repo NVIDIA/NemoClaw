@@ -84,6 +84,19 @@ jobs:
           docker run --rm --user sandbox nemoclaw-hermes-production \
             test -x /usr/local/bin/nemoclaw-start
 
+      - name: Run Hermes sandbox secret boundary test
+        env:
+          NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
+        run: bash test/e2e/test-hermes-sandbox-secret-boundary.sh
+
+      - name: Upload Hermes sandbox secret boundary log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-sandbox-secret-boundary-log
+          path: /tmp/nemoclaw-hermes-sandbox-secret-boundary.log
+          if-no-files-found: ignore
+
       - name: Run Hermes root entrypoint smoke
         env:
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production

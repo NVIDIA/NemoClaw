@@ -21,6 +21,27 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
+const REMOTE_ONLY_TOOLSETS = [
+  "web",
+  "browser",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "nemoclaw",
+  "audio",
+  "no_mcp",
+];
+const SANDBOX_LOCAL_TOOLSETS = [
+  "terminal",
+  "file",
+  "code_execution",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+];
+
 let tmpDir: string;
 
 function encodeJson(value: unknown): string {
@@ -89,6 +110,48 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   return fixtureScriptPath;
 }
 
+function expectNoSandboxLocalToolsets(toolsets: unknown): void {
+  expect(Array.isArray(toolsets)).toBe(true);
+  for (const toolset of SANDBOX_LOCAL_TOOLSETS) {
+    expect(toolsets).not.toContain(toolset);
+  }
+  expect(toolsets).toContain("no_mcp");
+}
+
+function findRawSecretEnvEntries(envFile: string): string[] {
+  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)(_|$)/;
+  const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
+  const allowedLiterals = new Set(["", "[STRIPPED_BY_MIGRATION]"]);
+  const violations: string[] = [];
+
+  for (const [index, rawLine] of envFile.split(/\r?\n/).entries()) {
+    let line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
+    const [rawKey, ...valueParts] = line.split("=");
+    const key = rawKey.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !secretKey.test(key)) continue;
+    let value = valueParts.join("=").trim();
+    if (
+      value.length >= 2 &&
+      value[0] === value[value.length - 1] &&
+      (value[0] === "'" || value[0] === '"')
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (
+      allowedLiterals.has(value) ||
+      value.startsWith("openshell:resolve:env:") ||
+      slackAlias.test(value)
+    ) {
+      continue;
+    }
+    violations.push(`${key} line ${index + 1}`);
+  }
+
+  return violations;
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-test-"));
 });
@@ -129,6 +192,33 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toMatch(/OPENSHELL/);
   });
 
+  it("keeps remote API and messaging platforms away from local sandbox toolsets", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+        "discord",
+        "slack",
+        "telegram",
+        "wechat",
+        "whatsapp",
+      ]),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        accountId: "test_account_42",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+    });
+
+    expect(config.platform_toolsets.api_server).toEqual(REMOTE_ONLY_TOOLSETS);
+    for (const platform of ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"]) {
+      expect(config.platform_toolsets[platform]).toEqual(REMOTE_ONLY_TOOLSETS);
+      expectNoSandboxLocalToolsets(config.platform_toolsets[platform]);
+    }
+
+    // The local Hermes CLI keeps upstream defaults. NemoClaw only narrows
+    // remote and messaging surfaces that can echo results back to users.
+    expect(config.platform_toolsets.cli).toBeUndefined();
+  });
+
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
@@ -147,6 +237,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.browser).toEqual({ cloud_provider: "browser-use", use_gateway: true });
     expect(config.image_gen).toEqual({ use_gateway: true });
     expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
+    expect(config.platform_toolsets.api_server).toContain("tts");
+    expectNoSandboxLocalToolsets(config.platform_toolsets.api_server);
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
     expect(envFile).toContain(
@@ -174,6 +266,33 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(`${result.stderr}\n${result.stdout}`).toContain(
       "Unknown Hermes managed-tool gateway preset: nous-typo",
     );
+  });
+
+  it("emits only resolver placeholders for secret-shaped Hermes env keys", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+        "discord",
+        "slack",
+        "telegram",
+        "wechat",
+        "whatsapp",
+      ]),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        accountId: "test_account_42",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson([
+        "nous-web",
+        "nous-audio",
+        "nous-browser",
+        "nous-image",
+      ]),
+    });
+
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+    expect(envFile).not.toContain("OPENAI_API_KEY=");
   });
 
   it("writes Discord settings in Hermes' top-level schema and keeps tokens in .env", () => {

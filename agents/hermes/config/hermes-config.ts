@@ -8,26 +8,28 @@ import {
 } from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
-const API_SERVER_TOOLSETS = [
+const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
-  "terminal",
-  "file",
-  "code_execution",
   "vision",
   "image_gen",
   "skills",
   "todo",
-  "memory",
-  "session_search",
-  "delegation",
-  "cronjob",
   "nemoclaw",
   "audio",
+  "no_mcp",
 ];
 
+const MESSAGING_PLATFORM_BY_CHANNEL: Record<string, string> = {
+  discord: "discord",
+  slack: "slack",
+  telegram: "telegram",
+  wechat: "weixin",
+  whatsapp: "whatsapp",
+};
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
-  const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
   const config: Record<string, unknown> = {
     _config_version: 12,
     model: {
@@ -59,7 +61,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       enabled: ["nemoclaw"],
     },
     platform_toolsets: {
-      api_server: apiServerToolsets,
+      api_server: remotePlatformToolsets,
     },
   };
 
@@ -81,9 +83,9 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     }
     if (
       settings.managedToolGateways.presets.includes("nous-audio") &&
-      !apiServerToolsets.includes("tts")
+      !remotePlatformToolsets.includes("tts")
     ) {
-      apiServerToolsets.push("tts");
+      remotePlatformToolsets.push("tts");
     }
   }
 
@@ -115,6 +117,13 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   }
 
   config.platforms = platforms;
+  const platformToolsets = config.platform_toolsets as Record<string, string[]>;
+  for (const channel of settings.messaging.enabledChannels) {
+    const platform = MESSAGING_PLATFORM_BY_CHANNEL[channel];
+    if (platform) {
+      platformToolsets[platform] = [...remotePlatformToolsets];
+    }
+  }
 
   return config;
 }
