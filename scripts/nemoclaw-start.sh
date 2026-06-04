@@ -211,9 +211,15 @@ mark_in_container_gateway() {
 }
 # A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
 # (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
-# absent. Both the root and non-root entrypoint paths gate gateway startup on
-# the same emptiness check further below.
-if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+# absent. Docker-driver sandboxes also leave it absent because OpenShell runs
+# the gateway as a host-side process outside this container's namespace. Both
+# the root and non-root entrypoint paths gate local gateway startup on the same
+# emptiness check further below.
+case ",${OPENSHELL_DRIVERS:-}," in
+  *,docker,*) _NEMOCLAW_DOCKER_DRIVER=1 ;;
+  *) _NEMOCLAW_DOCKER_DRIVER=0 ;;
+esac
+if [ ${#NEMOCLAW_CMD[@]} -eq 0 ] && [ "$_NEMOCLAW_DOCKER_DRIVER" != "1" ]; then
   mark_in_container_gateway
 fi
 
