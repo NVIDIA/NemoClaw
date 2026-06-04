@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Install OpenClaw messaging plugins that match the bundled OpenClaw version.
+"""Install OpenClaw plugins that match the bundled OpenClaw version.
 
 OpenClaw's doctor repair uses the official catalog's unversioned plugin specs.
 That can drift to a newer external messaging plugin than the host OpenClaw
@@ -28,6 +28,7 @@ EXTERNAL_CHANNEL_PACKAGES = {
     "slack": "@openclaw/slack",
     "whatsapp": "@openclaw/whatsapp",
 }
+DIAGNOSTICS_OTEL_PACKAGE = "@openclaw/diagnostics-otel"
 
 DOCTOR_ENV_BY_CHANNEL = {
     "telegram": {
@@ -76,22 +77,41 @@ def decode_channels(raw: str) -> list[str]:
     return channels
 
 
-def require_openclaw_version(channels: Iterable[str], env: dict[str, str]) -> str:
+def is_truthy_env(value: str | None) -> bool:
+    if value is None or value.strip() == "":
+        return False
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def require_openclaw_version(
+    channels: Iterable[str],
+    env: dict[str, str],
+    *,
+    diagnostics_otel_enabled: bool,
+) -> str:
     needs_external_install = any(channel in EXTERNAL_CHANNEL_PACKAGES for channel in channels)
+    needs_external_install = needs_external_install or diagnostics_otel_enabled
     version = (env.get("OPENCLAW_VERSION") or "").strip()
     if needs_external_install and not version:
         raise BuildMessagingPluginError(
-            "OPENCLAW_VERSION is required when external messaging channels are enabled"
+            "OPENCLAW_VERSION is required when external OpenClaw plugins are enabled"
         )
     return version
 
 
-def plugin_specs(channels: Iterable[str], openclaw_version: str) -> list[str]:
+def plugin_specs(
+    channels: Iterable[str],
+    openclaw_version: str,
+    *,
+    diagnostics_otel_enabled: bool,
+) -> list[str]:
     specs: list[str] = []
     for channel in channels:
         package_name = EXTERNAL_CHANNEL_PACKAGES.get(channel)
         if package_name:
             specs.append(f"npm:{package_name}@{openclaw_version}")
+    if diagnostics_otel_enabled:
+        specs.append(f"npm:{DIAGNOSTICS_OTEL_PACKAGE}@{openclaw_version}")
     return specs
 
 
@@ -118,8 +138,17 @@ def main(argv: list[str]) -> int:
 
     raw_channels = os.environ.get("NEMOCLAW_MESSAGING_CHANNELS_B64", DEFAULT_CHANNELS_B64)
     channels = decode_channels(raw_channels or DEFAULT_CHANNELS_B64)
-    openclaw_version = require_openclaw_version(channels, os.environ)
-    specs = plugin_specs(channels, openclaw_version)
+    diagnostics_otel_enabled = is_truthy_env(os.environ.get("NEMOCLAW_OPENCLAW_OTEL"))
+    openclaw_version = require_openclaw_version(
+        channels,
+        os.environ,
+        diagnostics_otel_enabled=diagnostics_otel_enabled,
+    )
+    specs = plugin_specs(
+        channels,
+        openclaw_version,
+        diagnostics_otel_enabled=diagnostics_otel_enabled,
+    )
     env_overrides = doctor_env_overrides(channels)
 
     if args.dry_run:
@@ -127,6 +156,7 @@ def main(argv: list[str]) -> int:
             json.dumps(
                 {
                     "channels": channels,
+                    "diagnosticsOtelEnabled": diagnostics_otel_enabled,
                     "doctorEnv": env_overrides,
                     "installSpecs": specs,
                     "openclawVersion": openclaw_version,

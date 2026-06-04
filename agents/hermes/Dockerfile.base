@@ -130,7 +130,10 @@ RUN mkdir -p /sandbox/.hermes/memories \
     && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and

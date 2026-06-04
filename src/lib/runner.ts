@@ -265,6 +265,10 @@ const { redact, redactError, writeRedactedResult } = require("./security/redact"
 /** Structured result returned by runCaptureEx. */
 export interface CaptureResult {
   stdout: string;
+  /** Captured stderr, trimmed. Many tools (docker, CUDA samples) write their
+   * actionable failure text here, so callers building diagnostics need it.
+   * Optional so existing `runCaptureEx` test seams stay source-compatible. */
+  stderr?: string;
   exitCode: number | null;
   /** True when spawnSync sets result.error due to a timeout (ETIMEDOUT). */
   timedOut: boolean;
@@ -299,8 +303,10 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
       (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
       result.status === 28;
     const stdout = result.stdout || "";
+    const stderr = result.stderr || "";
     return {
       stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
+      stderr: (typeof stderr === "string" ? stderr : stderr.toString("utf-8")).trim(),
       exitCode: result.status,
       timedOut,
     };

@@ -89,8 +89,13 @@ state_dirs:
 # exposes compatibility symlinks such as .hermes/state.db -> runtime/state.db.
 # The SQLite database is captured with SQLite's online backup API; WAL/SHM
 # files are intentionally omitted because the backup produces a consistent DB.
+# .hermes_history is user runtime history: prompt_toolkit appends to it on
+# every TUI keypress, so NemoClaw intentionally keeps it sandbox-writable even
+# when shields-up locks the parent config dir. It can be removed from this
+# contract if upstream Hermes supports redirecting or disabling FileHistory.
 state_files:
   - path: SOUL.md
+  - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
 

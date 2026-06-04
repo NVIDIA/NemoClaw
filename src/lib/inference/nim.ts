@@ -21,6 +21,7 @@ const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
 import {
+  type Arm64WslDockerDesktopGpuProver,
   isDenylistedNvidiaGpuName,
   isPlausibleNvidiaGpuName,
   nvidiaHostLooksGenuine,
@@ -70,6 +71,44 @@ export interface GpuDetection {
   unifiedMemory?: boolean;
   spark?: boolean;
   platform?: NvidiaPlatform;
+  // Set when a denylisted `JMJWOA-Generic-*` placeholder name was accepted only
+  // because a bounded Docker `--gpus` CUDA proof passed (Windows-ARM N1X + WSL2
+  // + Docker Desktop, #4565). Diagnostic marker that this detection cleared a
+  // live proof rather than firmware/name trust. The sandbox GPU preflight still
+  // reaches the Docker Desktop WSL compatibility branch via its own
+  // `detectWslDockerDesktopStatus()` check (consistent because the proof itself
+  // requires Docker Desktop WSL); this flag does not gate that branch.
+  wslDockerDesktopGpuProofPassed?: boolean;
+}
+
+export interface DetectGpuDeps {
+  // Optional accept-path for ARM64 WSL Docker Desktop `JMJWOA-Generic-*` GPUs
+  // (#4565). Injected in tests; in production `detectGpu()` lazily builds the
+  // default prover from the onboard WSL Docker Desktop module only when it is
+  // about to reject a denylisted ARM64 name.
+  proveArm64WslDockerDesktopGpu?: Arm64WslDockerDesktopGpuProver | null;
+}
+
+// Lazily construct the default ARM64 WSL Docker Desktop GPU prover. Kept lazy
+// (and behind a require) so the inference layer does not statically depend on
+// the onboard layer, and so the bounded Docker proof is only wired when we
+// actually reach the denylist-reject path on an ARM64 host.
+function defaultArm64WslDockerDesktopGpuProver(): Arm64WslDockerDesktopGpuProver | null {
+  try {
+    return require("../onboard/wsl-docker-desktop-gpu").createArm64WslDockerDesktopGpuProver();
+  } catch (error) {
+    // Only the optional module-resolution case should degrade to "no prover";
+    // a real bug inside the prover module must bubble up rather than masquerade
+    // as a missing GPU on an otherwise-supported N1X host.
+    if (
+      error &&
+      typeof error === "object" &&
+      (error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND"
+    ) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 // Group GPUs by their nvidia-smi model name, preserving first-appearance order.
@@ -314,7 +353,7 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
-export function detectGpu(): GpuDetection | null {
+export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
   // the bootstrap-model selector can pick a model that fits currently
@@ -356,20 +395,43 @@ export function detectGpu(): GpuDetection | null {
         // Off Spark/Station/Jetson firmware, layer a denylist check and the
         // trust-tier gate before trusting the nvidia-smi probe. The observed
         // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
-        // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
-        // either signal alone is sufficient to reject. Treat any denylisted
-        // row as a poisoned probe and reject the whole result — partial
-        // filtering would let a mixed-row spoof surface a non-placeholder
-        // row as a real GPU.
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory. A
+        // denylisted row still fails closed by default; the only escape is a
+        // bounded Docker `--gpus` CUDA proof (#4565), which the Snapdragon shim
+        // cannot pass. Without that proof, any denylisted row rejects the whole
+        // probe — partial filtering would let a mixed-row spoof surface a
+        // non-placeholder row as a real GPU.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
         let trusted: ParsedGpu[];
+        let wslDockerDesktopGpuProofPassed = false;
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
-        } else {
-          if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+        } else if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+          // A denylisted `JMJWOA-Generic-*` placeholder. Both real Windows-ARM
+          // N1X (WSL2 + Docker Desktop) and the Snapdragon nvidia-smi shim emit
+          // this name, so the name and `/proc/driver/nvidia` are insufficient.
+          // Give the host one bounded Docker `--gpus` CUDA proof: only the real
+          // GPU can run the workload, so a pass safely accepts N1X while the
+          // shim keeps failing closed (#4565 without reopening #3988/#4424).
+          const prover =
+            deps.proveArm64WslDockerDesktopGpu === undefined
+              ? defaultArm64WslDockerDesktopGpuProver()
+              : deps.proveArm64WslDockerDesktopGpu;
+          const proof = prover ? prover(parsed.map((p: ParsedGpu) => p.name)) : null;
+          if (!proof || !proof.passed) {
             return null;
           }
+          // The proof confirms a usable GPU, but it does not vouch for every
+          // row. Keep only the placeholder rows it covers plus any plausibly-
+          // named NVIDIA rows; drop unrecognized garbage so a mixed-row spoof
+          // cannot inflate totalMemoryMB with a phantom device.
+          trusted = parsed.filter(
+            (p: ParsedGpu) =>
+              isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
+          );
+          wslDockerDesktopGpuProofPassed = true;
+        } else {
           if (!nvidiaHostLooksGenuine()) {
             return null;
           }
@@ -402,6 +464,7 @@ export function detectGpu(): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
+          ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }
     }

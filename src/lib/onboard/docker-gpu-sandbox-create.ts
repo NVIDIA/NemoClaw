@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getSandboxFailurePhase } from "../state/gateway";
+import type { SandboxGpuProofResult } from "../state/registry";
 import type {
   DockerGpuPatchBackend,
   DockerGpuPatchDeps,
@@ -19,7 +21,6 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
-import { getSandboxFailurePhase } from "../state/gateway";
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
@@ -64,9 +65,12 @@ export type DockerGpuSandboxCreatePatch = {
    * Run the GPU proof while distinguishing "sandbox in terminal phase" from
    * "proof failed inside a live sandbox". Calls `process.exit(1)` for the
    * former and rethrows after printing diagnostics for the latter so the
-   * onboarding flow surfaces the right failure cause (#4316).
+   * onboarding flow surfaces the right failure cause (#4316). Returns the
+   * CUDA-usability proof result on success so callers can persist it (#4231).
    */
-  verifyGpuOrExit: (verifyDirectSandboxGpu: (sandboxName: string) => void) => void;
+  verifyGpuOrExit: (
+    verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
+  ) => SandboxGpuProofResult;
 };
 
 export function createDockerGpuSandboxCreatePatch(
@@ -209,7 +213,7 @@ export function createDockerGpuSandboxCreatePatch(
         }
       }
       try {
-        verifyDirectSandboxGpu(sandboxName);
+        return verifyDirectSandboxGpu(sandboxName);
       } catch (error) {
         printDockerGpuProofFailure(sandboxName, error, result?.mode ?? null, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
