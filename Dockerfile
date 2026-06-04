@@ -505,6 +505,10 @@ ARG NEMOCLAW_PROXY_PORT=3128
 # The actual API key is injected at runtime via openshell:resolve:env, never
 # baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_OPENCLAW_OTEL=0
+ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
+ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
+ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 
 # SECURITY: Promote build-args to env vars so the TypeScript script reads them
 # via process.env, never via string interpolation into executable source code.
@@ -533,7 +537,11 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
-    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
+    NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
+    NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
+    NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
 
 WORKDIR /sandbox
 USER sandbox
@@ -839,6 +847,38 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
             find "$p" -type d -exec chmod a+rwx {} +; \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
+    fi
+
+# Temporary workaround for OpenTelemetry JS OTLP/HTTP proxy handling.
+# When diagnostics OTEL is enabled, patch the bundled exporter so Node's
+# NODE_USE_ENV_PROXY=1 handling can apply instead of forcing the default agent.
+# Remove once https://github.com/open-telemetry/opentelemetry-js/issues/6638
+# is fixed in @opentelemetry/otlp-exporter-base.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+        target="$(find /sandbox/.openclaw \
+            -path '*/@opentelemetry/otlp-exporter-base/build/src/transport/http-transport-utils.js' \
+            -print -quit 2>/dev/null || true)"; \
+        if [ -z "$target" ]; then \
+            echo "ERROR: NEMOCLAW_OPENCLAW_OTEL=1 but otlp-exporter-base transport was not found" >&2; \
+            exit 1; \
+        fi; \
+        if grep -q 'NODE_USE_ENV_PROXY' "$target"; then \
+            echo "INFO: OpenTelemetry OTLP proxy patch already present in $target"; \
+        else \
+            owner="$(stat -c '%u:%g' "$target")"; \
+            mode="$(stat -c '%a' "$target")"; \
+            cp -p "$target" "$target.bak"; \
+            sed -i "0,/^[[:space:]]*agent,$/s//        agent: process.env.NODE_USE_ENV_PROXY === '1' ? undefined : agent,/" "$target"; \
+            grep -q 'NODE_USE_ENV_PROXY' "$target" || { \
+                echo "ERROR: failed to patch OpenTelemetry OTLP transport at $target" >&2; \
+                exit 1; \
+            }; \
+            chown "$owner" "$target"; \
+            chmod "$mode" "$target"; \
+            echo "INFO: patched OpenTelemetry OTLP proxy handling in $target"; \
+        fi; \
     fi
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)

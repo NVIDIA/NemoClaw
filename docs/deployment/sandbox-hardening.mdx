@@ -39,6 +39,11 @@ It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
 `CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
 When `setpriv` is available, the entrypoint also removes the remaining privilege-separation capabilities during the switch from root to the `sandbox` and `gateway` users.
 
+The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable the entrypoint logs a warning and continues with the runtime-provided capability set.
+If `setpriv` is unavailable, the entrypoint falls back to `gosu`.
+To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment: the agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities.
+This is opt-in because hosts that cannot drop capabilities (no `CAP_SETPCAP` — many cloud VMs, Docker Desktop, WSL) are common, and the check covers the agent process tree only.
+
 For defense-in-depth, also drop all Linux capabilities at the container runtime
 when you launch the image directly:
 

@@ -1257,6 +1257,11 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
 
+  if (!registry.getSandbox(sandboxName)) {
+    console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
+    process.exit(1);
+  }
+
   const normalized = channelArg.trim().toLowerCase();
   const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(normalized);
   if (alreadyDisabled === disabled) {

@@ -198,6 +198,21 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(webSearchConfig ? "1" : "0")}`,
   );
+  for (const envKey of [
+    "NEMOCLAW_OPENCLAW_OTEL",
+    "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+    "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
+    "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
+  ]) {
+    const rawValue = process.env[envKey];
+    if (rawValue !== undefined && rawValue.trim() !== "") {
+      const argPattern = new RegExp(`^ARG ${envKey}=.*$`, "m");
+      if (!argPattern.test(dockerfile)) {
+        throw new Error(`Dockerfile is missing ARG ${envKey}; cannot apply value ${rawValue}`);
+      }
+      dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
+    }
+  }
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
   dockerfile = dockerfile.replace(

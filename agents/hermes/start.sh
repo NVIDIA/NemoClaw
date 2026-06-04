@@ -322,6 +322,14 @@ hermes_config_root_is_locked() {
     && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
+apply_shields_up_runtime_env() {
+  hermes_config_root_is_locked || return 0
+  if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
+  fi
+}
+
 ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
@@ -365,9 +373,113 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_history_file() {
+  local file="$1"
+  local mode="$2"
+
+  # Use a no-follow fd workflow instead of check-then-use shell path
+  # operations. /sandbox/.hermes is intentionally sandbox-writable while
+  # shields are down, so root must not validate the pathname and then later
+  # chown/chmod whatever an agent swaps into that path. Python gives us
+  # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
+  NEMOCLAW_HERMES_HISTORY_FILE="$file" \
+    NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
+    python3 - <<'PYHISTORY'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+path = os.environ["NEMOCLAW_HERMES_HISTORY_FILE"]
+mode_text = os.environ["NEMOCLAW_HERMES_HISTORY_MODE"]
+try:
+    mode = int(mode_text, 8)
+except ValueError:
+    print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
+    sys.exit(1)
+
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+    sys.exit(1)
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+
+
+def describe_unsafe_existing_path() -> str:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "could not be opened safely"
+    if stat.S_ISLNK(st.st_mode):
+        return "is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a regular file"
+    return "could not be opened safely"
+
+try:
+    fd = os.open(path, flags, mode)
+except OSError as exc:
+    reason = describe_unsafe_existing_path()
+    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject hard-linked targets. An attacker who controls the sandbox user
+    # before shields-up can pre-create .hermes_history as a hard link to
+    # config.yaml or .env. O_NOFOLLOW and regular-file checks pass, so without
+    # this guard fchown/fchmod would walk the shared inode and silently undo
+    # the shields-up root:root 0444 lock on the config file after
+    # verify_config_integrity has already passed.
+    if st.st_nlink != 1:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {st.st_nlink}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.geteuid() == 0:
+        try:
+            uid = pwd.getpwnam("sandbox").pw_uid
+            gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        os.fchown(fd, uid, gid)
+    os.fchmod(fd, mode)
+
+    st = os.fstat(fd)
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.close(fd)
+PYHISTORY
+}
+
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    # The locked-root posture seals config.yaml/.env, not the dir, so we can
+    # still bring a missing prompt_toolkit history file into existence as a
+    # sandbox-owned regular file. Sandboxes built before the precreate landed
+    # would otherwise stay broken until the next `shields down` cycle.
+    # Refusal (symlink, non-regular, create failure) is a hard stop: starting
+    # the gateway with an unsafe .hermes_history under a locked root would
+    # either let the TUI clobber an attacker-pointed path or repeat the
+    # original keypress traceback.
+    echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
     return 0
   fi
 
@@ -377,6 +489,7 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
 }
 
 cleanup_stale_hermes_gateway_runtime() {
@@ -839,14 +952,14 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_shields_up_runtime_env
   refresh_hermes_provider_placeholders
   configure_messaging_channels
+  retry_tirith_marker_if_needed
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
-
-  retry_tirith_marker_if_needed
 
   cleanup_stale_hermes_gateway_runtime
 
@@ -887,14 +1000,14 @@ fi
 
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+apply_shields_up_runtime_env
 refresh_hermes_provider_placeholders
 configure_messaging_channels
+retry_tirith_marker_if_needed
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
-
-retry_tirith_marker_if_needed
 
 cleanup_stale_hermes_gateway_runtime
 

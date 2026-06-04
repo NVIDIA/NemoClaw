@@ -166,6 +166,8 @@ Three tiers are available:
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, see [Network Policies](network-policies.md#policy-tiers).
+When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
+Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 
@@ -249,6 +251,9 @@ Guild responses remain mention-gated by default unless you opt into all-message 
 If you enable Telegram during onboarding, the wizard can also prompt for whether group chats should reply only to `@mentions` or to all group messages.
 Set `TELEGRAM_REQUIRE_MENTION=1` for non-interactive onboarding when you want mention-only group replies.
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
+
+If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
+Existing live sandboxes are not deleted by this cancel rollback path.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.
@@ -422,6 +427,10 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the variable, or supply the missing token, before retrying.
 
+When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` prints an explicit warning and realigns the shared gateway to the recorded route.
+Use `nemoclaw inference set --provider <provider> --model <model>` to make an intentional route change.
+If the sandbox is registered locally but missing from a healthy gateway, `connect` preserves the registry entry and points you to `rebuild --yes`, `onboard`, or `destroy` instead of deleting the metadata needed for recovery.
+
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
@@ -490,6 +499,8 @@ Pass `--json` to emit a structured per-sandbox report instead of the text render
 The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, and `dockerPaused`.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
+`dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
+In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), or `failureLayer` is non-null.
 The alias form `nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
@@ -523,7 +534,12 @@ When the host Docker daemon is reachable but the per-sandbox container is stoppe
 If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to `Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
+When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
+
+When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state.
+It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
+Failed proofs include remediation guidance for the detected platform.
 
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
@@ -719,6 +735,11 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavio
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
+If the live policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
+Fix the gateway or policy read problem, then rerun the command.
+For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
+Recover or re-onboard the sandbox, then re-apply the custom preset.
 
 | Flag | Description |
 |------|-------------|
@@ -787,6 +808,8 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 
 Add a host alias to the sandbox pod template.
 Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
+Host alias commands use the legacy Kubernetes gateway `Sandbox` resource path.
+They are not supported on Docker-driver or VM-driver sandboxes because those drivers do not run the gateway cluster container that owns this resource.
 
 ```bash
 nemoclaw my-assistant hosts-add searxng.local 192.168.1.105
@@ -1422,6 +1445,8 @@ nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
 If you only want the lower-level OpenShell route operation, run `openshell inference set -g nemoclaw --model <model> --provider <provider>` directly.
 When either flag is missing, `nemoclaw inference set` prints that OpenShell command instead of an oclif flag-validation error.
+The command updates the host registry immediately after the gateway route changes.
+If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry aligned, warns that the running image may still need a rebuild, and points you to `nemoclaw <name> rebuild`.
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
@@ -1627,6 +1652,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
+When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
@@ -1692,6 +1718,10 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_OPENCLAW_OTEL` | `1` to enable | Enables OpenClaw conversation diagnostics export through the `diagnostics-otel` plugin. Disabled by default. |
+| `NEMOCLAW_OPENCLAW_OTEL_ENDPOINT` | OTLP/HTTP URL | Sets the OpenTelemetry collector endpoint for OpenClaw diagnostics. Defaults to `http://host.openshell.internal:4318` when `NEMOCLAW_OPENCLAW_OTEL=1`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME` | service name | Sets the OTEL `service.name` for OpenClaw gateway spans. Defaults to `openclaw-gateway`. |
+| `NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE` | `0.0` to `1.0` | Sets OpenClaw's root-span sample rate for conversation diagnostics. Defaults to `1.0`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
@@ -1821,6 +1851,29 @@ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json nemoclaw onboard
 
 Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
 Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
+
+### OpenClaw Conversation OTEL Diagnostics
+
+Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to enable runtime conversation traces through OpenClaw's `diagnostics-otel` plugin.
+This is separate from `NEMOCLAW_TRACE`, which records NemoClaw onboarding phases to a local JSON file.
+NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metrics and logs are disabled, and prompt/tool content capture is not enabled.
+
+For a local Jaeger collector:
+
+```bash
+docker run --rm --name nemoclaw-jaeger \
+    -e COLLECTOR_OTLP_ENABLED=true \
+    -p 16686:16686 \
+    -p 4318:4318 \
+    jaegertracing/all-in-one:1.57
+NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
+```
+
+Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
+
+Then open `http://localhost:16686` and select the `openclaw-gateway` service.
+The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
+For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
 
 ### Probe Timeouts
 

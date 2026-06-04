@@ -584,6 +584,12 @@ nemoclaw <name> rebuild
 The sandbox may have been stopped or deleted.
 Run `nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
 
+### Sandbox is registered locally but missing from the gateway
+
+After a gateway restart, host reboot, or manual OpenShell cleanup, NemoClaw may still have a local registry entry for a sandbox that the live gateway no longer lists.
+`nemoclaw <name> status` and `nemoclaw <name> connect` preserve that local registry entry and print recovery guidance instead of deleting it automatically.
+Run `nemoclaw <name> rebuild --yes` when you want NemoClaw to recreate the sandbox from the recorded metadata, or run `nemoclaw <name> destroy` when you intentionally want to remove the stale entry.
+
 ### Status shows "not running" inside the sandbox
 
 This is expected behavior.
@@ -1342,7 +1348,13 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the Quickstart (use the `nemoclaw-user-get-started` skill) and Windows Setup pages.
+For additional troubleshooting, see the Windows Setup page.
+<AgentOnly variant="openclaw">
+For first-time OpenClaw setup, see the Quickstart (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
+<AgentOnly variant="hermes">
+For first-time Hermes setup, see Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
 
 ## Podman
 
@@ -1352,7 +1364,9 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 ## Brev
 
+<AgentOnly variant="openclaw">
 For Brev setup instructions, refer to Brev Web UI (use the `nemoclaw-user-deploy-remote` skill).
+</AgentOnly>
 
 ### Most OpenClaw skills show as blocked
 
