@@ -43,7 +43,11 @@ function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode;
 }
 
-function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
+function withMockedDockerExecFileSync<T>(
+  calls: string[][],
+  run: () => T,
+  options: { symlinkedPaths?: ReadonlySet<string> } = {},
+): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerExecModule = require("../dist/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
@@ -66,6 +70,14 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
     const separator = args.indexOf("--");
     const command = separator >= 0 ? args.slice(separator + 1) : [...args];
     calls.push(command);
+    if (command[0] === "python3" && command[1] === "-c") {
+      for (const target of command.slice(6)) {
+        if (options.symlinkedPaths?.has(target)) {
+          throw new Error(`refusing symlink path: ${target}`);
+        }
+      }
+      return "";
+    }
     if (command[0] === "stat" && command[1] === "-c") {
       const target = command.at(-1);
       if (target === "/sandbox/.openclaw") return "2770 sandbox:sandbox\n";
@@ -225,9 +237,19 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/openclaw.json"]);
-    expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/.config-hash"]);
-    expect(commands).toContainEqual(["chmod", "2770", "/sandbox/.openclaw"]);
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
+    );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "660",
+        "2770",
+        "sandbox:sandbox",
+        "/sandbox/.openclaw",
+        "/sandbox/.openclaw/openclaw.json",
+        "/sandbox/.openclaw/.config-hash",
+      ]),
+    );
     // The consolidated state-dir unlock script restores ownership and mode on
     // every high-risk state dir (including `workspace`) inside a single
     // `sh -c` invocation; the workspace-* glob is handled by a second
@@ -250,6 +272,65 @@ describe("mutable agent config permissions", () => {
           typeof command[2] === "string" && command[2].includes('workspace-*'),
       ),
     ).toBe(true);
+  });
+
+  it("refuses to unlock OpenClaw config when a config path is a symlink", () => {
+    const commands: string[][] = [];
+    expect(() =>
+      withMockedDockerExecFileSync(
+        commands,
+        () => {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+            unlockAgentConfig: (
+              sandboxName: string,
+              target: {
+                agentName?: string;
+                configPath: string;
+                configDir: string;
+                sensitiveFiles?: string[];
+              },
+            ) => void;
+          };
+
+          unlockAgentConfig("sandbox-pod", {
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+            sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+          });
+        },
+        {
+          symlinkedPaths: new Set(["/sandbox/.openclaw/openclaw.json"]),
+        },
+      ),
+    ).toThrow("refusing symlink path");
+
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
+    );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.openclaw",
+        "/sandbox/.openclaw/openclaw.json",
+        "/sandbox/.openclaw/.config-hash",
+      ]),
+    );
+    const script = configUnlock?.[2] ?? "";
+    expect(script).toContain("unlock_ok = False");
+    expect(script).toContain('flags |= getattr(os, "O_NONBLOCK", 0)');
+    expect(script).toContain("if unlock_ok:");
+    expect(script).toContain("elif dir_stat is not None:");
+    expect(script).toContain("os.fchmod(dir_fd, stat.S_IMODE(dir_stat.st_mode))");
+    expect(
+      commands.some(
+        (command) =>
+          command[0] === "sh" &&
+          command[1] === "-c" &&
+          typeof command[2] === "string" &&
+          command[2].includes("chown -R"),
+      ),
+    ).toBe(false);
   });
 
   it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
@@ -276,9 +357,19 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/config.yaml"]);
-    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/.env"]);
-    expect(commands).toContainEqual(["chmod", "3770", "/sandbox/.hermes"]);
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
+    );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "640",
+        "3770",
+        "sandbox:sandbox",
+        "/sandbox/.hermes",
+        "/sandbox/.hermes/config.yaml",
+        "/sandbox/.hermes/.env",
+      ]),
+    );
   });
 
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {

@@ -137,6 +137,25 @@ describe("inspectMutableConfigPerms (#4538)", () => {
     }
   });
 
+  it("flags owner or group drift even when modes match the mutable contract", () => {
+    const result = inspectMutableConfigPerms(
+      OPENCLAW_TARGET,
+      "mutable_default",
+      statFromMap({
+        "/sandbox/.openclaw": "2770 root:root",
+        "/sandbox/.openclaw/openclaw.json": "660 sandbox:root",
+      }),
+    );
+    expect(result.applies).toBe(true);
+    if (result.applies) {
+      expect(result.ok).toBe(false);
+      expect(result.issues).toEqual([
+        "/sandbox/.openclaw owner root:root (expected sandbox:sandbox)",
+        "openclaw.json owner sandbox:root (expected sandbox:sandbox)",
+      ]);
+    }
+  });
+
   it("does not apply to non-OpenClaw agents", () => {
     const result = inspectMutableConfigPerms(HERMES_TARGET, "mutable_default", () => {
       throw new Error("should not stat for hermes");

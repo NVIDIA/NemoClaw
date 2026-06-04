@@ -95,16 +95,20 @@ export function buildConfigPermsCheck(
   let after: MutableConfigPermsInspection;
   try {
     after = inspect(sandboxName);
-  } catch {
-    after = { applies: false, reason: "re-inspection failed" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    after = { applies: false, reason: `re-inspection failed: ${message}` };
   }
-  const fixed = after.applies && after.ok;
+  const fixed = repairResult.verified && after.applies && after.ok;
   // Prefer the post-repair issues; otherwise fall back to the repair errors and
   // finally the re-inspection failure reason so the only actionable signal is
   // never dropped to a bare "unknown".
-  const incompleteReason = after.applies
-    ? after.issues.join("; ")
-    : repairResult.errors.join("; ") || after.reason || "unknown";
+  const postRepairIssues = after.applies ? after.issues.join("; ") : "";
+  const repairErrors = repairResult.errors.join("; ");
+  const incompleteReason =
+    postRepairIssues ||
+    repairErrors ||
+    (after.applies ? "repair verification failed" : after.reason || "unknown");
   return {
     group: "Sandbox",
     label: LABEL,

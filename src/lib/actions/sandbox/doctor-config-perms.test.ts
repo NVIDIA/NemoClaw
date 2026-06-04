@@ -103,6 +103,19 @@ describe("buildConfigPermsCheck (#4538)", () => {
     expect(check?.hint).toContain("rebuild");
   });
 
+  it("fails when repair verification fails even if re-inspection only checks the main config", () => {
+    inspect.mockReturnValueOnce(tightened).mockReturnValueOnce(intact);
+    repair.mockReturnValue({
+      applied: true,
+      verified: false,
+      errors: ["/sandbox/.openclaw/.config-hash owner=root:root"],
+    });
+    const check = buildConfigPermsCheck("alpha", true, deps());
+    expect(check?.status).toBe("fail");
+    expect(check?.detail).toContain("repair incomplete");
+    expect(check?.detail).toContain(".config-hash");
+  });
+
   it("warns when --fix is skipped (e.g. shields flipped to locked)", () => {
     inspect.mockReturnValue(tightened);
     repair.mockReturnValue({

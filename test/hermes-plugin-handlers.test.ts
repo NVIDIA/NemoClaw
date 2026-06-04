@@ -328,6 +328,63 @@ print(json.dumps(result))
     );
   });
 
+  it("preserves instance-method strip_think_blocks binding", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    def __init__(self):
+        self.calls = 0
+
+    def _strip_think_blocks(self, content):
+        self.calls += 1
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+
+patched = plugin._install_messaging_response_patch()
+plugin._set_current_messaging_platform("telegram")
+agent = AIAgent()
+normalized = agent._strip_think_blocks(
+    'send_message: "to telegram: Hello from an instance method."'
+)
+plain = agent._strip_think_blocks("plain response")
+
+print(json.dumps({
+    "patched": patched,
+    "normalized": normalized,
+    "plain": plain,
+    "calls": agent.calls,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      patched: boolean;
+      normalized: string;
+      plain: string;
+      calls: number;
+    };
+
+    expect(result.patched).toBe(true);
+    expect(result.normalized).toBe("Hello from an instance method.");
+    expect(result.plain).toBe("plain response");
+    expect(result.calls).toBe(2);
+  });
+
   it("anchors the strip_think_blocks patch via _pre_llm_call gateway hook", () => {
     const output = runPython(`
 import importlib.util

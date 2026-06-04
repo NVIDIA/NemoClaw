@@ -168,10 +168,7 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const {
-  collectBuildContextStats,
-  stageOptimizedSandboxBuildContext,
-} = require("./sandbox/build-context");
+const { collectBuildContextStats, stageOptimizedSandboxBuildContext } = require("./sandbox/build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -3571,6 +3568,7 @@ async function createSandbox(
     hermesDashboardState,
     formatEnvAssignment,
   );
+  require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create

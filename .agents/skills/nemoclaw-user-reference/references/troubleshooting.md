@@ -1348,7 +1348,13 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the Quickstart (use the `nemoclaw-user-get-started` skill) and Windows Setup pages.
+For additional troubleshooting, see the Windows Setup page.
+<AgentOnly variant="openclaw">
+For first-time OpenClaw setup, see the Quickstart (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
+<AgentOnly variant="hermes">
+For first-time Hermes setup, see Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
 
 ## Podman
 
@@ -1358,7 +1364,9 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 ## Brev
 
+<AgentOnly variant="openclaw">
 For Brev setup instructions, refer to Brev Web UI (use the `nemoclaw-user-deploy-remote` skill).
+</AgentOnly>
 
 ### Most OpenClaw skills show as blocked
 

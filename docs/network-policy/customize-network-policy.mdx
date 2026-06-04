@@ -20,12 +20,7 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 
 <Note>
 If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
-<AgentOnly variant="openclaw">
-Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Apply a custom NemoClaw preset with `nemohermes <sandbox> policy-add --from-file`.
-</AgentOnly>
+Apply a custom NemoClaw preset with `$$nemoclaw <sandbox> policy-add --from-file`.
 Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
 See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
 </Note>
@@ -33,7 +28,7 @@ See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#a
 <Warning>
 Adding a host to the egress policy permits the connection only after the endpoint, port, method, and binary rules match.
 OpenShell still applies SSRF protection separately, so a request can be denied if the final address resolves to a loopback, private, link-local, or otherwise blocked internal range.
-If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
+If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
 </Warning>
 
 ## Prerequisites
@@ -55,17 +50,17 @@ Static changes modify the baseline policy file and take effect after the next sa
 <AgentOnly variant="openclaw">
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `$$nemoclaw onboard`.
 
-If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+If you only need to apply a preset to a running sandbox, use `$$nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
 That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Open the Hermes policy additions and shared sandbox policy files under `agents/hermes/` and `nemoclaw-blueprint/policies/`, then add or modify endpoint entries.
 
-If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into the appropriate policy file and re-run `nemohermes onboard`.
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into the appropriate policy file and re-run `$$nemoclaw onboard`.
 
-If you only need to apply a preset to a running sandbox, use `nemohermes <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+If you only need to apply a preset to a running sandbox, use `$$nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
 That updates the live policy and does not edit the baseline policy files.
 </AgentOnly>
 
@@ -86,16 +81,9 @@ Each entry in the `network` section defines an endpoint group with the following
 
 Apply the updated policy by re-running the onboard wizard:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw onboard
+$$nemoclaw onboard
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes onboard
-```
-</AgentOnly>
 
 The wizard reads the modified policy file and applies it to the sandbox.
 
@@ -103,16 +91,9 @@ The wizard reads the modified policy file and applies it to the sandbox.
 
 Check that the sandbox is running with the updated policy:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> status
+$$nemoclaw <name> status
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> status
-```
-</AgentOnly>
 
 ### Add Blueprint Policy Additions
 
@@ -156,20 +137,9 @@ This is the non-destructive path and the only flow NemoClaw supports out of the 
 
 2. Apply it to the running sandbox:
 
-<AgentOnly variant="openclaw">
-
 ```bash
-nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy-add
 ```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-```bash
-nemohermes my-assistant policy-add
-```
-
-</AgentOnly>
 
 NemoClaw reads the live policy via `openshell policy get --full`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
 Existing presets and the baseline remain in place.
@@ -195,10 +165,10 @@ openshell policy set --policy live-policy.yaml my-assistant
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline policy plus the presets recorded for the sandbox.
 <AgentOnly variant="openclaw">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit the Hermes policy additions and re-run `nemohermes onboard`.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above; the file under `presets/` persists) or edit the Hermes policy additions and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 
 ### Approve Requests Interactively
@@ -242,16 +212,9 @@ Available presets:
 
 To apply a preset to a running sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> policy-add
+$$nemoclaw <name> policy-add
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> policy-add
-```
-</AgentOnly>
 
 <Note>
 Preset selection is interactive when you omit a preset name.
@@ -260,71 +223,39 @@ Pass a preset name with `--yes` for scripted workflows.
 
 For example, to interactively add PyPI access to a running sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add
+$$nemoclaw my-assistant policy-add
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add
-```
-</AgentOnly>
 
 To list which presets are applied to a sandbox:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw <name> policy-list
+$$nemoclaw <name> policy-list
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes <name> policy-list
-```
-</AgentOnly>
 
 <AgentOnly variant="openclaw">
-To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-To include a preset in the baseline, merge its entries into the Hermes policy additions and re-run `nemohermes onboard`.
+To include a preset in the baseline, merge its entries into the Hermes policy additions and re-run `$$nemoclaw onboard`.
 </AgentOnly>
 
 <Note>
 The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not accept the `preset:` metadata block used in preset YAML files.
-<AgentOnly variant="openclaw">
-Use `nemoclaw <name> policy-add` for presets.
-</AgentOnly>
-<AgentOnly variant="hermes">
-Use `nemohermes <name> policy-add` for presets.
-</AgentOnly>
+Use `$$nemoclaw <name> policy-add` for presets.
 </Note>
 
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add pypi --yes
-nemoclaw my-assistant policy-remove pypi --yes
+$$nemoclaw my-assistant policy-add pypi --yes
+$$nemoclaw my-assistant policy-remove pypi --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add pypi --yes
-nemohermes my-assistant policy-remove pypi --yes
-```
-</AgentOnly>
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
-See [Commands](../reference/commands#nemoclaw-name-policy-add) for the full flag reference.
+See [Commands](../reference/commands#$$nemoclaw-name-policy-add) for the full flag reference.
 
-<AgentOnly variant="openclaw">
-`nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
-</AgentOnly>
-<AgentOnly variant="hermes">
-`nemohermes <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
-</AgentOnly>
+`$$nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
 ## Custom Preset Files
 
@@ -357,31 +288,17 @@ Rename `preset.name` if NemoClaw refuses to apply the file because of a collisio
 
 ### Apply a Single File
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
+$$nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add --from-file ./presets/my-internal-api.yaml
-```
-</AgentOnly>
 
 Preview the endpoints without applying with `--dry-run`, and skip the confirmation prompt with `--yes` or by exporting `NEMOCLAW_NON_INTERACTIVE=1`.
 
 ### Apply Every File in a Directory
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
+$$nemoclaw my-assistant policy-add --from-dir ./presets/ --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-add --from-dir ./presets/ --yes
-```
-</AgentOnly>
 
 Files are processed in lexicographic order.
 Processing stops at the first failure; presets already applied are not rolled back.
@@ -397,23 +314,11 @@ Review every host in a custom preset before applying it, especially when the fil
 NemoClaw records custom presets applied with `--from-file` or `--from-dir` in the sandbox registry alongside their full YAML content.
 You can remove them by name without keeping the original file on disk:
 
-<AgentOnly variant="openclaw">
 ```bash
-nemoclaw my-assistant policy-remove my-internal-api --yes
+$$nemoclaw my-assistant policy-remove my-internal-api --yes
 ```
-</AgentOnly>
-<AgentOnly variant="hermes">
-```bash
-nemohermes my-assistant policy-remove my-internal-api --yes
-```
-</AgentOnly>
 
-<AgentOnly variant="openclaw">
-`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
-</AgentOnly>
-<AgentOnly variant="hermes">
-`policy-remove` accepts both built-in and custom preset names. Run `nemohermes <name> policy-list` to see every preset currently applied to the sandbox.
-</AgentOnly>
+`policy-remove` accepts both built-in and custom preset names. Run `$$nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
 ## Related Topics
 

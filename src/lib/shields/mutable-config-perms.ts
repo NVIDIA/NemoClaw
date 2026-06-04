@@ -18,6 +18,7 @@
 
 export const MUTABLE_OPENCLAW_DIR_MODE = "2770";
 export const MUTABLE_OPENCLAW_FILE_MODE = "660";
+export const MUTABLE_OPENCLAW_OWNER = "sandbox:sandbox";
 
 export type MutableConfigPostureMode =
   | "mutable_default"
@@ -138,9 +139,19 @@ export function inspectMutableConfigPerms(
       `${target.configDir} mode ${dir.mode} (expected ${MUTABLE_OPENCLAW_DIR_MODE} setgid+group-writable)`,
     );
   }
+  if (dir.owner !== MUTABLE_OPENCLAW_OWNER) {
+    issues.push(
+      `${target.configDir} owner ${dir.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
+    );
+  }
   if (!fileSatisfiesMutableContract(file.mode)) {
     issues.push(
       `${target.configFile} mode ${file.mode} (expected ${MUTABLE_OPENCLAW_FILE_MODE} group-writable)`,
+    );
+  }
+  if (file.owner !== MUTABLE_OPENCLAW_OWNER) {
+    issues.push(
+      `${target.configFile} owner ${file.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
     );
   }
   return {

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -94,6 +95,79 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard helpers", () => {
+  it("adds host proxy variables to sandbox startup env args", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    const noProxy = envArgs.find((entry) => entry.startsWith("NO_PROXY="));
+    expect(noProxy).toContain("corp.internal");
+    expect(noProxy).toContain("localhost");
+    expect(noProxy).toContain("127.0.0.1");
+    expect(noProxy).toContain("host.docker.internal");
+  });
+
+  it("does not add NO_PROXY-only values when no host proxy is configured", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
+  });
+
+  it("trims surrounding whitespace from proxy env values before forwarding", () => {
+    // A `HTTP_PROXY="  http://x:8888  "` from a sloppy shell rc must not
+    // flow through with surrounding whitespace — downstream consumers
+    // that don't re-trim would treat the value as malformed.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "  http://127.0.0.1:8888  ",
+      HTTPS_PROXY: "\thttp://127.0.0.1:8888\n",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    for (const entry of envArgs) {
+      expect(entry, "no forwarded entry should contain leading/trailing whitespace").toBe(
+        entry.trim(),
+      );
+    }
+  });
+
+  it("synthesizes both NO_PROXY and no_proxy in the sandbox so case-sensitive consumers stay covered", () => {
+    // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
+    // which one the user originally set. A user who only sets HTTP_PROXY
+    // (with no NO_PROXY at all) still gets both cases synthesized in the
+    // sandbox so case-sensitive consumers (e.g. some Python libs read
+    // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
+    // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
+    // future refactor of `withLocalNoProxy` doesn't silently drop one case.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy (lowercase) should also be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      expect(v).toContain("localhost");
+      expect(v).toContain("127.0.0.1");
+      expect(v).toContain("host.docker.internal");
+    }
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
@@ -3015,7 +3089,16 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const {
+      CHAT_UI_URL: _stripped,
+      HTTP_PROXY: _httpProxy,
+      HTTPS_PROXY: _httpsProxy,
+      NO_PROXY: _noProxy,
+      http_proxy: _lowerHttpProxy,
+      https_proxy: _lowerHttpsProxy,
+      no_proxy: _lowerNoProxy,
+      ...inheritedEnv
+    } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -3025,6 +3108,9 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_DASHBOARD_PORT: "19000",
+        HTTP_PROXY: "http://127.0.0.1:8888",
+        HTTPS_PROXY: "http://127.0.0.1:8888",
+        NO_PROXY: "corp.internal",
       },
     });
 
@@ -3045,6 +3131,15 @@ const { createSandbox } = require(${onboardPath});
     // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
     // overriding whatever value the Docker image had baked in.
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+    assert.ok(noProxyMatch, `expected NO_PROXY in sandbox create command:\n${createCommand.command}`);
+    const noProxyEntries = noProxyMatch[1].split(",");
+    assert.ok(noProxyEntries.includes("corp.internal"));
+    assert.ok(noProxyEntries.includes("localhost"));
+    assert.ok(noProxyEntries.includes("127.0.0.1"));
+    assert.ok(noProxyEntries.includes("host.docker.internal"));
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(

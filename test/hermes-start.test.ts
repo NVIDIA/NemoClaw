@@ -132,6 +132,64 @@ function runTirithMarkerBootstrap(opts: {
   }
 }
 
+function extractTirithDispatchBlock(src: string, mode: "non-root" | "root"): string {
+  const nonRootStart = src.indexOf("# ── Non-root fallback");
+  const rootStart = src.indexOf("# ── Root path");
+  if (nonRootStart < 0 || rootStart < 0 || rootStart <= nonRootStart) {
+    throw new Error("Expected root and non-root dispatch blocks in agents/hermes/start.sh");
+  }
+  return mode === "non-root" ? src.slice(nonRootStart, rootStart) : src.slice(rootStart);
+}
+
+function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-dispatch-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const marker = path.join(hermesHome, ".tirith-install-failed");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  fs.writeFileSync(marker, "download_failed");
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "retry_tirith_marker_if_needed"),
+      mode === "root"
+        ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }'
+        : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
+      "verify_config_integrity_if_locked() { :; }",
+      "verify_config_integrity() { :; }",
+      "apply_shields_up_runtime_env() { :; }",
+      "refresh_hermes_provider_placeholders() { :; }",
+      "configure_messaging_channels() { :; }",
+      'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
+      "STEP_DOWN_PREFIX_SANDBOX=(env)",
+      "NEMOCLAW_CMD=(bash -c 'test ! -e \"$1/.tirith-install-failed\"' bash \"$HERMES_DIR\")",
+      extractTirithDispatchBlock(src, mode),
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      markerExists: fs.existsSync(marker),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   "stat() {",
   '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
@@ -694,6 +752,18 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
+  it("removes retryable Tirith markers before explicit command dispatch", () => {
+    for (const mode of ["non-root", "root"] as const) {
+      const run = runTirithExplicitCommandDispatch(mode);
+
+      expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
+      expect(run.markerExists, mode).toBe(false);
+      expect(run.result.stderr).toContain(
+        "download_failed marker present; letting Hermes runtime fallback retry Tirith",
+      );
+    }
+  });
+
   it("removes a retryable download_failed marker so Hermes runtime fallback can retry", () => {
     const run = runTirithMarkerBootstrap({ markerReason: "download_failed" });
 
