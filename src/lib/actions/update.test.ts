@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   detectInstallType,
-  getLatestNemoClawVersionFromGitLatestTag,
+  getMaintainedNemoClawVersionFromGitTag,
   NEMOCLAW_UPDATE_COMMAND,
   runUpdateAction,
 } from "./update";
@@ -288,12 +288,12 @@ describe("detectInstallType", () => {
   });
 });
 
-describe("getLatestNemoClawVersionFromGitLatestTag", () => {
-  it("resolves the version tag that points at the maintained latest tag", () => {
+describe("getMaintainedNemoClawVersionFromGitTag", () => {
+  it("resolves the version tag that points at the maintained lkg tag", () => {
     const spawnSyncImpl = vi.fn(() => ({
       status: 0,
       stdout: [
-        "abc123\trefs/tags/latest",
+        "abc123\trefs/tags/lkg",
         "older\trefs/tags/v0.0.36",
         "abc123\trefs/tags/v0.0.37",
         "future\trefs/tags/v0.1.0",
@@ -302,6 +302,11 @@ describe("getLatestNemoClawVersionFromGitLatestTag", () => {
       signal: null,
     }) as never);
 
-    expect(getLatestNemoClawVersionFromGitLatestTag({ spawnSyncImpl })).toBe("0.0.37");
+    expect(getMaintainedNemoClawVersionFromGitTag({ spawnSyncImpl })).toBe("0.0.37");
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["refs/tags/lkg", "refs/tags/lkg^{}"]),
+      expect.any(Object),
+    );
   });
 });

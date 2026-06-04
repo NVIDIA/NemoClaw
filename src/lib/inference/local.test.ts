@@ -34,6 +34,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  isOllamaRunnerCrash,
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
@@ -982,6 +983,46 @@ describe("local inference helpers", () => {
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("flags runner-crash error payloads as a daemon failure (#4365)", () => {
+    // Issue #4365: when Ollama's model runner crashes ("model runner has
+    // unexpectedly stopped"), surface daemonFailure so the wizard escapes the
+    // Ollama-model inner loop instead of asking for another tag.
+    const crashSamples = [
+      "model runner has unexpectedly stopped, this may be due to resource limitations or an internal error",
+      "llama runner process has terminated: exit status 134",
+      "model runner crashed",
+      "Ollama runner process exited unexpectedly",
+      "runner died: signal 9",
+      "runner killed",
+    ];
+    for (const errText of crashSamples) {
+      expect(isOllamaRunnerCrash(errText)).toBe(true);
+      const payload = JSON.stringify({ error: errText });
+      const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+      const result = validateOllamaModel("nemotron-3-nano:30b", () => payload, undefined, captureEx);
+      expect(result.ok).toBe(false);
+      expect(result.daemonFailure).toBe(true);
+    }
+  });
+
+  it("does not flag model-fit / generic errors as a daemon failure (#4365)", () => {
+    expect(isOllamaRunnerCrash("model requires more system memory")).toBe(false);
+    expect(isOllamaRunnerCrash("model 'foo:latest' not found")).toBe(false);
+    expect(isOllamaRunnerCrash("")).toBe(false);
+    expect(isOllamaRunnerCrash(null)).toBe(false);
+    expect(isOllamaRunnerCrash(undefined)).toBe(false);
+    const payload = JSON.stringify({ error: "model requires more system memory" });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = validateOllamaModel(
+      "gabegoodhart/minimax-m2.1:latest",
+      () => payload,
+      () => false,
+      captureEx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.daemonFailure).toBeUndefined();
   });
 
   it("passes when first probe times out then retry returns OOM error but total RAM is sufficient", () => {

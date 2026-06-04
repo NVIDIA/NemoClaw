@@ -22,6 +22,20 @@ import { sleepSeconds } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
+import {
+  classifyForwardHealthWithReachability,
+  isLocalForwardReachable,
+} from "./forward-health";
+import {
+  ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
+  getHermesDashboardRecoveryConfig,
+  recoverHermesDashboardProcessIfEnabled as recoverHermesDashboardProcess,
+} from "./hermes-dashboard-recovery";
+
+export {
+  classifyForwardHealthWithReachability,
+  classifySandboxForwardHealth,
+} from "./forward-health";
 
 export type SandboxCommandResult = {
   status: number;
@@ -274,7 +288,9 @@ export async function probeSandboxInferenceGatewayHealth(
 function recoverSandboxProcesses(sandboxName: string): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort);
+  const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort, {
+    hermesDashboard: getHermesDashboardRecoveryConfig(sandboxName),
+  });
   const hasRecoveryMarker = (result: SandboxCommandResult | null) =>
     !!(
       result &&
@@ -334,17 +350,7 @@ function waitForRecoveredSandboxGateway(sandboxName: string): boolean {
  * confirms the new entry is running, false otherwise.
  */
 function ensureSandboxPortForward(sandboxName: string): boolean {
-  const forwardHealth = isSandboxForwardHealthy(sandboxName);
-  if (forwardHealth === true) return true;
-  if (forwardHealth === "occupied") return false;
-
-  const port = String(resolveSandboxDashboardPort(sandboxName));
-  runOpenshell(["forward", "stop", port], { ignoreError: true, stdio: "ignore" });
-  const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
-    ignoreError: true,
-  });
-  if (startResult.status !== 0) return false;
-  return isSandboxForwardHealthy(sandboxName) === true;
+  return ensureSandboxPortForwardForPort(sandboxName, resolveSandboxDashboardPort(sandboxName));
 }
 
 /**
@@ -367,7 +373,13 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
  * re-establish" line even though the forward worked.
  */
 function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
-  const port = resolveSandboxDashboardPort(sandboxName);
+  return isSandboxPortForwardHealthy(sandboxName, resolveSandboxDashboardPort(sandboxName));
+}
+
+function isSandboxPortForwardHealthy(
+  sandboxName: string,
+  port: number,
+): SandboxForwardHealth {
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -379,59 +391,31 @@ function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
   );
 }
 
-export function classifySandboxForwardHealth(
-  entries: SandboxForwardListEntry[],
-  sandboxName: string,
-  port: string,
-): Exclude<SandboxForwardHealth, null> {
-  const match = entries.find((entry) => entry.port === port);
-  if (!match) return false;
-  if (match.sandboxName !== sandboxName) return "occupied";
-  return match.status === "running";
-}
+function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boolean {
+  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
+  if (forwardHealth === true) return true;
+  if (forwardHealth === "occupied") return false;
 
-/**
- * Like {@link classifySandboxForwardHealth} but accepts a reachability
- * callback that probes whether the local forwarded port actually answers.
- * When the entry-based classification would return `false`, the
- * reachability check overrides it: a port that answers is healthy
- * regardless of what `forward list` reports. The "occupied" verdict is
- * preserved — we never silently take over a forward owned by another
- * sandbox, even if that forward happens to be reachable.
- */
-export function classifyForwardHealthWithReachability(
-  entries: SandboxForwardListEntry[],
-  sandboxName: string,
-  port: string,
-  isReachable: () => boolean,
-): Exclude<SandboxForwardHealth, null> {
-  const verdict = classifySandboxForwardHealth(entries, sandboxName, port);
-  if (verdict !== false) return verdict;
-  return isReachable() ? true : false;
-}
-
-/**
- * Synchronous reachability check for a local port. Used to override a
- * negative `openshell forward list` verdict when the forward is actually
- * still serving traffic — see {@link classifyForwardHealthWithReachability}.
- * Returns false on any error so the existing recovery path stays intact
- * when Node can't probe (e.g., restrictive sandbox).
- */
-function isLocalForwardReachable(port: number): boolean {
-  const script =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${port}});` +
-    "s.setTimeout(1000);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const result = spawnSync(process.execPath, ["-e", script], {
-    encoding: "utf-8",
-    stdio: ["ignore", "ignore", "ignore"],
-    timeout: 2000,
+  runOpenshell(["forward", "stop", String(port), sandboxName], {
+    ignoreError: true,
+    stdio: "ignore",
   });
-  if (result.error) return false;
-  return result.status === 0;
+  const startResult = runOpenshell(["forward", "start", "--background", String(port), sandboxName], {
+    ignoreError: true,
+  });
+  if (startResult.status !== 0) return false;
+  return isSandboxPortForwardHealthy(sandboxName, port) === true;
+}
+
+function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
+  return ensureHermesDashboardPortForward(sandboxName, {
+    isPortForwardHealthy: isSandboxPortForwardHealthy,
+    ensurePortForward: ensureSandboxPortForwardForPort,
+  });
+}
+
+function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | null {
+  return recoverHermesDashboardProcess(sandboxName, { executeCommand: executeSandboxCommand });
 }
 
 /**
@@ -455,6 +439,7 @@ export function checkAndRecoverSandboxProcesses(
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
+    const dashboardProcessRecovered = recoverHermesDashboardProcessIfEnabled(sandboxName);
     const forwardHealthy = isSandboxForwardHealthy(sandboxName);
     if (forwardHealthy === false) {
       if (!quiet) {
@@ -463,6 +448,7 @@ export function checkAndRecoverSandboxProcesses(
         console.log("  Re-establishing...");
       }
       const forwardRecovered = ensureSandboxPortForward(sandboxName);
+      const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
       if (!quiet) {
         if (forwardRecovered) {
           console.log(`  ${G}✓${R} Dashboard port forward re-established.`);
@@ -473,7 +459,15 @@ export function checkAndRecoverSandboxProcesses(
           );
         }
       }
-      return { checked: true, wasRunning: true, recovered: false, forwardRecovered };
+      return {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered:
+          forwardRecovered ||
+          dashboardForwardRecovered === true ||
+          dashboardProcessRecovered === true,
+      };
     }
     if (forwardHealthy === "occupied") {
       if (!quiet) {
@@ -483,7 +477,14 @@ export function checkAndRecoverSandboxProcesses(
       }
       return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
     }
-    return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
+    const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+    return {
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered:
+        dashboardForwardRecovered === true || dashboardProcessRecovered === true,
+    };
   }
 
   // Gateway not running — attempt recovery
@@ -511,6 +512,7 @@ export function checkAndRecoverSandboxProcesses(
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
+    const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     if (!quiet) {
       console.log(
         `  ${G}✓${R} ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway restarted inside sandbox.`,
@@ -524,7 +526,12 @@ export function checkAndRecoverSandboxProcesses(
         );
       }
     }
-    return { checked: true, wasRunning: false, recovered, forwardRecovered };
+    return {
+      checked: true,
+      wasRunning: false,
+      recovered,
+      forwardRecovered: forwardRecovered || dashboardForwardRecovered === true,
+    };
   }
   if (!quiet) {
     console.error(
