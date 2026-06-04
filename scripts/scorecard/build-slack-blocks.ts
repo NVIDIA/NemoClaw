@@ -168,7 +168,21 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
  * — missing `text` triggers a warning).
  */
 function buildFallbackText(data: ScorecardData): string {
-  return `🌅 *NemoClaw Nightly Scorecard — ${data.today}*`;
+  let modeSegment: string;
+  switch (data.runMode) {
+    case "Scheduled full nightly":
+      modeSegment = "🗓️ DAILY";
+      break;
+    case "Manual full run":
+      modeSegment = data.actor ? `🛠 Manual full by ${data.actor}` : "🛠 Manual full";
+      break;
+    case "Selective dispatch":
+      modeSegment = data.actor ? `🛠 Selective by ${data.actor}` : "🛠 Selective";
+      break;
+    default:
+      modeSegment = data.runMode;
+  }
+  return `🌅 *NemoClaw Nightly Scorecard · ${modeSegment} · ${data.today}*`;
 }
 
 type SlackStatusColor = "danger" | "good" | "warning";

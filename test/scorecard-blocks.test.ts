@@ -233,16 +233,38 @@ describe("buildBlocks — manual full run with actor", () => {
 });
 
 describe("buildFallbackText", () => {
-  it("renders title with date and sunrise emoji", () => {
+  it("renders schedule title with 🗓️ DAILY segment (uppercase)", () => {
     expect(buildFallbackText(makeData())).toBe(
-      "🌅 *NemoClaw Nightly Scorecard — May 25*",
+      "🌅 *NemoClaw Nightly Scorecard · 🗓️ DAILY · May 25*",
     );
   });
 
-  it("uses the same title regardless of run outcome", () => {
-    // Title is now stable — status detail lives inside the attachment
-    // stats line. Notification preview shows the title; users click to
-    // see the breakdown.
+  it("renders manual full title with 🛠 prefix + actor", () => {
+    expect(
+      buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" })),
+    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*");
+  });
+
+  it("renders selective title with 🛠 prefix + actor", () => {
+    expect(
+      buildFallbackText(
+        makeData({
+          runMode: "Selective dispatch",
+          isSelectiveDispatch: true,
+          requestedJobs: ["cloud-e2e"],
+          actor: "hunglp6d",
+        }),
+      ),
+    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Selective by hunglp6d · May 25*");
+  });
+
+  it("omits 'by <actor>' when actor empty on manual full", () => {
+    expect(
+      buildFallbackText(makeData({ runMode: "Manual full run", actor: "" })),
+    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*");
+  });
+
+  it("uses the same title regardless of run outcome (within same runMode)", () => {
     const perfect = buildFallbackText(makeData());
     const withFailures = buildFallbackText(makeData({ perfect: false, failure: 3 }));
     expect(perfect).toBe(withFailures);
