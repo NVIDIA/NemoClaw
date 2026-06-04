@@ -130,6 +130,14 @@ export class OnboardRuntimeBoundary {
     return runtime.applyResult(result);
   }
 
+  async recordStateResultsWithStepCompatibility(results: OnboardStateResult[]): Promise<Session> {
+    let session = await this.getRuntime().session();
+    for (const result of results) {
+      session = await this.recordStateResultWithStepCompatibility(result);
+    }
+    return session;
+  }
+
   async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     return this.getRuntime().emitResumeConflict(conflict);
   }
