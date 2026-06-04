@@ -611,6 +611,9 @@ describe("config set nested URL SSRF enforcement", () => {
       expect(appendAuditEntry).not.toHaveBeenCalledWith(
         expect.objectContaining({ action: "shields_down" }),
       );
+      expect(JSON.stringify(appendAuditEntry.mock.calls[0]?.[0])).not.toContain(
+        "nvapi-rotated-value",
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
