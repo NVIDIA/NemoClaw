@@ -122,6 +122,7 @@ function updateFrontmatter(frontmatter: string): string {
     "keywords",
     '["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
   );
+  next = upsertFrontmatterLine(next, "exclude-from-skills-gen", "true");
   return next;
 }
 
@@ -131,6 +132,14 @@ function replaceFrontmatterLine(frontmatter: string, key: string, value: string)
     throw new Error(`commands.mdx frontmatter is missing '${key}'`);
   }
   return frontmatter.replace(pattern, `${key}: ${value}`);
+}
+
+function upsertFrontmatterLine(frontmatter: string, key: string, value: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}:.*$`, "m");
+  if (pattern.test(frontmatter)) {
+    return frontmatter.replace(pattern, `${key}: ${value}`);
+  }
+  return frontmatter.replace(/\n---\n$/, `\n${key}: ${value}\n---\n`);
 }
 
 function stripAgentOnlyBlocks(body: string): string {

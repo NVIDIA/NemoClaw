@@ -151,6 +151,13 @@ describe("handleSandboxState", () => {
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
     expect(calls.complete).toHaveBeenCalledWith("sandbox", expect.objectContaining({ sandboxName: "my-assistant" }));
     expect(result).toMatchObject({ sandboxName: "my-assistant", selectedMessagingChannels: ["telegram"], webSearchSupported: true });
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "openclaw",
+      transitionKind: "branch",
+      updates: undefined,
+      metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
+    });
   });
 
   it("reuses a completed ready sandbox on resume", async () => {

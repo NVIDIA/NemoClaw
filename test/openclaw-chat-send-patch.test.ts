@@ -124,6 +124,43 @@ function writeFollowupRunner20260522Fixture(dist: string): string {
   return fixture;
 }
 
+function writeFollowupRunner20260527Fixture(dist: string): string {
+  const fixture = path.join(dist, "agent-runner.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "function createFollowupRunner(params) {",
+      "  const { opts, typing, sessionEntry } = params;",
+      "  return async (queued) => {",
+      "    let replyOperation;",
+      "    let run = queued.run;",
+      "    const replySessionKey = queued.run.sessionKey ?? sessionKey;",
+      "    const admission = await admitReplyTurn({",
+      "      sessionId: run.sessionId,",
+      '      sessionKey: replySessionKey ?? "",',
+      '      kind: "queued_followup",',
+      "      resetTriggered: false,",
+      "      upstreamAbortSignal: queued.abortSignal",
+      "    });",
+      '    if (admission.status === "skipped") return;',
+      "    replyOperation = admission.operation;",
+      "    if (replyOperation.sessionId !== run.sessionId) {",
+      "      run = { ...run, sessionId: replyOperation.sessionId };",
+      "    }",
+      "    const runId = crypto.randomUUID();",
+      "    if (run.sessionKey) registerAgentRunContext(runId, {",
+      "      sessionKey: run.sessionKey,",
+      "      verboseLevel: run.verboseLevel",
+      "    });",
+      "    return runId;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
 function writeFollowupRunnerWithoutOptsBindingFixture(dist: string): string {
   const fixture = path.join(dist, "agent-runner.fixture.js");
   fs.writeFileSync(
@@ -211,8 +248,10 @@ async function runPatchedFollowupFixture(
   const context = {
     createReplyOperation: (value: unknown) => value,
     crypto: { randomUUID: () => "fallback-run-id" },
+    admitReplyTurn: async () => ({ status: "admitted", operation: { sessionId: "session" } }),
     registerAgentRunContext: (runId: string) => registeredRuns.push(runId),
     replySessionKey: "reply-session",
+    sessionKey: "fallback-session-key",
   };
   const createFollowupRunner = vm.runInNewContext(
     `${patchedSource}\ncreateFollowupRunner;`,
@@ -288,6 +327,47 @@ describe("OpenClaw chat.send compatibility patch", () => {
     fs.mkdirSync(dist);
     writeChatSendFixture(dist);
     const followupFixture = writeFollowupRunner20260522Fixture(dist);
+    writeGetReplyFixture(dist);
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(patchedFollowup).toContain(
+        "const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
+      );
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          { opts: { runId: "opts-run-id" } },
+          { runId: "queued-run-id", run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "queued-run-id", registeredRuns: ["queued-run-id"] });
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          { opts: { runId: "opts-run-id" } },
+          { run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "opts-run-id", registeredRuns: ["opts-run-id"] });
+      await expect(
+        runPatchedFollowupFixture(
+          patchedFollowup,
+          {},
+          { run: { sessionId: "session", sessionKey: "key" } },
+        ),
+      ).resolves.toMatchObject({ runId: "fallback-run-id", registeredRuns: ["fallback-run-id"] });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the 2026.5.27 followup runner admission shape", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-527-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeChatSendFixture(dist);
+    const followupFixture = writeFollowupRunner20260527Fixture(dist);
     writeGetReplyFixture(dist);
 
     try {

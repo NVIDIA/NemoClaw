@@ -918,6 +918,48 @@ describe("Hermes sandbox provisioning", () => {
     expect(result.stdout).toContain("hermes manifest version");
   });
 
+  function runHermesUvExtrasExpansion() {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
+    if (!extras) {
+      throw new Error("Expected HERMES_UV_EXTRAS ARG in Hermes base Dockerfile");
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-uv-extras-"));
+    const command = [
+      "set -euo pipefail",
+      `HERMES_UV_EXTRAS=${JSON.stringify(extras)}`,
+      "set --",
+      'for extra in ${HERMES_UV_EXTRAS}; do set -- "$@" --extra "$extra"; done',
+      'printf "%s\\n" "$@"',
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", command], {
+      encoding: "utf-8",
+      cwd: tmp,
+      timeout: 5000,
+    });
+    return { result, tmp };
+  }
+
+  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+    const { result, tmp } = runHermesUvExtrasExpansion();
+    try {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split(/\n/)).toEqual([
+        "--extra",
+        "anthropic",
+        "--extra",
+        "messaging",
+        "--extra",
+        "web",
+        "--extra",
+        "pty",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");

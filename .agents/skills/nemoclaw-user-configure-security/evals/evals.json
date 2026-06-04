@@ -3,54 +3,9 @@
     "id": "docs-security-best-practices-001",
     "question": "I'm evaluating NemoClaw security best practices. Help me understand the risk posture of each configurable control so I can justify the setup to my team or security reviewers.",
     "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand the risk posture of each configurable control and gives enough concrete guidance, decision criteria, verification steps, or risk framing to justify the setup to my team or security reviewers."
-  },
-  {
-    "id": "docs-security-best-practices-002",
-    "question": "I'm balancing developer convenience with lockdown. Help me compare the trade-offs of changing security controls so I can choose a posture that fits the environment.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user compare the trade-offs of changing security controls and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose a posture that fits the environment."
-  },
-  {
-    "id": "docs-security-best-practices-003",
-    "question": "I'm preparing for production-like use. Help me see which defaults are acceptable and which require changes so I can avoid shipping with accidental weak spots.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user see which defaults are acceptable and which require changes and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid shipping with accidental weak spots."
-  },
-  {
-    "id": "docs-security-credential-storage-001",
-    "question": "I'm inspecting NemoClaw credential storage. Help me verify how secrets are stored and protected so I can decide whether the setup meets my secret-handling expectations.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user verify how secrets are stored and protected and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether the setup meets my secret-handling expectations."
-  },
-  {
-    "id": "docs-security-credential-storage-002",
-    "question": "I'm tracing where credentials live. Help me distinguish host, gateway, and sandbox storage boundaries so I can avoid assuming secrets are available in the wrong place.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user distinguish host, gateway, and sandbox storage boundaries and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid assuming secrets are available in the wrong place."
-  },
-  {
-    "id": "docs-security-credential-storage-003",
-    "question": "I'm rotating or inspecting credentials. Help me follow a workflow that does not print secrets in logs or docs so I can recover or update access safely.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user follow a workflow that does not print secrets in logs or docs and gives enough concrete guidance, decision criteria, verification steps, or risk framing to recover or update access safely."
-  },
-  {
-    "id": "docs-security-openclaw-controls-001",
-    "question": "I'm reading about controls outside NemoClaw's scope. Help me understand which security responsibilities remain with OpenClaw so I can avoid treating sandbox isolation as a complete application security model.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user understand which security responsibilities remain with OpenClaw and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid treating sandbox isolation as a complete application security model."
-  },
-  {
-    "id": "docs-security-openclaw-controls-002",
-    "question": "I'm assessing application-layer agent risk. Help me identify the controls NemoClaw does not add so I can plan separate mitigations for authentication, prompt handling, and agent behavior.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user identify the controls NemoClaw does not add and gives enough concrete guidance, decision criteria, verification steps, or risk framing to plan separate mitigations for authentication, prompt handling, and agent behavior."
-  },
-  {
-    "id": "docs-security-openclaw-controls-003",
-    "question": "I'm documenting the security boundary. Help me explain where NemoClaw protection ends so I can set accurate expectations for reviewers and operators.",
-    "expected_skill": "nemoclaw-user-configure-security",
-    "ground_truth": "A NemoClaw-specific answer that helps the user explain where NemoClaw protection ends and gives enough concrete guidance, decision criteria, verification steps, or risk framing to set accurate expectations for reviewers and operators."
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand the risk posture of each configurable control and gives enough concrete guidance, decision criteria, verification steps, or risk framing to justify the setup to my team or security reviewers.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
   }
 ]

@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Tool-Calling Reliability for Local Inference
 
 Local inference is useful for privacy, cost control, and offline development, but tool-calling agents place stricter demands on the model server than simple chat.
