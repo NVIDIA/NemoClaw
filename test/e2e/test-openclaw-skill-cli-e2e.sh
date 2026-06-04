@@ -170,16 +170,22 @@ pass "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR are exported
 section "Phase 3: Install skill via 'openclaw skills install <path>' inside sandbox"
 
 remote_skill_dir="/tmp/${SKILL_ID}"
-write_skill_cmd="rm -rf $(printf "%q" "$remote_skill_dir") && mkdir -p $(printf "%q" "$remote_skill_dir") && cat > $(printf "%q" "${remote_skill_dir}/SKILL.md") <<'SKILLEOF'
----
-name: \"${SKILL_ID}\"
-description: \"${SKILL_DESCRIPTION}\"
----
-
-# OpenClaw skill CLI roundtrip fixture
-
-Written by test/e2e/test-openclaw-skill-cli-e2e.sh.
-SKILLEOF"
+# openshell sandbox exec rejects command arguments that contain newlines or CRs
+# ("InvalidArgument: command argument N contains newline or carriage return
+# characters"), so the SKILL.md payload is base64-encoded on the host and decoded
+# inside the sandbox. The encoder uses base64 -w0 (or tr -d) so the encoded
+# payload is itself single-line.
+skill_payload=$(printf '%s\n' \
+  "---" \
+  "name: \"${SKILL_ID}\"" \
+  "description: \"${SKILL_DESCRIPTION}\"" \
+  "---" \
+  "" \
+  "# OpenClaw skill CLI roundtrip fixture" \
+  "" \
+  "Written by test/e2e/test-openclaw-skill-cli-e2e.sh.")
+skill_payload_b64=$(printf '%s' "$skill_payload" | base64 | tr -d '\n')
+write_skill_cmd="rm -rf $(printf "%q" "$remote_skill_dir") && mkdir -p $(printf "%q" "$remote_skill_dir") && printf '%s' '${skill_payload_b64}' | base64 -d > $(printf "%q" "${remote_skill_dir}/SKILL.md")"
 
 set +e
 write_out=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$write_skill_cmd" 2>&1)
