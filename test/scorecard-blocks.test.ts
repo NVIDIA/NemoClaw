@@ -207,7 +207,7 @@ describe("buildBlocks — selective dispatch", () => {
         actor: "hple",
       }),
     );
-    expect(elementText(withActor[0], 0)).toContain("(by `hple`)");
+    expect(elementText(withActor[0], 0)).toContain("(by *hple*)");
   });
 
   it("keeps the 'not shown' trend text from the generator", () => {
@@ -221,7 +221,7 @@ describe("buildBlocks — manual full run with actor", () => {
     const blocks = renderBlocks(
       makeData({ runMode: "Manual full run", actor: "hple" }),
     );
-    expect(elementText(blocks[0], 0)).toContain("Manual full run (by `hple`)");
+    expect(elementText(blocks[0], 0)).toContain("Manual full run (by *hple*)");
   });
 
   it("omits actor suffix when actor is empty", () => {
