@@ -77,6 +77,7 @@ flowchart TB
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets operators approve or deny requests in real time.
+Network policy allowlists do not disable OpenShell's SSRF guard; see Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for the interaction between egress rules and internal-address blocking.
 
 ### Deny-by-Default Egress
 
@@ -270,7 +271,15 @@ During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setg
 
 This behavior is best effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening).
+
+To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
+The agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities, so it will not boot on a host whose bounding set still holds them — typically one that cannot perform the drop (no `CAP_SETPCAP`, or `capsh` missing) and was not given a clean bounding set by the container runtime.
+This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WSL); leaving it unset preserves the best-effort default.
+The check covers the agent process tree only — a `nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+
+<AgentOnly variant="openclaw">
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening.
+</AgentOnly>
 
 | Aspect | Detail |
 |---|---|
@@ -569,6 +578,8 @@ The following patterns weaken security without providing meaningful benefit.
 - Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference.
 - Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
 - Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
+<AgentOnly variant="openclaw">
 - Sandbox Hardening for container-level security measures.
+</AgentOnly>
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 - How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.

@@ -537,6 +537,10 @@ If the sandbox or gateway cannot be verified, the command exits non-zero instead
 When a locally registered sandbox is missing from the live gateway, status preserves the registry entry so the suggested `rebuild --yes` recovery can still find the sandbox metadata.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
+When sandbox GPU passthrough is enabled, the `Sandbox GPU` line includes the last CUDA usability proof state.
+It reports `(CUDA verified)`, `(CUDA unverified)`, or `(last CUDA proof failed: <label>)` so automation and operators can distinguish configured GPU passthrough from proven CUDA access.
+Failed proofs include remediation guidance for the detected platform.
+
 A `Connected` line reports whether the sandbox has any active SSH sessions and, if so, how many.
 The sandbox list in the status output includes the dashboard port suffix for sandboxes with a recorded dashboard port.
 
@@ -731,6 +735,11 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavio
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
+Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
+If the live policy read returns non-empty output that NemoClaw cannot parse, the command exits non-zero instead of overwriting the live policy with only the new preset.
+Fix the gateway or policy read problem, then rerun the command.
+For custom presets, the command also reports when the preset reached the gateway but NemoClaw could not record it in the local sandbox registry, because unrecorded custom presets will not appear in `policy-list` or `status`.
+Recover or re-onboard the sandbox, then re-apply the custom preset.
 
 | Flag | Description |
 |------|-------------|
@@ -1851,18 +1860,19 @@ NemoClaw configures OpenClaw for OTLP/HTTP protobuf traces only by default: metr
 
 For a local Jaeger collector:
 
-```console
-$ docker run --rm --name nemoclaw-jaeger \
+```bash
+docker run --rm --name nemoclaw-jaeger \
     -e COLLECTOR_OTLP_ENABLED=true \
     -p 16686:16686 \
     -p 4318:4318 \
     jaegertracing/all-in-one:1.57
-$ NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
-$ nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes
+NEMOCLAW_OPENCLAW_OTEL=1 nemoclaw onboard
 ```
 
+Onboarding automatically applies the `openclaw-diagnostics-otel-local` preset at sandbox create and again during the policy step when `NEMOCLAW_OPENCLAW_OTEL=1`, so OTLP export is allowed before the gateway's first trace flush. If you enabled OTEL after an existing sandbox was created, run `nemoclaw <sandbox-name> policy-add openclaw-diagnostics-otel-local --yes` or recreate the sandbox with OTEL enabled at build time.
+
 Then open `http://localhost:16686` and select the `openclaw-gateway` service.
-The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` to `host.openshell.internal:4318`.
+The built-in `openclaw-diagnostics-otel-local` preset allows only `POST /v1/traces` (and subpaths) to `host.openshell.internal:4318` from `openclaw` and `node`.
 For a remote collector, create a custom preset for the collector host and port instead of using the local host-gateway preset.
 
 ### Probe Timeouts
@@ -1905,19 +1915,6 @@ These flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
-
-### Remote Deployment
-
-These variables seed defaults for `nemoclaw deploy` and `nemoclaw onboard --remote`, which provision a sandbox on a Brev instance.
-Each has a flag equivalent on `deploy`; the env var lets non-interactive runs skip the prompt.
-For narrative how-to coverage of `NEMOCLAW_BREV_PROVIDER` and `NEMOCLAW_GPU`, see Deploy to Remote GPU.
-
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `NEMOCLAW_BREV_PROVIDER` | `gcp` | Cloud provider for Brev instance creation. |
-| `NEMOCLAW_GPU` | `a2-highgpu-1g:nvidia-tesla-a100:1` | GPU specification (instance type and GPU model) for the Brev instance. |
-| `NEMOCLAW_DEPLOY_NO_CONNECT` | unset | When set to `1`, skips the automatic `connect` step after the remote deploy completes. |
-| `NEMOCLAW_DEPLOY_NO_START_SERVICES` | unset | When set to `1`, skips starting services automatically after the remote deploy. |
 
 ### Legacy `nemoclaw setup`
 
