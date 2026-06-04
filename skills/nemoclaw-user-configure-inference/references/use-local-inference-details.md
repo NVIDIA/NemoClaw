@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Use a Local Inference Server: Details
 
 ## Non-Interactive Setup

@@ -1,3 +1,5 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Set Up Task-Specific Sub-Agents
 
 OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
@@ -35,17 +37,17 @@ It keeps the primary `main` agent on the normal NemoClaw inference route and add
 | Sub-agent model | `nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b` |
 | Delegation tool | `sessions_spawn` |
 
-The sub-agent uses Omni as the specialist model for image tasks.
+Omni is used as the specialist model for image tasks.
 The primary orchestration model remains responsible for conversation, planning, and deciding when to delegate.
 
 ## Update the Sandbox Config
 
 Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
 
-```bash
-export SANDBOX=my-assistant
-export DOCKER_CTR=openshell-cluster-nemoclaw
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
+```console
+$ export SANDBOX=my-assistant
+$ export DOCKER_CTR=openshell-cluster-nemoclaw
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- cat /sandbox/.openclaw/openclaw.json > /tmp/openclaw.json
 ```
 
 Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
@@ -54,13 +56,13 @@ For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py
 Upload the patched config and refresh the hash.
 In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof; lock the config root-owned and read-only afterward if the sandbox should enforce config integrity at startup.
 
-```bash
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/.config-hash
-cat /tmp/openclaw.updated.json | docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -c agent -- sh -c 'cat > /sandbox/.openclaw/openclaw.json'
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/openclaw.json
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/.config-hash
+```console
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/openclaw.json
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 644 /sandbox/.openclaw/.config-hash
+$ cat /tmp/openclaw.updated.json | docker exec -i "$DOCKER_CTR" kubectl exec -i -n openshell "$SANDBOX" -c agent -- sh -c 'cat > /sandbox/.openclaw/openclaw.json'
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- /bin/bash -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash"
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/openclaw.json
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chmod 444 /sandbox/.openclaw/.config-hash
 ```
 
 Check `/tmp/gateway.log` after upload and confirm the gateway hot-reloaded the provider or `agents.list` change.
@@ -75,10 +77,10 @@ For the Omni example:
 ```
 
 Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
-After uploading the auth profile, make sure the sandbox user owns the sub-agent directory:
+After uploading the auth profile, make sure the sub-agent directory is owned by the sandbox user:
 
-```bash
-docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
+```console
+$ docker exec "$DOCKER_CTR" kubectl exec -n openshell "$SANDBOX" -c agent -- chown -R sandbox:sandbox /sandbox/.openclaw/agents/vision-operator
 ```
 
 ## Allow Auxiliary Provider Egress

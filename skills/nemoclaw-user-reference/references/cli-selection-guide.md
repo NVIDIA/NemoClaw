@@ -1,4 +1,6 @@
-# Choose Between NemoClaw and OpenShell CLIs
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+# CLI Selection Guide
 
 NemoClaw uses two host-side CLIs.
 Use `nemoclaw` for NemoClaw-managed workflows.
@@ -19,52 +21,52 @@ Use `nemoclaw` for operations where NemoClaw adds product-specific state, safety
 
 - Install, onboard, or recreate a NemoClaw sandbox:
 
-  ```bash
-  nemoclaw onboard
-  nemoclaw onboard --resume --recreate-sandbox
+  ```console
+  $ nemoclaw onboard
+  $ nemoclaw onboard --resume --recreate-sandbox
   ```
 
 - List, connect to, check, or delete NemoClaw-managed sandboxes:
 
-  ```bash
-  nemoclaw list
-  nemoclaw my-assistant connect
-  nemoclaw my-assistant status
-  nemoclaw my-assistant logs --follow
-  nemoclaw my-assistant destroy
+  ```console
+  $ nemoclaw list
+  $ nemoclaw my-assistant connect
+  $ nemoclaw my-assistant status
+  $ nemoclaw my-assistant logs --follow
+  $ nemoclaw my-assistant destroy
   ```
 
 - Rebuild or upgrade while preserving workspace state:
 
-  ```bash
-  nemoclaw my-assistant rebuild
-  nemoclaw upgrade-sandboxes --check
+  ```console
+  $ nemoclaw my-assistant rebuild
+  $ nemoclaw upgrade-sandboxes --check
   ```
 
 - Snapshot, restore, or mount sandbox state:
 
-  ```bash
-  nemoclaw my-assistant snapshot create --name before-change
-  nemoclaw my-assistant snapshot restore before-change
-  nemoclaw my-assistant share mount
+  ```console
+  $ nemoclaw my-assistant snapshot create --name before-change
+  $ nemoclaw my-assistant snapshot restore before-change
+  $ nemoclaw my-assistant share mount
   ```
 
 - Add or remove NemoClaw policy presets:
 
-  ```bash
-  nemoclaw my-assistant policy-add pypi --yes
-  nemoclaw my-assistant policy-list
-  nemoclaw my-assistant policy-remove pypi --yes
+  ```console
+  $ nemoclaw my-assistant policy-add pypi --yes
+  $ nemoclaw my-assistant policy-list
+  $ nemoclaw my-assistant policy-remove pypi --yes
   ```
 
 - Manage NemoClaw messaging channels, credentials, diagnostics, and cleanup:
 
-  ```bash
-  nemoclaw my-assistant channels add slack
-  nemoclaw credentials list
-  nemoclaw credentials reset nvidia-prod
-  nemoclaw debug --sandbox my-assistant
-  nemoclaw gc --dry-run
+  ```console
+  $ nemoclaw my-assistant channels add slack
+  $ nemoclaw credentials list
+  $ nemoclaw credentials reset nvidia-prod
+  $ nemoclaw debug --sandbox my-assistant
+  $ nemoclaw gc --dry-run
   ```
 
 ## Use `openshell` For OpenShell Operations
@@ -73,40 +75,40 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
 
 - Open the OpenShell TUI for network approvals and live activity:
 
-  ```bash
-  openshell term
+  ```console
+  $ openshell term
   ```
 
 - Manage dashboard or service port forwards:
 
-  ```bash
-  openshell forward start --background <port> <sandbox-name>
-  openshell forward list
+  ```console
+  $ openshell forward start --background <port> <sandbox-name>
+  $ openshell forward list
   ```
 
 - Inspect the underlying sandbox state:
 
-  ```bash
-  openshell sandbox list
-  openshell sandbox get <sandbox-name>
-  openshell logs <sandbox-name> -n 20
-  openshell doctor check
+  ```console
+  $ openshell sandbox list
+  $ openshell sandbox get <sandbox-name>
+  $ openshell logs <sandbox-name> -n 20
+  $ openshell doctor check
   ```
 
-- Move files, or run raw one-off commands when you intentionally want to bypass NemoClaw's sandbox registry and wrappers:
+- Run one-off commands or move files without starting a NemoClaw chat session:
 
-  ```bash
-  openshell sandbox upload <sandbox-name> ./local-file /sandbox/
-  openshell sandbox download <sandbox-name> /sandbox/output ./output
-  openshell sandbox exec -n <sandbox-name> -- env | grep '^HOME='
+  ```console
+  $ openshell sandbox exec -n <sandbox-name> -- ls -la /sandbox
+  $ openshell sandbox upload <sandbox-name> ./local-file /sandbox/
+  $ openshell sandbox download <sandbox-name> /sandbox/output ./output
   ```
 
 - Inspect or replace raw OpenShell policy:
 
-  ```bash
-  openshell policy get --full <sandbox-name> > live-policy.yaml
-  openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
-  openshell policy set --policy live-policy.yaml <sandbox-name>
+  ```console
+  $ openshell policy get --full <sandbox-name> > live-policy.yaml
+  $ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+  $ openshell policy set --policy live-policy.yaml <sandbox-name>
   ```
 
 `openshell policy update` merges specific endpoint and rule changes into the live sandbox policy.
@@ -132,18 +134,10 @@ It waits for readiness, handles stale SSH host keys after gateway restarts, and 
 
 Use `openshell sandbox connect <name>` only when you intentionally want the raw OpenShell connection path.
 
-For a one-off command in a NemoClaw-managed sandbox, use `nemoclaw <name> exec` instead of opening an interactive shell.
-It resolves the sandbox by its NemoClaw registry name and runs through the standard NemoClaw CLI surface.
-The command executes as the sandbox user with `HOME=/sandbox` inside the provisioned sandbox, where the agent configuration, inference routing, and policy state are already in place.
+For a one-off command, use `openshell sandbox exec` instead of opening an interactive shell.
 
-```bash
-nemoclaw my-assistant exec -- cat /tmp/gateway.log
-```
-
-Use `openshell sandbox exec` for the raw OpenShell execution path, for example when addressing a sandbox by its gateway name or intentionally bypassing the NemoClaw CLI and registry.
-
-```bash
-openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
+```console
+$ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
 ```
 
 ### Check Health or Logs
@@ -165,27 +159,27 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
 
-```bash
-nemoclaw inference get
-nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+```console
+$ nemoclaw inference get
+$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/config.yaml` without a rebuild or restart:
 
-```bash
-nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
+```console
+$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
 For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
-```bash
-nemoclaw onboard --resume --recreate-sandbox
+```console
+$ nemoclaw onboard --resume --recreate-sandbox
 ```
 
 Verify either path with:
 
-```bash
-nemoclaw <name> status
+```console
+$ nemoclaw <name> status
 ```
 
 ### Update Network Policy
