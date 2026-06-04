@@ -30,6 +30,7 @@ function isOclifParseError(error: unknown): boolean {
     name === "NonExistentFlagsError" ||
     name === "RequiredArgsError" ||
     name === "UnexpectedArgsError" ||
+    name === "FailedFlagValidationError" ||
     name === "CLIError" ||
     message.startsWith("Parsing --")
   );

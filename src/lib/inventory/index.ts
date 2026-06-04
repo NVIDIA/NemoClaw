@@ -227,11 +227,11 @@ export async function getSandboxInventory(
  * cluster-wide gateway is currently serving) the live gateway `model`/
  * `provider` take precedence over the onboarded snapshot so the CLI agrees
  * with `openshell inference get` (#2369); when they drift from stored values
- * a `(onboarded: …)` line is appended. Non-default sandboxes keep their
- * stored config — the gateway only applies to one sandbox at a time, and
- * each non-default sandbox swaps the gateway back to its stored config on
- * its next `connect`. Falls back to stored values when `liveInference`
- * is `null` (gateway unreachable).
+ * an explicit live-gateway annotation is appended. Non-default sandboxes keep
+ * their stored config — the gateway only applies to one sandbox at a time,
+ * and each non-default sandbox swaps the gateway back to its stored config on
+ * its next `connect`. Falls back to stored values when `liveInference` is
+ * `null` (gateway unreachable).
  */
 export function renderSandboxInventoryText(
   inventory: SandboxInventoryResult,
@@ -287,7 +287,7 @@ export function renderSandboxInventoryText(
       const parts: string[] = [];
       if (modelDrifted) parts.push(`model=${sandbox.model || "unknown"}`);
       if (providerDrifted) parts.push(`provider=${sandbox.provider || "unknown"}`);
-      log(`      (onboarded: ${parts.join(", ")})`);
+      log(`      (live OpenShell gateway differs from onboarded: ${parts.join(", ")})`);
     }
     if (sandbox.dashboardPort != null) {
       log(`      dashboard: http://127.0.0.1:${sandbox.dashboardPort}/`);

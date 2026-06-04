@@ -12,6 +12,9 @@ export interface ChannelBase {
   userIdHelp?: string;
   userIdLabel?: string;
   allowIdsMode?: "dm" | "guild";
+  channelIdEnvKey?: string;
+  channelIdHelp?: string;
+  channelIdLabel?: string;
   serverIdEnvKey?: string;
   serverIdHelp?: string;
   serverIdLabel?: string;
@@ -118,12 +121,19 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
+    channelIdEnvKey: "SLACK_ALLOWED_CHANNELS",
+    channelIdHelp:
+      "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+    channelIdLabel: "Slack Channel IDs (comma-separated allowlist)",
   },
   whatsapp: {
     description: "WhatsApp Web messaging (QR pairing)",
-    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, connect to it (e.g. `openshell sandbox connect <sandbox>`) and run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes. NemoClaw renders the OpenClaw QR in compact (scan-friendly) form and validates the gateway before pairing, so a gateway close (e.g. `1008`) is reported separately from the QR (issue #4522).",
     label: "WhatsApp",
     loginMethod: "in-sandbox-qr",
+    setupNotes: [
+      "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp` to confirm the bridge is delivering inbound messages — pairing alone does not guarantee inbound delivery (issue #4386).",
+    ],
   },
 };
 

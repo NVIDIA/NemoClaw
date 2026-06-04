@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { withSandboxPhaseTrace } from "../../tracing";
 
 export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
   resume: boolean;
@@ -76,7 +77,6 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       hermesToolGateways: string[],
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
-    setDefaultSandbox(sandboxName: string): void;
     getSandboxAgentRegistryFields(agent: Agent, agentVersionKnown: boolean): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -275,22 +275,30 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     });
 
     if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+    const confirmedSandboxName = sandboxName;
     const resourceProfile = await deps.selectResourceProfileForSandbox();
-    if (fresh) deps.stopStaleDashboardListenersForSandbox(deps.listRegistrySandboxes().sandboxes, sandboxName);
-    sandboxName = await deps.createSandbox(
-      gpu,
-      model,
+    if (fresh) deps.stopStaleDashboardListenersForSandbox(deps.listRegistrySandboxes().sandboxes, confirmedSandboxName);
+    sandboxName = await withSandboxPhaseTrace(
+      confirmedSandboxName,
       provider,
-      preferredInferenceApi,
-      sandboxName,
-      nextWebSearchConfig,
-      selectedMessagingChannels,
-      fromDockerfile,
-      agent,
-      controlUiPort,
-      sandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
+      model,
+      (agent as { name?: string } | null)?.name,
+      () =>
+        deps.createSandbox(
+          gpu,
+          model,
+          provider,
+          preferredInferenceApi,
+          confirmedSandboxName,
+          nextWebSearchConfig,
+          selectedMessagingChannels,
+          fromDockerfile,
+          agent,
+          controlUiPort,
+          sandboxGpuConfig,
+          resourceProfile,
+          hermesToolGateways,
+        ),
     );
     webSearchConfig = nextWebSearchConfig;
     deps.updateSandboxRegistry(sandboxName, {
@@ -298,7 +306,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
       provider,
       ...deps.getSandboxAgentRegistryFields(agent, !fromDockerfile),
     });
-    deps.setDefaultSandbox(sandboxName);
+    // Default-marking is deferred to finalization so a cancelled onboard never
+    // leaves this sandbox registered as default (#4614).
     session = await deps.recordStepComplete(
       "sandbox",
       deps.toSessionUpdates({

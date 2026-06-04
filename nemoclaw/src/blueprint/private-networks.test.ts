@@ -1,12 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // In-memory fs shared with the mocked module.
 const store = new Map<string, string>();
+const mtimes = new Map<string, number>();
+const sizes = new Map<string, number>();
+let nextMtime = 1;
 let existsCalls: string[] = [];
+let statCalls: string[] = [];
+let nowMs = 1_000;
+
+vi.spyOn(Date, "now").mockImplementation(() => nowMs);
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
@@ -18,8 +25,14 @@ vi.mock("node:fs", async (importOriginal) => {
     },
     readFileSync: (p: string) => {
       const content = store.get(p);
-      if (content === undefined) throw new Error(`ENOENT: ${p}`);
+      if (content === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
       return content;
+    },
+    statSync: (p: string) => {
+      statCalls.push(p);
+      const mtimeMs = mtimes.get(p);
+      if (mtimeMs === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+      return { mtimeMs, size: sizes.get(p) ?? 0 } as fs.Stats;
     },
   };
 });
@@ -50,12 +63,32 @@ names:
 
 function seedYaml(path: string, body: string): void {
   store.set(path, body);
+  mtimes.set(path, nextMtime);
+  sizes.set(path, body.length);
+  nextMtime += 1;
+}
+
+function replaceYamlKeepingMtime(path: string, body: string): void {
+  const mtimeMs = mtimes.get(path);
+  if (mtimeMs === undefined) throw new Error(`missing seeded mtime for ${path}`);
+  store.set(path, body);
+  mtimes.set(path, mtimeMs);
+  sizes.set(path, body.length);
+}
+
+function advanceStatInterval(): void {
+  nowMs += 1_000;
 }
 
 describe("private-networks loader", () => {
   beforeEach(() => {
     store.clear();
+    mtimes.clear();
+    sizes.clear();
+    nextMtime = 1;
     existsCalls = [];
+    statCalls = [];
+    nowMs = 1_000;
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
     resetCache();
   });
@@ -66,16 +99,24 @@ describe("private-networks loader", () => {
       seedYaml("/custom/path/private-networks.yaml", VALID_YAML);
       const entries = getNetworkEntries();
       expect(entries.ipv4).toHaveLength(2);
-      // resolveBlueprintPath's dev-guess probe is skipped when the env
-      // var is set; the only existsSync call is load()'s existence
-      // precheck on the final source path.
-      expect(existsCalls).toEqual(["/custom/path/private-networks.yaml"]);
+      // resolveBlueprintPath's dev-guess probe is skipped when the env var is set.
+      expect(existsCalls).toEqual([]);
     });
 
     it("throws a descriptive error when the YAML is missing", () => {
       process.env.NEMOCLAW_BLUEPRINT_PATH = "/missing/path";
       expect(() => getNetworkEntries()).toThrow(
         /private-networks\.yaml not found at \/missing\/path\/private-networks\.yaml.*NEMOCLAW_BLUEPRINT_PATH/s,
+      );
+    });
+
+    it("throws the descriptive error when the YAML disappears between stat and read", () => {
+      process.env.NEMOCLAW_BLUEPRINT_PATH = "/blueprint";
+      seedYaml("/blueprint/private-networks.yaml", VALID_YAML);
+      store.delete("/blueprint/private-networks.yaml");
+
+      expect(() => getNetworkEntries()).toThrow(
+        /private-networks\.yaml not found at \/blueprint\/private-networks\.yaml.*NEMOCLAW_BLUEPRINT_PATH/s,
       );
     });
 
@@ -256,6 +297,21 @@ describe("private-networks loader", () => {
       expect(first).toBe(second);
     });
 
+    it("skips file metadata checks within the stat interval", () => {
+      const first = getPrivateNetworks();
+      const statCount = statCalls.length;
+      seedYaml(
+        "/blueprint/private-networks.yaml",
+        "ipv4:\n  - address: 8.8.8.0\n    prefix: 24\n    purpose: inside stat interval\nipv6: []\nnames: []\n",
+      );
+
+      const second = getPrivateNetworks();
+
+      expect(second).toBe(first);
+      expect(statCalls).toHaveLength(statCount);
+      expect(isPrivateHostname("8.8.8.1")).toBe(false);
+    });
+
     it("resetCache forces a reload", () => {
       const before = getPrivateNetworks();
       resetCache();
@@ -265,6 +321,36 @@ describe("private-networks loader", () => {
         "ipv4:\n  - address: 8.8.8.0\n    prefix: 24\n    purpose: after reset\nipv6: []\nnames: []\n",
       );
       const after = getPrivateNetworks();
+      expect(after).not.toBe(before);
+      expect(isPrivateHostname("8.8.8.1")).toBe(true);
+      expect(isPrivateHostname("10.0.0.1")).toBe(false);
+    });
+
+    it("reloads when private-networks.yaml mtime changes", () => {
+      const before = getPrivateNetworks();
+      seedYaml(
+        "/blueprint/private-networks.yaml",
+        "ipv4:\n  - address: 8.8.8.0\n    prefix: 24\n    purpose: after mtime change\nipv6: []\nnames: []\n",
+      );
+      advanceStatInterval();
+
+      const after = getPrivateNetworks();
+
+      expect(after).not.toBe(before);
+      expect(isPrivateHostname("8.8.8.1")).toBe(true);
+      expect(isPrivateHostname("10.0.0.1")).toBe(false);
+    });
+
+    it("reloads when private-networks.yaml size changes without an mtime change", () => {
+      const before = getPrivateNetworks();
+      replaceYamlKeepingMtime(
+        "/blueprint/private-networks.yaml",
+        "ipv4:\n  - address: 8.8.8.0\n    prefix: 24\n    purpose: after size-only change with same mtime\nipv6: []\nnames: []\n",
+      );
+      advanceStatInterval();
+
+      const after = getPrivateNetworks();
+
       expect(after).not.toBe(before);
       expect(isPrivateHostname("8.8.8.1")).toBe(true);
       expect(isPrivateHostname("10.0.0.1")).toBe(false);
