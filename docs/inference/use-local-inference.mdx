@@ -26,7 +26,7 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 - NemoClaw installed. Refer to the [Quickstart](../get-started/quickstart) if you have not installed yet.
 </AgentOnly>
 <AgentOnly variant="hermes">
-- NemoClaw installed. Refer to [Quickstart with Hermes](../get-started/quickstart-hermes) if you have not installed yet.
+- NemoClaw installed. Refer to [Quickstart with Hermes](../get-started/quickstart) if you have not installed yet.
 </AgentOnly>
 - A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
@@ -109,6 +109,7 @@ Windows-host Ollama requires Docker Desktop WSL integration because the sandbox 
 If NemoClaw detects native Docker Engine inside WSL, the provider menu labels Windows-host Ollama actions as requiring Docker Desktop integration.
 Selecting one of those actions in the unsupported native Docker topology exits early with a remediation message instead of trying to start or install Ollama on Windows.
 
+<AgentOnly variant="openclaw">
 <Warning>
 Ollama is convenient for local chat, but some model/template combinations can
 return tool calls as plain text under realistic agent load. If the TUI shows raw
@@ -116,6 +117,7 @@ JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a
 tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
 `--tool-call-parser`. See [Tool-Calling Reliability](tool-calling-reliability).
 </Warning>
+</AgentOnly>
 
 ### Authenticated Reverse Proxy
 
@@ -466,6 +468,6 @@ If the provider itself needs to change (for example, switching from vLLM to a cl
 
 - [Inference Options](inference-options) for the full list of providers available during onboarding.
 - [Switch Inference Models](switch-inference-providers) for runtime model switching.
-- [Quickstart with Hermes](../get-started/quickstart-hermes) for first-time installation.
+- [Quickstart with Hermes](../get-started/quickstart) for first-time installation.
 
 </AgentOnly>

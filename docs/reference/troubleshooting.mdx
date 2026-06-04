@@ -1359,7 +1359,13 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the [Quickstart](../get-started/quickstart) and [Windows Setup](../get-started/prerequisites/windows-preparation) pages.
+For additional troubleshooting, see the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
+<AgentOnly variant="openclaw">
+For first-time OpenClaw setup, see the [Quickstart](../get-started/quickstart).
+</AgentOnly>
+<AgentOnly variant="hermes">
+For first-time Hermes setup, see [Quickstart with Hermes](../get-started/quickstart).
+</AgentOnly>
 
 ## Podman
 
@@ -1369,7 +1375,9 @@ If you encounter issues with Podman, switch to a tested runtime (Docker Engine, 
 
 ## Brev
 
+<AgentOnly variant="openclaw">
 For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui).
+</AgentOnly>
 
 ### Most OpenClaw skills show as blocked
 
@@ -1453,7 +1461,7 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 ## Hermes
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
-For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart-hermes).
+For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
@@ -1550,7 +1558,7 @@ Reset a specific provider's credentials with `nemohermes credentials reset <prov
 
 ### `Brave Search` policy preset has no effect under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](../../hermes/get-started/quickstart-hermes) and [Network Policies](network-policies)).
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
 If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
 Configure Hermes web search from the agent's own configuration inside the sandbox.
 
