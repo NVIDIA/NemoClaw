@@ -2713,20 +2713,112 @@ NODE
   fi
 }
 
-# Run one or more locally-defined bash functions as the sandbox user
-# without round-tripping through `bash -c "$(declare -f ...) ..."`.
+# Extract the literal source of a bash function from its defining file.
 #
-# The interpolated form is fragile under restricted runtimes: the
-# step-down shell cannot always re-parse a heredoc-bearing function
-# body carried through `bash -c`'s argv. Writing the declarations plus
-# the trailing invocation to a temp script and invoking `bash <file>`
-# instead lets the step-down shell read the literal source bytes from
-# disk so the argv/quoting round-trip is gone.
+# Uses `shopt -s extdebug` + `declare -F` to look up the function's
+# source location, then prints the function definition byte-exact from
+# disk. The opener line MUST match ^<name>\(\) \{$ and the body MUST
+# end with a single `}` at column 0; every function dispatched through
+# run_step_down_as_sandbox follows that style.
+#
+# This bypasses `declare -f`'s serialiser, which mis-orders the body of
+# functions whose `if`/`while`/`until` condition is a here-doc command:
+# `declare -f` places the indented `then`-body command immediately after
+# the `<<TAG` opener and before the here-doc body. The step-down shell
+# then absorbs the displaced command into the here-doc body, leaves the
+# `then` block empty, and aborts on the closing `fi` with
+#   syntax error near unexpected token `fi'
+# Reading the source bytes off disk preserves the original layout and
+# is robust to every here-doc shape, not only the
+# here-doc-as-last-statement shape `declare -f` happens to round-trip.
+#
+# Returns 1 on any of: function not a function, source file unreadable,
+# opener line shape unrecognised, or matching closing `}` not found.
+_step_down_extract_function() {
+  local fn="$1"
+  local info src_lineno src_path
+  if ! shopt -s extdebug 2>/dev/null; then
+    return 1
+  fi
+  info="$(declare -F "$fn" 2>/dev/null)"
+  shopt -u extdebug 2>/dev/null || true
+  if [ -z "$info" ]; then
+    return 1
+  fi
+  src_lineno="${info#* }"
+  src_lineno="${src_lineno%% *}"
+  src_path="${info#* * }"
+  if [ -z "$src_lineno" ] || [ -z "$src_path" ] || [ ! -r "$src_path" ]; then
+    return 1
+  fi
+  awk -v start="$src_lineno" -v fn="$fn" '
+    NR == start {
+      # One-liner shape: `name() { body; }` — entire definition on one line.
+      # No heredoc is possible in this shape, so emit and stop.
+      if ($0 ~ "^"fn"[[:space:]]*\\(\\)[[:space:]]*\\{.*\\}[[:space:]]*$") {
+        print
+        exit 0
+      }
+      # Multi-line shape: `name() {` opener, with the matching `}` on its
+      # own line at column 0 at the end of the body. Both production
+      # call sites and the test stubs that exercise here-docs follow
+      # this convention.
+      if ($0 !~ "^"fn"[[:space:]]*\\(\\)[[:space:]]*\\{[[:space:]]*$") {
+        exit 1
+      }
+      in_fn = 1
+      print
+      next
+    }
+    !in_fn { next }
+    in_heredoc {
+      print
+      if ($0 == heredoc_tag) in_heredoc = 0
+      next
+    }
+    {
+      print
+      if (match($0, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) {
+        tag = substr($0, RSTART, RLENGTH)
+        sub(/^<<-?[[:space:]]*/, "", tag)
+        sub(/^['"'"'"]/, "", tag)
+        sub(/['"'"'"]$/, "", tag)
+        in_heredoc = 1
+        heredoc_tag = tag
+        next
+      }
+      if ($0 == "}") exit
+    }
+    END { if (in_fn && in_heredoc) exit 1 }
+  ' "$src_path"
+}
+
+# Run one or more locally-defined bash functions as the sandbox user
+# without round-tripping through `bash -c "$(declare -f ...) ..."` and
+# without going through `declare -f`'s serialiser at all.
+#
+# The interpolated argv form was fragile because the step-down shell
+# could not always re-parse a here-doc-bearing function body carried
+# through `bash -c`'s argv. The earlier in-house fix routed function
+# bodies through `declare -f` plus a temp file, which removed the argv
+# round-trip but kept `declare -f`'s body-reordering bug for here-doc
+# `if` conditions. This helper now copies each named function's source
+# verbatim from `${BASH_SOURCE[0]}` (resolved per function via the
+# extdebug machinery), so every here-doc shape — condition, body,
+# trailing — survives the dispatch unchanged.
 #
 # The temp script lives directly under /tmp (sticky-bit, world-writable
 # but unlink-protected) with an unguessable mktemp suffix, so an
 # attacker cannot swap the file between mktemp and the step-down bash
 # invocation. The directory is intentionally not configurable.
+#
+# A `bash -n` syntax check runs on the assembled script before the
+# step-down invocation. It is a fail-closed guard: if a future change
+# ever produces a malformed temp script (for example, a dispatched
+# function that violates the opener/closer style assumption), we abort
+# before handing the broken script to step-down, surfacing a clean
+# error instead of the obscure `unexpected token 'fi'` failure that
+# this helper exists to prevent.
 #
 # Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
 #
@@ -2747,14 +2839,22 @@ run_step_down_as_sandbox() {
     rm -f "$script" 2>/dev/null || true
     return 1
   fi
-  {
+  if ! (
     printf 'set -euo pipefail\n'
-    declare -f "$@"
+    for fn in "$@"; do
+      _step_down_extract_function "$fn" || exit 1
+    done
     printf '%s\n' "$invocation"
-  } >"$script" || {
+  ) >"$script"; then
     rm -f "$script" 2>/dev/null || true
+    printf '[step-down] failed to assemble dispatch script\n' >&2
     return 1
-  }
+  fi
+  if ! bash -n "$script" 2>/dev/null; then
+    rm -f "$script" 2>/dev/null || true
+    printf '[step-down] generated dispatch script failed bash -n syntax check\n' >&2
+    return 1
+  fi
   local rc=0
   "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash "$script" || rc=$?
   rm -f "$script" 2>/dev/null || true
