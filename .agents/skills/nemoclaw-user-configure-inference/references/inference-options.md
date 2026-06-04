@@ -14,7 +14,7 @@ The provider flow is the same, with the NVIDIA Endpoints route available for Ope
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-For Hermes onboarding, use `nemohermes onboard`.
+For Hermes onboarding, use `nemoclaw onboard`.
 The provider flow is the same, with the Hermes Provider route available for Hermes Agent.
 </AgentOnly>
 
@@ -128,17 +128,9 @@ The sandbox never sees raw API keys.
 
 To use the router in scripted setup, set:
 
-<AgentOnly variant="openclaw">
 ```bash
 NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
-</AgentOnly>
-
-<AgentOnly variant="hermes">
-```bash
-NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemohermes onboard --non-interactive
-```
-</AgentOnly>
 
 ### Host Python Requirement
 
@@ -151,24 +143,11 @@ NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare
 If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
 This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
 
-<AgentOnly variant="openclaw">
 To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
-</AgentOnly>
-<AgentOnly variant="hermes">
-To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemohermes onboard`:
-</AgentOnly>
 
-<AgentOnly variant="openclaw">
 ```bash
 NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
 ```
-</AgentOnly>
-
-<AgentOnly variant="hermes">
-```bash
-NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemohermes onboard
-```
-</AgentOnly>
 
 The pin is strict.
 NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
@@ -211,5 +190,7 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 ## Next Steps
 
 - [Use a Local Inference Server](../SKILL.md) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
+<AgentOnly variant="openclaw">
 - [Tool-Calling Reliability](tool-calling-reliability.md) for deciding when Ollama is enough and when vLLM with a parser is safer.
+</AgentOnly>
 - [Switch Inference Models](switch-inference-providers.md) for changing the model at runtime without re-onboarding.
