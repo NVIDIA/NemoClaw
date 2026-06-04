@@ -1330,13 +1330,18 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
       expect(script).toContain("command -v openclaw");
       expect(script).toContain("command -v python3");
+      expect(script).toContain(
+        "cat > /tmp/openclaw_device_approval_policy.py <<'NEMOCLAW_APPROVAL_POLICY_PY'",
+      );
+      expect(script).toContain(
+        "from openclaw_device_approval_policy import approval_request_decision, gateway_approval_env",
+      );
       expect(script).toContain("devices");
       expect(script).toContain("list");
       expect(script).toContain("approve");
-      expect(script).toContain("approve_env = os.environ.copy()");
-      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_URL', None)");
-      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_PORT', None)");
-      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)");
+      expect(script).toContain("decision = approval_request_decision(device)");
+      expect(script).toContain("if not decision['allowed']:");
+      expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
       expect(script).toContain("env=approve_env");
       expect(script).toContain("if approve_proc.returncode == 0");
       expect(script).toContain("openclaw-control-ui");
@@ -1345,9 +1350,8 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       expect(script).toContain("operator.read");
       expect(script).toContain("operator.write");
       expect(script).toContain("return None");
-      expect(script).toContain("if scopes is None or (scopes and not scopes.issubset(ALLOWED_SCOPES))");
       expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
-        script.indexOf("approve_env = os.environ.copy()"),
+        script.indexOf("approve_env = gateway_approval_env(os.environ)"),
       );
       // Allowlist must NOT silently approve arbitrary clients.
       expect(script).not.toContain("evil-client");

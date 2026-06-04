@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -681,36 +683,45 @@ function ensureSandboxInferenceRouteOrExit(
 // mid-loop kill cannot strand allowlisted requests within a normal batch.
 const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
 const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
+  ROOT,
+  "scripts",
+  "lib",
+  "openclaw_device_approval_policy.py",
+);
+
+function readConnectAutoPairPolicyModule(): string | null {
+  try {
+    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
+  } catch {
+    return null;
+  }
+}
 
 function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  const approvalPolicyModule = readConnectAutoPairPolicyModule();
+  if (!approvalPolicyModule) {
+    return;
+  }
   const script = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
+cat > /tmp/openclaw_device_approval_policy.py <<'NEMOCLAW_APPROVAL_POLICY_PY'
+${approvalPolicyModule}
+NEMOCLAW_APPROVAL_POLICY_PY
 OPENCLAW_BIN="$(command -v openclaw)" python3 - <<'PYAPPROVE'
 import json
 import os
 import subprocess
 import sys
 
+sys.path.insert(0, '/tmp')
+from openclaw_device_approval_policy import approval_request_decision, gateway_approval_env
+
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat', 'cli'}
-ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
 MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
-
-
-def requested_scopes(device):
-    if 'scopes' in device:
-        scopes = device.get('scopes')
-    elif 'requestedScopes' in device:
-        scopes = device.get('requestedScopes')
-    else:
-        return set()
-    if not isinstance(scopes, list):
-        return None
-    return {str(scope).strip() for scope in scopes if str(scope or '').strip()}
 
 try:
     proc = subprocess.run(
@@ -741,18 +752,11 @@ for device in pending:
     request_id = device.get('requestId')
     if not request_id or request_id in seen_request_ids:
         continue
-    client_id = device.get('clientId', '')
-    client_mode = device.get('clientMode', '')
-    if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
-        continue
-    scopes = requested_scopes(device)
-    if scopes is None or (scopes and not scopes.issubset(ALLOWED_SCOPES)):
+    decision = approval_request_decision(device)
+    if not decision['allowed']:
         continue
     seen_request_ids.add(request_id)
-    approve_env = os.environ.copy()
-    approve_env.pop('OPENCLAW_GATEWAY_URL', None)
-    approve_env.pop('OPENCLAW_GATEWAY_PORT', None)
-    approve_env.pop('OPENCLAW_GATEWAY_TOKEN', None)
+    approve_env = gateway_approval_env(os.environ)
     attempted_count += 1
     try:
         approve_proc = subprocess.run(
