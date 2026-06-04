@@ -203,7 +203,7 @@ navigation:
                     slug: windows-preparation
               - page: "Quickstart with Hermes"
                 path: get-started/quickstart-hermes.mdx
-                slug: quickstart-hermes
+                slug: quickstart
           - section: "Inference"
             slug: inference
             collapsed: open-by-default

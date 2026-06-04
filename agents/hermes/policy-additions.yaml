@@ -147,7 +147,9 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
+      - { path: /usr/bin/curl }
       - { path: /usr/local/bin/pip3 }
+      - { path: /usr/local/bin/curl }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 

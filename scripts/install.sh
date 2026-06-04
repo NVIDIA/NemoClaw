@@ -1848,11 +1848,46 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+repair_installer_stale_nvidia_cdi_spec() {
+  local flagged_file="${1:-}"
+  local service_spec_path="/var/run/cdi/nvidia.yaml"
+  local sudo_cmd=()
+
+  info "Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service."
+  info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
+  info "Docker is configured for CDI, but the effective nvidia.com/gpu spec may be stale."
+  info "The refresh service regenerates ${service_spec_path}; re-assessment verifies that effective spec."
+  if [[ -n "$flagged_file" && "$flagged_file" != "$service_spec_path" ]]; then
+    info "The stale ${flagged_file} file is a leftover; the refreshed ${service_spec_path} overrides it."
+  fi
+  if ! command_exists systemctl; then
+    warn "Could not refresh the stale NVIDIA CDI spec automatically because systemctl is unavailable."
+    return 0
+  fi
+  if [[ "$(id -u)" -ne 0 ]]; then
+    sudo_cmd=(sudo)
+    info "You may be asked for your password to authorize these host-level admin changes."
+    info "NemoClaw does not store your password."
+    if ! sudo -v; then
+      warn "Could not obtain sudo credentials for NVIDIA CDI refresh service repair."
+      return 0
+    fi
+  fi
+  if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
+    && "${sudo_cmd[@]}" systemctl start nvidia-cdi-refresh.service >/dev/null 2>&1; then
+    ok "Enabled NVIDIA CDI refresh service and refreshed the service-managed NVIDIA CDI device spec."
+    return 0
+  fi
+  warn "Could not refresh the stale NVIDIA CDI spec automatically with nvidia-cdi-refresh.service."
+}
+
 repair_installer_nvidia_cdi_spec() {
   local preflight_module="$1"
+  local repair_plan=""
+  local repair_kind=""
   local spec_path=""
 
-  spec_path="$(
+  repair_plan="$(
     # shellcheck disable=SC2016
     node -e '
       const preflightPath = process.argv[1];
@@ -1864,7 +1899,18 @@ repair_installer_nvidia_cdi_spec() {
           host.cdiNvidiaGpuSpecMissing &&
           !isWslDockerDesktopRuntime(host)
         ) {
-          process.stdout.write(getNvidiaCdiSpecPath(host));
+          process.stdout.write(`missing\t${getNvidiaCdiSpecPath(host)}`);
+        } else if (
+          host &&
+          host.cdiNvidiaGpuSpecStale &&
+          host.cdiNvidiaGpuSpecNeedsRepair &&
+          !host.cdiNvidiaGpuSpecMissing &&
+          host.nvidiaContainerToolkitInstalled &&
+          !isWslDockerDesktopRuntime(host)
+        ) {
+          const mismatch = String(host.cdiNvidiaGpuSpecMismatch || "");
+          const flaggedFilePath = mismatch.trim().split(/\s+/, 1)[0] || "";
+          process.stdout.write(`stale\t${flaggedFilePath}`);
         }
       } catch {
         process.exit(0);
@@ -1872,9 +1918,18 @@ repair_installer_nvidia_cdi_spec() {
     ' "$preflight_module" 2>/dev/null || true
   )"
 
-  if [[ -z "$spec_path" ]]; then
+  if [[ -z "$repair_plan" ]]; then
     return 0
   fi
+
+  repair_kind="${repair_plan%%$'\t'*}"
+  spec_path="${repair_plan#*$'\t'}"
+
+  if [[ "$repair_kind" == "stale" ]]; then
+    repair_installer_stale_nvidia_cdi_spec "$spec_path"
+    return 0
+  fi
+
   if ! command_exists nvidia-ctk; then
     return 0
   fi
@@ -1886,10 +1941,10 @@ repair_installer_nvidia_cdi_spec() {
   fi
 
   local sudo_cmd=()
-  info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  info "Refreshing NVIDIA CDI device spec at ${spec_path}."
   info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
-  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing."
-  info "Without it, OpenShell gateway startup would fail before the sandbox can use the GPU."
+  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing or may be stale."
+  info "Without a refreshed spec, OpenShell gateway startup can fail before the sandbox can use the GPU."
   info "NemoClaw will first enable NVIDIA's CDI refresh service."
   info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
