@@ -3133,6 +3133,17 @@ const { createSandbox } = require(${onboardPath});
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
     assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
     assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
+    // `openclaw skills install` and `openclaw skills list` resolve the same
+    // paths. Without this, the upstream skill loader can fall back to a
+    // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
+    // and hides workspace-installed skills from `skills list`.
+    assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
+    assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
+    assert.match(
+      createCommand.command,
+      /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
+    );
     const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
     assert.ok(noProxyMatch, `expected NO_PROXY in sandbox create command:\n${createCommand.command}`);
     const noProxyEntries = noProxyMatch[1].split(",");

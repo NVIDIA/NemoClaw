@@ -376,6 +376,7 @@ NEMOCLAW_EXPERIMENTAL=1 $$nemoclaw onboard
 
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
+The managed NIM startup health wait defaults to 15 minutes (900 seconds) so first-time checkpoint loads on systems such as DGX Spark can finish before onboard falls back to another provider.
 On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM so you can confirm which device class the model selection used.
 
 NVIDIA hosts NIM container images on `nvcr.io`, and `docker pull` requires NGC registry authentication.
@@ -417,6 +418,7 @@ NemoClaw bakes this setting into the sandbox at build time.
 Changing it after onboarding requires re-running `$$nemoclaw onboard`.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only governs the inference-server validation probe.
+The managed NIM startup health wait uses its own 15-minute (900-second) default and still exits early if the container stops before it becomes healthy.
 During local Ollama setup, NemoClaw treats host-side curl process timeouts as retryable probe failures and retries with a larger timeout before it reports a validation failure.
 NemoClaw also retries Docker runtime detection with a longer `docker info` timeout before it chooses the local inference route.
 The post-create readiness wait (image build, gateway upload, in-sandbox boot) has its own budget, `NEMOCLAW_SANDBOX_READY_TIMEOUT`, also defaulting to 180 seconds.
