@@ -12,6 +12,7 @@ type VerificationResult = { ok: boolean };
 
 function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {}) {
   const calls = {
+    setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
     postVerify: vi.fn(async () => createSession({ machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 } })),
     complete: vi.fn(async () => createSession({ status: "complete" })),
@@ -31,6 +32,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     calls,
     deps: {
       ensureAgentDashboardForward: calls.ensureAgentDashboard,
+      setDefaultSandbox: calls.setDefaultSandbox,
       recordPostVerifyStarted: calls.postVerify,
       recordSessionComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
@@ -74,6 +76,11 @@ describe("handleFinalizationState", () => {
 
     const result = await handleFinalizationState(baseOptions(deps));
 
+    // Default is set at finalization (deferred from sandbox creation, #4614), before completion.
+    expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
+    expect(calls.setDefaultSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.complete.mock.invocationCallOrder[0],
+    );
     expect(calls.cleanupHost).toHaveBeenCalledOnce();
     expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
     expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
@@ -117,6 +124,9 @@ describe("handleFinalizationState", () => {
     expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(calls.complete).not.toHaveBeenCalled();
     expect(calls.dashboard).not.toHaveBeenCalled();
+    // The sandbox reached finalization (policies confirmed), so it stays the default
+    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {

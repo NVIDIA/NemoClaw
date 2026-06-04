@@ -4,26 +4,26 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -73,6 +73,7 @@ export interface OnboardDashboardHelpers {
     sandboxName: string,
     agent: { forwardPort?: number | null },
   ): number;
+  ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
@@ -322,6 +323,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return actualAgentDashboardPort;
   }
 
+  function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
+    return ensureFixedAgentForward(deps, sandboxName, port, label);
+  }
+
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
     try {
@@ -439,6 +444,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
