@@ -185,7 +185,7 @@ describe("OnboardRuntime", () => {
       "state.exited",
       "state.entered",
     ]);
-    expect(events[0].metadata.fields).toEqual(["sandboxName"]);
+    expect(events[0].metadata).toMatchObject({ fields: ["sandboxName"], source: "handler" });
     expect(events[1]).toMatchObject({ state: "init", metadata: { source: "handler" } });
     expect(events[2]).toMatchObject({ state: "preflight", metadata: { source: "handler" } });
   });
@@ -200,11 +200,35 @@ describe("OnboardRuntime", () => {
     expect(branchHarness.getSession().machine).toMatchObject({ state: "agent_setup" });
 
     const completeHarness = createHarness(sessionInState("post_verify"));
-    await completeHarness.runtime.applyResult(completeOnboardMachine({ sandboxName: "done" }));
+    await completeHarness.runtime.applyResult(
+      completeOnboardMachine({ sandboxName: "done" }, { source: "finalizer" }),
+    );
     expect(completeHarness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "done",
       machine: { state: "complete" },
+    });
+    expect(completeHarness.events.map((event) => event.type)).toEqual([
+      "context.updated",
+      "state.completed",
+      "state.entered",
+      "onboard.completed",
+    ]);
+    expect(completeHarness.events[0].metadata).toMatchObject({
+      fields: ["sandboxName"],
+      source: "finalizer",
+    });
+    expect(completeHarness.events[1]).toMatchObject({
+      state: "post_verify",
+      metadata: { source: "finalizer" },
+    });
+    expect(completeHarness.events[2]).toMatchObject({
+      state: "complete",
+      metadata: { source: "finalizer" },
+    });
+    expect(completeHarness.events[3]).toMatchObject({
+      state: "complete",
+      metadata: { source: "finalizer" },
     });
 
     const failedHarness = createHarness(sessionInState("gateway"));
@@ -279,16 +303,15 @@ describe("OnboardRuntime", () => {
     const { runtime, events, getSession } = createHarness(sessionInState("provider_selection"));
 
     await runtime.emitResumeConflict({
-      field: "fromDockerfile",
-      recorded: "/workspace/Dockerfile",
-      requested: "/tmp/Dockerfile",
-      metadata: { endpoint: "https://alice:secret@example.com/v1?token=super-secret" },
+      field: "provider",
+      recorded: "nvidia",
+      requested: "https://alice:secret@example.com/v1?token=super-secret",
     });
 
     expect(getSession().machine.state).toBe("provider_selection");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: "resume.conflict", state: "provider_selection" });
-    expect(events[0].metadata.field).toBe("fromDockerfile");
+    expect(events[0].metadata.field).toBe("provider");
     expect(JSON.stringify(events)).not.toContain("super-secret");
     expect(JSON.stringify(events)).not.toContain("alice:secret");
   });

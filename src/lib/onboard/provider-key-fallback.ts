@@ -7,7 +7,7 @@ export interface ProviderOption {
 }
 
 export interface ProviderKeyFallbackContext {
-  isWindowsHostOllama: boolean;
+  canUseWindowsHostOllama: boolean;
 }
 
 export function resolveProviderKeyFallback<T extends ProviderOption>(
@@ -29,10 +29,10 @@ export function resolveProviderKeyFallback<T extends ProviderOption>(
       // entries that still point at the Windows host.
       return (
         find("start-windows-ollama") ||
-        (context.isWindowsHostOllama ? find("ollama") : undefined)
+        (context.canUseWindowsHostOllama ? find("ollama") : undefined)
       );
     case "start-windows-ollama":
-      return context.isWindowsHostOllama ? find("ollama") : undefined;
+      return context.canUseWindowsHostOllama ? find("ollama") : undefined;
     case "ollama":
       return find("install-ollama");
     default:

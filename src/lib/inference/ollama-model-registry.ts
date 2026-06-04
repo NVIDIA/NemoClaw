@@ -36,7 +36,7 @@ export interface OllamaModelEntry {
 export const OLLAMA_MODEL_REGISTRY: readonly OllamaModelEntry[] = [
   { tag: "qwen3.6:35b", requiredMemoryMB: 26_000, downloadSizeBytes: 24_000_000_000 },
   { tag: "nemotron-3-nano:30b", requiredMemoryMB: 22_000, downloadSizeBytes: 19_000_000_000 },
-  { tag: "qwen2.5:7b", requiredMemoryMB: 8_000, downloadSizeBytes: 4_683_073_184 },
+  { tag: "qwen3.5:9b", requiredMemoryMB: 12_000, downloadSizeBytes: 6_600_000_000 },
 ];
 
 export const SMALLEST_OLLAMA_MODEL_TAG =

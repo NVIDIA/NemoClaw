@@ -148,7 +148,7 @@ export function getCredentialPromptIntent(value: CredentialInput): CredentialPro
  *
  * NOTE for tests: this mutates `process.env` directly (not via vitest's
  * `vi.stubEnv`), so callers that pollute the env in a unit test must
- * clean up themselves — see `test/credentials.test.ts` for the
+ * clean up themselves — see the credentials tests for the
  * `clearTrackedEnv` pattern.
  */
 export function saveCredential(key: string, value: CredentialInput): void {
