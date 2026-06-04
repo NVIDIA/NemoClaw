@@ -9,6 +9,24 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
+interface RunReconcileOptions {
+  /**
+   * Output the stubbed `openshell inference get --json` should print.
+   * - undefined → no openshell on PATH (probe falls back to in-file logic).
+   * - "" → openshell exists but returns empty JSON (probe yields no model).
+   * - non-empty string → openshell returns `{"model": <string>}`.
+   * Ignored when `gatewayRawOutput` is set.
+   */
+  gatewayModel?: string;
+  /**
+   * Raw stdout the stub emits instead of a JSON-formatted payload. Use to
+   * exercise malformed-JSON or unexpected-shape paths. Takes precedence
+   * over `gatewayModel` when both are set.
+   */
+  gatewayRawOutput?: string;
+  env?: Record<string, string>;
+}
+
 describe("agent identity reconciliation with provider (#3175)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -20,7 +38,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     return `${name}() {${match[1]}\n}`;
   }
 
-  function runReconcile(initialConfig: unknown, env: Record<string, string> = {}) {
+  function runReconcile(initialConfig: unknown, options: RunReconcileOptions = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reconcile-"));
     const openclawDir = path.join(root, ".openclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
@@ -31,6 +49,28 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     fs.chmodSync(openclawDir, 0o2770);
     fs.chmodSync(configPath, 0o660);
     fs.chmodSync(hashPath, 0o660);
+
+    const binDir = path.join(root, "bin");
+    fs.mkdirSync(binDir);
+    const installStub = options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
+    if (installStub) {
+      const payload =
+        options.gatewayRawOutput !== undefined
+          ? options.gatewayRawOutput
+          : options.gatewayModel === ""
+            ? "{}"
+            : JSON.stringify({ model: options.gatewayModel });
+      const stub = [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        `  printf '%s' ${JSON.stringify(payload)}`,
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(binDir, "openshell"), stub, { mode: 0o755 });
+    }
 
     const helperFns = [
       extractShellFunction("openclaw_config_dir_owner"),
@@ -57,9 +97,28 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     ].join("\n");
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
+    // Build PATH: when the test installs an openshell stub, prepend its
+    // bin dir; otherwise scrub openshell from the inherited PATH so the
+    // probe deterministically reports "not installed".
+    const inheritedPath = process.env.PATH ?? "/usr/bin:/bin";
+    const scrubbedPath = inheritedPath
+      .split(path.delimiter)
+      .filter((dir) => {
+        if (!dir) return false;
+        try {
+          fs.accessSync(path.join(dir, "openshell"), fs.constants.X_OK);
+          return false;
+        } catch {
+          return true;
+        }
+      })
+      .join(path.delimiter);
+    const pathValue = installStub
+      ? `${binDir}${path.delimiter}${scrubbedPath}`
+      : scrubbedPath;
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
-      env: { ...process.env, ...env },
+      env: { ...process.env, ...options.env, PATH: pathValue },
     });
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const hash = fs.readFileSync(hashPath, "utf-8");
@@ -140,5 +199,133 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(result.status).toBe(0);
     expect(config).toEqual({ unrelated: true });
     expect(hash).toBe("oldhash\n");
+  });
+
+  // ── Gateway-as-source-of-truth path (the #3175 user-reported repro) ──
+
+  it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/nemotron-3-super-120b-a12b" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].name).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].id).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(hash).not.toBe("oldhash\n");
+    expect(hash).toContain("openclaw.json");
+  });
+
+  it("accepts an inference-qualified gateway model without double-prefixing", () => {
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "inference/nvidia/nemotron-3-super-120b-a12b" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].id).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+  });
+
+  it("is a no-op when the live gateway model matches both file fields", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia/synced" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia/synced", name: "inference/nvidia/synced" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/synced" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/synced");
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("falls back to the in-file reconcile when the gateway probe returns no model", () => {
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
+    // models[0] is untouched in legacy-fallback mode.
+    expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
+  });
+
+  it("falls back to the in-file reconcile when the gateway probe emits malformed JSON", () => {
+    // A future packaging shift could ship an `openshell` shim that doesn't
+    // implement `inference get --json` and returns junk on stdout. The
+    // current absorb-via-SystemExit(0) path should still leave the user
+    // in the legacy in-file reconcile state — pinning this so a refactor
+    // of the probe parser can't silently degrade to "do nothing".
+    const { result, config } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/old-model" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+            },
+          },
+        },
+      },
+      { gatewayRawOutput: "<html>not json at all</html>" },
+    );
+
+    expect(result.status).toBe(0);
+    // Legacy in-file path runs: primary is aligned to the file's first
+    // model, models[0] stays untouched (same shape as the empty-probe case).
+    expect(config.agents.defaults.model.primary).toBe("inference/nvidia/new-model");
+    expect(config.models.providers.inference.models[0].id).toBe("nvidia/new-model");
   });
 });
