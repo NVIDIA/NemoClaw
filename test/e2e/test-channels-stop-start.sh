@@ -413,8 +413,11 @@ if (channelId !== "whatsapp" && !credentialBindings.some((entry) => entry?.chann
   fail(channelId + " credential binding missing from messaging.plan");
 }
 const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
-if (!agentRender.some((entry) => entry?.channelId === channelId && entry?.agent === agent)) {
-  fail(channelId + " " + agent + " render entry missing from messaging.plan");
+const buildSteps = Array.isArray(plan.buildSteps) ? plan.buildSteps : [];
+const hasAgentRender = agentRender.some((entry) => entry?.channelId === channelId && entry?.agent === agent);
+const hasBuildStep = buildSteps.some((entry) => entry?.channelId === channelId);
+if (!hasAgentRender && !hasBuildStep) {
+  fail(channelId + " " + agent + " render/build-step entry missing from messaging.plan");
 }
 ' "$REGISTRY" "$ACTIVE_SANDBOX" "$ACTIVE_AGENT" "$channel" "$expected" 2>&1)"; then
       msg="${ACTIVE_AGENT}/${channel}: host registry messaging.plan has channel ${expected} ${context}"
