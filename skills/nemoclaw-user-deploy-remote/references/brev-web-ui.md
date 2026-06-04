@@ -29,7 +29,8 @@ You do not need to install local software for this flow.
 
 ## Get Your NVIDIA API Key
 
-If you already have an NVIDIA API key skip this section. Otherwise, follow these steps to generate a new key:
+If you already have an NVIDIA API key, skip this section.
+Otherwise, follow these steps to generate a new key:
 
 1. Go to [build.nvidia.com](https://build.nvidia.com).
 2. Sign in or create an account.
@@ -48,7 +49,7 @@ Use the [NemoClaw Brev launchable](https://brev.nvidia.com/launchable/deploy/now
 2. Review the instance type, cloud provider, and estimated hourly cost on the NemoClaw setup page.
 3. Click **Deploy NemoClaw**.
 
-The right-side deployment panel shows progress while Brev deploys the CPU instance and prepares VM mode.
+The deployment panel on the right shows progress while Brev deploys the CPU instance and prepares VM mode.
 Keep this page open until the deployment completes.
 When the panel shows the **NemoClaw** button, click it to open the agent setup page.
 
@@ -98,7 +99,8 @@ Click **Chat With Agent** to open the OpenClaw dashboard.
 
 The dashboard might initially show a **Pairing required** warning.
 This means the gateway is still completing pairing in the background.
-Wait for about a few minutes for pairing to finish automatically. Refresh the dashboard to see if the warning is resolved and the connection is established.
+Wait a few minutes for pairing to finish automatically.
+Refresh the dashboard to check whether the warning has cleared and the dashboard has connected.
 If pairing does not finish, go to the **Overview** page in the OpenClaw UI, find the **Gateway Access** panel, and click **Connect**.
 
 ## Start a Chat
@@ -110,7 +112,7 @@ Hello! What can you do for me? What skills do you have available?
 ```
 
 The agent reads its workspace files and introduces itself.
-The starter workspace includes example skills such as:
+The starter workspace includes these example skills:
 
 - **Weather** gets current weather and forecasts.
 - **Healthcheck** runs security audit and hardening checks.
