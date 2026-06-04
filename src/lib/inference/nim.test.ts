@@ -1325,6 +1325,29 @@ describe("nim", () => {
   });
 
   describe("waitForNimHealth", () => {
+    it("uses a longer default startup timeout for first-time checkpoint loads", () => {
+      const consoleLogs: string[] = [];
+      const origLog = console.log;
+      console.log = (...args: unknown[]) => {
+        consoleLogs.push(args.map(String).join(" "));
+      };
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS).toBe(900);
+        expect(nimModule.waitForNimHealth(9000)).toBe(true);
+        expect(consoleLogs.some((line) => line.includes("timeout: 900s"))).toBe(true);
+      } finally {
+        console.log = origLog;
+        restore();
+      }
+    });
+
     it("bounds curl health probes with connect and total timeouts", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -1345,7 +1368,7 @@ describe("nim", () => {
 
     // Regression #3333: if the container exits (typically NGC auth failure),
     // stop polling immediately and surface the last log lines so the user sees
-    // the cause instead of a generic 5-minute timeout. NIM's Python logger
+    // the cause instead of a generic startup timeout. NIM's Python logger
     // writes errors to stderr, so the dockerLogs adapter must capture both
     // streams or the tail will be empty in the real failure mode.
     it("short-circuits when the container has exited and surfaces stderr", () => {
