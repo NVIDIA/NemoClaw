@@ -26,7 +26,8 @@ export interface ShieldsAuditEntry {
     | "shields_up_failed"
     | "shields_auto_restore_lock_warning"
     | "inference_set"
-    | "config_set";
+    | "config_set"
+    | "rotate_token";
   sandbox: string;
   timestamp: string;
   timeout_seconds?: number;

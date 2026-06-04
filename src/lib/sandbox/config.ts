@@ -970,7 +970,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 6. Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "rotate_token",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `rotate-token ${target.agentName}:${credentialEnv}`,
