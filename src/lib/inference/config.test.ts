@@ -271,6 +271,46 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
+  it("maps anthropic-prod to the anthropic wire behind inference.local", () => {
+    expect(getSandboxInferenceConfig("claude-sonnet-4-6", "anthropic-prod")).toEqual({
+      providerKey: "anthropic",
+      primaryModelRef: "anthropic/claude-sonnet-4-6",
+      inferenceBaseUrl: "https://inference.local",
+      inferenceApi: "anthropic-messages",
+      inferenceCompat: null,
+    });
+  });
+
+  it("defaults compatible-anthropic-endpoint to the anthropic wire when no API preference is baked", () => {
+    expect(getSandboxInferenceConfig("claude-sonnet-4-6", "compatible-anthropic-endpoint")).toEqual(
+      {
+        providerKey: "anthropic",
+        primaryModelRef: "anthropic/claude-sonnet-4-6",
+        inferenceBaseUrl: "https://inference.local",
+        inferenceApi: "anthropic-messages",
+        inferenceCompat: null,
+      },
+    );
+  });
+
+  it("keeps compatible-anthropic-endpoint on the OpenAI wire only for an explicit preference", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "claude-sonnet-4-6",
+        "compatible-anthropic-endpoint",
+        "openai-completions",
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/claude-sonnet-4-6`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
   it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
     expect(getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"))
       .toEqual({

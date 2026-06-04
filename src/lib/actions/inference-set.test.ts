@@ -295,6 +295,58 @@ describe("patchHermesInferenceConfig", () => {
     });
     expect(config.terminal).toEqual({ backend: "local" });
   });
+
+  it("propagates the anthropic wire mode for anthropic-prod routes", () => {
+    const config: ConfigObject = {
+      model: {
+        default: "nvidia-routed",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+
+    const result = patchHermesInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
+
+    expect(result.changed).toBe(true);
+    expect(config.model).toEqual({
+      default: "claude-sonnet-4-6",
+      provider: "custom",
+      base_url: "https://inference.local",
+      api_mode: "anthropic_messages",
+    });
+  });
+
+  it("propagates the anthropic wire mode for compatible-anthropic-endpoint routes", () => {
+    const config: ConfigObject = { model: {} };
+
+    patchHermesInferenceConfig(config, "compatible-anthropic-endpoint", "claude-sonnet-4-6");
+
+    expect(config.model).toEqual({
+      default: "claude-sonnet-4-6",
+      provider: "custom",
+      base_url: "https://inference.local",
+      api_mode: "anthropic_messages",
+    });
+  });
+
+  it("clears a stale anthropic wire mode when switching to an OpenAI-wire route", () => {
+    const config: ConfigObject = {
+      model: {
+        default: "claude-sonnet-4-6",
+        provider: "custom",
+        base_url: "https://inference.local",
+        api_mode: "anthropic_messages",
+      },
+    };
+
+    patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
+
+    expect(config.model).toEqual({
+      default: "openai/gpt-5.4-mini",
+      provider: "custom",
+      base_url: "https://inference.local/v1",
+    });
+  });
 });
 
 describe("runInferenceSet", () => {

@@ -270,6 +270,19 @@ export function patchHermesInferenceConfig(
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
   modelConfig.provider = "custom";
+  // Hermes "custom" providers default to the OpenAI chat-completions wire and
+  // pick other transports only from explicit config or base-url heuristics —
+  // "https://inference.local/v1" matches none. Anthropic-wire routes
+  // (anthropic-prod, compatible-anthropic-endpoint) must therefore propagate
+  // the API mode, or the agent POSTs /chat/completions at an anthropic-type
+  // provider and the gateway L7 policy denies every inference call. Clear the
+  // key on non-anthropic routes so a stale wire mode never survives a provider
+  // switch (mirrors Hermes's own stale-api_mode cleanup on provider changes).
+  if (route.inferenceApi === "anthropic-messages") {
+    modelConfig.api_mode = "anthropic_messages";
+  } else {
+    delete modelConfig.api_mode;
+  }
 
   return { changed: before !== JSON.stringify(config), route };
 }

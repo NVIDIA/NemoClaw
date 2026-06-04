@@ -194,7 +194,16 @@ export function getSandboxInferenceConfig(
       break;
     case "anthropic-prod":
     case "compatible-anthropic-endpoint":
-      if (provider === "compatible-anthropic-endpoint" && inferenceApi === "openai-completions") {
+      // Only an EXPLICIT openai-completions preference keeps an
+      // Anthropic-compatible endpoint on the OpenAI wire. The fallback default
+      // ("openai-completions" when preferredInferenceApi is null) must not:
+      // callers without a baked preference — notably the Hermes config sync,
+      // which never passes one — would otherwise speak the OpenAI protocol at
+      // an anthropic-type provider and be denied by the gateway L7 policy.
+      if (
+        provider === "compatible-anthropic-endpoint" &&
+        preferredInferenceApi === "openai-completions"
+      ) {
         providerKey = MANAGED_PROVIDER_ID;
         primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
         inferenceCompat = {
