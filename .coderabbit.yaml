@@ -53,8 +53,10 @@ reviews:
           where multiple sentences appear on the same line.
         - CLI commands, file paths, flags, parameter names, and values must use
           inline `code` formatting.
-        - CLI code blocks must use the `console` language tag with `$` prompt
-          prefix. Flag ```bash or ```shell for CLI examples.
+        - Copyable CLI code blocks must use language-specific tags such as
+          `bash`, `sh`, or `powershell`, and must not include prompt markers
+          such as `$`. Reserve `console` blocks for terminal transcripts that
+          include prompts, output, or interactive sessions.
         - Use Fern callout components (<Note>, <Tip>, <Warning>) for callouts
           in MDX pages, not bold text or blockquotes. MyST admonitions are
           acceptable only in legacy .md pages that have not migrated yet.
@@ -338,11 +340,47 @@ reviews:
         trail, and auto-restore timer.
 
         **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct Docker/VM privileged
+          exec routing for shields/config mutations
         - `shields-config-e2e` — shields lifecycle + config get/set/rotate
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/privileged-exec.ts"
+      instructions: |
+        This file selects the privileged mutation transport for host-side
+        sandbox writes. Changes can break shields up/down and config set on
+        Docker Desktop VM-driver sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — fake Docker registry
+          coverage for VM/Docker direct-container routing and prefix
+          collision handling
+        - `shields-config-e2e` — live shields lifecycle + config get/set/rotate
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/config.ts"
+      instructions: |
+        This file implements host-side config get/set/rotate. Changes to
+        config writes, hash recomputation, or privileged exec routing affect
+        Docker/VM sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct privileged exec
+          routing for host-side config mutation
+        - `shields-config-e2e` — live config get/set/rotate while shields
+          transitions are exercised
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
         ```
 
     - path: "agents/hermes/**"
@@ -692,6 +730,41 @@ reviews:
         ```
         gh workflow run regression-e2e.yaml --ref <branch> -f 'jobs=gateway-health-honest-e2e'
         ```
+
+    - path: "test/e2e/test-sessions-agents-cli.sh"
+      instructions: &e2e-sessions-agents-cli |
+        This script exercises the host-side `nemoclaw <name> sessions` and
+        `nemoclaw <name> agents` subcommand groups end-to-end: gateway RPC
+        envelope round-trip for `sessions reset` / `sessions delete`, plus
+        passthrough for `sessions list` and `agents add` / `agents delete`.
+        These flows are invisible to unit tests because the wrapper layer
+        depends on `openshell sandbox exec` and a live OpenClaw gateway.
+
+        **E2E test recommendation:**
+        - `sessions-agents-cli-e2e` — sessions + agents CLI wrapper coverage
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sessions-agents-cli-e2e
+        ```
+
+    - path: "src/lib/actions/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/lib/actions/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
 
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |

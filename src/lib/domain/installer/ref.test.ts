@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveInstallerVersion, resolveInstallRef } from "./ref";
+import { DEFAULT_INSTALL_REF, resolveInstallerVersion, resolveInstallRef } from "./ref";
 
 describe("installer ref helpers", () => {
   it("resolves install refs with the same priority as install.sh", () => {
@@ -11,7 +11,7 @@ describe("installer ref helpers", () => {
       "feature",
     );
     expect(resolveInstallRef({ NEMOCLAW_INSTALL_TAG: "v1" })).toBe("v1");
-    expect(resolveInstallRef({})).toBe("latest");
+    expect(resolveInstallRef({})).toBe(DEFAULT_INSTALL_REF);
   });
 
   it("derives installer versions from refs and fallback sources", () => {
@@ -25,7 +25,7 @@ describe("installer ref helpers", () => {
     expect(
       resolveInstallerVersion({
         defaultVersion: "0.1.0",
-        env: { NEMOCLAW_INSTALL_TAG: "latest" },
+        env: { NEMOCLAW_INSTALL_TAG: "lkg" },
         gitDescribeVersion: "v2.0.0-4-gabc",
         packageJsonVersion: "3.0.0",
         stampedVersion: "2.0.0",

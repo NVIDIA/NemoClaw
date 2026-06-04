@@ -1,0 +1,26 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: hermes-nvidia-discord
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: hermes
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging:
+      - discord
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY
+      - DISCORD_BOT_TOKEN

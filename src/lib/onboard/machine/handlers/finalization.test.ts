@@ -12,6 +12,7 @@ type VerificationResult = { ok: boolean };
 
 function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {}) {
   const calls = {
+    setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
     postVerify: vi.fn(async () => createSession({ machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 } })),
     complete: vi.fn(async () => createSession({ status: "complete" })),
@@ -22,6 +23,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
+    verifyWebSearch: vi.fn(),
     dashboard: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
@@ -30,6 +32,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     calls,
     deps: {
       ensureAgentDashboardForward: calls.ensureAgentDashboard,
+      setDefaultSandbox: calls.setDefaultSandbox,
       recordPostVerifyStarted: calls.postVerify,
       recordSessionComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
@@ -40,6 +43,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
       formatVerificationDiagnostics: calls.diagnostics,
+      verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
       error: calls.error,
       log: calls.log,
@@ -61,6 +65,7 @@ function baseOptions(
     hermesToolGateways: [],
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
+    webSearchEnabled: false,
     deps,
   };
 }
@@ -71,6 +76,11 @@ describe("handleFinalizationState", () => {
 
     const result = await handleFinalizationState(baseOptions(deps));
 
+    // Default is set at finalization (deferred from sandbox creation, #4614), before completion.
+    expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
+    expect(calls.setDefaultSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.complete.mock.invocationCallOrder[0],
+    );
     expect(calls.cleanupHost).toHaveBeenCalledOnce();
     expect(calls.recoverProcesses).toHaveBeenCalledWith("my-assistant", { quiet: true });
     expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
@@ -114,6 +124,9 @@ describe("handleFinalizationState", () => {
     expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(calls.complete).not.toHaveBeenCalled();
     expect(calls.dashboard).not.toHaveBeenCalled();
+    // The sandbox reached finalization (policies confirmed), so it stays the default
+    // even when post-policy verification flakes — only a pre-policy cancel rolls back.
+    expect(calls.setDefaultSandbox).toHaveBeenCalledWith("my-assistant");
   });
 
   it("removes legacy credentials only when all staged values migrated", async () => {
@@ -141,5 +154,27 @@ describe("handleFinalizationState", () => {
     expect(calls.removeLegacy).not.toHaveBeenCalled();
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("SLACK_BOT_TOKEN"));
     expect(result.unmigratedLegacyKeys).toEqual(["SLACK_BOT_TOKEN"]);
+  });
+
+  it("runs web-search verification only when webSearchEnabled is true", async () => {
+    const { deps: depsOff, calls: callsOff } = createDeps();
+    await handleFinalizationState(baseOptions(depsOff));
+    expect(callsOff.verifyWebSearch).not.toHaveBeenCalled();
+
+    const { deps: depsOn, calls: callsOn } = createDeps();
+    const agent = { name: "openclaw" };
+    await handleFinalizationState({
+      ...baseOptions(depsOn),
+      agent,
+      webSearchEnabled: true,
+    });
+    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent);
+    // Probe runs after sandbox-process recovery so the post-policy state is live.
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(
+      callsOn.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      callsOn.verify.mock.invocationCallOrder[0],
+    );
   });
 });

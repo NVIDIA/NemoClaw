@@ -4,11 +4,13 @@
 import type { JsonObject } from "../../core/json-types";
 import * as onboardSession from "../../state/onboard-session";
 import type { Session, SessionUpdates } from "../../state/onboard-session";
+import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
   type OnboardMachineEvent,
 } from "./events";
+import type { OnboardStateResult } from "./result";
 import {
   assertValidOnboardMachineTransition,
   canTransitionOnboardMachineState,
@@ -35,8 +37,17 @@ export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
+function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+  if (conflict.field === "fromDockerfile" && value) return "<path>";
+  return value;
+}
+
 export type OnboardRuntimeUpdateOptions = {
   state?: OnboardMachineState | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type OnboardRuntimeCompleteOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
@@ -168,7 +179,10 @@ export class OnboardRuntime {
     return updated;
   }
 
-  async complete(updates: SessionUpdates = {}): Promise<Session> {
+  async complete(
+    updates: SessionUpdates = {},
+    options: OnboardRuntimeCompleteOptions = {},
+  ): Promise<Session> {
     const current = this.ensureSession();
     const from = current.machine.state;
     assertValidOnboardMachineTransition(from, "complete");
@@ -188,13 +202,43 @@ export class OnboardRuntime {
     if (fields.length > 0) {
       this.emit("context.updated", updated, {
         state: "complete",
-        metadata: { fields },
+        metadata: { ...eventMetadata(options.metadata), fields },
       });
     }
-    this.emit("state.completed", updated, { state: from });
-    this.emit("state.entered", updated, { state: "complete" });
-    this.emit("onboard.completed", updated, { state: "complete" });
+    this.emit("state.completed", updated, { state: from, metadata: options.metadata });
+    this.emit("state.entered", updated, { state: "complete", metadata: options.metadata });
+    this.emit("onboard.completed", updated, {
+      state: "complete",
+      metadata: options.metadata,
+    });
     return updated;
+  }
+
+  async applyResult(result: OnboardStateResult): Promise<Session> {
+    if (result.type === "complete") {
+      return this.complete(result.updates ?? {}, { metadata: result.metadata });
+    }
+    if (result.type === "failed") {
+      return this.fail(result.error, {
+        step: result.step,
+        metadata: result.metadata,
+      });
+    }
+
+    const current = this.ensureSession();
+    const transition = assertValidOnboardMachineTransition(current.machine.state, result.next);
+    if (result.transitionKind && transition.kind !== result.transitionKind) {
+      throw new Error(
+        `Invalid onboarding machine transition kind: ${current.machine.state} -> ${result.next} expected ${result.transitionKind}, got ${transition.kind}`,
+      );
+    }
+    if (result.updates && Object.keys(this.deps.filterSafeUpdates(result.updates)).length > 0) {
+      await this.updateContext(result.updates, {
+        state: current.machine.state,
+        metadata: result.metadata,
+      });
+    }
+    return this.transition(result.next, { metadata: result.metadata });
   }
 
   async fail(message: string | null, options: OnboardRuntimeFailureOptions = {}): Promise<Session> {
@@ -240,6 +284,19 @@ export class OnboardRuntime {
       throw new Error(`Terminal onboarding state cannot be skipped: ${state}`);
     }
     this.emit("state.skipped", session, { state, metadata });
+    return session;
+  }
+
+  async emitResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
+    const session = this.ensureSession();
+    this.emit("resume.conflict", session, {
+      state: session.machine.state,
+      metadata: {
+        field: conflict.field,
+        recorded: safeResumeConflictValue(conflict, conflict.recorded),
+        requested: safeResumeConflictValue(conflict, conflict.requested),
+      },
+    });
     return session;
   }
 

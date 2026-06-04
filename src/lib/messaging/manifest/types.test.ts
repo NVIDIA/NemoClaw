@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -60,7 +57,6 @@ const telegramManifest = {
       required: false,
       envKey: "TELEGRAM_REQUIRE_MENTION",
       validValues: ["0", "1"],
-      defaultValue: "1",
       statePath: "telegramConfig.requireMention",
     },
   ],
@@ -188,19 +184,29 @@ const wechatHookManifest = {
 
 const telegramPlan = {
   schemaVersion: 1,
+  sandboxName: "demo",
+  agent: "openclaw",
+  workflow: "onboard",
   channels: [
     {
       channelId: "telegram",
       displayName: "Telegram",
+      authMode: "token-paste",
       active: true,
+      selected: true,
+      configured: false,
+      disabled: false,
       inputs: [
         {
+          channelId: "telegram",
           inputId: "botToken",
           kind: "secret",
           required: true,
           sourceEnv: "TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
         },
         {
+          channelId: "telegram",
           inputId: "allowedIds",
           kind: "config",
           required: false,
@@ -208,36 +214,55 @@ const telegramPlan = {
           statePath: "allowedIds.telegram",
         },
       ],
-      credentialBindings: [
-        {
-          credentialId: "telegramBotToken",
-          sourceInput: "botToken",
-          providerName: "demo-telegram-bridge",
-          providerEnvKey: "TELEGRAM_BOT_TOKEN",
-          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        },
-      ],
-      policyPresets: ["telegram"],
-      render: [
-        {
-          kind: "json-fragment",
-          agent: "openclaw",
-          target: "openclaw.json",
-          path: "channels.telegram.accounts.default",
-          value: {
-            botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-            enabled: true,
-          },
-        },
-        {
-          kind: "env-lines",
-          agent: "hermes",
-          target: "~/.hermes/.env",
-          lines: ["TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN"],
-        },
-      ],
-      buildInputs: [],
       hooks: [],
+    },
+  ],
+  disabledChannels: [],
+  credentialBindings: [
+    {
+      channelId: "telegram",
+      credentialId: "telegramBotToken",
+      sourceInput: "botToken",
+      providerName: "demo-telegram-bridge",
+      providerEnvKey: "TELEGRAM_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      credentialAvailable: true,
+    },
+  ],
+  networkPolicy: {
+    presets: ["telegram"],
+    entries: [
+      {
+        channelId: "telegram",
+        presetName: "telegram",
+        policyKeys: ["telegram_bot"],
+        source: "manifest",
+      },
+    ],
+  },
+  agentRender: [
+    {
+      channelId: "telegram",
+      renderId: "telegram-openclaw",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      path: "channels.telegram.accounts.default",
+      value: {
+        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        enabled: true,
+      },
+      templateRefs: [],
+    },
+  ],
+  buildSteps: [],
+  stateUpdates: [],
+  healthChecks: [
+    {
+      channelId: "telegram",
+      phase: "health-check",
+      requiredBefore: "lifecycle-success",
+      hookIds: [],
     },
   ],
 } as const satisfies SandboxMessagingPlan;
@@ -255,22 +280,6 @@ function findFunctionPaths(value: unknown, prefix = "$"): string[] {
     return Object.entries(value).flatMap(([key, entry]) => findFunctionPaths(entry, `${prefix}.${key}`));
   }
   return [];
-}
-
-function collectProductionFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const absolute = path.join(dir, entry);
-    const stats = statSync(absolute);
-    if (stats.isDirectory()) return collectProductionFiles(absolute);
-    if (absolute.endsWith(".ts") && !absolute.endsWith(".test.ts")) return [absolute];
-    return [];
-  });
-}
-
-function collectModuleSpecifiers(source: string): string[] {
-  const pattern =
-    /(?:import|export)\s+(?:type\s+)?(?:[^"']*?\s+from\s+)?["']([^"']+)["']/g;
-  return [...source.matchAll(pattern)].map((match) => match[1] ?? "");
 }
 
 describe("messaging manifest type contracts", () => {
@@ -301,7 +310,7 @@ describe("messaging manifest type contracts", () => {
     expect(parsed).toEqual(telegramPlan);
     expect(serialized).toContain("openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     expect(serialized).not.toContain(rawSecret);
-    expect(parsed.channels[0]?.credentialBindings[0]).not.toHaveProperty("value");
+    expect(parsed.credentialBindings[0]).not.toHaveProperty("value");
   });
 
   it("uses hook handler references instead of function-valued fields", () => {
@@ -311,30 +320,7 @@ describe("messaging manifest type contracts", () => {
     expect(wechatHookManifest.hooks[0]?.handler).toBe("wechat.ilinkLogin");
   });
 
-  it("keeps the new production module isolated from side-effect layers", () => {
-    const moduleRoot = path.join(import.meta.dirname, "..");
-    const files = collectProductionFiles(moduleRoot);
-    const forbiddenFragments = [
-      "gateway",
-      "state/registry",
-      "credentials",
-      "node:fs",
-      "node:child_process",
-      "child_process",
-      "adapters/openshell",
-      "src/commands",
-      "lib/actions",
-    ];
-
-    for (const file of files) {
-      const source = readFileSync(file, "utf8");
-      const specifiers = collectModuleSpecifiers(source);
-      for (const fragment of forbiddenFragments) {
-        expect(
-          specifiers.some((specifier) => specifier.includes(fragment)),
-          `${path.relative(moduleRoot, file)} imports ${fragment}`,
-        ).toBe(false);
-      }
-    }
-  });
+  // Import-layer isolation for the production manifest modules is enforced by
+  // scripts/checks/layer-import-boundaries.ts. Keep this unit test focused on
+  // manifest serialization and type contracts rather than walking source files.
 });

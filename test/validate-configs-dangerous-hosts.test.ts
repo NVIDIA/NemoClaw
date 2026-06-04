@@ -13,7 +13,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   DANGEROUS_HOSTS,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
   findDangerousHosts,
+  findDangerousRouterApiBases,
   isDangerousHost,
 } from "../scripts/validate-configs";
 
@@ -56,6 +58,34 @@ describe("isDangerousHost", () => {
     for (const host of DANGEROUS_HOSTS) {
       expect(isDangerousHost(host)).toBe(true);
     }
+  });
+});
+
+describe("findDangerousRouterApiBases", () => {
+  it("allows the public NVIDIA Build endpoint", () => {
+    expect(
+      findDangerousRouterApiBases({
+        models: [{ api_base: "https://integrate.api.nvidia.com/v1" }],
+      }),
+    ).toEqual([]);
+    expect(ROUTER_API_BASE_HOST_ALLOWLIST.has("integrate.api.nvidia.com")).toBe(true);
+  });
+
+  it.each([
+    "http://integrate.api.nvidia.com/v1",
+    "https://localhost/v1",
+    "https://127.0.0.1/v1",
+    "https://10.0.0.5/v1",
+    "https://metadata.google.internal/v1",
+  ])("flags unsafe router api_base %s", (apiBase) => {
+    const findings = findDangerousRouterApiBases({ models: [{ api_base: apiBase }] });
+    expect(findings).toEqual([{ path: "/models/0/api_base", host: apiBase }]);
+  });
+
+  it("tolerates malformed shapes", () => {
+    expect(findDangerousRouterApiBases(null)).toEqual([]);
+    expect(findDangerousRouterApiBases({ models: "not an array" })).toEqual([]);
+    expect(findDangerousRouterApiBases({ models: [{ api_base: "not a url" }] })).toEqual([]);
   });
 });
 
