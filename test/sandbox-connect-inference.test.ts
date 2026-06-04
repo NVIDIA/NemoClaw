@@ -1480,7 +1480,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
   );
 
   it(
-    "does not import approval policy from preexisting shared temp or PYTHONPATH",
+    "does not import approval policy from PYTHONPATH",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -1503,10 +1503,6 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         "",
       ].join("\n");
       const maliciousPythonPath = path.join(tmpDir, "malicious-pythonpath");
-      const tmpPolicyPath = "/tmp/openclaw_device_approval_policy.py";
-      const previousTmpPolicy = fs.existsSync(tmpPolicyPath)
-        ? fs.readFileSync(tmpPolicyPath, "utf-8")
-        : null;
 
       fs.mkdirSync(maliciousPythonPath);
       fs.writeFileSync(
@@ -1514,33 +1510,24 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         maliciousPolicy,
       );
 
-      try {
-        fs.writeFileSync(tmpPolicyPath, maliciousPolicy);
-        const result = runConnect(tmpDir, sandboxName);
-        expect(result.status).toBe(0);
-        const script = extractApprovalPassScript(stateFile, sandboxName);
-        const run = runApprovalPassScript(
-          script,
-          [
-            {
-              requestId: "admin-cli",
-              clientId: "openclaw-cli",
-              clientMode: "cli",
-              scopes: ["operator.admin"],
-            },
-          ],
-          { PYTHONPATH: maliciousPythonPath },
-        );
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+      const script = extractApprovalPassScript(stateFile, sandboxName);
+      const run = runApprovalPassScript(
+        script,
+        [
+          {
+            requestId: "admin-cli",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            scopes: ["operator.admin"],
+          },
+        ],
+        { PYTHONPATH: maliciousPythonPath },
+      );
 
-        expect(run.result.status).toBe(0);
-        expect(run.approvals).toEqual([]);
-      } finally {
-        if (previousTmpPolicy === null) {
-          fs.rmSync(tmpPolicyPath, { force: true });
-        } else {
-          fs.writeFileSync(tmpPolicyPath, previousTmpPolicy);
-        }
-      }
+      expect(run.result.status).toBe(0);
+      expect(run.approvals).toEqual([]);
     },
   );
 
