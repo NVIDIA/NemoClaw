@@ -48,14 +48,11 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install Fern CLI
-        run: |
-          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
-          npm install -g "fern-api@${FERN_VERSION}"
+      - name: Install docs dependencies
+        run: npm ci --ignore-scripts
 
       - name: Validate docs
-        working-directory: ./fern
-        run: fern check
+        run: npm run docs
 
       - name: Generate preview URL
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
@@ -63,10 +60,11 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
-        working-directory: ./fern
         run: |
+          npm run docs:check-agent-variants
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           set +e
-          OUTPUT=$(fern generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"

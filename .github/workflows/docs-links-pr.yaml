@@ -9,7 +9,6 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - "**/*.md"
-      - "**/*.mdx"
       - ".github/workflows/docs-links-pr.yaml"
       - "test/e2e/e2e-cloud-experimental/check-docs.sh"
 
@@ -34,9 +33,10 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           mapfile -t doc_files < <(
+            # Fern preview validates MDX routes after building variant navigation.
+            # This raw Markdown checker only verifies repository-local .md links.
             git diff --name-only --diff-filter=ACMR "$base" "$head" -- \
               '*.md' \
-              '*.mdx' \
               ':(exclude)node_modules/**' \
               ':(exclude)dist/**' \
               ':(exclude)vendor/**' \

@@ -4,6 +4,7 @@
 import type { JsonObject } from "../../core/json-types";
 import * as onboardSession from "../../state/onboard-session";
 import type { Session, SessionUpdates } from "../../state/onboard-session";
+import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -36,8 +37,17 @@ export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
+function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+  if (conflict.field === "fromDockerfile" && value) return "<path>";
+  return value;
+}
+
 export type OnboardRuntimeUpdateOptions = {
   state?: OnboardMachineState | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type OnboardRuntimeCompleteOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
@@ -169,7 +179,10 @@ export class OnboardRuntime {
     return updated;
   }
 
-  async complete(updates: SessionUpdates = {}): Promise<Session> {
+  async complete(
+    updates: SessionUpdates = {},
+    options: OnboardRuntimeCompleteOptions = {},
+  ): Promise<Session> {
     const current = this.ensureSession();
     const from = current.machine.state;
     assertValidOnboardMachineTransition(from, "complete");
@@ -189,18 +202,21 @@ export class OnboardRuntime {
     if (fields.length > 0) {
       this.emit("context.updated", updated, {
         state: "complete",
-        metadata: { fields },
+        metadata: { ...eventMetadata(options.metadata), fields },
       });
     }
-    this.emit("state.completed", updated, { state: from });
-    this.emit("state.entered", updated, { state: "complete" });
-    this.emit("onboard.completed", updated, { state: "complete" });
+    this.emit("state.completed", updated, { state: from, metadata: options.metadata });
+    this.emit("state.entered", updated, { state: "complete", metadata: options.metadata });
+    this.emit("onboard.completed", updated, {
+      state: "complete",
+      metadata: options.metadata,
+    });
     return updated;
   }
 
   async applyResult(result: OnboardStateResult): Promise<Session> {
     if (result.type === "complete") {
-      return this.complete(result.updates ?? {});
+      return this.complete(result.updates ?? {}, { metadata: result.metadata });
     }
     if (result.type === "failed") {
       return this.fail(result.error, {
@@ -271,20 +287,14 @@ export class OnboardRuntime {
     return session;
   }
 
-  async emitResumeConflict(options: {
-    field: string;
-    recorded?: unknown;
-    requested?: unknown;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<Session> {
+  async emitResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     const session = this.ensureSession();
     this.emit("resume.conflict", session, {
       state: session.machine.state,
       metadata: {
-        ...eventMetadata(options.metadata),
-        field: options.field,
-        recorded: options.recorded ?? null,
-        requested: options.requested ?? null,
+        field: conflict.field,
+        recorded: safeResumeConflictValue(conflict, conflict.recorded),
+        requested: safeResumeConflictValue(conflict, conflict.requested),
       },
     });
     return session;
