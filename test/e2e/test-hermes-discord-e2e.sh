@@ -598,7 +598,9 @@ fi
 
 if [ "$rebuild_rc" -ne 0 ]; then
   fail "Hermes rebuild failed with NVIDIA_API_KEY unset (rc=${rebuild_rc})"
-  tail -60 "$HERMES_REBUILD_LOG" 2>/dev/null || true
+  echo "---- begin rebuild log (${HERMES_REBUILD_LOG}) ----"
+  cat "$HERMES_REBUILD_LOG" 2>/dev/null || true
+  echo "---- end rebuild log ----"
 elif grep -q "provider credential not found" "$HERMES_REBUILD_LOG"; then
   fail "REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
 else
