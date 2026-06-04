@@ -13,7 +13,7 @@ describe('requireValue', () => {
     {
         expect(() => requireValue(null, "value is required")).toThrow("value is required");
     });
-    
+
     it("throws with the given message when value is undefined", () =>
     {
         expect(() => requireValue(undefined, "value is required")).toThrow("value is required");
