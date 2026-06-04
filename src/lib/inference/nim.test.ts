@@ -1604,9 +1604,9 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS).toBe(900);
+        expect(nimModule.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS).toBe(1200);
         expect(nimModule.waitForNimHealth(9000)).toBe(true);
-        expect(consoleLogs.some((line) => line.includes("timeout: 900s"))).toBe(true);
+        expect(consoleLogs.some((line) => line.includes("timeout: 1200s"))).toBe(true);
       } finally {
         console.log = origLog;
         restore();
