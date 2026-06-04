@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "dos2unix=7.5.2-1*" \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
+        make \
+        g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).
