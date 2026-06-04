@@ -218,11 +218,12 @@ describe("config set nested URL SSRF enforcement", () => {
         runOpenshellCommand: () => ({ status: 0 }),
       },
     } as any;
+    const appendAuditEntry = vi.fn();
     requireCache[shieldsAuditPath] = {
       id: shieldsAuditPath,
       filename: shieldsAuditPath,
       loaded: true,
-      exports: { appendAuditEntry: () => {} },
+      exports: { appendAuditEntry },
     } as any;
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
@@ -247,6 +248,13 @@ describe("config set nested URL SSRF enforcement", () => {
 
       expect(errorSpy).not.toHaveBeenCalled();
       expect(execSpy).toHaveBeenCalled();
+      expect(appendAuditEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "config_set",
+          sandbox: "sandbox-ssrf-test",
+          reason: "config set openclaw:inference.endpoints",
+        }),
+      );
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
