@@ -381,6 +381,7 @@ describe("nemoclaw-start non-root fallback", () => {
       'write_runtime_shell_env() { :; }',
       'ensure_runtime_shell_env_shim() { :; }',
       'lock_rc_files() { :; }',
+      'normalize_slack_runtime_env() { :; }',
       'configure_messaging_channels() { echo "SHOULD_NOT_CONFIGURE"; exit 70; }',
       'install_telegram_diagnostics() { echo "SHOULD_NOT_INSTALL"; exit 71; }',
       'install_slack_channel_guard() { echo "SHOULD_NOT_INSTALL"; exit 73; }',
@@ -2700,7 +2701,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
-    const runStepDown = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+    const runStepDown = [
+      extractShellFunctionFromSource(src, "_step_down_extract_function"),
+      extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+    ].join("\n");
     const seedAsSandbox = extractShellFunctionFromSource(
       src,
       "seed_default_workspace_templates_as_sandbox",
@@ -2887,6 +2891,267 @@ describe("provider placeholder refresh (#4251)", () => {
       "telegram.default.botToken is an OpenShell placeholder but TELEGRAM_BOT_TOKEN is missing",
     );
   });
+
+  it("warns when the Slack config alias is present but SLACK_BOT_TOKEN is missing", () => {
+    const run = runRefresh({
+      channels: {
+        slack: {
+          accounts: {
+            default: {
+              botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+            },
+          },
+        },
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken expects the SLACK_BOT_TOKEN provider placeholder but it is missing",
+    );
+    expect(run.result.stderr).toContain(
+      "slack.default.appToken expects the SLACK_APP_TOKEN provider placeholder but it is missing",
+    );
+  });
+
+  it("does not warn when the Slack config alias matches an OpenShell runtime placeholder", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v42_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v42_SLACK_APP_TOKEN",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain("slack.default");
+    // The Bolt-compatible alias is never rewritten on disk; it does not match
+    // the canonical "openshell:resolve:env:SLACK_BOT_TOKEN" placeholder key.
+    expect(run.config.channels.slack.accounts.default.botToken).toBe(
+      "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    );
+    expect(run.config.channels.slack.accounts.default.appToken).toBe(
+      "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    );
+  });
+
+  it("does not warn when the Slack runtime env holds a genuine xoxb-/xapp- token", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                appToken: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        SLACK_BOT_TOKEN: "xoxb-1-real-bot-token",
+        SLACK_APP_TOKEN: "xapp-1-real-app-token",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain("slack.default");
+    expect(JSON.stringify(run.config)).not.toContain("xoxb-1-real-bot-token");
+  });
+
+  it("warns when the Slack runtime env holds neither a placeholder nor a Slack token", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      { SLACK_BOT_TOKEN: "garbage-not-a-token" },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+    );
+  });
+
+  it("warns when the Slack runtime env resolves a different key than expected", () => {
+    // A placeholder for the wrong key must not look healthy — Bolt would still
+    // inherit a non-Slack placeholder and fail at startup.
+    const run = runRefresh(
+      {
+        channels: {
+          slack: {
+            accounts: {
+              default: {
+                botToken: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      { SLACK_BOT_TOKEN: "openshell:resolve:env:v51_OTHER_KEY" },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
+    );
+  });
+});
+
+describe("Slack runtime env normalization (#4274)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  // Exercises normalize_slack_runtime_env() through the real shell function so
+  // we prove the *exported* process-env values the OpenClaw child inherits are
+  // Bolt-compatible, not the canonical "openshell:resolve:env:*" placeholder.
+  function runNormalize(env: Record<string, string | undefined> = {}): {
+    bot: string;
+    app: string;
+    result: ReturnType<typeof spawnSync>;
+  } {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-env-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const fn = extractShellFunctionFromSource(src, "normalize_slack_runtime_env");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        fn,
+        "normalize_slack_runtime_env",
+        'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
+        'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    // A clean env so an inherited SLACK_* from the host can't mask an "unset" case.
+    const childEnv: Record<string, string> = { PATH: process.env.PATH || "" };
+    for (const [key, value] of Object.entries(env)) {
+      if (value !== undefined) childEnv[key] = value;
+    }
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      env: childEnv,
+      timeout: 5000,
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    const bot = (result.stdout.match(/^BOT=(.*)$/m)?.[1] ?? "").trimEnd();
+    const app = (result.stdout.match(/^APP=(.*)$/m)?.[1] ?? "").trimEnd();
+    return { bot, app, result };
+  }
+
+  it("normalizes revision-scoped Slack placeholders to Bolt-compatible aliases", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("does not leak the revision suffix into the normalized env or logs", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).not.toContain("v51_");
+    expect(run.app).not.toContain("v51_");
+    expect(run.result.stderr).not.toContain("v51_");
+    expect(run.bot).not.toContain("openshell:resolve:env:");
+    expect(run.app).not.toContain("openshell:resolve:env:");
+  });
+
+  it("normalizes the canonical (non-revision) placeholder too", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("leaves already-aliased Slack tokens unchanged (idempotent)", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
+  });
+
+  it("leaves real Slack tokens untouched", () => {
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "xoxb-123-real-bot-token",
+      SLACK_APP_TOKEN: "xapp-1-real-app-token",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("xoxb-123-real-bot-token");
+    expect(run.app).toBe("xapp-1-real-app-token");
+  });
+
+  it("does not create Slack env vars that were never set", () => {
+    const run = runNormalize();
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("__UNSET__");
+    expect(run.app).toBe("__UNSET__");
+  });
+
+  it("leaves a placeholder that resolves a different key untouched", () => {
+    // OpenShell injects self-referential placeholders. A placeholder resolving
+    // some other secret must not be silently rebound to the Slack alias.
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
+      SLACK_APP_TOKEN: "openshell:resolve:env:v51_SOME_OTHER_KEY",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
+    expect(run.app).toBe("openshell:resolve:env:v51_SOME_OTHER_KEY");
+  });
+
+  it("leaves a suffix-collision key (…_NOT_SLACK_BOT_TOKEN) untouched", () => {
+    // The match is anchored: only the canonical key or its v<rev>_ form is
+    // rebound, never a key that merely ends with the same suffix.
+    const run = runNormalize({
+      SLACK_BOT_TOKEN: "openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN",
+      SLACK_APP_TOKEN: "openshell:resolve:env:MY_SLACK_APP_TOKEN",
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.bot).toBe("openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN");
+    expect(run.app).toBe("openshell:resolve:env:MY_SLACK_APP_TOKEN");
+  });
 });
 
 describe("Telegram diagnostics (#2766)", () => {
@@ -2970,6 +3235,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'write_runtime_shell_env() { :; }',
         'ensure_runtime_shell_env_shim() { :; }',
         'lock_rc_files() { :; }',
+        'normalize_slack_runtime_env() { :; }',
         'configure_messaging_channels() { echo "ORDER:configure"; }',
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
@@ -3848,7 +4114,10 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
 
 describe("run_step_down_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+  const helper = [
+    extractShellFunctionFromSource(src, "_step_down_extract_function"),
+    extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+  ].join("\n");
 
   it("dispatches via a temp script and cleans up after success", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-helper-"));
@@ -3900,6 +4169,70 @@ describe("run_step_down_as_sandbox", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("EXIT=7");
+      const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
+      expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
+      expect(fs.existsSync(tempScriptPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives a heredoc used as an if-condition's command without bash declare -f reordering the then-body into the heredoc", () => {
+    // Regression: bash `declare -f` serialises a function whose `if`
+    // condition is a heredoc-bearing command by placing the indented
+    // `then`-body command BEFORE the heredoc closer. When the
+    // step-down shell re-parses that output, it consumes the displaced
+    // command as part of the heredoc body, leaves the `then` block
+    // empty, and aborts on the closing `fi` with
+    //   syntax error near unexpected token `fi'
+    // (the exact text NV QA reported on v0.0.58 after the earlier fix
+    // that handled only the heredoc-as-last-statement shape). The new
+    // helper bypasses `declare -f` and reads the function source
+    // verbatim from disk via `shopt -s extdebug` + `declare -F`, so
+    // every here-doc placement survives intact.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-heredoc-if-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const sentinel = path.join(tmpDir, "ran.txt");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        `SENTINEL=${JSON.stringify(sentinel)}`,
+        // Mirror seed_default_workspace_templates' broken shape exactly:
+        // a heredoc-bearing `node` invocation as the `if` condition,
+        // with a `then`-body command, followed by `fi`. This is the
+        // shape `declare -f` mangles in bash 5.x.
+        "heredoc_in_if_condition() {",
+        "  local marker=\"$1\"",
+        "  if ! node - \"$marker\" <<'NODE' >/dev/null 2>&1; then",
+        "const fs = require(\"fs\");",
+        "const target = process.argv[2];",
+        "fs.writeFileSync(target, \"ran-via-heredoc-if\\n\");",
+        "process.exit(0);",
+        "NODE",
+        "    return 0",
+        "  fi",
+        "}",
+        helper,
+        "run_step_down_as_sandbox 'heredoc_in_if_condition \"$SENTINEL\"' heredoc_in_if_condition",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, SENTINEL: sentinel },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stderr).not.toContain("syntax error near unexpected token `fi'");
+      expect(result.stderr).not.toContain("bash -n syntax check");
+      // The heredoc body ran in the step-down shell: it wrote the sentinel.
+      expect(fs.existsSync(sentinel)).toBe(true);
+      expect(fs.readFileSync(sentinel, "utf-8")).toBe("ran-via-heredoc-if\n");
       const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
       expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
       expect(fs.existsSync(tempScriptPath)).toBe(false);
@@ -3976,7 +4309,10 @@ describe("run_step_down_as_sandbox", () => {
 
 describe("setup_auth_profile_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+  const helper = [
+    extractShellFunctionFromSource(src, "_step_down_extract_function"),
+    extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+  ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
 
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
@@ -3995,7 +4331,7 @@ describe("setup_auth_profile_as_sandbox", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         "export HOME=/root",
-        "STEP_DOWN_PREFIX_SANDBOX=()",
+        "STEP_DOWN_PREFIX_SANDBOX=(env)",
         `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
         "harden_auth_profiles() { :; }",
         helper,
@@ -4121,9 +4457,18 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
         ],
         { encoding: "utf-8", timeout: 5000 },
       );
-      expect(directProbe.status).not.toBe(0);
-      expect(directProbe.stderr.toLowerCase()).toContain("permission denied");
-      expect(fs.readFileSync(hashPath, "utf-8")).toBe("placeholder\n");
+      const runningAsRoot = typeof process.getuid === "function" && process.getuid() === 0;
+      if (runningAsRoot && directProbe.status === 0) {
+        // Some platform CI runners execute the WSL distro as uid 0 with DAC
+        // override, so the single-uid chmod surrogate cannot prove EACCES.
+        // Reset the fixture and still verify the production step-down path.
+        fs.writeFileSync(hashPath, "placeholder\n");
+        fs.chmodSync(hashPath, 0o444);
+      } else {
+        expect(directProbe.status).not.toBe(0);
+        expect(directProbe.stderr.toLowerCase()).toContain("permission denied");
+        expect(fs.readFileSync(hashPath, "utf-8")).toBe("placeholder\n");
+      }
 
       // Phase 2: the production function runs the same redirection
       // through `STEP_DOWN_PREFIX_SANDBOX`, here stubbed to relax the
@@ -4234,7 +4579,10 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     const writeRuntimeEnv = src
       .slice(writeRuntimeStart, writeRuntimeEnd)
       .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvFile);
-    const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+    const helper = [
+      extractShellFunctionFromSource(src, "_step_down_extract_function"),
+      extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+    ].join("\n");
     const setupAuth = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
     fs.writeFileSync(
       scriptPath,
@@ -4287,7 +4635,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_CIAO_GUARD_SCRIPT=""',
         '_TELEGRAM_DIAGNOSTICS_SCRIPT=""',
         '_SLACK_GUARD_SCRIPT=""',
-        "_TOOL_REDIRECTS=()",
+        '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',
         readToken,
         ensureHash,

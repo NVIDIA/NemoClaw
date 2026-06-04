@@ -673,13 +673,17 @@ ensure_mutable_openclaw_config_hash() {
   # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
   # cannot bypass the sandbox-only write bit and the redirection
   # aborts with EACCES, so step down to the file's owner for the write.
-  local run_prefix=()
-  if [ "$(id -u)" -eq 0 ]; then
-    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
-  fi
-
   # shellcheck disable=SC2016  # positional params are expanded by the inner sh
-  if ! "${run_prefix[@]}" sh -c '
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
+      cd "$1" || exit 1
+      sha256sum openclaw.json >".config-hash" || exit 1
+      chmod 660 ".config-hash" 2>/dev/null || true
+    ' _ "$config_dir"; then
+      printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
+      return 1
+    fi
+  elif ! sh -c '
     cd "$1" || exit 1
     sha256sum openclaw.json >".config-hash" || exit 1
     chmod 660 ".config-hash" 2>/dev/null || true
@@ -1023,6 +1027,7 @@ refresh_openclaw_provider_placeholders() {
       python3 - "$config_file" <<'PYPLACEHOLDERS'
 import json
 import os
+import re
 import sys
 
 config_file = sys.argv[1]
@@ -1091,6 +1096,45 @@ if isinstance(channels, dict):
                     f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
                 )
 
+# Slack stores Bolt-compatible aliases (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) on
+# disk rather than the canonical "openshell:resolve:env:*" placeholder, so the
+# loop above (which keys on the canonical prefix) never inspects it. Diagnose
+# the alias-vs-runtime-env consistency separately. The aliases themselves are
+# never rewritten on disk — the L7 egress proxy resolves them at request time —
+# so we only warn, never mutate. Ref: NVIDIA/NemoClaw#4274.
+slack_aliases = {
+    "botToken": ("SLACK_BOT_TOKEN", "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN", "xoxb-"),
+    "appToken": ("SLACK_APP_TOKEN", "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN", "xapp-"),
+    }
+if isinstance(channels, dict):
+    slack_cfg = channels.get("slack", {})
+    slack_accounts = slack_cfg.get("accounts", {}) if isinstance(slack_cfg, dict) else {}
+    if isinstance(slack_accounts, dict):
+        for account_id, account in slack_accounts.items():
+            if not isinstance(account, dict):
+                continue
+            for field, (env_key, alias, token_scheme) in slack_aliases.items():
+                if account.get(field) != alias:
+                    continue
+                label = f"slack.{account_id}.{field}"
+                env_value = os.environ.get(env_key, "")
+                # A valid runtime placeholder is the canonical self-referential
+                # form or its revision-scoped variant for *this* key; a
+                # placeholder for a different key (or a suffix collision) is not
+                # accepted and must be surfaced. A genuine xoxb-/xapp- token is
+                # accepted by Bolt as-is.
+                placeholder_re = re.compile(
+                    rf"^{re.escape(prefix)}(v[0-9]+_)?{re.escape(env_key)}$"
+                )
+                if not env_value:
+                    warnings.append(
+                        f"[channels] {label} expects the {env_key} provider placeholder but it is missing from the runtime environment"
+                    )
+                elif not placeholder_re.match(env_value) and not env_value.startswith(token_scheme):
+                    warnings.append(
+                        f"[channels] {label} runtime {env_key} is neither the {env_key} OpenShell placeholder nor a {token_scheme} Slack token; Slack Bolt may reject it"
+                    )
+
 if updated != config:
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(updated, f, indent=2)
@@ -1120,6 +1164,46 @@ PYPLACEHOLDERS
 
   restore_openclaw_config_after_write "$config_file" "$hash_file"
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
+# ── Slack runtime env normalization (Bolt-compatible placeholder) ──
+# OpenShell injects messaging-provider credentials into the sandbox process
+# environment as canonical resolve placeholders, e.g.
+#   SLACK_BOT_TOKEN=openshell:resolve:env:v51_SLACK_BOT_TOKEN
+# Unlike the canonical OpenClaw config values (handled by
+# refresh_openclaw_provider_placeholders), Slack Bolt validates token *shape*
+# at startup and rejects anything that does not begin with xoxb-/xapp-. After a
+# messaging-provider rebuild the gateway therefore inherits a placeholder it
+# cannot parse and Slack auth fails even though the provider attached
+# successfully (NVIDIA/NemoClaw#4274). The L7 egress proxy rewrites the
+# Bolt-aliased form (xoxb-/xapp-OPENSHELL-RESOLVE-ENV-*) at request time — the
+# same alias the config generator bakes into openclaw.json — so normalize the
+# runtime env to that alias before launching OpenClaw.
+#
+# This runs in the *main* shell (never a subshell / command substitution) so
+# the exported values are inherited by the gateway and any one-shot
+# "${NEMOCLAW_CMD[@]}" child. Real xoxb-/xapp- tokens and already-aliased values
+# are left untouched, so it is safe to call unconditionally and is idempotent.
+#
+# OpenShell injects self-referential placeholders (the SLACK_BOT_TOKEN env var
+# resolves to "openshell:resolve:env:SLACK_BOT_TOKEN" or its revision-scoped
+# form "openshell:resolve:env:v<rev>_SLACK_BOT_TOKEN"). The match is anchored to
+# exactly those two shapes so a placeholder that resolves some *other* key
+# (including a suffix collision like ...v1_NOT_SLACK_BOT_TOKEN) is left alone
+# rather than silently rebound to the Slack secret.
+normalize_slack_runtime_env() {
+  local bot_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$'
+  local app_re='^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$'
+
+  if [[ "${SLACK_BOT_TOKEN-}" =~ $bot_re ]]; then
+    export SLACK_BOT_TOKEN="xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
+    printf '[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+  fi
+
+  if [[ "${SLACK_APP_TOKEN-}" =~ $app_re ]]; then
+    export SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"
+    printf '[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias\n' >&2
+  fi
 }
 
 # ── Slack secrets-on-disk tripwire ────────────────────────────────
@@ -1818,14 +1902,17 @@ fi
 # thinking mode disabled for NemoClaw's OpenAI-compatible
 # chat-completions path.
 #
-# The preload wraps http.request() — the lowest common denominator every
-# HTTP client bottoms out at — buffers the JSON body for POST requests
-# to /v1/chat/completions, and injects model-specific kwargs for the affected
-# NVIDIA endpoint models. Backends that do not recognise the extra field
-# silently ignore it (OpenAI-compatible contract).
+# The preload wraps http.request()/https.request() plus fetch() because modern
+# OpenAI-compatible clients may use either transport. It buffers JSON bodies for
+# POST requests to /v1/chat/completions and injects model-specific kwargs for the
+# affected NVIDIA endpoint models. Backends that do not recognise the extra
+# field silently ignore it (OpenAI-compatible contract).
 #
 # Scoped strictly to known affected models: unrelated requests pass through
-# completely untouched.
+# completely untouched. This sandbox preload is the source-boundary workaround
+# until upstream clients/providers always emit these model-specific kwargs; see
+# nemoclaw-blueprint/scripts/nemotron-inference-fix.js for the invalid state,
+# regression proof, and removal condition.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
 emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE"
@@ -1907,7 +1994,7 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
-    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR; do
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
@@ -2626,20 +2713,112 @@ NODE
   fi
 }
 
-# Run one or more locally-defined bash functions as the sandbox user
-# without round-tripping through `bash -c "$(declare -f ...) ..."`.
+# Extract the literal source of a bash function from its defining file.
 #
-# The interpolated form is fragile under restricted runtimes: the
-# step-down shell cannot always re-parse a heredoc-bearing function
-# body carried through `bash -c`'s argv. Writing the declarations plus
-# the trailing invocation to a temp script and invoking `bash <file>`
-# instead lets the step-down shell read the literal source bytes from
-# disk so the argv/quoting round-trip is gone.
+# Uses `shopt -s extdebug` + `declare -F` to look up the function's
+# source location, then prints the function definition byte-exact from
+# disk. The opener line MUST match ^<name>\(\) \{$ and the body MUST
+# end with a single `}` at column 0; every function dispatched through
+# run_step_down_as_sandbox follows that style.
+#
+# This bypasses `declare -f`'s serialiser, which mis-orders the body of
+# functions whose `if`/`while`/`until` condition is a here-doc command:
+# `declare -f` places the indented `then`-body command immediately after
+# the `<<TAG` opener and before the here-doc body. The step-down shell
+# then absorbs the displaced command into the here-doc body, leaves the
+# `then` block empty, and aborts on the closing `fi` with
+#   syntax error near unexpected token `fi'
+# Reading the source bytes off disk preserves the original layout and
+# is robust to every here-doc shape, not only the
+# here-doc-as-last-statement shape `declare -f` happens to round-trip.
+#
+# Returns 1 on any of: function not a function, source file unreadable,
+# opener line shape unrecognised, or matching closing `}` not found.
+_step_down_extract_function() {
+  local fn="$1"
+  local info src_lineno src_path
+  if ! shopt -s extdebug 2>/dev/null; then
+    return 1
+  fi
+  info="$(declare -F "$fn" 2>/dev/null)"
+  shopt -u extdebug 2>/dev/null || true
+  if [ -z "$info" ]; then
+    return 1
+  fi
+  src_lineno="${info#* }"
+  src_lineno="${src_lineno%% *}"
+  src_path="${info#* * }"
+  if [ -z "$src_lineno" ] || [ -z "$src_path" ] || [ ! -r "$src_path" ]; then
+    return 1
+  fi
+  awk -v start="$src_lineno" -v fn="$fn" '
+    NR == start {
+      # One-liner shape: `name() { body; }` — entire definition on one line.
+      # No heredoc is possible in this shape, so emit and stop.
+      if ($0 ~ "^"fn"[[:space:]]*\\(\\)[[:space:]]*\\{.*\\}[[:space:]]*$") {
+        print
+        exit 0
+      }
+      # Multi-line shape: `name() {` opener, with the matching `}` on its
+      # own line at column 0 at the end of the body. Both production
+      # call sites and the test stubs that exercise here-docs follow
+      # this convention.
+      if ($0 !~ "^"fn"[[:space:]]*\\(\\)[[:space:]]*\\{[[:space:]]*$") {
+        exit 1
+      }
+      in_fn = 1
+      print
+      next
+    }
+    !in_fn { next }
+    in_heredoc {
+      print
+      if ($0 == heredoc_tag) in_heredoc = 0
+      next
+    }
+    {
+      print
+      if (match($0, /<<-?[[:space:]]*['"'"'"]?[A-Za-z_][A-Za-z0-9_]*['"'"'"]?/)) {
+        tag = substr($0, RSTART, RLENGTH)
+        sub(/^<<-?[[:space:]]*/, "", tag)
+        sub(/^['"'"'"]/, "", tag)
+        sub(/['"'"'"]$/, "", tag)
+        in_heredoc = 1
+        heredoc_tag = tag
+        next
+      }
+      if ($0 == "}") exit
+    }
+    END { if (in_fn && in_heredoc) exit 1 }
+  ' "$src_path"
+}
+
+# Run one or more locally-defined bash functions as the sandbox user
+# without round-tripping through `bash -c "$(declare -f ...) ..."` and
+# without going through `declare -f`'s serialiser at all.
+#
+# The interpolated argv form was fragile because the step-down shell
+# could not always re-parse a here-doc-bearing function body carried
+# through `bash -c`'s argv. The earlier in-house fix routed function
+# bodies through `declare -f` plus a temp file, which removed the argv
+# round-trip but kept `declare -f`'s body-reordering bug for here-doc
+# `if` conditions. This helper now copies each named function's source
+# verbatim from `${BASH_SOURCE[0]}` (resolved per function via the
+# extdebug machinery), so every here-doc shape — condition, body,
+# trailing — survives the dispatch unchanged.
 #
 # The temp script lives directly under /tmp (sticky-bit, world-writable
 # but unlink-protected) with an unguessable mktemp suffix, so an
 # attacker cannot swap the file between mktemp and the step-down bash
 # invocation. The directory is intentionally not configurable.
+#
+# A `bash -n` syntax check runs on the assembled script before the
+# step-down invocation. It is a fail-closed guard: if a future change
+# ever produces a malformed temp script (for example, a dispatched
+# function that violates the opener/closer style assumption), we abort
+# before handing the broken script to step-down, surfacing a clean
+# error instead of the obscure `unexpected token 'fi'` failure that
+# this helper exists to prevent.
 #
 # Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
 #
@@ -2660,14 +2839,22 @@ run_step_down_as_sandbox() {
     rm -f "$script" 2>/dev/null || true
     return 1
   fi
-  {
+  if ! (
     printf 'set -euo pipefail\n'
-    declare -f "$@"
+    for fn in "$@"; do
+      _step_down_extract_function "$fn" || exit 1
+    done
     printf '%s\n' "$invocation"
-  } >"$script" || {
+  ) >"$script"; then
     rm -f "$script" 2>/dev/null || true
+    printf '[step-down] failed to assemble dispatch script\n' >&2
     return 1
-  }
+  fi
+  if ! bash -n "$script" 2>/dev/null; then
+    rm -f "$script" 2>/dev/null || true
+    printf '[step-down] generated dispatch script failed bash -n syntax check\n' >&2
+    return 1
+  fi
   local rc=0
   "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash "$script" || rc=$?
   rm -f "$script" 2>/dev/null || true
@@ -2737,6 +2924,9 @@ if [ "$(id -u)" -ne 0 ]; then
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
+  # Normalize Slack provider placeholders before any child inherits the env —
+  # covers both the one-shot "${NEMOCLAW_CMD[@]}" exec and the gateway launch.
+  normalize_slack_runtime_env
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
@@ -2879,6 +3069,10 @@ export_gateway_token
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
+# Normalize Slack provider placeholders before any child (the one-shot
+# "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
+# gosu/setpriv preserve the environment, so the export reaches the gateway user.
+normalize_slack_runtime_env
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.

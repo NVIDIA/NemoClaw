@@ -216,6 +216,10 @@ async function autoCreateSandboxFromSource(
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
+    // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+    // so clear src's proof rather than inheriting it — otherwise dst could show
+    // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+    sandboxGpuProof: null,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);

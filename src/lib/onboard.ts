@@ -168,10 +168,7 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const {
-  collectBuildContextStats,
-  stageOptimizedSandboxBuildContext,
-} = require("./sandbox/build-context");
+const { collectBuildContextStats, stageOptimizedSandboxBuildContext } = require("./sandbox/build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -424,6 +421,7 @@ const {
 } = modelRouter;
 const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
 const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const { installSandboxCancelRollback, makeOnboardCancelExit, wasSandboxDefault, restoreDefaultAfterRecreate }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const { handleAgentSetupState }: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
 const { handleFinalizationState }: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
 const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
@@ -433,6 +431,7 @@ const { handleProviderInferenceState }: typeof import("./onboard/machine/handler
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
 const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
 const policies: typeof import("./policy") = require("./policy");
+const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
@@ -465,6 +464,8 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
+const { printDockerDaemonRecovery, reportLegacyGatewayStartResultFailure } =
+  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
@@ -538,7 +539,6 @@ import type {
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
-import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
@@ -920,9 +920,7 @@ function upsertMessagingProviders(
   if (mutated) persistMigratedLegacyKeys();
   return upserted;
 }
-function providerExistsInGateway(name: string) {
-  return onboardProviders.providerExistsInGateway(name, runOpenshell);
-}
+const providerExistsInGateway = (name: string) => onboardProviders.providerExistsInGateway(name, runOpenshell);
 
 // Tri-state probe factory for messaging-conflict backfill. An upfront liveness
 // check is necessary because `openshell provider get` exits non-zero for both
@@ -1257,6 +1255,7 @@ function destroyGateway(
 
 type FinalGatewayStartFailureOptions = {
   retries: number;
+  dockerUnreachable?: boolean;
   collectDiagnostics?: () => string | null | undefined;
   cleanupGateway?: () => void;
   exitProcess?: (code: number) => never;
@@ -1265,6 +1264,7 @@ type FinalGatewayStartFailureOptions = {
 
 function handleFinalGatewayStartFailure({
   retries,
+  dockerUnreachable = false,
   collectDiagnostics = () =>
     runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
       ignoreError: true,
@@ -1274,6 +1274,11 @@ function handleFinalGatewayStartFailure({
   exitProcess = (code) => process.exit(code),
   printError = (message = "") => console.error(message),
 }: FinalGatewayStartFailureOptions): never {
+  if (dockerUnreachable) {
+    printDockerDaemonRecovery(printError);
+    return exitProcess(1);
+  }
+
   printError(`  Gateway failed to start after ${retries + 1} attempts.`);
   printError("  Gateway state preserved until diagnostics are collected.");
   printError("");
@@ -1832,16 +1837,8 @@ function assertCdiNvidiaGpuSpecPresent(
   hostGpuPlatform: string | null | undefined = null,
 ): void {
   if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!host.cdiNvidiaGpuSpecMissing || optedOutGpuPassthrough) return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but no",
-  );
-  console.error(
-    "  nvidia.com/gpu CDI spec was found on the host. OpenShell's gateway start will",
-  );
-  console.error(
-    "  fail with `unresolvable CDI devices nvidia.com/gpu=all` (issue #3152).",
-  );
+  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough) return;
+  console.error("  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.");
   printRemediationActions(planHostRemediation(host));
   process.exit(1);
 }
@@ -2244,22 +2241,16 @@ async function startGatewayWithOptions(
     );
   }
 
-  // When a stale gateway is detected (metadata exists but container is gone,
-  // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
-  // can recover the container without wiping metadata and mTLS certs.
-  // The retry loop below will destroy only if start genuinely fails.
   if (hasStaleGateway(gatewaySnapshot.gwInfo)) {
     console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
-  // Clear stale SSH host keys from previous gateway (fixes #768)
   try {
     const { execFileSync } = require("child_process");
     execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
   } catch {
     /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
   }
-  // Also purge any known_hosts entries matching the gateway hostname pattern
   const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
   try {
     const kh = fs.readFileSync(knownHostsPath, "utf8");
@@ -2270,9 +2261,6 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", getGatewayPortArg()];
-  // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
-  // makes direct CUDA tools available in the sandbox by default while still
-  // supporting host-side inference providers.
   if (gpuPassthrough) {
     gwArgs.push("--gpu");
   }
@@ -2281,12 +2269,8 @@ async function startGatewayWithOptions(
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
-  // first-run environments) the embedded k3s needs more time than OpenShell's
-  // internal health-check window allows. Retrying after a clean destroy lets
-  // the second attempt benefit from cached images and cleaner cgroup state.
-  // See: https://github.com/NVIDIA/OpenShell/issues/433
   const retries = exitOnFailure ? 2 : 0;
+  let dockerUnreachable = false;
   try {
     await pRetry(
       async () => {
@@ -2298,13 +2282,15 @@ async function startGatewayWithOptions(
           },
         );
         if (startResult.status !== 0) {
-          const lines = String(redact(startResult.output || ""))
-            .split("\n")
-            .map((l) => compactText(l.replace(ANSI_RE, "")))
-            .filter(Boolean)
-            .map((l) => `    ${l}`);
-          if (lines.length > 0) {
-            console.log(`  Gateway start returned before healthy:\n${lines.join("\n")}`);
+          const failure = reportLegacyGatewayStartResultFailure(
+            startResult.output || "",
+            console.log,
+          );
+          if (failure.kind === "docker_unreachable") {
+            dockerUnreachable = true;
+            throw new pRetry.AbortError(
+              "Docker daemon is not reachable (gateway cannot start).",
+            );
           }
         }
         console.log("  Waiting for gateway health...");
@@ -2365,7 +2351,7 @@ async function startGatewayWithOptions(
     );
   } catch {
     if (exitOnFailure) {
-      handleFinalGatewayStartFailure({ retries });
+      handleFinalGatewayStartFailure({ retries, dockerUnreachable });
     }
     throw new Error("Gateway failed to start");
   }
@@ -2981,6 +2967,8 @@ async function createSandbox(
 
   // Reconcile local registry state with the live OpenShell gateway state.
   const liveExists = pruneStaleSandboxEntry(sandboxName);
+  // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
+  const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
   // Declared outside the liveExists block so it is accessible during
   // post-creation restore (the sandbox create path runs after the block).
@@ -3100,6 +3088,7 @@ async function createSandbox(
           if (confirmedSelectionDrift) {
             note("  [non-interactive] Recreating sandbox due to provider/model drift.");
           } else {
+            policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             // Upsert messaging providers even on reuse so credential changes take
             // effect without requiring a full sandbox recreation.
             upsertMessagingProviders(messagingTokenDefs);
@@ -3161,6 +3150,7 @@ async function createSandbox(
           console.log(`  Sandbox '${sandboxName}' already exists.`);
           console.log("  Choosing 'n' will delete the existing sandbox and create a new one.");
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
+            policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
             chatUiUrl = `http://127.0.0.1:${reusedPort2}`;
@@ -3235,12 +3225,7 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
-    onboardSession.updateSession((c: Session) => {
-      c.policyPresets = decision.newPresets;
-      return c;
-    });
-    if (decision.overrideNote !== null) note(decision.overrideNote);
+    policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
     if (pendingStateRestore === null && !shouldSkipPreRecreateBackup(process.env)) {
       note("  Backing up workspace state before recreating sandbox...");
@@ -3569,11 +3554,9 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-  onboardHermesDashboard.appendHermesDashboardEnvArgs(
-    envArgs,
-    hermesDashboardState,
-    formatEnvAssignment,
-  );
+  require("./onboard/openclaw-runtime-env").appendOpenClawRuntimeEnvArgs(envArgs, agent);
+  onboardHermesDashboard.appendHermesDashboardEnvArgs(envArgs, hermesDashboardState, formatEnvAssignment);
+  require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -3819,7 +3802,7 @@ async function createSandbox(
     gatewayName: GATEWAY_NAME,
     gatewayPort: GATEWAY_PORT,
   });
-  registry.setDefault(sandboxName);
+  restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   if (restoreBackupPath) {
     note(
@@ -3864,6 +3847,8 @@ async function createSandbox(
 
   warnIfLandlockUnsupported({ dockerInfoFormat, runCapture });
 
+  // #4614: arm rollback only when the sandbox was not live before (never a recreate/rebuild).
+  if (!liveExists) sandboxCancelRollback.arm(sandboxName);
   return sandboxName;
 }
 
@@ -4434,14 +4419,15 @@ async function setupNim(
           }
           if (isNonInteractive()) {
             const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
-            if (!resolvedNvidiaKey) {
+            if (resolvedNvidiaKey) {
+              const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
+              if (keyError) {
+                console.error(keyError);
+                console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
+                process.exit(1);
+              }
+            } else if (!providerExistsInGateway(provider)) {
               logMissingNvidiaApiKeyHelp(REMOTE_PROVIDER_CONFIG.build.helpUrl);
-              process.exit(1);
-            }
-            const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-            if (keyError) {
-              console.error(keyError);
-              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
               process.exit(1);
             }
           } else {
@@ -4506,7 +4492,7 @@ async function setupNim(
             break;
           }
           if (isNonInteractive()) {
-            if (!resolveProviderCredential(selectedCredentialEnv)) {
+            if (!resolveProviderCredential(selectedCredentialEnv) && !providerExistsInGateway(provider)) {
               console.error(
                 `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
               );
@@ -5067,8 +5053,9 @@ async function setupNim(
             ignoreError: true,
           },
         );
+        let vllmModels: { data?: Array<{ id?: unknown }> } = {};
         try {
-          const vllmModels = JSON.parse(vllmModelsRaw);
+          vllmModels = JSON.parse(vllmModelsRaw);
           if (vllmModels.data && vllmModels.data.length > 0) {
             const detectedModel =
               typeof vllmModels.data[0]?.id === "string" ? vllmModels.data[0].id : null;
@@ -5102,13 +5089,11 @@ async function setupNim(
         if (validation.retry === "selection" || validation.retry === "model") {
           continue selectionLoop;
         }
-        if (!validation.ok) {
-          continue selectionLoop;
-        }
+        if (!validation.ok) continue selectionLoop;
+        localInference.applyVllmRuntimeContextWindow(vllmModels, model as string);
         preferredInferenceApi = validation.api;
         // Force chat completions — vLLM's /v1/responses endpoint does not
-        // run the --tool-call-parser, so tool calls arrive as raw text.
-        // See: https://github.com/NVIDIA/NemoClaw/issues/976
+        // run the --tool-call-parser, so tool calls arrive as raw text (#976).
         if (preferredInferenceApi !== "openai-completions") {
           console.log(
             "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
@@ -5964,10 +5949,7 @@ async function selectPolicyTier(): Promise<string> {
       process.removeListener("SIGTERM", onSigterm);
     };
 
-    const onSigterm = () => {
-      cleanup();
-      process.exit(1);
-    };
+    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
     process.once("SIGTERM", onSigterm);
 
     const onData = (key: string) => {
@@ -5979,8 +5961,7 @@ async function selectPolicyTier(): Promise<string> {
         selectedIdx = cursor;
         redraw();
       } else if (key === "\x03") {
-        cleanup();
-        process.exit(1);
+        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
       } else if (key === "\x1b[A" || key === "k") {
         cursor = (cursor - 1 + n) % n;
         redraw();
@@ -6155,10 +6136,7 @@ async function selectTierPresetsAndAccess(
       process.removeListener("SIGTERM", onSigterm);
     };
 
-    const onSigterm = () => {
-      cleanup();
-      process.exit(1);
-    };
+    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
     process.once("SIGTERM", onSigterm);
 
     const onData = (key: string) => {
@@ -6171,8 +6149,7 @@ async function selectTierPresetsAndAccess(
             .map((p) => ({ name: p.name, access: accessModes[p.name] })),
         );
       } else if (key === "\x03") {
-        cleanup();
-        process.exit(1);
+        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
       } else if (key === "\x1b[A" || key === "k") {
         cursor = (cursor - 1 + n) % n;
         redraw();
@@ -6305,10 +6282,7 @@ async function presetsCheckboxSelector(
       process.removeListener("SIGTERM", onSigterm);
     };
 
-    const onSigterm = () => {
-      cleanup();
-      process.exit(1);
-    };
+    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
     process.once("SIGTERM", onSigterm);
 
     const onData = (key: string) => {
@@ -6317,9 +6291,7 @@ async function presetsCheckboxSelector(
         process.stdout.write("\n");
         resolve([...selected]);
       } else if (key === "\x03") {
-        // Ctrl+C
-        cleanup();
-        process.exit(1);
+        makeOnboardCancelExit(sandboxCancelRollback, cleanup)(); // Ctrl+C
       } else if (key === "\x1b[A" || key === "k") {
         cursor = (cursor - 1 + n) % n;
         redraw();
@@ -6409,6 +6381,8 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
 });
+
+const sandboxCancelRollback = installSandboxCancelRollback({ runOpenshell, registry, clearOnboardSession: onboardSession.clearSession }); // #4614
 
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
@@ -7034,7 +7008,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         listRegistrySandboxes: registry.listSandboxes,
         createSandbox,
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
-        setDefaultSandbox: registry.setDefault,
         getSandboxAgentRegistryFields,
         recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
@@ -7121,9 +7094,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSession: onboardSession.updateSession,
         recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
     });
     session = policiesResult.session;
+    sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
 
     await handleFinalizationState({
       sandboxName,
@@ -7138,6 +7113,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
       deps: {
         ensureAgentDashboardForward,
+        setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
         recordSessionComplete,

@@ -22,6 +22,9 @@ import {
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
 import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import {
+  applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels,
+} from "./vllm-runtime-context";
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
@@ -769,6 +772,13 @@ export { resetOllamaRuntimeContextWindowAutoState };
 
 export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
   applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
+}
+
+export function applyVllmRuntimeContextWindow(
+  modelsResponse: unknown,
+  modelId: string | null | undefined,
+): void {
+  applyVllmRuntimeContextWindowFromModels(modelsResponse, modelId);
 }
 
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
