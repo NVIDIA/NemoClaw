@@ -92,41 +92,28 @@ on:
       jobs:
         description: >-
           Comma-separated job names to run (empty = all).
-          Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
-          agent-turn-latency-e2e,
-          skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
-          openclaw-slack-pairing-e2e,
-          openclaw-tui-chat-correlation-e2e,
-          issue-3600-gpu-proof-optional-e2e,
-          openclaw-discord-pairing-e2e,
-          issue-4462-scope-upgrade-approval-e2e,
-          issue-4462-gateway-pinned-approval-characterization-e2e,
-          messaging-compatible-endpoint-e2e,
-          kimi-inference-compat-e2e,
-          bedrock-runtime-compatible-anthropic-e2e,
-          token-rotation-e2e, sandbox-survival-e2e,
-          openshell-gateway-upgrade-e2e,
-          issue-2478-crash-loop-recovery-e2e, hermes-e2e,
-          hermes-dashboard-e2e,
-          hermes-root-entrypoint-smoke-e2e,
-          openclaw-onboard-security-posture-e2e,
-          hermes-onboard-security-posture-e2e,
-          hermes-inference-switch-e2e, hermes-discord-e2e,
-          hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
-          openclaw-inference-switch-e2e,
-          network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e, diagnostics-e2e,
-          credential-migration-e2e,
-          snapshot-commands-e2e, shields-config-e2e,
-          vm-driver-privileged-exec-routing-e2e, rebuild-openclaw-e2e,
-          upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
-          rebuild-hermes-stale-base-e2e, double-onboard-e2e,
-          onboard-repair-e2e, onboard-resume-e2e, onboard-negative-paths-e2e,
-          runtime-overrides-e2e,
-          credential-sanitization-e2e, telegram-injection-e2e,
-          overlayfs-autofix-e2e, device-auth-health-e2e,
-          launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
-          sessions-agents-cli-e2e
+          Valid: agent-turn-latency-e2e, bedrock-runtime-compatible-anthropic-e2e, brave-search-e2e, 
+          channels-add-remove-e2e, channels-stop-start-e2e, 
+          cloud-e2e, cloud-inference-e2e, cloud-onboard-e2e, 
+          credential-migration-e2e, credential-sanitization-e2e, device-auth-health-e2e, 
+          diagnostics-e2e, docs-validation-e2e, docs-validation-e2e, 
+          double-onboard-e2e, gpu-double-onboard-e2e, gpu-e2e, 
+          hermes-dashboard-e2e, hermes-discord-e2e, hermes-e2e, 
+          hermes-inference-switch-e2e, hermes-onboard-security-posture-e2e, hermes-root-entrypoint-smoke-e2e, 
+          hermes-slack-e2e, inference-routing-e2e, issue-2478-crash-loop-recovery-e2e, 
+          issue-3600-gpu-proof-optional-e2e, issue-4462-gateway-pinned-approval-characterization-e2e, issue-4462-scope-upgrade-approval-e2e, 
+          kimi-inference-compat-e2e, launchable-smoke-e2e, messaging-compatible-endpoint-e2e, 
+          messaging-providers-e2e, messaging-providers-e2e, network-policy-e2e, 
+          onboard-negative-paths-e2e, onboard-repair-e2e, onboard-resume-e2e, 
+          openclaw-discord-pairing-e2e, openclaw-inference-switch-e2e, openclaw-onboard-security-posture-e2e, 
+          openclaw-skill-cli-e2e, openclaw-slack-pairing-e2e, openclaw-tui-chat-correlation-e2e, 
+          openshell-gateway-upgrade-e2e, overlayfs-autofix-e2e, rebuild-hermes-e2e, 
+          rebuild-hermes-stale-base-e2e, rebuild-openclaw-e2e, runtime-overrides-e2e, 
+          sandbox-operations-e2e, sandbox-survival-e2e, sessions-agents-cli-e2e, 
+          shields-config-e2e, skill-agent-e2e, skill-agent-e2e, 
+          snapshot-commands-e2e, state-backup-restore-e2e, telegram-injection-e2e, 
+          token-rotation-e2e, tunnel-lifecycle-e2e, upgrade-stale-sandbox-e2e,
+          vm-driver-privileged-exec-routing-e2e
         required: false
         type: string
         default: ""
@@ -251,6 +238,21 @@ jobs:
       artifact_name: "install-log-skill-agent"
       artifact_path: "/tmp/nemoclaw-e2e-skill-agent-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-skill-agent"}'
+      nvidia_api_key: true
+    secrets: *nightly-e2e-default-secrets
+  openclaw-skill-cli-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-skill-cli-e2e.sh
+      timeout_minutes: 25
+      artifact_name: "install-log-openclaw-skill-cli"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-skill-cli-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-skill-cli"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   docs-validation-e2e:
@@ -1921,6 +1923,7 @@ jobs:
         cloud-inference-e2e,
         agent-turn-latency-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
@@ -2030,6 +2033,7 @@ jobs:
         cloud-inference-e2e,
         agent-turn-latency-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
@@ -2196,6 +2200,7 @@ jobs:
         cloud-inference-e2e,
         agent-turn-latency-e2e,
         skill-agent-e2e,
+        openclaw-skill-cli-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
