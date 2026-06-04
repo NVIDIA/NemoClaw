@@ -580,7 +580,51 @@ else
   dump_hermes_discord_diagnostics
 fi
 
-section "Phase 8: Cleanup"
+section "Phase 8: Gateway-stored credential rebuild"
+
+# Rebuild with NVIDIA_API_KEY unset so the preflight is forced to reuse the
+# gateway-stored inference credential. Catches the Hermes regression that
+# motivated the gateway-aware credential check in setupNim + rebuild.
+
+# Phase 7's fake Discord Gateway leaves a root-owned scratch dir at
+# $REPO/.tmp/fake-discord.* via its Docker bind-mount. `nemoclaw rebuild`
+# recreates the sandbox by copying $REPO into a build context, which hits
+# EACCES on those files because the runner uid cannot read root-owned
+# bytes. Tear the container down and `sudo rm` the scratch before the
+# rebuild so the build context copy succeeds.
+if [ -n "${FAKE_DISCORD_GATEWAY_CONTAINER:-}" ]; then
+  docker rm -f "$FAKE_DISCORD_GATEWAY_CONTAINER" >/dev/null 2>&1 || true
+fi
+if [ -d "$REPO/.tmp" ]; then
+  sudo rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || rm -rf "$REPO/.tmp"/fake-discord.* 2>/dev/null || true
+fi
+
+NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
+unset NVIDIA_API_KEY
+info "NVIDIA_API_KEY unset; gateway must hold the inference credential"
+
+HERMES_REBUILD_LOG="/tmp/nc-hermes-rebuild-noenv.log"
+if nemoclaw "$SANDBOX_NAME" rebuild --yes >"$HERMES_REBUILD_LOG" 2>&1; then
+  rebuild_rc=0
+else
+  rebuild_rc=$?
+fi
+
+if [ "$rebuild_rc" -ne 0 ]; then
+  fail "Hermes rebuild failed with NVIDIA_API_KEY unset (rc=${rebuild_rc})"
+  tail -80 "$HERMES_REBUILD_LOG" 2>/dev/null || true
+elif grep -q "provider credential not found" "$HERMES_REBUILD_LOG"; then
+  fail "REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
+else
+  pass "Hermes rebuild reused gateway-stored credential without NVIDIA_API_KEY"
+fi
+
+if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+  export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+fi
+unset NVIDIA_API_KEY_BACKUP
+
+section "Phase 9: Cleanup"
 
 if [[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" != "1" ]]; then
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tail -3 || true

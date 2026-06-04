@@ -16,7 +16,7 @@ You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
 Complete these steps before following the [Quickstart](../quickstart).
 </AgentOnly>
 <AgentOnly variant="hermes">
-Complete these steps before following [Quickstart with Hermes](../quickstart-hermes).
+Complete these steps before following [Quickstart with Hermes](../quickstart).
 </AgentOnly>
 Linux and macOS users do not need this page and can go directly to the Quickstart.
 
@@ -36,7 +36,7 @@ Verify the following before you begin:
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- Hardware requirements are the same as [Quickstart with Hermes](../quickstart-hermes).
+- Hardware requirements are the same as [Quickstart with Hermes](../quickstart).
 
 </AgentOnly>
 
@@ -157,7 +157,7 @@ During onboarding, NemoClaw can use an already-running Windows-host daemon, star
 If the installer offers express install on WSL, accepting it selects this Windows-host Ollama path automatically.
 When Ollama runs on the Windows host, NemoClaw detects it from WSL through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
-Use one instance, or move one of them to a different port before running `nemoclaw onboard`.
+Use one instance, or move one of them to a different port before running `$$nemoclaw onboard`.
 
 ## Next Step
 
@@ -167,7 +167,7 @@ If you used the bootstrap script, follow the installer command it printed inside
 If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the [Quickstart](../quickstart) to install NemoClaw and launch your first sandbox.
 </AgentOnly>
 <AgentOnly variant="hermes">
-If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with [Quickstart with Hermes](../quickstart-hermes) to install NemoClaw and launch your first Hermes sandbox.
+If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with [Quickstart with Hermes](../quickstart) to install NemoClaw and launch your first Hermes sandbox.
 </AgentOnly>
 
 All NemoClaw commands run inside WSL, not in PowerShell.

@@ -14,6 +14,19 @@ fail() {
   exit 1
 }
 
+ensure_tag_identity() {
+  if git var GIT_COMMITTER_IDENT >/dev/null 2>&1; then
+    return
+  fi
+
+  git config user.name "${RELEASE_TAGGER_NAME:-github-actions[bot]}"
+  git config user.email "${RELEASE_TAGGER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+
+  if ! git var GIT_COMMITTER_IDENT >/dev/null 2>&1; then
+    fail "Unable to configure a git committer identity for latest tag promotion"
+  fi
+}
+
 if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   fail "Refusing to promote non-semver tag: $RELEASE_TAG"
 fi
@@ -74,6 +87,7 @@ if [[ -n "$previous_remote_semver" ]]; then
   fi
 fi
 
+ensure_tag_identity
 git tag -fa latest "$release_commit" -m "latest -> $RELEASE_TAG"
 
 if [[ "$PUSH_LATEST" != "0" ]]; then

@@ -1,20 +1,48 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parse } from "yaml";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const docsRoot = path.join(repoRoot, "docs");
 const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
 const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
-const lifecyclePath = path.join(repoRoot, "docs/manage-sandboxes/lifecycle.mdx");
+const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
 const agentVariants = ["openclaw", "hermes"] as const;
 
 type AgentVariant = (typeof agentVariants)[number];
 type RenderedFile = {
   path: string;
   contents: string;
+};
+type RenderTarget = {
+  sourcePath: string;
+  variant: AgentVariant;
+};
+type RenderAgentVariantOptions = {
+  outputPath?: string;
+  sourcePath?: string;
+};
+type DocsIndex = {
+  navigation?: NavigationItem[];
+};
+type NavigationItem = {
+  variants?: NavigationVariant[];
+  layout?: NavigationNode[];
+  contents?: NavigationNode[];
+  path?: string;
+  slug?: string;
+};
+type NavigationVariant = {
+  slug?: string;
+  layout?: NavigationNode[];
+};
+type NavigationNode = {
+  contents?: NavigationNode[];
+  path?: string;
 };
 
 const GENERATED_NOTICE =
@@ -60,6 +88,7 @@ export function renderHermesCommandsReference(source: string): string {
       "",
     ),
   )
+    .replaceAll(CLI_SENTINEL, "nemohermes")
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
@@ -118,9 +147,17 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   );
 }
 
-export function renderAgentVariantPage(source: string, variant: AgentVariant): string {
+export function renderAgentVariantPage(
+  source: string,
+  variant: AgentVariant,
+  options: RenderAgentVariantOptions = {},
+): string {
   const { frontmatter, body } = splitFrontmatter(source);
-  const renderedBody = stripAgentOnlyBlocksForVariant(
+  const renderedFrontmatter = frontmatter.replaceAll(
+    CLI_SENTINEL,
+    variant === "hermes" ? "nemohermes" : "nemoclaw",
+  );
+  let renderedBody = stripAgentOnlyBlocksForVariant(
     body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
     variant,
   )
@@ -128,20 +165,212 @@ export function renderAgentVariantPage(source: string, variant: AgentVariant): s
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
-  return `${frontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(/\s*$/, "\n");
+  if (options.sourcePath && options.outputPath) {
+    renderedBody = rewriteRelativePaths(renderedBody, options.sourcePath, options.outputPath);
+  }
+
+  return `${renderedFrontmatter}${GENERATED_VARIANT_NOTICE}\n\n${renderedBody}`.replace(
+    /\s*$/,
+    "\n",
+  );
 }
 
 function renderGeneratedAgentVariantPages(): RenderedFile[] {
-  const source = readFileSync(lifecyclePath, "utf8");
-  const sourceDirectory = path.dirname(lifecyclePath);
-  const basename = path.basename(lifecyclePath, ".mdx");
-  return agentVariants.map((variant) => ({
-    path: path.join(sourceDirectory, `${basename}.${variant}.generated.mdx`),
-    contents: renderAgentVariantPage(source, variant),
-  }));
+  return findAgentVariantTargets().map(({ sourcePath, variant }) => {
+    const sourceFilePath = path.join(docsRoot, sourcePath);
+    const source = readFileSync(sourceFilePath, "utf8");
+    const basename = path.basename(sourceFilePath, ".mdx");
+    const relativeSourceDirectory = path.relative(docsRoot, path.dirname(sourceFilePath));
+    const outputPath = path.join(
+      generatedDocsRoot,
+      relativeSourceDirectory,
+      `${basename}.${variant}.generated.mdx`,
+    );
+    return {
+      path: outputPath,
+      contents: renderAgentVariantPage(source, variant, {
+        outputPath,
+        sourcePath: sourceFilePath,
+      }),
+    };
+  });
+}
+
+function findAgentVariantTargets(): RenderTarget[] {
+  const sharedSources = findSharedNavigationSourcePaths();
+  assertNoUnsharedPlaceholders(sharedSources);
+  return findGeneratedNavigationTargets().sort((left, right) => {
+    const sourceOrder = left.sourcePath.localeCompare(right.sourcePath);
+    return sourceOrder === 0 ? left.variant.localeCompare(right.variant) : sourceOrder;
+  });
+}
+
+function findGeneratedNavigationTargets(): RenderTarget[] {
+  const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
+  const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
+  if (!userGuide?.variants) {
+    throw new Error("docs/index.yml must define navigation variants");
+  }
+  return userGuide.variants.flatMap((variant) => {
+    if (variant.slug !== "openclaw" && variant.slug !== "hermes") return [];
+    return collectGeneratedTargets(variant.layout ?? [], variant.slug);
+  });
+}
+
+function collectGeneratedTargets(nodes: NavigationNode[], variant: AgentVariant): RenderTarget[] {
+  return nodes.flatMap((node): RenderTarget[] => {
+    const sourcePath = normalizeGeneratedNavigationSourcePath(node.path);
+    const current = sourcePath ? [{ sourcePath, variant }] : [];
+    return node.contents
+      ? [...current, ...collectGeneratedTargets(node.contents, variant)]
+      : current;
+  });
+}
+
+function findSharedNavigationSourcePaths(): Set<string> {
+  const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
+  const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
+  const openclaw = userGuide?.variants?.find((variant) => variant.slug === "openclaw");
+  const hermes = userGuide?.variants?.find((variant) => variant.slug === "hermes");
+  if (!openclaw?.layout || !hermes?.layout) {
+    throw new Error("docs/index.yml must define openclaw and hermes navigation variants");
+  }
+
+  const openclawPaths = collectSourcePaths(openclaw.layout);
+  const hermesPaths = collectSourcePaths(hermes.layout);
+  return new Set([...openclawPaths].filter((sourcePath) => hermesPaths.has(sourcePath)));
+}
+
+function collectSourcePaths(nodes: NavigationNode[]): Set<string> {
+  const paths = new Set<string>();
+  for (const node of nodes) {
+    const sourcePath = normalizeNavigationSourcePath(node.path);
+    if (sourcePath) paths.add(sourcePath);
+    if (node.contents) {
+      for (const childPath of collectSourcePaths(node.contents)) {
+        paths.add(childPath);
+      }
+    }
+  }
+  return paths;
+}
+
+function normalizeNavigationSourcePath(navPath: string | undefined): string | null {
+  if (!navPath) return null;
+  const sourcePath =
+    normalizeGeneratedNavigationSourcePath(navPath) ?? normalizeLegacyVariantSource(navPath);
+  if (!sourcePath.endsWith(".mdx") || sourcePath === "index.mdx") return null;
+  return sourcePath;
+}
+
+function normalizeGeneratedNavigationSourcePath(navPath: string | undefined): string | null {
+  if (!navPath) return null;
+  const generatedMatch = navPath.match(
+    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/,
+  );
+  return generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : null;
+}
+
+function normalizeLegacyVariantSource(navPath: string): string {
+  if (navPath === "reference/commands-nemohermes.mdx") return "reference/commands.mdx";
+  return navPath;
+}
+
+function assertNoUnsharedPlaceholders(sharedSources: Set<string>): void {
+  const offenderPaths: string[] = [];
+  for (const sourcePath of findPlaceholderSourcePaths()) {
+    if (!sharedSources.has(sourcePath)) offenderPaths.push(sourcePath);
+  }
+  if (offenderPaths.length > 0) {
+    throw new Error(
+      [
+        "The following non-shared nav pages contain $$nemoclaw and would render it literally:",
+        ...offenderPaths.map((offenderPath) => `  - docs/${offenderPath}`),
+        "Use a literal CLI name on single-variant pages, or add the page to both nav variants.",
+      ].join("\n"),
+    );
+  }
+}
+
+function findPlaceholderSourcePaths(): string[] {
+  const files: string[] = [];
+  walkDocs(docsRoot, files);
+  return files.sort();
+}
+
+function walkDocs(directory: string, files: string[]): void {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith("_")) continue;
+      walkDocs(entryPath, files);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue;
+    if (entry.name.endsWith(".generated.mdx") || entry.name === "commands-nemohermes.mdx") {
+      continue;
+    }
+    if (readFileSync(entryPath, "utf8").includes(CLI_SENTINEL)) {
+      files.push(path.relative(docsRoot, entryPath).replaceAll(path.sep, "/"));
+    }
+  }
+}
+
+function rewriteRelativePaths(body: string, sourcePath: string, outputPath: string): string {
+  const sourceDirectory = path.dirname(sourcePath);
+  const outputDirectory = path.dirname(outputPath);
+  return rewriteRelativeImports(
+    rewriteRelativeImageLinks(body, sourceDirectory, outputDirectory),
+    sourceDirectory,
+    outputDirectory,
+  );
+}
+
+function rewriteRelativeImageLinks(
+  body: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  return body.replace(/(!\[[^\]]*\]\()([^)]+)(\))/g, (_match, prefix, target, suffix) => {
+    if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
+    return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
+  });
+}
+
+function rewriteRelativeImports(
+  body: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  return body.replace(
+    /^(import\s+[^'"]+\s+from\s+["'])([^"']+)(["'];?)$/gm,
+    (_match, prefix, target, suffix) => {
+      if (shouldKeepLinkTarget(target)) return `${prefix}${target}${suffix}`;
+      return `${prefix}${rewriteRelativeLinkTarget(target, sourceDirectory, outputDirectory)}${suffix}`;
+    },
+  );
+}
+
+function shouldKeepLinkTarget(target: string): boolean {
+  return target.startsWith("#") || target.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(target);
+}
+
+function rewriteRelativeLinkTarget(
+  target: string,
+  sourceDirectory: string,
+  outputDirectory: string,
+): string {
+  const match = target.match(/^([^?#]*)([?#].*)?$/);
+  if (!match || !match[1]) return target;
+
+  const absoluteTarget = path.resolve(sourceDirectory, match[1]);
+  const relativeTarget = path.relative(outputDirectory, absoluteTarget).replaceAll(path.sep, "/");
+  const normalizedTarget = relativeTarget.startsWith(".") ? relativeTarget : `./${relativeTarget}`;
+  return `${normalizedTarget}${match[2] ?? ""}`;
 }
 
 function writeGeneratedFiles(files: RenderedFile[]): void {
+  pruneStaleGeneratedFiles(new Set(files.map((file) => file.path)));
   for (const file of files) {
     if (readOptionalFile(file.path) === file.contents) {
       console.log(`${path.relative(repoRoot, file.path)} is already up to date`);
@@ -151,6 +380,30 @@ function writeGeneratedFiles(files: RenderedFile[]): void {
     writeFileSync(file.path, file.contents);
     console.log(`Wrote ${path.relative(repoRoot, file.path)}`);
   }
+}
+
+function pruneStaleGeneratedFiles(expectedPaths: Set<string>): void {
+  for (const filePath of listGeneratedFiles(generatedDocsRoot)) {
+    if (expectedPaths.has(filePath)) continue;
+    rmSync(filePath);
+    console.log(`Removed ${path.relative(repoRoot, filePath)}`);
+  }
+}
+
+function listGeneratedFiles(directory: string): string[] {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  return entries.flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return listGeneratedFiles(entryPath);
+    return entry.isFile() && entry.name.endsWith(".generated.mdx") ? [entryPath] : [];
+  });
 }
 
 function transformNemoclawCliInvocations(body: string): string {

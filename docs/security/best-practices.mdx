@@ -298,9 +298,11 @@ If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warn
 To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
 The agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities, so it will not boot on a host whose bounding set still holds them — typically one that cannot perform the drop (no `CAP_SETPCAP`, or `capsh` missing) and was not given a clean bounding set by the container runtime.
 This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WSL); leaving it unset preserves the best-effort default.
-The check covers the agent process tree only — a `nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+The check covers the agent process tree only — a `$$nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
 
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see [Sandbox Hardening](../manage-sandboxes/sandbox-hardening)).
+<AgentOnly variant="openclaw">
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to [Sandbox Hardening](../manage-sandboxes/sandbox-hardening).
+</AgentOnly>
 
 | Aspect | Detail |
 |---|---|
@@ -599,7 +601,9 @@ The following patterns weaken security without providing meaningful benefit.
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
 - [Customize the Network Policy](../network-policy/customize-network-policy) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
+<AgentOnly variant="openclaw">
 - [Sandbox Hardening](../manage-sandboxes/sandbox-hardening) for container-level security measures.
+</AgentOnly>
 - [Inference Options](../inference/inference-options) for provider configuration details.
 - [How It Works](../about/how-it-works) for the protection layer architecture.
 {/* - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. */}

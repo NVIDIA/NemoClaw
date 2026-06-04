@@ -44,15 +44,23 @@ Refer to the following pages on the official documentation website for more info
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
 | [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | Static and dynamic policy changes, presets. |
 | [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | Controls reference, risk framework, and posture profiles for sandbox security. |
-| [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
+| [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/manage-sandboxes/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
 
 ## Community
 
-- [Discord](https://discord.gg/XFpfPv9Uvx)
-- [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions)
-- [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues)
+Join the NemoClaw community to ask questions, share feedback, and report issues.
+NemoClaw is an alpha project, so maintainers review issues, discussions, and pull requests on a best effort basis without guaranteed response timelines.
+
+| Need | Channel |
+|------|---------|
+| Setup or usage questions | [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) or [Discord](https://discord.gg/XFpfPv9Uvx) |
+| Reproducible bugs | [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues) |
+| Feature proposals | Start with [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions), then open an issue when the scope is clear |
+| Current priorities | [Current Priorities](#current-priorities) |
+| Contribution help | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Security vulnerabilities | Use the private channels in [SECURITY.md](SECURITY.md); do not open public issues |
 
 ## Contributing
 
@@ -69,6 +77,19 @@ Use one of the private reporting channels described in [SECURITY.md](SECURITY.md
 - Use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configuring-private-vulnerability-reporting-for-a-repository) to submit a report directly on this repository.
 
 For security bulletins and PSIRT policies, visit the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) portal.
+
+## Current Priorities
+
+NemoClaw's current priorities are maintained here as a public orientation point for contributors and community members.
+This list is not a delivery commitment, support promise, or fixed roadmap; priorities can change as maintainers respond to security, quality, platform readiness, and community feedback.
+
+- Improve install and onboarding reliability across tested platforms.
+- Strengthen sandbox hardening, credential handling, and network-policy defaults.
+- Validate local and routed inference behavior for supported provider paths.
+- Keep documentation, troubleshooting guidance, and agent skills aligned with supported workflows.
+
+For specific scoped work, use [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues) and start broader proposals in [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions).
+Security vulnerabilities must use the private reporting channels in [SECURITY.md](SECURITY.md), not public issues.
 
 ## Notice and Disclaimer
 
