@@ -60,12 +60,18 @@ function startScriptHeredoc(src: string, marker: string): string {
   return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
 }
 
+function trustedApprovalPolicyFile(): string {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
+  const helperPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
+  fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), helperPath);
+  fs.chmodSync(helperPath, 0o444);
+  return helperPath;
+}
+
 function localApprovalPolicyPythonScript(src: string): string {
   return startScriptHeredoc(src, "PYAUTOPAIR").replace(
     "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
-    `APPROVAL_POLICY_FILE = ${JSON.stringify(
-      path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"),
-    )}`,
+    `APPROVAL_POLICY_FILE = ${JSON.stringify(trustedApprovalPolicyFile())}`,
   );
 }
 
@@ -1503,6 +1509,45 @@ setImmediate(function () {
 
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  it("refuses an approval policy helper writable by the current user", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-policy-mode-"));
+    const writablePolicy = path.join(tmpDir, "openclaw_device_approval_policy.py");
+    fs.writeFileSync(
+      writablePolicy,
+      [
+        "def approval_request_decision(_device):",
+        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+        "",
+        "def gateway_approval_env(source_env=None):",
+        "    return dict(source_env or {})",
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const autoPairScript = startScriptHeredoc(src, "PYAUTOPAIR").replace(
+      "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+      `APPROVAL_POLICY_FILE = ${JSON.stringify(writablePolicy)}`,
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairScript], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: "/bin/false",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(
+        "approval policy helper is writable by the current user",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
   it("approves only whitelisted clients and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));

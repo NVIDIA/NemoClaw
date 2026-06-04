@@ -1735,9 +1735,12 @@ APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.
 
 
 def load_approval_policy(path):
-    mode = os.stat(path).st_mode
+    helper_stat = os.stat(path)
+    mode = helper_stat.st_mode
     if mode & (stat.S_IWGRP | stat.S_IWOTH):
         raise RuntimeError('approval policy helper is writable by group or other')
+    if helper_stat.st_uid == os.geteuid() and mode & stat.S_IWUSR:
+        raise RuntimeError('approval policy helper is writable by the current user')
     spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
     if spec is None or spec.loader is None:
         raise RuntimeError('approval policy helper could not be loaded')
