@@ -4,9 +4,6 @@ description: "Describes the agent skills shipped with NemoClaw and how to access
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # NemoClaw Agent Skills for Your AI Coding Assistant
 
 NemoClaw ships agent skills that are generated directly from this documentation.

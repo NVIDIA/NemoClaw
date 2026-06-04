@@ -30,6 +30,40 @@ describe("channels mutation oclif commands", () => {
     expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: true,
+      force: false,
+    });
+  });
+
+  // Scenario 12 (#4305): --force is threaded through to addSandboxChannel.
+  it("threads --force through add to typed action options", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram", "--force"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: true,
+    });
+  });
+
+  // Scenario 12 (#4305): omitting --force yields force:false (no implicit override).
+  it("defaults force to false when --force is omitted on add", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+      force: false,
+    });
+  });
+
+  // Scenario 12 (#4305): --force combines with --dry-run independently.
+  it("threads both --force and --dry-run on add", async () => {
+    await ChannelsAddCommand.run(["alpha", "telegram", "--force", "--dry-run"], rootDir);
+
+    expect(mocks.addSandboxChannel).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: true,
+      force: true,
     });
   });
 
@@ -41,15 +75,29 @@ describe("channels mutation oclif commands", () => {
     expect(mocks.removeSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: false,
+      force: false,
     });
     expect(mocks.startSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "telegram",
       dryRun: true,
+      force: false,
     });
     expect(mocks.stopSandboxChannel).toHaveBeenCalledWith("alpha", {
       channel: "slack",
       dryRun: false,
+      force: false,
     });
+  });
+
+  // Scenario 12 (#4305): --force is add-only. Only `channels add` can create a
+  // cross-sandbox credential overlap, so only it exposes the override; surfacing
+  // a no-op --force on remove/start/stop would mislead users and break the
+  // CLI/docs flag-parity check.
+  it("exposes --force only on add, not on remove/start/stop", () => {
+    expect(ChannelsAddCommand.flags).toHaveProperty("force");
+    expect(ChannelsRemoveCommand.flags).not.toHaveProperty("force");
+    expect(ChannelsStartCommand.flags).not.toHaveProperty("force");
+    expect(ChannelsStopCommand.flags).not.toHaveProperty("force");
   });
 
   it("requires a channel before dispatch", async () => {

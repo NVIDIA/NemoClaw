@@ -7,7 +7,7 @@ import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import {
   channelMutationOptions,
   channelMutationArgs,
-  channelMutationFlags,
+  channelAddFlags,
 } from "../../../lib/sandbox/channels-command-support";
 
 export default class ChannelsAddCommand extends NemoClawCommand {
@@ -15,10 +15,10 @@ export default class ChannelsAddCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Save messaging channel credentials and rebuild";
   static description = "Store credentials for a messaging channel and queue a sandbox rebuild.";
-  static usage = ["<name> <channel> [--dry-run]"];
+  static usage = ["<name> <channel> [--dry-run] [--force]"];
   static examples = ["<%= config.bin %> sandbox channels add alpha telegram"];
   static args = channelMutationArgs;
-  static flags = channelMutationFlags;
+  static flags = channelAddFlags;
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ChannelsAddCommand);
