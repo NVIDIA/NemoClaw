@@ -410,6 +410,8 @@ def parse_doc(path: Path, doc_platform: str = "myst-md") -> DocPage:
     """Parse a documentation file into a DocPage."""
     raw = path.read_text(encoding="utf-8")
     fm, body = parse_yaml_frontmatter(raw)
+    if doc_platform == "fern-mdx":
+        body = body.replace("$$nemoclaw", "nemoclaw")
     body = strip_commented_out_blocks(body)
 
     page = DocPage(path=path, raw=raw, frontmatter=fm, body=body)
@@ -1888,6 +1890,8 @@ EXCLUDED_PATTERNS = {
 
 def _is_excluded_doc(path: Path, doc_platform: str) -> bool:
     """Return whether a page should be skipped for the selected source format."""
+    if path.name.endswith(".generated.mdx"):
+        return True
     if path.name in EXCLUDED_PATTERNS:
         return True
     if doc_platform == "fern-mdx" and path.with_suffix(".md").name in EXCLUDED_PATTERNS:

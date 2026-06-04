@@ -53,6 +53,10 @@ const {
   isHashVerificationIssue,
   isSha256Hex,
 }: typeof import("./seal") = require("./seal");
+const {
+  applyStateDirLockMode,
+  preflightStateDirLock,
+}: typeof import("./state-dir-lock") = require("./state-dir-lock");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -331,114 +335,18 @@ function isShieldsState(value: unknown): value is ShieldsState {
 }
 
 // ---------------------------------------------------------------------------
-// NC-2227-05: State directories locked by shields-up.
-//
-// During shields-up, these must be locked (root:root 755) so the sandbox
-// user cannot create new entries or modify existing ones. This covers both
-// executable state (skills, hooks, cron jobs, extensions, plugins, agent
-// definitions) and writable agent state entry points such as workspace and
-// memory, so a stale symlink bridge cannot bypass the lockdown.
-//
-// The list is a superset: directories that don't exist in a given agent's
-// config dir are silently skipped.
+// State-dir lock — adapter between this module's privileged-exec helpers and
+// the lock pipeline in ./state-dir-lock. The inventory of locked dirs, the
+// preflight/mutation/verification logic, and the `agents/*/sessions`
+// carve-out live in that sibling module so this file stays focused on
+// shields state transitions.
 // ---------------------------------------------------------------------------
 
-const HIGH_RISK_STATE_DIRS = [
-  "skills",
-  "hooks",
-  "cron",
-  "agents",
-  "extensions",
-  "plugins", // Hermes equivalent of extensions
-  "workspace",
-  "memory",
-  "credentials",
-  "identity",
-  "devices",
-  "canvas",
-  "telegram",
-];
-
-function applyStateDirLockMode(
-  sandboxName: string,
-  configDir: string,
-  owner: string,
-): void {
-  // Locking (shields-up) strips group + world write. Unlocking (shields-down)
-  // restores the same group-readable/writable + o-rwx mutable-default contract
-  // as startup, plus setgid so the gateway UID — now in the sandbox group via
-  // Dockerfile.base — can write to OpenClaw's mutable config tree (#2681).
-  //
-  // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
-  // access from descendants. Without re-adding group read/write explicitly,
-  // shields-down would leave nested files readable/writable only by owner.
-  const isLocking = owner === "root:root";
-  const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
-  const dirMode = isLocking ? "755" : "2770";
-
-  for (const dirName of HIGH_RISK_STATE_DIRS) {
-    const dirPath = `${configDir}/${dirName}`;
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "-R", owner, dirPath]);
-    } catch {
-      // Directory may not exist for this agent — silently skip
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", dirMode, dirPath]);
-    } catch {
-      // Silently skip
-    }
-    if (isLocking) {
-      try {
-        privilegedSandboxExec(sandboxName, ["chmod", "g-s", dirPath]);
-      } catch {
-        // Best effort; do not skip recursive write stripping.
-      }
-    }
-    try {
-      privilegedSandboxExec(sandboxName, [
-        "chmod",
-        "-R",
-        recursiveMode,
-        dirPath,
-      ]);
-    } catch {
-      // Silently skip
-    }
-  }
-
-  // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
-  // discovered dynamically because they are configured by openclaw.json.
-  const clearSetgid = isLocking ? "1" : "0";
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-owner="$2"
-recursive_mode="$3"
-dir_mode="$4"
-clear_setgid="$5"
-for dir in "$config_dir"/workspace-*; do
-  [ -d "$dir" ] || continue
-  chown -R "$owner" "$dir" 2>/dev/null || true
-  chmod "$dir_mode" "$dir" 2>/dev/null || true
-  [ "$clear_setgid" = "1" ] && chmod g-s "$dir" 2>/dev/null || true
-  chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
-done
-`,
-      "sh",
-      configDir,
-      owner,
-      recursiveMode,
-      dirMode,
-      clearSetgid,
-    ]);
-  } catch {
-    // Best effort; verification below catches the primary config lock.
-  }
+function stateDirLockExec(sandboxName: string) {
+  return {
+    exec: (cmd: string[]) => privilegedSandboxExec(sandboxName, cmd),
+    capture: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+  };
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -542,8 +450,18 @@ function unlockAgentConfig(
 
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
-  // locked to root:root by a prior shields-up).
-  applyStateDirLockMode(sandboxName, target.configDir, "sandbox:sandbox");
+  // locked to root:root by a prior shields-up). Surface fan-out issues
+  // so `shields down` cannot report success while a state dir is still
+  // root-owned or read-only.
+  const stateDirUnlockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "sandbox:sandbox",
+    false,
+  );
+  for (const issue of stateDirUnlockIssues) {
+    errors.push(`state dir unlock: ${issue}`);
+  }
 
   if (errors.length > 0) {
     console.error(
@@ -652,6 +570,18 @@ function lockAgentConfig(
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
 
+  // Symlink preflight runs before any file or directory mutation: if a
+  // pre-lockdown agent swapped e.g. `extensions/` for a symlink to /etc,
+  // we abort before the privileged chmod/chown touches anything, so the
+  // tree is never half-mutated against an attacker-controlled host path.
+  const preflightIssues = preflightStateDirLock(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+  );
+  if (preflightIssues.length > 0) {
+    throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
+  }
+
   for (const f of filesToLock) {
     try {
       privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
@@ -692,10 +622,24 @@ function lockAgentConfig(
     }
   }
 
-  // NC-2227-05: Lock state directories. Root-own the directory and set 755 so
-  // the sandbox user can read/execute but cannot create new entries or modify
-  // existing ones.
-  applyStateDirLockMode(sandboxName, target.configDir, "root:root");
+  // Lock state directories. High-risk dirs use `root:sandbox` ownership so
+  // the gateway (in the sandbox group) can still read plugin/agent code while
+  // the sandbox user is denied write through `chmod -R go-w`. Secret-bearing
+  // dirs (CONFIDENTIALITY_STATE_DIRS in ./state-dir-lock) go to `root:root`
+  // 700/go-rwX so neither the sandbox user nor the gateway can read them
+  // while shields are up. Top-level configDir stays root:root.
+  const stateDirLockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "root:sandbox",
+    true,
+  );
+  if (stateDirLockIssues.length > 0) {
+    // Symlinked state-dir roots are a security-relevant violation:
+    // continuing would let shields-up report "locked" while a state
+    // dir still points at a writable host path. Refuse the lock.
+    throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
+  }
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid
   // after descendant locking so shields-up verifies the root config dir as

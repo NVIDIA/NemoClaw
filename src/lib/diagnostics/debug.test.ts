@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -82,6 +82,29 @@ describe("createTarball", () => {
     const ok = createTarball(tempDir, "/nonexistent/path/debug.tar.gz");
     expect(ok).toBe(false);
     expect(process.exitCode).toBe(1);
+  });
+
+  it("leaves pre-existing user output untouched and removes the temp sibling when tar fails", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
+    writeFileSync(join(tempDir, "payload.txt"), "test data");
+    outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
+    const output = join(outputDir, "partial.tar.gz");
+    // Pre-existing user file must NOT be clobbered when tar fails.
+    const previous = "pre-existing user content";
+    writeFileSync(output, previous);
+    // Removing the source dir forces tar to fail without racing in-progress
+    // collection.
+    rmSync(tempDir, { recursive: true, force: true });
+    const ok = createTarball(tempDir, output);
+    expect(ok).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(output)).toBe(true);
+    expect(readFileSync(output, "utf-8")).toBe(previous);
+    // No .partial sibling should remain after cleanup.
+    const partials = readdirSync(outputDir).filter(
+      (name) => name.endsWith(".partial") || name.includes(".partial."),
+    );
+    expect(partials).toEqual([]);
   });
 
   it("creates tarball successfully and returns true for valid output path", () => {

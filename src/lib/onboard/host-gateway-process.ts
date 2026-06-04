@@ -168,7 +168,7 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   return result.stdout.trim() || null;
 }
 
-function hostGatewayCmdlineMatches(
+export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
 ): boolean {

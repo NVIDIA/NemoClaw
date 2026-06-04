@@ -3,11 +3,13 @@
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
 import { OnboardRuntime } from "./machine/runtime";
+import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   maybeForceE2eStepFailure(stepName: string): void;
+  createRuntime?(): OnboardRuntime;
 }
 
 export class OnboardRuntimeBoundary {
@@ -16,7 +18,7 @@ export class OnboardRuntimeBoundary {
   constructor(private readonly options: OnboardRuntimeBoundaryOptions) {}
 
   reset(): void {
-    this.runtime = new OnboardRuntime();
+    this.runtime = this.options.createRuntime?.() ?? new OnboardRuntime();
   }
 
   clear(): void {
@@ -24,21 +26,27 @@ export class OnboardRuntimeBoundary {
   }
 
   getRuntime(): OnboardRuntime {
-    if (!this.runtime) this.runtime = new OnboardRuntime();
+    if (!this.runtime) this.runtime = this.options.createRuntime?.() ?? new OnboardRuntime();
     return this.runtime;
   }
 
   recorders() {
     return {
+      recordOnboardStarted: this.recordOnboardStarted.bind(this),
       startRecordedStep: this.startRecordedStep.bind(this),
       recordStepComplete: this.recordStepComplete.bind(this),
       recordStepSkipped: this.recordStepSkipped.bind(this),
       recordStateSkipped: this.recordStateSkipped.bind(this),
       recordRepairEvent: this.recordRepairEvent.bind(this),
+      recordResumeConflict: this.recordResumeConflict.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
     };
+  }
+
+  async recordOnboardStarted(resumed: boolean): Promise<Session> {
+    return this.getRuntime().start({ resumed });
   }
 
   async startRecordedStep(
@@ -75,6 +83,10 @@ export class OnboardRuntimeBoundary {
     metadata: Record<string, unknown> | null = null,
   ): Promise<Session> {
     return this.getRuntime().markSkipped(state, metadata);
+  }
+
+  async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
+    return this.getRuntime().emitResumeConflict(conflict);
   }
 
   async recordRepairEvent(

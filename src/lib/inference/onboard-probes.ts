@@ -443,6 +443,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       temperature: 0,
       // Bound strict tool-call probes so a slow local model cannot keep
       // generating until the host-side curl process timeout kills validation.
+      // This strict gate is currently used for Local Ollama; if it expands to
+      // reasoning models, add a thinking-suppression carve-out before lowering
+      // this cap so reasoning traces cannot consume the whole budget (#4537).
       max_tokens: 256,
       stream: false,
     }),

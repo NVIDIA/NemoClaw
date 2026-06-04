@@ -545,6 +545,8 @@ function buildPrBody(previousVersion: string, nextVersion: string, options: PrBo
   ].join("\n");
 }
 
+// Keep automated releases scoped to the semver tag and `latest`.
+// The public installer's `lkg` tag is promoted manually by release admins after validation.
 function updateLatestTag(tagName: string): void {
   log(`Updating mutable 'latest' tag to ${tagName}`);
   if (gitRefExists("refs/tags/latest")) {
