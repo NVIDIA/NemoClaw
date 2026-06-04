@@ -30,6 +30,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
 **Docker Group Access:**
 
@@ -39,6 +40,11 @@ Members of the `docker` group can control the daemon with root-level impact, so 
 For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+If the installer reports that `strings` is missing, install `binutils` and rerun the installer:
+
+```bash
+sudo apt-get install -y binutils
+```
 
 On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
@@ -70,5 +76,5 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 ## Next Steps
 
 - Prepare Windows for NemoClaw if you are using Windows.
-- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.
+- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandboxed agent.
 - Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant before setup.
