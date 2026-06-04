@@ -2285,48 +2285,69 @@ jobs:
                 ? 'Manual full run'
                 : 'Scheduled full nightly';
 
+            // ── Canonical job set (API truth) ──
+            // Strip " / <suffix>" (reusable-workflow inner names) to match
+            // caller-side IDs. Fall back to needs context on API failure.
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
+
+            let canonicalJobs = null;
+            try {
+              const apiJobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                },
+              );
+              const dedupedByName = new Map();
+              for (const j of apiJobs) {
+                const name = j.name.replace(/ \/ [^/]+$/, '');
+                // Last-write-wins: re-runs reflect final attempt.
+                if (!EXCLUDED_JOBS.has(name)) dedupedByName.set(name, { ...j, name });
+              }
+              canonicalJobs = [...dedupedByName.values()];
+            } catch (e) {
+              core.warning(`Could not fetch jobs from API; falling back to needs context: ${e.message}`);
+            }
+
+            // ── Counts ──
             let success = 0;
             let failure = 0;
             let cancelled = 0;
             let skipped = 0;
 
-            for (const [, { result }] of entries) {
-              if (result === 'success') success++;
-              else if (result === 'failure') failure++;
-              else if (result === 'cancelled') cancelled++;
-              else if (result === 'skipped') skipped++;
-            }
-
-            const total = entries.length;
-            const ran = total - skipped;
-            const perfect = failure === 0 && cancelled === 0 && ran > 0;
-
-            // ── Identify failed jobs (with html_url for clickable links) ──
-            const failedNames = entries
-              .filter(([, { result }]) => result === 'failure')
-              .map(([name]) => name)
-              .sort();
-
-            let urlByName = new Map();
-            if (failedNames.length > 0) {
-              try {
-                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: context.runId,
-                  per_page: 100,
-                });
-                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
-              } catch (e) {
-                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+            if (canonicalJobs) {
+              for (const j of canonicalJobs) {
+                if (j.conclusion === 'success') success++;
+                else if (j.conclusion === 'failure') failure++;
+                else if (j.conclusion === 'cancelled') cancelled++;
+                else if (j.conclusion === 'skipped' || j.status !== 'completed') skipped++;
+              }
+            } else {
+              for (const [, { result }] of entries) {
+                if (result === 'success') success++;
+                else if (result === 'failure') failure++;
+                else if (result === 'cancelled') cancelled++;
+                else if (result === 'skipped') skipped++;
               }
             }
 
-            const failedJobs = failedNames.map((name) => ({
-              name,
-              url: urlByName.get(name) || null,
-            }));
+            const total = canonicalJobs ? canonicalJobs.length : entries.length;
+            const ran = total - skipped;
+            const perfect = failure === 0 && cancelled === 0 && ran > 0;
+
+            // ── Failed jobs ──
+            const failedJobs = canonicalJobs
+              ? canonicalJobs
+                  .filter((j) => j.conclusion === 'failure')
+                  .map((j) => ({ name: j.name, url: j.html_url }))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+              : entries
+                  .filter(([, { result }]) => result === 'failure')
+                  .map(([name]) => ({ name, url: null }))
+                  .sort((a, b) => a.name.localeCompare(b.name));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
