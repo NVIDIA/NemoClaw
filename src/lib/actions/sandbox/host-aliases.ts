@@ -3,12 +3,13 @@
 
 import { isIP } from "node:net";
 
-import { dockerExecFileSync } from "../../adapters/docker";
+import { dockerCapture, dockerExecFileSync } from "../../adapters/docker";
 import { CLI_NAME } from "../../cli/branding";
 import * as registry from "../../state/registry";
 
 const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 const HOST_ALIAS_KUBECTL_TIMEOUT_MS = 10_000;
+const HOST_ALIAS_DOCKER_PROBE_TIMEOUT_MS = 5_000;
 
 // Drivers that run a per-sandbox direct container (openshell-<sandbox>...)
 // instead of the legacy k3s gateway. They have no openshell-cluster-nemoclaw
@@ -85,10 +86,45 @@ function assertLegacyGatewayHostAliasSupport(sandboxName: string): void {
     hostAliasesFail([
       `  Host aliases are not supported on the '${driver}' driver sandbox '${sandboxName}'.`,
       "  This command edits aliases on the legacy Kubernetes gateway sandbox resource,",
-      `  which the ${driver} driver does not run (there is no openshell-cluster-nemoclaw container).`,
+      `  which the ${driver} driver does not run (there is no ${K3S_CONTAINER} container).`,
       "  OpenShell does not yet expose a persistent host-alias API for this driver, and a",
       "  one-time /etc/hosts edit would not survive a sandbox restart or rebuild.",
     ]);
+  }
+  // Registry entries from older NemoClaw releases predate the openshellDriver
+  // field, and a kubernetes-driver sandbox whose legacy gateway never came up
+  // also slips past the driver branch above. Without this probe both fall
+  // through to `docker exec openshell-cluster-nemoclaw kubectl ...` and the
+  // user sees an opaque `Error response from daemon: No such container:
+  // openshell-cluster-nemoclaw`. Surface the same actionable guidance as the
+  // driver branch instead.
+  if (!isLegacyGatewayContainerRunning()) {
+    const driverLabel = driver ?? "unspecified";
+    hostAliasesFail([
+      `  Host aliases require the legacy OpenShell gateway container '${K3S_CONTAINER}' to be running.`,
+      `  The legacy gateway container is not running on this host (sandbox '${sandboxName}', driver: ${driverLabel}).`,
+      "  Newer OpenShell drivers run per-sandbox direct containers instead of the legacy gateway",
+      "  and do not yet expose a persistent host-alias API. A one-time /etc/hosts edit inside the",
+      "  direct container would not survive a sandbox restart or rebuild.",
+    ]);
+  }
+}
+
+function isLegacyGatewayContainerRunning(): boolean {
+  try {
+    const output = dockerCapture(
+      ["ps", "--format", "{{.Names}}", "--filter", `name=^${K3S_CONTAINER}$`],
+      {
+        timeout: HOST_ALIAS_DOCKER_PROBE_TIMEOUT_MS,
+        ignoreError: true,
+      },
+    );
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .some((line) => line === K3S_CONTAINER);
+  } catch {
+    return false;
   }
 }
 

@@ -382,6 +382,7 @@ function writeHostAliasDockerStub(
   localBin: string,
   dockerLog: string,
   hostAliases: { ip: string; hostnames: string[] }[],
+  { gatewayRunning = true }: { gatewayRunning?: boolean } = {},
 ): void {
   const resource = JSON.stringify({
     metadata: { resourceVersion: "123" },
@@ -393,6 +394,10 @@ function writeHostAliasDockerStub(
       "#!/usr/bin/env bash",
       `log_file=${JSON.stringify(dockerLog)}`,
       'printf "%s\\n" "$@" >> "$log_file"',
+      'if [ "$1" = "ps" ]; then',
+      gatewayRunning ? '  printf "%s\\n" "openshell-cluster-nemoclaw"' : "  :",
+      "  exit 0",
+      "fi",
       'if printf "%s\\n" "$@" | grep -q "^get$"; then',
       `  printf "%s\\n" ${JSON.stringify(resource)}`,
       "fi",
@@ -3096,6 +3101,10 @@ describe("CLI dispatch", () => {
         "#!/usr/bin/env bash",
         `log_file=${JSON.stringify(dockerLog)}`,
         'printf "%s\\n" "$@" >> "$log_file"',
+        'if [ "$1" = "ps" ]; then',
+        '  printf "%s\\n" "openshell-cluster-nemoclaw"',
+        "  exit 0",
+        "fi",
         'if printf "%s\\n" "$@" | grep -q "^get$"; then',
         '  printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"10.0.0.5","hostnames":["old.local"]}]}}}}\'',
         "fi",
@@ -3112,10 +3121,15 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Added host alias searxng.local -> 192.168.1.105");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    // The docker invocation must start with the `exec` subcommand. Without
-    // it, docker parses kubectl's `-n` as a docker flag and exits 125
-    // ("unknown shorthand flag: 'n' in -n").
-    expect(log[0]).toBe("exec");
+    // The docker invocation targeting the legacy gateway container must use
+    // the `exec` subcommand. Without it, docker parses kubectl's `-n` as a
+    // docker flag and exits 125 ("unknown shorthand flag: 'n' in -n"). The
+    // probe added for #4317 runs `docker ps ...` first, so check the
+    // subcommand position relative to `kubectl` rather than at index 0.
+    const kubectlIndex = log.indexOf("kubectl");
+    expect(kubectlIndex).toBeGreaterThan(1);
+    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
+    expect(log[kubectlIndex - 2]).toBe("exec");
     expect(log).toContain("patch");
     expect(log).toContain("--type=json");
     const patch = JSON.parse(log[log.indexOf("-p") + 1]);
@@ -3146,6 +3160,10 @@ describe("CLI dispatch", () => {
         "#!/usr/bin/env bash",
         `log_file=${JSON.stringify(dockerLog)}`,
         'printf "%s\\n" "$@" >> "$log_file"',
+        'if [ "$1" = "ps" ]; then',
+        '  printf "%s\\n" "openshell-cluster-nemoclaw"',
+        "  exit 0",
+        "fi",
         'printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"192.168.1.105","hostnames":["searxng.local","search.lan"]}]}}}}\'',
       ].join("\n"),
       { mode: 0o755 },
@@ -3160,8 +3178,10 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Host aliases for 'alpha'");
     expect(r.out).toContain("192.168.1.105  searxng.local, search.lan");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    expect(log[0]).toBe("exec");
-    expect(log).toContain("kubectl");
+    const kubectlIndex = log.indexOf("kubectl");
+    expect(kubectlIndex).toBeGreaterThan(1);
+    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
+    expect(log[kubectlIndex - 2]).toBe("exec");
     expect(log).toContain("get");
   });
 
@@ -3184,7 +3204,10 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Removed host alias searxng.local");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
-    expect(log[0]).toBe("exec");
+    const kubectlIndex = log.indexOf("kubectl");
+    expect(kubectlIndex).toBeGreaterThan(1);
+    expect(log[kubectlIndex - 1]).toBe("openshell-cluster-nemoclaw");
+    expect(log[kubectlIndex - 2]).toBe("exec");
     expect(log).toContain("patch");
     const patch = JSON.parse(log[log.lastIndexOf("-p") + 1]);
     expect(patch[0]).toEqual({
@@ -3298,6 +3321,10 @@ describe("CLI dispatch", () => {
         `get_count=${JSON.stringify(getCount)}`,
         `patch_count=${JSON.stringify(patchCount)}`,
         'printf "%s\\n" "$@" >> "$log_file"',
+        'if [ "$1" = "ps" ]; then',
+        '  printf "%s\\n" "openshell-cluster-nemoclaw"',
+        "  exit 0",
+        "fi",
         'if printf "%s\\n" "$@" | grep -q "^get$"; then',
         '  count=$(cat "$get_count" 2>/dev/null || echo 0)',
         "  count=$((count + 1))",
@@ -3380,6 +3407,55 @@ describe("CLI dispatch", () => {
       expect(fs.existsSync(dockerLog)).toBe(false);
     });
   }
+
+  it(
+    "fails host alias commands with an actionable error when the legacy gateway container is not running (#4317 reopen)",
+    testTimeoutOptions(30_000),
+    () => {
+      // Reproduce the reopen case: a sandbox onboarded by an older NemoClaw
+      // release whose registry entry predates the openshellDriver field, on a
+      // host where the legacy `openshell-cluster-nemoclaw` k3s gateway is not
+      // running. Without the runtime probe, `docker exec openshell-cluster-
+      // nemoclaw kubectl ...` bubbles up an opaque `Error response from
+      // daemon: No such container: openshell-cluster-nemoclaw` to the user.
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-hosts-no-gateway-"),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeHostAliasDockerStub(
+        localBin,
+        dockerLog,
+        [{ ip: "10.0.0.5", hostnames: ["old.local"] }],
+        { gatewayRunning: false },
+      );
+      // Registry omits openshellDriver to mimic a pre-feature sandbox entry.
+      writeSandboxRegistry(home);
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env);
+      const add = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
+      const remove = runWithEnv("alpha hosts-remove searxng.local", env);
+
+      for (const result of [list, add, remove]) {
+        expect(result.code).toBe(1);
+        expect(result.out).toContain(
+          "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
+        );
+        expect(result.out).not.toContain("Error response from daemon");
+        expect(result.out).not.toContain("No such container");
+      }
+
+      const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+      // Only the probe ran. No exec/get/patch reached the missing container.
+      expect(log).toContain("ps");
+      expect(log).not.toContain("exec");
+      expect(log).not.toContain("kubectl");
+      expect(log).not.toContain("get");
+      expect(log).not.toContain("patch");
+    },
+  );
 
   it("supports oclif-native sandbox command forms", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-native-sandbox-"));
