@@ -1994,7 +1994,7 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
-    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR; do
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
       _openclaw_env_value="${!_openclaw_env_name:-}"
       [ -n "$_openclaw_env_value" ] || continue
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
