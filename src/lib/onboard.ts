@@ -3560,10 +3560,7 @@ async function createSandbox(
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
-  // #2598: opt-in flag that empties the default workspace seed.
-  if (process.env.NEMOCLAW_MINIMAL_BOOTSTRAP === "1") {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_MINIMAL_BOOTSTRAP", "1"));
-  }
+  if (process.env.NEMOCLAW_MINIMAL_BOOTSTRAP === "1") envArgs.push(formatEnvAssignment("NEMOCLAW_MINIMAL_BOOTSTRAP", "1")); // #2598
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist

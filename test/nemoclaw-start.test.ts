@@ -2652,7 +2652,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
     );
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: { ...process.env, NEMOCLAW_MINIMAL_BOOTSTRAP: "", ...(options.env ?? {}) },
       timeout: 5000,
     });
   }
