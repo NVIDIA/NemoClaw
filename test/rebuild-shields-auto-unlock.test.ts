@@ -230,8 +230,10 @@ if (a[0]==="exec") {
   //   lsattr → "----i------"
   // We are testing the auto-unlock path: shields-down is called on a locked sandbox,
   // verification should look like 660 sandbox:sandbox / 2770 sandbox:sandbox.
+  if (cmd[0]==="python3" && cmd[1]==="-c") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="-i") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="+i") { writeLockState("locked"); process.exit(0); }
+  if (cmd[0]==="test" && cmd[1]==="-L") { process.exit(1); }
   if (cmd[0]==="chown" && cmd[1]==="sandbox:sandbox") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chown" && cmd[1]==="root:root") { writeLockState("locked"); process.exit(0); }
   if (cmd[0]==="chmod" && (cmd[1]==="660" || cmd[1]==="2770")) { writeLockState("unlocked"); process.exit(0); }
