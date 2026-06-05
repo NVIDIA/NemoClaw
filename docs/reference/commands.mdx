@@ -182,6 +182,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 NEMOCLAW_POLICY_TIER=restricted $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+Any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight with an error listing the valid options.
+
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy-add`](#$$nemoclaw-name-policy-add) across re-onboards.

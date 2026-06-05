@@ -142,6 +142,78 @@ console.log = () => {};
     );
   });
 
+  it("rejects unknown NEMOCLAW_POLICY_TIER before usage notice or preflight (#3741)", () => {
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_POLICY_TIER = "invalid_tier";
+const { onboard } = require(${onboardPath});
+const exitMarker = "__NEMOCLAW_TEST_PROCESS_EXIT__";
+process.exit = (code = 0) => {
+  const err = new Error(exitMarker);
+  err.code = Number(code);
+  throw err;
+};
+(async () => {
+  try {
+    await onboard({
+      nonInteractive: true,
+      acceptThirdPartySoftware: true,
+      sandboxName: "tier-test",
+    });
+    process.stdout.write("UNEXPECTED_SUCCESS\n");
+    process.exitCode = 0;
+  } catch (err) {
+    if (!err || err.message !== exitMarker) {
+      process.stderr.write((err && err.stack) || String(err));
+      process.exitCode = 99;
+      return;
+    }
+    const stateDir = path.join(process.env.HOME, ".nemoclaw");
+    process.stdout.write(JSON.stringify({
+      exitCode: err.code,
+      usageNoticeExists: fs.existsSync(path.join(stateDir, "usage-notice.json")),
+      lockExists: fs.existsSync(path.join(stateDir, "onboard.lock")),
+      sessionExists: fs.existsSync(path.join(stateDir, "onboard-session.json")),
+    }) + "\n");
+    process.exitCode = err.code;
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 1, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split(/\n/).at(-1) || "{}");
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.usageNoticeExists, false, "usage notice must not be accepted/written");
+    assert.equal(payload.lockExists, false, "onboard lock must not be created");
+    assert.equal(payload.sessionExists, false, "onboard session must not be created");
+    assert.match(
+      result.stderr,
+      /Unknown policy tier: invalid_tier\. Valid: restricted, balanced, open/,
+    );
+    assert.doesNotMatch(result.stderr, /Third-Party Software Notice/);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /\[1\/8\] Preflight checks/);
+    assert.ok(!result.stdout.includes("UNEXPECTED_SUCCESS"));
+  });
+
+  it("treats whitespace-only NEMOCLAW_POLICY_TIER as the balanced default", () => {
+    const script =
+      buildPreamble({ tierEnv: "   " }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  const tier = await selectPolicyTier();
+  process.stdout.write(JSON.stringify({ tier }) + "\n");
+})().catch((err) => { process.stderr.write(err.message + "\n"); process.exit(1); });
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.tier, "balanced");
+  });
+
   it("restricted tier produces an empty preset list", () => {
     const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =

@@ -6153,6 +6153,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  A sandbox name cannot be prompted for in this context.");
     process.exit(1);
   }
+  // Same fail-fast contract for NEMOCLAW_POLICY_TIER (#3741):
+  // validate before usage-notice state, preflight, gateway, or inference work.
+  policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,
@@ -6166,8 +6169,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   // misleading 'Docker is not reachable' error instead of the real
   // problem: an unsupported provider value.
   getRequestedProviderHint();
-  // Same fail-fast contract for NEMOCLAW_POLICY_TIER (#3741): blank/unset proceeds, others validated now.
-  policyTierEnv.validatePolicyTierEnvEarly();
   const lockResult = onboardSession.acquireOnboardLock(
     `nemoclaw onboard${resume ? " --resume" : ""}${fresh ? " --fresh" : ""}${isNonInteractive() ? " --non-interactive" : ""}${requestedFromDockerfile ? ` --from ${requestedFromDockerfile}` : ""}`,
   );
