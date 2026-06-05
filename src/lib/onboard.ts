@@ -31,8 +31,8 @@ const {
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   CUSTOM_BUILD_CONTEXT_WARN_BYTES,
+  createCustomBuildContextFilter,
   isInsideIgnoredCustomBuildContextPath,
-  shouldIncludeCustomBuildContextPath,
 }: typeof import("./onboard/custom-build-context") = require("./onboard/custom-build-context");
 const {
   buildCompatibleEndpointSandboxSmokeCommand,
@@ -3273,9 +3273,10 @@ async function createSandbox(
     }
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
     console.log(`  Docker build context: ${buildContextDir}`);
+    const shouldIncludeCustomContextPath = createCustomBuildContextFilter(buildContextDir);
     const buildContextStats = collectBuildContextStats(
       buildContextDir,
-      shouldIncludeCustomBuildContextPath,
+      shouldIncludeCustomContextPath,
     );
     if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
       const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
@@ -3299,7 +3300,7 @@ async function createSandbox(
     try {
       fs.cpSync(buildContextDir, buildCtx, {
         recursive: true,
-        filter: shouldIncludeCustomBuildContextPath,
+        filter: shouldIncludeCustomContextPath,
       });
       // If the caller pointed at a file not named "Dockerfile", copy it to the
       // location openshell expects (buildCtx/Dockerfile).
