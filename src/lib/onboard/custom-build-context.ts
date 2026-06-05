@@ -32,7 +32,6 @@ type DockerignoreRule = {
   pattern: string;
   negated: boolean;
   directoryOnly: boolean;
-  anchored: boolean;
   hasSlash: boolean;
   matcher: RegExp;
 };
@@ -114,7 +113,6 @@ function parseDockerignoreRule(rawLine: string): DockerignoreRule | null {
   if (!pattern || pattern === ".") return null;
 
   const directoryOnly = pattern.endsWith("/");
-  const anchored = pattern.startsWith("/");
   pattern = pattern.replace(/^\/+/, "").replace(/\/+$/, "");
   if (!pattern) return null;
 
@@ -122,7 +120,6 @@ function parseDockerignoreRule(rawLine: string): DockerignoreRule | null {
     pattern,
     negated,
     directoryOnly,
-    anchored,
     hasSlash: pattern.includes("/"),
     matcher: dockerignoreGlobToRegex(pattern),
   };
@@ -141,7 +138,7 @@ function readDockerignoreRules(buildContextDir: string): DockerignoreRule[] {
 function matchesDockerignoreRule(relativePath: string, rule: DockerignoreRule): boolean {
   if (!relativePath) return false;
 
-  if (!rule.hasSlash && !rule.anchored) {
+  if (!rule.hasSlash) {
     const segments = relativePath.split("/");
     return segments.some((segment) => rule.matcher.test(segment));
   }

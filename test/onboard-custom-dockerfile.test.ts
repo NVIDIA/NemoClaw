@@ -66,7 +66,7 @@ describe("custom Dockerfile build context filter", () => {
     }
   });
 
-  it("honors rooted patterns separately from same-name nested paths", () => {
+  it("treats leading slash patterns like equivalent unrooted dockerignore patterns", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-context-filter-"));
     try {
       fs.writeFileSync(
@@ -77,10 +77,10 @@ describe("custom Dockerfile build context filter", () => {
       const filter = createCustomBuildContextFilter(tmpDir);
 
       assert.equal(filter(path.join(tmpDir, "root-only.log")), false);
-      assert.equal(filter(path.join(tmpDir, "nested", "root-only.log")), true);
+      assert.equal(filter(path.join(tmpDir, "nested", "root-only.log")), false);
       assert.equal(filter(path.join(tmpDir, "root-cache")), false);
       assert.equal(filter(path.join(tmpDir, "root-cache", "data.bin")), false);
-      assert.equal(filter(path.join(tmpDir, "nested", "root-cache", "data.bin")), true);
+      assert.equal(filter(path.join(tmpDir, "nested", "root-cache", "data.bin")), false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
