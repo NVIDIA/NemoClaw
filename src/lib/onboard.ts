@@ -114,6 +114,7 @@ const {
 const {
   installOllamaOnMacOS,
 }: typeof import("./onboard/install-ollama-macos") = require("./onboard/install-ollama-macos");
+const { OllamaProbeFailureTracker }: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -3846,34 +3847,20 @@ const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readR
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
   | { outcome: "back-to-selection" };
-// Pick an Ollama model, pull it if missing, and validate it via the local
-// proxy. Shared by the three Ollama provider branches (running, Windows-host
-// install/start, install-locally). Returns "back-to-selection" so the caller
-// can `continue` its labelled outer selectionLoop.
 async function selectAndValidateOllamaModel(
   gpu: ReturnType<typeof nim.detectGpu>,
   provider: string,
   defaults: { requestedModel: string | null; recoveredModel: string | null },
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
-  // Track local-probe failures so a host that legitimately cannot load the
-  // wizard's default model (e.g. NVIDIA L4 vs 30B class, cold-load timeout)
-  // does not dead-loop re-offering the same model. After the same tag fails
-  // twice — or three total probe failures across distinct tags — surface a
-  // diagnostic and return to provider selection so the caller can offer a
-  // different provider instead of cycling the same broken pick.
-  const probeFailureCounts = new Map<string, number>();
-  const excludedAfterRepeatFail = new Set<string>();
-  const MAX_PROBE_FAILS_SAME_MODEL = 2;
-  const MAX_PROBE_FAILS_TOTAL = 3;
-  let totalProbeFailures = 0;
+  const probeFailures = new OllamaProbeFailureTracker();
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      model = await promptOllamaModel(gpu, { excludeModels: excludedAfterRepeatFail });
+      model = await promptOllamaModel(gpu, { excludeModels: probeFailures.excludedModels() });
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
@@ -3911,24 +3898,11 @@ async function selectAndValidateOllamaModel(
     }
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
-      const sameModelCount = (probeFailureCounts.get(selectedModel) ?? 0) + 1;
-      probeFailureCounts.set(selectedModel, sameModelCount);
-      totalProbeFailures += 1;
-      if (sameModelCount >= MAX_PROBE_FAILS_SAME_MODEL) {
-        excludedAfterRepeatFail.add(selectedModel);
-      }
+      const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
       if (action === "back-to-selection") return { outcome: "back-to-selection" };
-      if (
-        sameModelCount >= MAX_PROBE_FAILS_SAME_MODEL ||
-        totalProbeFailures >= MAX_PROBE_FAILS_TOTAL
-      ) {
-        console.error(
-          `  Ollama model selection has hit ${totalProbeFailures} probe failure(s) ` +
-            `(model '${selectedModel}' alone failed ${sameModelCount} time(s)). ` +
-            "Returning to provider selection — pick a different provider, free GPU memory, " +
-            "or set NEMOCLAW_MODEL to a model known to fit this host before retrying Ollama.",
-        );
+      if (probeFailureLimitReached) {
+        console.error(probeFailures.formatLimitMessage(selectedModel));
         return { outcome: "back-to-selection" };
       }
       continue;
@@ -3990,9 +3964,6 @@ async function setupNim(
   let preferredInferenceApi: string | null = null;
   let allowToolsIncompatible = false;
 
-  // Detect local inference options. Bound curl with --connect-timeout/--max-time
-  // so a half-open port or stalled listener cannot hang the onboard at step 3
-  // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
   const ollamaHost = findReachableOllamaHost();
