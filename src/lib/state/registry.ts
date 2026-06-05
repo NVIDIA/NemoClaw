@@ -3,16 +3,35 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface CustomPolicyEntry {
   name: string;
   content: string;
   sourcePath?: string;
   appliedAt?: string;
+}
+
+// Outcome of the last live sandbox GPU proof run during onboarding/recovery.
+// `status` separates a configured-but-unverified GPU from one whose CUDA
+// usability was actually proven (`verified`) or actively failed a live proof
+// (`failed`, e.g. Jetson `/dev/nvmap` permission errors). Persisted so
+// `nemoclaw <sandbox> status` can report proof state instead of treating any
+// configured GPU as healthy (#4231).
+export type SandboxGpuProofStatus = "verified" | "unverified" | "failed";
+
+export interface SandboxGpuProofResult {
+  status: SandboxGpuProofStatus;
+  // True only when a CUDA-usability proof (cuInit via libcuda) actually passed.
+  cudaVerified: boolean;
+  // Label of the last proof that determined `status`.
+  label?: string | null;
+  // Redacted, truncated diagnostic captured when the proof failed.
+  detail?: string | null;
+  at: string;
 }
 
 export interface SandboxEntry {
@@ -26,20 +45,43 @@ export interface SandboxEntry {
   sandboxGpuEnabled?: boolean;
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
+  sandboxGpuProof?: SandboxGpuProofResult | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
+  // True once the onboard policy step has fully completed and reconciled the
+  // effective preset selection (set by the post-policy registry write). Absent
+  // on a sandbox whose registration recorded only boot-time presets but whose
+  // policy step never finished — so re-onboard knows whether `policies`
+  // represents a final selection it can carry forward. See #4621.
+  policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
   imageTag?: string | null;
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
+  messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
+  hermesDashboardEnabled?: boolean;
+  hermesDashboardPort?: number | null;
+  hermesDashboardInternalPort?: number | null;
+  hermesDashboardTui?: boolean;
   disabledChannels?: string[];
   dashboardPort?: number | null;
+  // OpenShell gateway registration name and host port bound to this sandbox.
+  // Persisted so later lifecycle commands operate on the sandbox's own gateway
+  // instead of the process-global `nemoclaw` singleton — a second sandbox on a
+  // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
+}
+
+export interface SandboxMessagingState {
+  schemaVersion: 1;
+  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -202,10 +244,16 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
+      sandboxGpuProof: entry.sandboxGpuProof ?? null,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      // policyPresetsFinalized is intentionally not set here: registration means
+      // the policy step has not completed for this entry. It is stamped only by
+      // the post-policy registry write (see policy-preset-persistence), so a
+      // snapshot clone (which spreads the source entry but resets `policies`)
+      // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
@@ -215,21 +263,38 @@ export function registerSandbox(entry: SandboxEntry): void {
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
           ? { ...entry.messagingChannelConfig }
           : undefined,
+      messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
           : undefined,
+      hermesDashboardEnabled: entry.hermesDashboardEnabled === true ? true : undefined,
+      hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
+      hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
+      hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       disabledChannels:
         Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
           ? [...entry.disabledChannels]
           : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      gatewayName: entry.gatewayName ?? undefined,
+      gatewayPort: entry.gatewayPort ?? undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
     }
     save(data);
   });
+}
+
+function cloneSandboxMessagingState(
+  messaging: SandboxMessagingState | undefined,
+): SandboxMessagingState | undefined {
+  if (!messaging || messaging.schemaVersion !== 1) return undefined;
+  return {
+    schemaVersion: 1,
+    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
+  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {

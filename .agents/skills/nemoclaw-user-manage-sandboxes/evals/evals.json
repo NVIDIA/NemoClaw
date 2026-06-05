@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-manage-sandboxes-lifecycle-001",
+    "question": "I'm managing a NemoClaw sandbox. Help me check status, health, logs, ports, providers, upgrades, and uninstall paths so I can operate the sandbox safely after quickstart.",
+    "expected_skill": "nemoclaw-user-manage-sandboxes",
+    "ground_truth": "A NemoClaw-specific answer that helps the user check status, health, logs, ports, providers, upgrades, and uninstall paths and gives enough concrete guidance, decision criteria, verification steps, or risk framing to operate the sandbox safely after quickstart.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

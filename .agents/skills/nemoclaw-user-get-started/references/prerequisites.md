@@ -1,8 +1,6 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Prerequisites
 
-Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
+Before you start, verify that your machine has the software and hardware needed to run NemoClaw.
 
 ## Hardware
 
@@ -12,7 +10,11 @@ Before getting started, check the prerequisites to ensure you have the necessary
 | RAM      | 8 GB           | 16 GB            |
 | Disk     | 20 GB free     | 40 GB free       |
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline. The pipeline buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+The sandbox image is approximately 2.4 GB compressed.
+During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline.
+The pipeline buffers decompressed layers in memory.
+On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
 ## Software
 
@@ -26,8 +28,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
-**Docker group access:**
+**Docker Group Access:**
 
 NemoClaw needs Docker access.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
@@ -35,6 +38,11 @@ Members of the `docker` group can control the daemon with root-level impact, so 
 For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+If the installer reports that `strings` is missing, install `binutils` and rerun the installer:
+
+```bash
+sudo apt-get install -y binutils
+```
 
 On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
@@ -44,17 +52,17 @@ You do not need to install or sign a separate OpenShell VM driver helper for sta
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 
-**Docker storage driver:**
+**Docker Storage Driver:**
 
 On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
-No manual setup is required.
-See the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
+You do not need manual setup.
+Refer to the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
 
 ## Platforms
 
 The following table lists tested platform and runtime combinations.
 Availability is not limited to these entries, but untested configurations can have issues.
-The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
+The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
@@ -65,5 +73,6 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 
 ## Next Steps
 
-- Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill) if you are using Windows.
-- Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+- Prepare Windows for NemoClaw if you are using Windows.
+- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandboxed agent.
+- Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant before setup.

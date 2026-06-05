@@ -21,6 +21,7 @@ import {
 } from "./onboard/config.js";
 import { registerRuntimeContext } from "./runtime-context.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
+import { safeResolvePath } from "./security/safe-resolve-path.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
 type PluginValue = PluginScalar | PluginRecord | PluginValue[];
@@ -391,8 +392,13 @@ export default function register(api: OpenClawPluginApi): void {
         const rawPath = event.params["file_path"] ?? event.params["path"];
         if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
         // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw/memory/secrets.md
-        const filePath = api.resolvePath(rawPath);
+        // /sandbox/project/../../.openclaw/memory/secrets.md. The host's
+        // resolver may be missing or return undefined under embedded-fallback
+        // runtimes, so route through safeResolvePath which falls back to the
+        // raw path rather than crashing the hook. isMemoryPath knows how to
+        // classify both absolute resolved paths and canonical memory
+        // basenames written through a relative path.
+        const filePath = safeResolvePath(api, rawPath);
         if (!isMemoryPath(filePath)) return undefined;
 
         const content =

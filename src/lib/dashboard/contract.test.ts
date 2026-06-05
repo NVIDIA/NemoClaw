@@ -10,6 +10,7 @@ describe("buildChain", () => {
     expect(c).toMatchObject({
       accessUrl: "http://127.0.0.1:18789", forwardTarget: "18789",
       healthEndpoint: "/health", port: 18789, bindAddress: "127.0.0.1",
+      dashboardHealthEndpoint: "/health", gatewayPort: 18789, gatewayHealthEndpoint: "/health",
     });
     expect(c.corsOrigins).toEqual(["http://127.0.0.1:18789"]);
     expect(c.shouldDisableDeviceAuth).toBe(false);
@@ -40,6 +41,25 @@ describe("buildChain", () => {
 
   it("respects explicit port override", () => {
     expect(buildChain({ port: 19000 }).port).toBe(19000);
+  });
+
+  it("supports separate agent dashboard and gateway health probes", () => {
+    const c = buildChain({
+      chatUiUrl: "http://127.0.0.1:18789",
+      dashboardHealthEndpoint: "api/status",
+      gatewayPort: 8642,
+      gatewayHealthEndpoint: "/health",
+    });
+    expect(c.port).toBe(18789);
+    expect(c.dashboardHealthEndpoint).toBe("/api/status");
+    expect(c.healthEndpoint).toBe("/api/status");
+    expect(c.gatewayPort).toBe(8642);
+    expect(c.gatewayHealthEndpoint).toBe("/health");
+  });
+
+  it("normalizes URL-shaped health endpoints to their pathname", () => {
+    expect(buildChain({ dashboardHealthEndpoint: "http://127.0.0.1/" }).dashboardHealthEndpoint).toBe("/");
+    expect(buildChain({ gatewayHealthEndpoint: "http://127.0.0.1/health" }).gatewayHealthEndpoint).toBe("/health");
   });
 
   it("treats empty/invalid chatUiUrl as default without throwing", () => {

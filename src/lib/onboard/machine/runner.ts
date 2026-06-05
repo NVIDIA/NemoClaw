@@ -23,6 +23,11 @@ export interface OnboardMachineRunnerOptions<Context> {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   handlers: OnboardStateHandlers<Context>;
+  /**
+   * Safety valve for retry-capable handlers. Handlers should bound their own
+   * retry loops, but the runner refuses to apply unbounded transitions.
+   */
+  maxTransitions?: number;
   updateContext?(input: {
     context: Context;
     state: OnboardMachineState;
@@ -46,22 +51,46 @@ export class MissingOnboardStateHandlerError extends Error {
   }
 }
 
+export class OnboardMachineTransitionLimitError extends Error {
+  readonly maxTransitions: number;
+
+  constructor(maxTransitions: number) {
+    super(`Onboarding machine exceeded transition limit: ${maxTransitions}`);
+    this.name = "OnboardMachineTransitionLimitError";
+    this.maxTransitions = maxTransitions;
+  }
+}
+
+const DEFAULT_MAX_TRANSITIONS = 100;
+
+function normalizeMaxTransitions(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_TRANSITIONS;
+  return Math.max(1, Math.trunc(value));
+}
+
 export async function runOnboardMachine<Context>({
   context: initialContext,
   runtime,
   handlers,
+  maxTransitions,
   updateContext,
 }: OnboardMachineRunnerOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   let context = initialContext;
   let session = await runtime.session();
+  let transitions = 0;
+  const transitionLimit = normalizeMaxTransitions(maxTransitions);
 
   while (!isTerminalOnboardMachineState(session.machine.state)) {
+    if (transitions >= transitionLimit) {
+      throw new OnboardMachineTransitionLimitError(transitionLimit);
+    }
     const state = session.machine.state;
     const handler = handlers[state as OnboardNonTerminalMachineState];
     if (!handler) throw new MissingOnboardStateHandlerError(state as OnboardNonTerminalMachineState);
 
     const result = await handler(context);
     session = await runtime.applyResult(result);
+    transitions += 1;
     context = updateContext
       ? await updateContext({ context, state, result, session })
       : context;

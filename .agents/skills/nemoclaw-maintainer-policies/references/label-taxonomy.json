@@ -1,0 +1,615 @@
+{
+  "schema_version": 1,
+  "repo": "NVIDIA/NemoClaw",
+  "status": "canonical maintainer policy",
+  "issue_type_source_of_truth": {
+    "field": "GitHub native Issue Type",
+    "values": ["Bug", "Enhancement", "Task", "Documentation", "Epic", "Initiative"]
+  },
+  "project_fields": {
+    "project": "NVIDIA organization Project 199",
+    "fields": {
+      "Status": {
+        "data_type": "single_select",
+        "value_source": "policy",
+        "values": ["No Status", "Backlog", "In Progress", "Blocked", "Needs Review", "NV QA", "Done", "Won't Fix", "Duplicate"]
+      },
+      "Priority": {
+        "data_type": "single_select",
+        "value_source": "policy",
+        "values": ["Urgent", "High", "Medium", "Low"]
+      },
+      "Sprint": {
+        "data_type": "iteration",
+        "value_source": "live_project_iterations",
+        "values": [],
+        "write_rule": "Fetch live Project iterations before writing."
+      },
+      "Effort": {
+        "data_type": "single_select",
+        "value_source": "policy",
+        "values": ["High", "Medium", "Low"]
+      },
+      "Start date": {
+        "data_type": "date",
+        "value_source": "date",
+        "format": "YYYY-MM-DD"
+      },
+      "Target date": {
+        "data_type": "date",
+        "value_source": "date",
+        "format": "YYYY-MM-DD"
+      }
+    }
+  },
+  "agent_owned_namespace": {
+    "pattern": "agt: *",
+    "permissions": ["create", "apply", "remove", "delete"],
+    "authorization": "Allowed inside an authorized agent-owned workflow.",
+    "forbidden_meanings": ["product type", "priority", "project status", "sprint", "release version", "issue classification"]
+  },
+  "unknown_label_policy": {
+    "canonical": false,
+    "allowed_exceptions": ["agt: *"],
+    "handling": "Report old or unknown labels in an audit or cleanup dry run. Do not create, apply, or recreate labels that are not listed in this taxonomy."
+  },
+  "canonical_labels": [
+    {
+      "name": "bug-fix",
+      "family": "pr_type",
+      "item_kinds": ["pull_request"],
+      "description": "PR primarily fixes broken behavior.",
+      "positive_signals": ["regression fix", "failing test fix", "crash fix", "incorrect output fix"],
+      "negative_signals": ["new capability", "docs only", "tooling only"],
+      "mutually_exclusive_group": "pr_type"
+    },
+    {
+      "name": "feature",
+      "family": "pr_type",
+      "item_kinds": ["pull_request"],
+      "description": "PR adds or expands user-visible capability.",
+      "positive_signals": ["new command", "new provider", "new workflow", "new user-facing behavior"],
+      "negative_signals": ["bug-only fix", "docs only"],
+      "mutually_exclusive_group": "pr_type"
+    },
+    {
+      "name": "refactor",
+      "family": "pr_type",
+      "item_kinds": ["pull_request"],
+      "description": "PR restructures code without intended behavior change.",
+      "positive_signals": ["cleanup", "decomposition", "architecture simplification"],
+      "negative_signals": ["intended behavior change"],
+      "mutually_exclusive_group": "pr_type"
+    },
+    {
+      "name": "chore",
+      "family": "pr_type",
+      "item_kinds": ["pull_request"],
+      "description": "Docs, CI, dependencies, packaging, policy, or maintenance.",
+      "positive_signals": ["docs", "CI", "dependency", "skill policy", "automation", "packaging"],
+      "negative_signals": ["primary product behavior change"],
+      "mutually_exclusive_group": "pr_type"
+    },
+    {
+      "name": "security",
+      "family": "risk",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Potential vulnerability, unsafe behavior, or access risk.",
+      "positive_signals": ["credentials", "permissions", "authentication", "SSRF", "sandbox escape", "policy bypass", "trusted installer"],
+      "negative_signals": ["ordinary UX issue without security impact"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "needs: triage",
+      "family": "needs",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "New issue or PR needs maintainer review for project workflow assignment, labeling, ownership, or next action.",
+      "positive_signals": ["new issue", "new PR", "project workflow assignment needed", "labeling needed", "ownership needed", "next action unclear"],
+      "negative_signals": ["already classified", "project workflow assignment complete", "owner assigned", "next action clear"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "needs: info",
+      "family": "needs",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Waiting on author for missing details.",
+      "positive_signals": ["missing repro", "missing logs", "missing version", "missing platform", "unclear intent"],
+      "negative_signals": ["enough context to act", "review-ready PR"],
+      "mutually_exclusive_group": "primary_blocking_need"
+    },
+    {
+      "name": "needs: design",
+      "family": "needs",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Requires product or architecture direction.",
+      "positive_signals": ["cross-cutting change", "unclear architecture", "product decision needed"],
+      "negative_signals": ["straightforward implementation"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "needs: rebase",
+      "family": "needs",
+      "item_kinds": ["pull_request"],
+      "description": "PR needs rebase or conflict resolution.",
+      "positive_signals": ["merge conflicts", "dirty merge state", "stale base blocking review"],
+      "negative_signals": ["clean merge state"],
+      "mutually_exclusive_group": "primary_blocking_need"
+    },
+    {
+      "name": "needs: unblock",
+      "family": "needs",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Blocked item needs dependency or decision resolved.",
+      "positive_signals": ["blocked dependency", "decision needed", "external unblock required"],
+      "negative_signals": ["work can proceed"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "needs: cleanup-review",
+      "family": "needs",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Stale, superseded, competing, convergence-needed, or closure-candidate item needs maintainer judgment.",
+      "positive_signals": ["stale", "superseded candidate", "competing PR", "overlapping work", "convergence decision needed", "closure candidate"],
+      "negative_signals": ["active work", "clear close decision already made"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "good first issue",
+      "family": "community",
+      "item_kinds": ["issue"],
+      "description": "Small, clear, safe task for new contributors with tiny blast radius and no permission, secret, security, release, or policy risk.",
+      "positive_signals": ["tiny blast radius", "clear scope", "enough context", "starter task", "no permissions risk", "no secrets risk"],
+      "negative_signals": ["security", "urgent", "needs design", "large refactor", "permissions", "secrets", "release risk", "policy risk"],
+      "mutually_exclusive_group": null
+    },
+    {
+      "name": "help wanted",
+      "family": "community",
+      "item_kinds": ["issue"],
+      "description": "Accepted work where maintainers welcome external contribution.",
+      "positive_signals": ["accepted scope", "external contribution useful"],
+      "negative_signals": ["private security work", "unclear direction"],
+      "mutually_exclusive_group": null
+    }
+  ],
+  "label_families": {
+    "area": {
+      "item_kinds": ["issue", "pull_request"],
+      "prefix": "area:",
+      "selection_guidance": [
+        "Use area labels for the affected product or code surface, not for every concept mentioned in the report.",
+        "For install/onboarding/packaging overlap: use area: install for prerequisites or setup mechanics, area: onboarding for first-run flow and onboarding state, and area: packaging for shipped artifacts, images, registries, or distribution.",
+        "For inference/providers/routing/local-models overlap: use area: inference for model execution or output behavior, area: providers for provider integration/configuration/selection work, area: routing for dispatch/fallback/model-selection logic, and area: local-models for local runtime, download, launch, or connectivity.",
+        "For integrations/messaging overlap: use area: integrations for external app or bridge behavior, area: messaging when message delivery/channel lifecycle is the affected subsystem, and add a specific integration:* label when one listed integration is involved."
+      ],
+      "values": [
+        "area: architecture",
+        "area: ci",
+        "area: cli",
+        "area: docs",
+        "area: e2e",
+        "area: inference",
+        "area: install",
+        "area: integrations",
+        "area: local-models",
+        "area: messaging",
+        "area: networking",
+        "area: observability",
+        "area: onboarding",
+        "area: packaging",
+        "area: performance",
+        "area: policy",
+        "area: project-management",
+        "area: providers",
+        "area: routing",
+        "area: sandbox",
+        "area: security",
+        "area: skills",
+        "area: ui"
+      ],
+      "entries": [
+        {
+          "name": "area: architecture",
+          "description": "Architecture, design debt, major refactors, or maintainability.",
+          "positive_signals": ["architecture proposal", "design debt", "major refactor", "maintainability", "cross-cutting structure"],
+          "negative_signals": ["small local bug", "docs-only change", "single command UX issue"]
+        },
+        {
+          "name": "area: ci",
+          "description": "CI workflows, checks, release automation, or GitHub Actions.",
+          "positive_signals": ["GitHub Actions", "workflow failure", "CI check", "release automation", "test runner infrastructure"],
+          "negative_signals": ["runtime bug found by CI but not caused by CI", "manual test failure"]
+        },
+        {
+          "name": "area: cli",
+          "description": "Command line interface, flags, terminal UX, or output.",
+          "positive_signals": ["command", "flag", "terminal output", "CLI error", "argument parsing"],
+          "negative_signals": ["web UI issue", "backend behavior with no CLI-specific surface"]
+        },
+        {
+          "name": "area: docs",
+          "description": "Documentation, examples, guides, generated docs, or docs build.",
+          "positive_signals": ["docs page", "guide", "example", "README", "broken link", "generated docs"],
+          "negative_signals": ["code behavior bug", "feature request without documentation scope"]
+        },
+        {
+          "name": "area: e2e",
+          "description": "End-to-end tests, nightly failures, or validation infrastructure.",
+          "positive_signals": ["end-to-end test", "nightly failure", "validation run", "QA regression", "release validation"],
+          "negative_signals": ["unit test only", "single component failure outside e2e flow"]
+        },
+        {
+          "name": "area: inference",
+          "description": "Inference routing, serving, model selection, or generated outputs.",
+          "positive_signals": ["model output", "inference request", "serving path", "model selection", "generated response"],
+          "negative_signals": ["provider setup only", "UI-only presentation issue"]
+        },
+        {
+          "name": "area: install",
+          "description": "Install, setup, prerequisites, or uninstall flow.",
+          "positive_signals": ["installer", "setup", "dependency", "prerequisite", "uninstall", "first install"],
+          "negative_signals": ["post-install runtime behavior", "ordinary command usage after setup"]
+        },
+        {
+          "name": "area: integrations",
+          "description": "External app, tool, channel, or OpenClaw integration behavior.",
+          "positive_signals": ["external app", "bridge", "channel", "integration setup", "third-party tool"],
+          "negative_signals": ["core product behavior with no external integration"]
+        },
+        {
+          "name": "area: local-models",
+          "description": "Local model providers, downloads, launch, or connectivity.",
+          "positive_signals": ["local model", "model download", "local runtime", "Ollama", "vLLM", "local serving"],
+          "negative_signals": ["hosted provider only", "generic inference issue without local runtime evidence"]
+        },
+        {
+          "name": "area: messaging",
+          "description": "Messaging channels, bridges, manifests, or channel lifecycle.",
+          "positive_signals": ["message delivery", "channel lifecycle", "manifest", "bridge message", "chat channel"],
+          "negative_signals": ["general UI text", "notification unrelated to messaging bridge"]
+        },
+        {
+          "name": "area: networking",
+          "description": "DNS, proxy, TLS, ports, host aliases, or connectivity.",
+          "positive_signals": ["DNS", "proxy", "TLS", "port", "connection refused", "host alias", "network timeout"],
+          "negative_signals": ["provider outage with no local networking evidence", "generic install failure"]
+        },
+        {
+          "name": "area: observability",
+          "description": "Logging, metrics, tracing, diagnostics, or debug output.",
+          "positive_signals": ["logs", "metrics", "trace", "diagnostics", "debug output", "observability"],
+          "negative_signals": ["logs only included as evidence for a different issue"]
+        },
+        {
+          "name": "area: onboarding",
+          "description": "First-run, onboarding FSM, provider setup, or sandbox launch.",
+          "positive_signals": ["first run", "onboard command", "onboarding state", "provider setup wizard", "initial sandbox launch"],
+          "negative_signals": ["ongoing usage after onboarding", "general install prerequisite"]
+        },
+        {
+          "name": "area: packaging",
+          "description": "Packages, images, registries, installers, or distribution.",
+          "positive_signals": ["package", "image", "registry", "installer artifact", "distribution", "release package"],
+          "negative_signals": ["runtime code bug unrelated to packaging"]
+        },
+        {
+          "name": "area: performance",
+          "description": "Latency, throughput, resource use, benchmarks, or scaling.",
+          "positive_signals": ["slow", "latency", "throughput", "CPU", "memory", "benchmark", "scaling"],
+          "negative_signals": ["functional failure without performance impact"]
+        },
+        {
+          "name": "area: policy",
+          "description": "Network policy, egress rules, presets, or sandbox policy.",
+          "positive_signals": ["policy", "egress rule", "preset", "allowlist", "denylist", "sandbox rule"],
+          "negative_signals": ["maintainer workflow policy", "label policy", "documentation policy"]
+        },
+        {
+          "name": "area: project-management",
+          "description": "Taxonomy, triage, workflow, roadmap, or project process.",
+          "positive_signals": ["label taxonomy", "triage workflow", "project field", "roadmap", "maintainer process"],
+          "negative_signals": ["product feature request", "code behavior bug"]
+        },
+        {
+          "name": "area: providers",
+          "description": "Inference provider integration, configuration, or selection work.",
+          "positive_signals": ["provider integration", "provider configuration", "provider selection", "new provider", "provider adapter behavior"],
+          "negative_signals": ["generic model output issue", "routing-only issue with no provider configuration or adapter behavior"],
+          "companion_label_guidance": "Add provider:* when a listed provider is specifically involved. Use area: providers without provider:* for unknown, proposed, or non-canonical providers."
+        },
+        {
+          "name": "area: routing",
+          "description": "Request routing, policy routing, model selection, or fallback logic.",
+          "positive_signals": ["routing", "fallback", "request dispatch", "model selection", "provider selection logic"],
+          "negative_signals": ["single provider failure with no routing behavior"]
+        },
+        {
+          "name": "area: sandbox",
+          "description": "OpenShell sandbox lifecycle, runtime, configuration, or recovery.",
+          "positive_signals": ["sandbox", "OpenShell", "sandbox launch", "runtime boundary", "sandbox recovery"],
+          "negative_signals": ["general container issue not tied to sandbox behavior"]
+        },
+        {
+          "name": "area: security",
+          "description": "Security controls, permissions, secrets, or hardening.",
+          "positive_signals": ["permission", "secret", "credential", "hardening", "access control", "security control"],
+          "negative_signals": ["ordinary bug without security-sensitive path"]
+        },
+        {
+          "name": "area: skills",
+          "description": "Agent skills, prompts, behaviors, or skill packaging.",
+          "positive_signals": ["skill", "prompt", "agent behavior", "skill package", "agent instruction"],
+          "negative_signals": ["ordinary user workflow without agent or skill behavior"]
+        },
+        {
+          "name": "area: ui",
+          "description": "Web UI, terminal display, visual layout, or UX behavior.",
+          "positive_signals": ["web UI", "layout", "visual", "terminal display", "UX behavior", "screen text"],
+          "negative_signals": ["backend behavior with no visible user interface impact"]
+        }
+      ],
+      "positive_signals": ["affected code area", "affected user workflow", "review routing surface"],
+      "negative_signals": ["weak inference", "not useful for routing"]
+    },
+    "platform": {
+      "item_kinds": ["issue", "pull_request"],
+      "prefix": "platform:",
+      "selection_guidance": [
+        "Apply platform labels only when the platform appears causal, routing-relevant, or materially more likely to own the issue.",
+        "Do not apply a platform label just because the platform appears in the environment template, reproduction setup, or logs.",
+        "When a more specific platform label applies, prefer it over a broader one unless both are independently routing-relevant."
+      ],
+      "values": [
+        "platform: arm64",
+        "platform: brev",
+        "platform: container",
+        "platform: dgx-spark",
+        "platform: dgx-station",
+        "platform: gb10",
+        "platform: jetson",
+        "platform: k3s",
+        "platform: k8s",
+        "platform: linux",
+        "platform: macos",
+        "platform: ubuntu",
+        "platform: windows",
+        "platform: wsl"
+      ],
+      "entries": [
+        {
+          "name": "platform: arm64",
+          "description": "ARM64 or aarch64-specific behavior.",
+          "positive_signals": ["ARM64-only failure", "aarch64 build failure", "architecture-specific binary or dependency", "reproduction differs between ARM64 and x86_64"],
+          "negative_signals": ["platform only listed in environment", "same failure on x86_64", "Apple Silicon or Jetson issue better routed by platform: macos or platform: jetson alone"]
+        },
+        {
+          "name": "platform: brev",
+          "description": "Brev hosted development environments.",
+          "positive_signals": ["Brev workspace", "Brev-hosted environment", "Brev-specific setup or runtime"],
+          "negative_signals": ["cloud development environment without Brev evidence"]
+        },
+        {
+          "name": "platform: container",
+          "description": "Docker, containerd, Podman, or image behavior.",
+          "positive_signals": ["Docker daemon appears causal", "containerd runtime failure", "Podman-specific behavior", "image pull or image build failure", "container networking appears causal"],
+          "negative_signals": ["Docker only listed in environment", "container is only part of generic setup and not likely causal"]
+        },
+        {
+          "name": "platform: dgx-spark",
+          "description": "DGX Spark hardware or workflows.",
+          "positive_signals": ["DGX Spark", "DGX Spark setup", "DGX Spark-specific workflow"],
+          "negative_signals": ["NVIDIA hardware mentioned without DGX Spark relevance"]
+        },
+        {
+          "name": "platform: dgx-station",
+          "description": "DGX Station hardware or workflows.",
+          "positive_signals": ["DGX Station", "DGX Station setup", "DGX Station-specific workflow"],
+          "negative_signals": ["NVIDIA hardware mentioned without DGX Station relevance"]
+        },
+        {
+          "name": "platform: gb10",
+          "description": "GB10 GPU environments.",
+          "positive_signals": ["GB10", "GB10-specific GPU environment", "GB10 hardware behavior"],
+          "negative_signals": ["generic GPU issue without GB10 evidence"]
+        },
+        {
+          "name": "platform: jetson",
+          "description": "Jetson AGX Thor or Orin environments.",
+          "positive_signals": ["Jetson", "AGX Thor", "Orin", "JetPack", "Jetson-specific install or runtime"],
+          "negative_signals": ["ARM64 issue without Jetson-specific evidence"]
+        },
+        {
+          "name": "platform: k3s",
+          "description": "K3s-specific behavior.",
+          "positive_signals": ["K3s", "lightweight Kubernetes", "K3s cluster", "K3s-specific deployment"],
+          "negative_signals": ["generic Kubernetes issue better labeled platform: k8s"]
+        },
+        {
+          "name": "platform: k8s",
+          "description": "Kubernetes-specific behavior.",
+          "positive_signals": ["Kubernetes", "kubectl", "cluster", "pod", "deployment", "service"],
+          "negative_signals": ["container runtime issue outside Kubernetes"]
+        },
+        {
+          "name": "platform: linux",
+          "description": "Linux behavior without Ubuntu specificity.",
+          "positive_signals": ["Linux-specific path", "systemd", "Linux permissions", "non-Ubuntu Linux distribution"],
+          "negative_signals": ["Ubuntu-specific behavior", "platform listed only as environment"]
+        },
+        {
+          "name": "platform: macos",
+          "description": "macOS, Darwin, Homebrew, or Apple Silicon behavior.",
+          "positive_signals": ["macOS-specific error", "Darwin", "Homebrew", "Apple Silicon path", "macOS permission behavior"],
+          "negative_signals": ["macOS only listed as tested environment", "Docker only listed in environment", "same issue reproduced on Linux or Windows"]
+        },
+        {
+          "name": "platform: ubuntu",
+          "description": "Ubuntu-specific behavior.",
+          "positive_signals": ["Ubuntu version", "apt package", "Ubuntu-specific dependency", "Ubuntu-specific install path"],
+          "negative_signals": ["generic Linux behavior", "Ubuntu only listed as environment"]
+        },
+        {
+          "name": "platform: windows",
+          "description": "Native Windows or PowerShell behavior.",
+          "positive_signals": ["Windows-specific error", "PowerShell", "Windows path", "native Windows install", "Windows permissions"],
+          "negative_signals": ["WSL-specific issue", "Windows host only listed in environment"]
+        },
+        {
+          "name": "platform: wsl",
+          "description": "Windows Subsystem for Linux behavior.",
+          "positive_signals": ["WSL", "WSL2", "Windows Subsystem for Linux", "WSL networking", "WSL filesystem path"],
+          "negative_signals": ["native Windows issue", "generic Linux issue without WSL-specific evidence"]
+        }
+      ],
+      "positive_signals": ["platform-specific error", "platform-specific code path", "platform-specific install behavior", "platform-specific runtime behavior", "repeated evidence from same platform", "platform seems routing-relevant or likely causal"],
+      "negative_signals": ["platform-agnostic", "all platforms", "reproduction setup only", "logs mention platform without platform-specific behavior", "guessed from generic failure text"]
+    },
+    "provider": {
+      "item_kinds": ["issue", "pull_request"],
+      "prefix": "provider:",
+      "selection_guidance": [
+        "Apply provider labels only when the item is specific to that provider's API, configuration, runtime, endpoint, auth, model behavior, or adapter.",
+        "When a provider exposes an OpenAI-compatible API but has its own canonical provider label, use the more specific provider label instead of provider: openai.",
+        "Use area: providers with no provider:* label for unknown, proposed, or non-canonical providers."
+      ],
+      "values": [
+        "provider: anthropic",
+        "provider: nvidia",
+        "provider: ollama",
+        "provider: openai",
+        "provider: vllm"
+      ],
+      "entries": [
+        {
+          "name": "provider: anthropic",
+          "description": "Anthropic or Claude provider behavior.",
+          "positive_signals": ["Anthropic", "Claude", "Anthropic API", "Claude model", "Anthropic provider config"],
+          "negative_signals": ["generic inference issue", "OpenAI-compatible provider issue"]
+        },
+        {
+          "name": "provider: nvidia",
+          "description": "NVIDIA inference endpoint, NIM, or NVIDIA provider behavior.",
+          "positive_signals": ["NVIDIA endpoint", "NIM", "NVIDIA provider", "NVIDIA API key", "NVIDIA-hosted model"],
+          "negative_signals": ["NVIDIA hardware only", "non-provider NVIDIA platform issue"]
+        },
+        {
+          "name": "provider: ollama",
+          "description": "Ollama local model provider behavior.",
+          "positive_signals": ["Ollama", "ollama serve", "Ollama model", "local Ollama runtime"],
+          "negative_signals": ["local model issue not using Ollama"]
+        },
+        {
+          "name": "provider: openai",
+          "description": "OpenAI API or OpenAI-compatible provider behavior.",
+          "positive_signals": ["OpenAI API", "OpenAI-compatible endpoint with no more specific provider label", "Chat Completions", "Responses API", "OpenAI model"],
+          "negative_signals": ["Anthropic-specific issue", "NVIDIA, Ollama, or vLLM issue with a more specific provider label", "local provider issue"]
+        },
+        {
+          "name": "provider: vllm",
+          "description": "vLLM local or hosted provider behavior.",
+          "positive_signals": ["vLLM", "vllm serve", "OpenAI-compatible vLLM endpoint", "vLLM runtime"],
+          "negative_signals": ["generic local model issue not tied to vLLM"]
+        }
+      ],
+      "positive_signals": ["specific provider path", "provider configuration", "provider-specific failure"],
+      "negative_signals": ["generic inference issue", "unknown provider"]
+    },
+    "integration": {
+      "item_kinds": ["issue", "pull_request"],
+      "prefix": "integration:",
+      "selection_guidance": [
+        "Apply integration labels only when a listed external app, channel, tool, or agent integration is specifically involved.",
+        "Use area: integrations for integration subsystem work, and add integration:* when a listed integration is named or clearly implicated.",
+        "Use area: messaging when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with integration:* when the messaging issue is specific to a listed integration."
+      ],
+      "values": [
+        "integration: brave",
+        "integration: discord",
+        "integration: hermes",
+        "integration: openclaw",
+        "integration: slack",
+        "integration: telegram",
+        "integration: wechat",
+        "integration: whatsapp"
+      ],
+      "entries": [
+        {
+          "name": "integration: brave",
+          "description": "Brave integration behavior.",
+          "positive_signals": ["Brave", "browser integration", "Brave-specific channel or app behavior"],
+          "negative_signals": ["generic browser issue without Brave evidence"]
+        },
+        {
+          "name": "integration: discord",
+          "description": "Discord bridge or channel lifecycle.",
+          "positive_signals": ["Discord", "Discord bot", "Discord bridge", "Discord channel"],
+          "negative_signals": ["generic messaging issue without Discord evidence"]
+        },
+        {
+          "name": "integration: hermes",
+          "description": "Hermes startup, plugin, or sandbox behavior.",
+          "positive_signals": ["Hermes", "Hermes plugin", "Hermes startup", "Hermes sandbox"],
+          "negative_signals": ["generic plugin issue without Hermes evidence"]
+        },
+        {
+          "name": "integration: openclaw",
+          "description": "OpenClaw runtime, plugins, configuration, or bridge.",
+          "positive_signals": ["OpenClaw", "OpenClaw runtime", "OpenClaw plugin", "OpenClaw bridge"],
+          "negative_signals": ["NemoClaw core behavior without OpenClaw involvement"]
+        },
+        {
+          "name": "integration: slack",
+          "description": "Slack bridge, manifest, auth, or delivery behavior.",
+          "positive_signals": ["Slack", "Slack app", "Slack manifest", "Slack auth", "Slack message delivery"],
+          "negative_signals": ["generic messaging issue without Slack evidence"]
+        },
+        {
+          "name": "integration: telegram",
+          "description": "Telegram bot, bridge, polling, or delivery.",
+          "positive_signals": ["Telegram", "Telegram bot", "Telegram bridge", "polling", "Telegram delivery"],
+          "negative_signals": ["generic messaging issue without Telegram evidence"]
+        },
+        {
+          "name": "integration: wechat",
+          "description": "WeChat channel or bridge behavior.",
+          "positive_signals": ["WeChat", "WeChat channel", "WeChat bridge", "WeChat delivery"],
+          "negative_signals": ["generic messaging issue without WeChat evidence"]
+        },
+        {
+          "name": "integration: whatsapp",
+          "description": "WhatsApp channel setup or runtime.",
+          "positive_signals": ["WhatsApp", "WhatsApp channel", "WhatsApp bridge", "WhatsApp setup"],
+          "negative_signals": ["generic messaging issue without WhatsApp evidence"]
+        }
+      ],
+      "positive_signals": ["specific app", "specific bridge", "specific agent integration"],
+      "negative_signals": ["generic integration surface"]
+    },
+    "release": {
+      "item_kinds": ["issue", "pull_request"],
+      "pattern": "^v\\d+\\.\\d+\\.\\d+$",
+      "positive_signals": ["maintainer selected PR for daily work", "open PR activated for day queue", "issue tracked as daily release attention signal", "issue flagged as needing PR work for daily release"],
+      "negative_signals": ["readiness claim", "automatic bump", "issue treated as release inclusion"]
+    },
+    "agent_owned": {
+      "item_kinds": ["issue", "pull_request"],
+      "pattern": "^agt: .+",
+      "positive_signals": ["agent coordination", "agent audit marker"],
+      "negative_signals": ["product type", "priority", "project status", "sprint", "release version"]
+    }
+  },
+  "mutually_exclusive_groups": {
+    "pr_type": ["bug-fix", "feature", "refactor", "chore"],
+    "primary_blocking_need": ["needs: info", "needs: rebase"]
+  },
+  "quality_rules": {
+    "minimal_labeling": true,
+    "low_confidence_write_allowed": false,
+    "default_mode": "recommendation_only",
+    "writes_require_authorization_context": true,
+    "human_review_required_when_outside_authorization_context": true,
+    "agent_owned_label_writes_allowed_when_authorized": true,
+    "release_labels_on_issues_allowed": true,
+    "release_label_is_readiness_claim": false
+  }
+}

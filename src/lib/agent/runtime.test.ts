@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
+  buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildOpenClawRecoveryScript,
   buildRecoveryScript,
@@ -18,7 +19,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     gateway_command: "test-agent gateway run",
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
-    dashboard: { kind: "ui", label: "UI", path: "/" },
+    dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
@@ -106,6 +107,30 @@ describe("buildRecoveryScript", () => {
     expect(script).toContain('"$AGENT_BIN" gateway run');
     expect(script).not.toContain('"$AGENT_BIN" gateway run --port 8642');
     expect(script).not.toContain("hermes gateway run --port 8642");
+  });
+
+  it("relaunches the optional Hermes dashboard during recovery", () => {
+    const script = buildRecoveryScript(hermesAgent, 8642, {
+      hermesDashboard: { publicPort: 9119, internalPort: 19119, tuiEnabled: true },
+    });
+    expect(script).toContain("/tmp/hermes-dashboard.log");
+    expect(script).toContain(
+      '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open --tui',
+    );
+    expect(script).toContain("DASHBOARD_PID=$DPID");
+    expect(script).toContain("DASHBOARD_FAILED");
+  });
+
+  it("can recover only the optional Hermes dashboard process", () => {
+    const script = buildHermesDashboardProcessRecoveryScript({
+      publicPort: 9119,
+      internalPort: 19119,
+      tuiEnabled: false,
+    });
+    expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
+    expect(script).toContain("/usr/local/bin/hermes");
+    expect(script).toContain('"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open');
+    expect(script).not.toContain("--tui");
   });
 
   it("does not launch a Hermes decode proxy during recovery", () => {
