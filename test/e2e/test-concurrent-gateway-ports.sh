@@ -262,13 +262,23 @@ sandbox_phase() {
 verify_sandbox_alive() {
   local name="$1"
   local label="${2:-${name} alive}"
-  local phase
-  phase="$(sandbox_phase "${name}")"
-  if [ "${phase}" = "Ready" ] || [ "${phase}" = "Running" ]; then
-    pass "${label} (phase=${phase})"
-    return 0
-  fi
-  fail "${label} (phase='${phase:-missing}')"
+  local retries="${3:-12}"
+  local phase=""
+  for _ in $(seq 1 "${retries}"); do
+    phase="$(sandbox_phase "${name}")"
+    case "${phase}" in
+      Ready | Running)
+        pass "${label} (phase=${phase})"
+        return 0
+        ;;
+      Error | Failed | CrashLoopBackOff)
+        fail "${label} terminal (phase='${phase}')"
+        return 1
+        ;;
+    esac
+    sleep 5
+  done
+  fail "${label} did not reach Ready/Running within ${retries} polls (last phase='${phase:-missing}')"
   return 1
 }
 
