@@ -6056,7 +6056,7 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-const recordStateResult = onboardRuntimeBoundary.recordStateResult.bind(onboardRuntimeBoundary);
+const recordStateResult = onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
 function skippedStepMessage(
@@ -6455,7 +6455,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
-    session = preflightResult.session;
+    session = (await recordStateResult(preflightResult.stateResult), preflightResult.session);
     const {
       sandboxGpuConfig,
       resumeHasResolvedGpuIntent,
@@ -6527,7 +6527,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
-    session = gatewayResult.session;
+    session = (await recordStateResult(gatewayResult.stateResult), gatewayResult.session);
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
@@ -6612,7 +6612,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    session = providerInferenceResult.session;
+    session = (await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility([...providerInferenceResult.retryStateResults, providerInferenceResult.stateResult]), providerInferenceResult.session);
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
@@ -6687,7 +6687,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
-    session = sandboxStateResult.session;
+    session = (await recordStateResult(sandboxStateResult.stateResult), sandboxStateResult.session);
     sandboxName = sandboxStateResult.sandboxName;
     webSearchConfig = sandboxStateResult.webSearchConfig ?? null;
     selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
@@ -6729,7 +6729,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
-    session = agentSetupResult.session;
+    await recordStateResult(agentSetupResult.stateResult);
 
     const policiesResult = await handlePoliciesState({
       resume,
@@ -6766,7 +6766,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
     });
-    session = policiesResult.session;
+    await recordStateResult(policiesResult.stateResult);
     sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
 
     const finalizationResult = await handleFinalizationState({

@@ -340,12 +340,13 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
-  // #4503: the Docker HEALTHCHECK reports healthy on curl-exit-7 only when the
-  // /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered out of this
-  // container's namespace). To avoid masking a slow in-container startup, the
-  // entrypoint must drop that marker early on the gateway-serving path — and
-  // must NOT drop it when only running a one-shot command.
-  it("drops the in-container gateway healthcheck marker only on the gateway-serving path (#4503)", () => {
+  // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
+  // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
+  // out of this container's namespace). To avoid masking a slow in-container
+  // startup, the entrypoint must drop that marker early on the gateway-serving
+  // path — and must NOT drop it when only running a one-shot command or when
+  // OpenShell's Docker driver serves the gateway from the host.
+  it("drops the in-container gateway healthcheck marker only on the local gateway path (#4503, #4710)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const start = src.indexOf('NEMOCLAW_CMD=("$@")');
     const end = src.indexOf("_chat_ui_url_port()", start);
@@ -358,9 +359,13 @@ describe("nemoclaw-start non-root fallback", () => {
       .slice(start, end)
       .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
 
-    function runScenario(setArgs: string) {
+    function runScenario(setArgs: string, env: NodeJS.ProcessEnv = {}) {
       const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
-      return spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      return spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        env: { ...process.env, ...env },
+        timeout: 5000,
+      });
     }
 
     try {
@@ -376,6 +381,20 @@ describe("nemoclaw-start non-root fallback", () => {
       fs.rmSync(markerPath, { force: true });
       const oneShot = runScenario("set -- openclaw agent --agent main");
       expect(oneShot.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+
+      // Docker-driver path: the sandbox container has no trailing command, but
+      // OpenShell serves the gateway on the host. The marker must stay absent
+      // so Dockerfile HEALTHCHECK can short-circuit curl exit 7 instead of
+      // looking for an in-container gateway process.
+      fs.rmSync(markerPath, { force: true });
+      const dockerDriver = runScenario("set --", { OPENSHELL_DRIVERS: "docker" });
+      expect(dockerDriver.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+
+      fs.rmSync(markerPath, { force: true });
+      const mixedDrivers = runScenario("set --", { OPENSHELL_DRIVERS: "vm,docker" });
+      expect(mixedDrivers.status).toBe(0);
       expect(fs.existsSync(markerPath)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
