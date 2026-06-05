@@ -286,10 +286,27 @@ export function postInstall(
 }
 
 /**
- * Verify the SKILL.md file exists on the sandbox at the expected path.
+ * Verify the SKILL.md file exists on the sandbox.
+ *
+ * For OpenClaw the home mirror ($HOME/.openclaw/skills/<name>) must also exist:
+ * that is the path the agent loads skills from at session start (#4819), so a
+ * successful upload whose mirror copy failed must NOT verify as installed —
+ * otherwise the CLI reports success while the skill stays invisible to the
+ * agent. This mirrors verifyRemove(), which already checks both paths.
  */
-export function verifyInstall(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
+export function verifyInstall(
+  ctx: SshContext,
+  paths: SkillPaths,
+  opts: { sshExecImpl?: typeof sshExec } = {},
+): boolean {
+  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    // mirrorDir contains $HOME, which must expand on the remote shell, so we
+    // use double quotes (not shellQuote) — safe because skill names are
+    // restricted to [A-Za-z0-9._-].
+    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
+  }
+  const runSsh = opts.sshExecImpl ?? sshExec;
+  const result = runSsh(ctx, `${checks.join(" && ")} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
 }

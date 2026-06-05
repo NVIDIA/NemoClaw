@@ -13,6 +13,7 @@ import {
   resolveSkillPaths,
   shellQuote,
   validateRelativePath,
+  verifyInstall,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -331,5 +332,38 @@ describe("postInstall", () => {
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("verifyInstall", () => {
+  it("requires SKILL.md in the OpenClaw home mirror, not only the upload dir (#4819)", () => {
+    // The agent loads skills from the home mirror, so an install whose mirror
+    // copy failed must NOT verify as installed — otherwise the CLI reports
+    // success while the skill stays invisible to the agent.
+    const paths = resolveSkillPaths(null, "report-writer");
+    const commands: string[] = [];
+    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "EXISTS", stderr: "" };
+      },
+    });
+
+    expect(ok).toBe(true);
+    // The verification command must cover the home mirror SKILL.md.
+    expect(commands.some((c) => c.includes('"$HOME/.openclaw/skills/report-writer/SKILL.md"'))).toBe(
+      true,
+    );
+  });
+
+  it("returns false when the upload dir has SKILL.md but the home mirror does not", () => {
+    const paths = resolveSkillPaths(null, "report-writer");
+    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+      // A combined `test -f A && test -f B` shell command fails (non-zero,
+      // no EXISTS) when the mirror file is absent.
+      sshExecImpl: () => ({ status: 1, stdout: "", stderr: "" }),
+    });
+
+    expect(ok).toBe(false);
   });
 });
