@@ -4,6 +4,7 @@
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
+import { advanceTo, retryTo, type OnboardStateTransitionResult } from "../result";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -84,6 +85,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     isInferenceRouteReady(provider: string, model: string): boolean;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
+    reupsertRoutedProvider(
+      provider: string,
+      endpointUrl: string | null,
+      credentialEnv: string | null,
+    ): { ok: boolean; endpointUrl: string; message?: string; status?: number };
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     assessHost(): Host;
@@ -120,6 +126,8 @@ export interface ProviderInferenceStateResult {
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
+  retryStateResults: OnboardStateTransitionResult[];
 }
 
 function requireSelection(
@@ -169,6 +177,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
+  const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
     let forceInferenceSetup = false;
@@ -288,6 +297,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           clearStagedCredentialEnv(deps, credentialEnv);
         }
         if (inferenceResult?.retry === "selection") {
+          retryStateResults.push(
+            retryTo("provider_selection", {
+              metadata: { state: "inference", provider, model, reason: "selection_retry" },
+            }),
+          );
           forceProviderSelection = true;
           continue;
         }
@@ -304,6 +318,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.error(`  ✗ Failed to reconcile model router: ${err instanceof Error ? err.message : String(err)}`);
           deps.exitProcess(1);
         }
+        // #4564: re-upsert the gateway provider with the sandbox-facing
+        // endpoint so a stale localhost base URL recorded by an earlier run is
+        // repaired on resume instead of surviving and breaking inference.local.
+        const reupserted = deps.reupsertRoutedProvider(provider, endpointUrl, credentialEnv);
+        if (!reupserted.ok) {
+          deps.error(`  ${reupserted.message ?? "Failed to update the routed inference provider."}`);
+          deps.exitProcess(reupserted.status ?? 1);
+        }
+        endpointUrl = reupserted.endpointUrl;
       }
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
       await deps.recordStateSkipped("inference", {
@@ -372,6 +395,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       clearStagedCredentialEnv(deps, credentialEnv);
     }
     if (inferenceResult?.retry === "selection") {
+      retryStateResults.push(
+        retryTo("provider_selection", {
+          metadata: { state: "inference", provider, model, reason: "selection_retry" },
+        }),
+      );
       forceProviderSelection = true;
       continue;
     }
@@ -395,5 +423,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     nimContainer,
     webSearchConfig,
     session,
+    stateResult: advanceTo("sandbox", {
+      metadata: { state: "inference", provider, model },
+    }),
+    retryStateResults,
   };
 }

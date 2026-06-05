@@ -57,10 +57,19 @@ on:
         required: false
         type: boolean
         default: false
+      messaging_live_secrets:
+        description: Pass optional live messaging provider secrets to the script.
+        required: false
+        type: boolean
+        default: false
     secrets:
       NVIDIA_API_KEY:
         required: false
       BRAVE_API_KEY:
+        required: false
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
         required: false
       TELEGRAM_BOT_TOKEN_REAL:
         required: false
@@ -86,7 +95,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     steps:
       - name: Checkout target ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.ref }}
           path: repo
@@ -115,7 +124,7 @@ jobs:
           printf '%s=%s\n' "$E2E_CHECKED_OUT_REF_ENV" "$(git -C repo rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Checkout workflow action
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.ref }}
           sparse-checkout: .github/actions/run-e2e-script
@@ -160,6 +169,20 @@ jobs:
                 out.write(f"{name}={rendered}\n")
           PY
 
+      - name: Authenticate to Docker Hub
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target_ref == '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
+
       - name: Run E2E script
         uses: ./workflow-actions/.github/actions/run-e2e-script
         with:
@@ -171,10 +194,10 @@ jobs:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
           NVIDIA_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_API_KEY || '' }}
-          TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
-          TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
-          DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
-          DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
-          SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
-          SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
-          SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
+          TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
+          DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
+          DISCORD_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.DISCORD_CHANNEL_ID_E2E || '' }}
+          SLACK_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_BOT_TOKEN_REAL || '' }}
+          SLACK_APP_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_APP_TOKEN_REAL || '' }}
+          SLACK_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.SLACK_CHANNEL_ID_E2E || '' }}

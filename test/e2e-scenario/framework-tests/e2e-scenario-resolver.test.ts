@@ -10,6 +10,7 @@ import yaml from "js-yaml";
 
 import { resolveScenario, type ResolverInput } from "../runtime/resolver/plan.ts";
 import { loadMetadataFromDir, loadMetadataFromObjects } from "../runtime/resolver/load.ts";
+import { listScenarios } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e-scenario");
@@ -64,6 +65,20 @@ describe("E2E scenario resolver", () => {
       exit_code: 1,
       no_stack_trace: true,
     });
+  });
+
+  it("should_resolve_every_typed_scenario_id_through_yaml_setup_scenarios", () => {
+    const meta = realMetadata();
+    const failures = listScenarios().flatMap((scenario) => {
+      try {
+        resolveScenario(scenario.id, meta);
+        return [];
+      } catch (error) {
+        return [`${scenario.id}: ${(error as Error).message}`];
+      }
+    });
+
+    expect(failures, failures.join("\n")).toEqual([]);
   });
 
   it("should_fail_for_unknown_scenario", () => {

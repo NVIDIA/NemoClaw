@@ -17,6 +17,7 @@ export interface OpenShellGatewayUserServiceOptions {
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
   platform?: NodeJS.Platform;
+  prepareServiceEnv?: () => void;
   spawnSyncImpl?: SpawnSyncLike;
 }
 
@@ -51,8 +52,11 @@ export interface PackageManagedDockerDriverGatewayOptions {
   registerDockerDriverGatewayEndpoint: () => boolean;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
   sleepSeconds?: (seconds: number) => void;
+  prepareOpenShellGatewayUserServiceEnv?: () => void;
   skipSandboxBridgeReachability: boolean;
-  startOpenShellGatewayUserService?: () => OpenShellGatewayUserServiceStartResult;
+  startOpenShellGatewayUserService?: (
+    opts?: Pick<OpenShellGatewayUserServiceOptions, "prepareServiceEnv">,
+  ) => OpenShellGatewayUserServiceStartResult;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
     options?: { skip?: boolean },
@@ -70,6 +74,10 @@ export function getOpenShellGatewayUserServicePaths(): string[] {
     "/usr/lib/systemd/user/openshell-gateway.service",
     "/lib/systemd/user/openshell-gateway.service",
   ];
+}
+
+export function getOpenShellGatewayUserServiceBinaryPaths(): string[] {
+  return ["/usr/local/bin/openshell-gateway", "/usr/bin/openshell-gateway"];
 }
 
 export function hasOpenShellGatewayUserService(
@@ -96,7 +104,7 @@ function text(value: Buffer | string | null | undefined): string {
 }
 
 function userManagerLooksUnavailable(reason: string): boolean {
-  return /Failed to connect to bus|No medium found|XDG_RUNTIME_DIR|System has not been booted|Host is down|No such file or directory/i.test(
+  return /Failed to connect to bus|No medium found|XDG_RUNTIME_DIR|System has not been booted|Host is down/i.test(
     reason,
   );
 }
@@ -138,7 +146,19 @@ function isTrustedOpenShellGatewayUserServiceIdentity(
     (candidate) => path.normalize(candidate) === fragmentPath,
   );
   if (!trustedUnit) return false;
-  return /\bopenshell-gateway\b/.test(identity.execStart);
+  const execStartPath = extractSystemdExecStartPath(identity.execStart);
+  if (!execStartPath) return false;
+  const normalizedExecStartPath = path.normalize(execStartPath);
+  return getOpenShellGatewayUserServiceBinaryPaths().some(
+    (candidate) => path.normalize(candidate) === normalizedExecStartPath,
+  );
+}
+
+function extractSystemdExecStartPath(execStart: string): string | null {
+  const pathMatch = /(?:^|[\s;])path=([^\s;]+)/.exec(execStart);
+  if (!pathMatch) return null;
+  const execStartPath = pathMatch[1]?.trim();
+  return execStartPath && path.isAbsolute(execStartPath) ? execStartPath : null;
 }
 
 function readTrustedOpenShellGatewayUserServiceIdentity(
@@ -230,6 +250,18 @@ export function startOpenShellGatewayUserService(
     };
   }
 
+  try {
+    opts.prepareServiceEnv?.();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      attempted: true,
+      fallbackAllowed: false,
+      reason: `failed to prepare OpenShell gateway service environment: ${detail}`,
+      started: false,
+    };
+  }
+
   for (const args of [
     ["enable", OPENSHELL_GATEWAY_USER_SERVICE],
     ["restart", OPENSHELL_GATEWAY_USER_SERVICE],
@@ -260,6 +292,7 @@ export async function startPackageManagedDockerDriverGateway({
   registerDockerDriverGatewayEndpoint,
   runCaptureOpenshell,
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
+  prepareOpenShellGatewayUserServiceEnv,
   skipSandboxBridgeReachability,
   startOpenShellGatewayUserService: startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
   verifySandboxBridgeGatewayReachableOrExit,
@@ -267,7 +300,9 @@ export async function startPackageManagedDockerDriverGateway({
   if (!hasOpenShellGatewayUserServiceImpl()) return false;
 
   console.log("  Starting OpenShell Docker-driver gateway via upstream user service...");
-  const serviceStart = startOpenShellGatewayUserServiceImpl();
+  const serviceStart = startOpenShellGatewayUserServiceImpl({
+    prepareServiceEnv: prepareOpenShellGatewayUserServiceEnv,
+  });
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.fallbackAllowed) {

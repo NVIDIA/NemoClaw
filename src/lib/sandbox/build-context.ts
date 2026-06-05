@@ -128,6 +128,14 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
+    path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
+    path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
+  );
   // OpenClaw config generator extracted in #2449 (fixed in #2565)
   fs.copyFileSync(
     path.join(rootDir, "scripts", "generate-openclaw-config.mts"),

@@ -40,6 +40,15 @@ fi
 # SECURITY: Lock down PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Hermes' browser Chat tab shells out to the React/Ink TUI. Force it to the
+# trusted prebuilt bundle baked into the image so `hermes dashboard --tui
+# --skip-build` never honors a stale/user-controlled TUI path or tries to run
+# npm under root-owned /opt/hermes at runtime. Remove this when upstream Hermes
+# reliably discovers the prebaked ui-tui bundle without HERMES_TUI_DIR.
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
 # failures before /tmp/gateway.log exists are still diagnosable.
@@ -322,6 +331,14 @@ hermes_config_root_is_locked() {
     && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
+apply_shields_up_runtime_env() {
+  hermes_config_root_is_locked || return 0
+  if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
+  fi
+}
+
 ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
@@ -365,9 +382,113 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_history_file() {
+  local file="$1"
+  local mode="$2"
+
+  # Use a no-follow fd workflow instead of check-then-use shell path
+  # operations. /sandbox/.hermes is intentionally sandbox-writable while
+  # shields are down, so root must not validate the pathname and then later
+  # chown/chmod whatever an agent swaps into that path. Python gives us
+  # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
+  NEMOCLAW_HERMES_HISTORY_FILE="$file" \
+    NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
+    python3 - <<'PYHISTORY'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+path = os.environ["NEMOCLAW_HERMES_HISTORY_FILE"]
+mode_text = os.environ["NEMOCLAW_HERMES_HISTORY_MODE"]
+try:
+    mode = int(mode_text, 8)
+except ValueError:
+    print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
+    sys.exit(1)
+
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+    sys.exit(1)
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+
+
+def describe_unsafe_existing_path() -> str:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "could not be opened safely"
+    if stat.S_ISLNK(st.st_mode):
+        return "is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a regular file"
+    return "could not be opened safely"
+
+try:
+    fd = os.open(path, flags, mode)
+except OSError as exc:
+    reason = describe_unsafe_existing_path()
+    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject hard-linked targets. An attacker who controls the sandbox user
+    # before shields-up can pre-create .hermes_history as a hard link to
+    # config.yaml or .env. O_NOFOLLOW and regular-file checks pass, so without
+    # this guard fchown/fchmod would walk the shared inode and silently undo
+    # the shields-up root:root 0444 lock on the config file after
+    # verify_config_integrity has already passed.
+    if st.st_nlink != 1:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {st.st_nlink}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.geteuid() == 0:
+        try:
+            uid = pwd.getpwnam("sandbox").pw_uid
+            gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        os.fchown(fd, uid, gid)
+    os.fchmod(fd, mode)
+
+    st = os.fstat(fd)
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.close(fd)
+PYHISTORY
+}
+
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    # The locked-root posture seals config.yaml/.env, not the dir, so we can
+    # still bring a missing prompt_toolkit history file into existence as a
+    # sandbox-owned regular file. Sandboxes built before the precreate landed
+    # would otherwise stay broken until the next `shields down` cycle.
+    # Refusal (symlink, non-regular, create failure) is a hard stop: starting
+    # the gateway with an unsafe .hermes_history under a locked root would
+    # either let the TUI clobber an attacker-pointed path or repeat the
+    # original keypress traceback.
+    echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
     return 0
   fi
 
@@ -377,6 +498,7 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
 }
 
 cleanup_stale_hermes_gateway_runtime() {
@@ -533,6 +655,11 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
+    cat <<'TUIENVEOF'
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+TUIENVEOF
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -817,6 +944,114 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+validate_hermes_env_secret_boundary() {
+  local env_file="${HERMES_DIR}/.env"
+  [ -e "$env_file" ] || return 0
+  if [ -L "$env_file" ]; then
+    echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
+    return 1
+  fi
+  [ -f "$env_file" ] || return 0
+
+  python3 - "$env_file" <<'PYSECRETBOUNDARY'
+import re
+import sys
+
+env_file = sys.argv[1]
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+violations = []
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+with open(env_file, encoding="utf-8") as fh:
+    for lineno, raw_line in enumerate(fh, 1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in allowed_nonsecret_keys:
+            continue
+        if not secret_key_re.search(key):
+            continue
+        value = unquote(value)
+        if value in allowed_literals:
+            continue
+        if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+            continue
+        violations.append(f"{key} (line {lineno})")
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYSECRETBOUNDARY
+}
+
+validate_hermes_runtime_env_secret_boundary() {
+  python3 - <<'PYRUNTIMESECRETBOUNDARY'
+import os
+import re
+import sys
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+allowed_raw_secret_keys = {"OPENCLAW_GATEWAY_TOKEN"}
+allowed_nonsecret_keys = set((
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "GPG_KEY",
+    "NEMOCLAW_INFERENCE_API",
+    "NEMOCLAW_PROVIDER_KEY",
+))
+violations = []
+
+for key, value in sorted(os.environ.items()):
+    if key in allowed_raw_secret_keys or key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    if value in allowed_literals:
+        continue
+    if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+        continue
+    violations.append(key)
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because the process environment "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYRUNTIMESECRETBOUNDARY
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .hermes
@@ -839,14 +1074,16 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_shields_up_runtime_env
+  validate_hermes_env_secret_boundary
+  validate_hermes_runtime_env_secret_boundary
   refresh_hermes_provider_placeholders
   configure_messaging_channels
+  retry_tirith_marker_if_needed
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
-
-  retry_tirith_marker_if_needed
 
   cleanup_stale_hermes_gateway_runtime
 
@@ -887,14 +1124,16 @@ fi
 
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+apply_shields_up_runtime_env
+validate_hermes_env_secret_boundary
+validate_hermes_runtime_env_secret_boundary
 refresh_hermes_provider_placeholders
 configure_messaging_channels
+retry_tirith_marker_if_needed
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
-
-retry_tirith_marker_if_needed
 
 cleanup_stale_hermes_gateway_runtime
 

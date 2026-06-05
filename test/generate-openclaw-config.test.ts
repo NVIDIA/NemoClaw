@@ -195,6 +195,47 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.models).toBeDefined();
   });
 
+  it("keeps OpenClaw OTEL diagnostics disabled by default", () => {
+    const config = runConfigScript();
+    expect(config.diagnostics).toBeUndefined();
+    expect(config.plugins.entries["diagnostics-otel"]).toBeUndefined();
+  });
+
+  it("enables traces-only OpenClaw OTEL diagnostics when requested", () => {
+    const config = buildConfigDirect({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://host.openshell.internal:4318",
+      NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME: "nemoclaw-local",
+      NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE: "0.5",
+    });
+
+    expect(config.plugins.entries["diagnostics-otel"]).toEqual({ enabled: true });
+    expect(config.diagnostics).toEqual({
+      enabled: true,
+      otel: {
+        enabled: true,
+        endpoint: "http://host.openshell.internal:4318",
+        protocol: "http/protobuf",
+        serviceName: "nemoclaw-local",
+        traces: true,
+        metrics: false,
+        logs: false,
+        sampleRate: 0.5,
+      },
+    });
+    expect(config.diagnostics.otel.captureContent).toBeUndefined();
+  });
+
+  it("rejects OTEL endpoints with embedded credentials", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+      NEMOCLAW_OPENCLAW_OTEL_ENDPOINT: "http://token@example.com:4318",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  });
+
   it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
@@ -927,6 +968,326 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.thinkingDefault).toBe("off");
   });
 
+  // ─── agents.list bake ─────────────────────────────────────────────────────
+  // Even with no NEMOCLAW_EXTRA_AGENTS_JSON_B64 set, agents.list must exist
+  // with the canonical main entry pinned as default. Otherwise a wholesale
+  // list overwrite could leave OpenClaw resolving default to agents[0]
+  // without "main" present.
+
+  const TOOLS_OK = { profile: "minimal", allow: ["read"], deny: ["exec"] };
+  const SUBAGENTS_OK = { maxSpawnDepth: 0 };
+
+  function makeExtra(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "research",
+      workspace: "/sandbox/.openclaw/workspace-research",
+      agentDir: "/sandbox/.openclaw/agents/research",
+      tools: TOOLS_OK,
+      subagents: SUBAGENTS_OK,
+      ...overrides,
+    };
+  }
+
+  function extraAgentsB64(extras: unknown): string {
+    return Buffer.from(JSON.stringify(extras)).toString("base64");
+  }
+
+  it("always writes agents.list with a default 'main' entry first", () => {
+    const config = runConfigScript();
+    expect(Array.isArray(config.agents.list)).toBe(true);
+    expect(config.agents.list).toHaveLength(1);
+    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
+  });
+
+  it("appends NEMOCLAW_EXTRA_AGENTS_JSON_B64 entries after main", () => {
+    const extras = [
+      makeExtra({ id: "research" }),
+      makeExtra({
+        id: "writing",
+        workspace: "/sandbox/.openclaw/workspace-writing",
+        agentDir: "/sandbox/.openclaw/agents/writing",
+      }),
+    ];
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras),
+    });
+    expect(config.agents.list).toHaveLength(3);
+    expect(config.agents.list[0]).toEqual({ id: "main", default: true });
+    expect(config.agents.list[1]).toMatchObject({ id: "research" });
+    expect(config.agents.list[2]).toMatchObject({ id: "writing" });
+  });
+
+  it("keeps 'main' as the default even when extras are present", () => {
+    // Wholesale list replacement would leave agents[0] = first extra, so
+    // resolveDefaultAgentId would silently re-elect the first extra as
+    // default. The bake must always emit { id: "main", default: true } first.
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
+    });
+    const defaultEntries = config.agents.list.filter((entry: { default?: boolean }) => entry.default === true);
+    expect(defaultEntries).toHaveLength(1);
+    expect(defaultEntries[0].id).toBe("main");
+    expect(config.agents.list[0].id).toBe("main");
+  });
+
+  it("rejects extras that claim id 'main'", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ id: "main" })]) },
+      /reserved for the primary agent/,
+    );
+  });
+
+  it("rejects extras that set default: true", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ default: true })]) },
+      /default cannot be true/,
+    );
+  });
+
+  it("rejects extras with duplicate ids", () => {
+    const extras = [
+      makeExtra(),
+      makeExtra({
+        workspace: "/sandbox/.openclaw/workspace-research-2",
+        agentDir: "/sandbox/.openclaw/agents/research-2",
+      }),
+    ];
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64(extras) },
+      /is duplicated/,
+    );
+  });
+
+  it("rejects extras whose ids violate the regex", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ id: "Research" })]) },
+      /\.id must match/,
+    );
+  });
+
+  it("rejects extras with relative paths", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace: "workspace-research" })]) },
+      /must be an absolute path/,
+    );
+  });
+
+  it("rejects extras whose paths escape the sandbox state root", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ workspace: "/etc/openclaw/workspace-research" }),
+        ]),
+      },
+      /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
+    );
+  });
+
+  it("rejects extras that smuggle dot-segments past the sandbox state root prefix", () => {
+    // /sandbox/.openclaw/../../tmp/research resolves to /tmp/research; a raw
+    // startsWith() check on the prefix would accept it. The validator must
+    // normalise before containment.
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ workspace: "/sandbox/.openclaw/../../tmp/research" }),
+        ]),
+      },
+      /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
+    );
+  });
+
+  it("rejects extras whose workspace points anywhere but the canonical workspace-<id> slot", () => {
+    // The runtime startup script provisions /sandbox/.openclaw/workspace-<id>
+    // as the per-agent workspace. Pointing at sibling paths (gateway state,
+    // openclaw.json, credentials/) blurs that isolation boundary.
+    for (const workspace of [
+      "/sandbox/.openclaw",
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw/credentials",
+      "/sandbox/.openclaw/workspace",
+      "/sandbox/.openclaw/workspace-other",
+    ]) {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace })]) },
+        /workspace must equal "\/sandbox\/\.openclaw\/workspace-research"/,
+      );
+    }
+  });
+
+  it("rejects extras whose agentDir points anywhere but the canonical agents/<id> slot", () => {
+    for (const agentDir of [
+      "/sandbox/.openclaw",
+      "/sandbox/.openclaw/agents",
+      "/sandbox/.openclaw/agents/other",
+      "/sandbox/.openclaw/openclaw.json",
+    ]) {
+      expectBuildConfigError(
+        { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ agentDir })]) },
+        /agentDir must equal "\/sandbox\/\.openclaw\/agents\/research"/,
+      );
+    }
+  });
+
+  it("rejects extras that lack a tools policy", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: undefined }),
+        ]),
+      },
+      /\.tools must be an object/,
+    );
+  });
+
+  it("rejects extras whose tools policy lacks allow[] and deny[]", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: { profile: "minimal" } }),
+        ]),
+      },
+      /must declare a non-empty allow\[\] or deny\[\]/,
+    );
+  });
+
+  it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: undefined }),
+        ]),
+      },
+      /\.subagents must be an object/,
+    );
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: { maxSpawnDepth: -1 } }),
+        ]),
+      },
+      /maxSpawnDepth must be a non-negative integer/,
+    );
+  });
+
+  it("rejects extras when the payload is not an array", () => {
+    expectBuildConfigError(
+      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64({ id: "research" }) },
+      /must decode to a JSON array/,
+    );
+  });
+
+  it("rejects extras that include unsupported top-level fields (no implicit pass-through)", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ apiKey: "leaking-secret-disguised-as-config" }),
+        ]),
+      },
+      /contains unsupported field\(s\): apiKey/,
+    );
+  });
+
+  it("rejects extras that smuggle credential-like keys inside tools", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ tools: { ...TOOLS_OK, apiKey: "x" } }),
+        ]),
+      },
+      /\.tools contains unsupported field\(s\): apiKey/,
+    );
+  });
+
+  it("rejects extras that smuggle credential-like keys inside subagents", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ subagents: { ...SUBAGENTS_OK, token: "x" } }),
+        ]),
+      },
+      /\.subagents contains unsupported field\(s\): token/,
+    );
+  });
+
+  it("rejects extras with an operator-supplied model override (currently unsupported)", () => {
+    expectBuildConfigError(
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ model: { primary: "evil/model" } }),
+        ]),
+      },
+      /contains unsupported field\(s\): model/,
+    );
+  });
+
+  it("emits canonical paths for workspace/agentDir even when operator input contains dot segments", () => {
+    // Resolves to the canonical /sandbox/.openclaw/workspace-research path,
+    // but the operator-supplied string is the dot-segment form. The bake
+    // must write the canonical string so the runtime
+    // `provision_agent_workspaces` parser (which only matches direct
+    // `/sandbox/.openclaw/workspace-*`) still recognises it.
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        makeExtra({
+          workspace: "/sandbox/.openclaw/foo/../workspace-research",
+          agentDir: "/sandbox/.openclaw/bar/../agents/research",
+        }),
+      ]),
+    });
+    expect(config.agents.list[1].workspace).toBe("/sandbox/.openclaw/workspace-research");
+    expect(config.agents.list[1].agentDir).toBe("/sandbox/.openclaw/agents/research");
+  });
+
+  it("strips operator entries to the allowlist when writing agents.list", () => {
+    // Even if the operator includes an unrecognised but harmless-looking
+    // field, the validator must drop it before it reaches the baked image.
+    // (The previous test confirms unknown fields fail; this test guards
+    // against an allowlist drift where an unknown field is accepted but a
+    // known one is dropped.)
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        {
+          id: "research",
+          workspace: "/sandbox/.openclaw/workspace-research",
+          agentDir: "/sandbox/.openclaw/agents/research",
+          tools: TOOLS_OK,
+          subagents: SUBAGENTS_OK,
+          description: "Researches things",
+        },
+      ]),
+    });
+    expect(config.agents.list[1]).toEqual({
+      id: "research",
+      workspace: "/sandbox/.openclaw/workspace-research",
+      agentDir: "/sandbox/.openclaw/agents/research",
+      tools: TOOLS_OK,
+      subagents: SUBAGENTS_OK,
+      description: "Researches things",
+    });
+  });
+
+  it("matches OpenClaw's resolveDefaultAgentId fallback shape for the baked list", () => {
+    // OpenClaw's resolver: pick the first entry with default === true; if
+    // none, fall back to agents[0]. Simulate that locally over the baked
+    // list to prove the bake satisfies the upstream contract today. The
+    // authoritative resolver still lives in the openclaw npm package; see
+    // agents/openclaw/manifest.yaml -> expected_version for the pinned tag.
+    const config = runConfigScript({
+      NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+        makeExtra({ id: "research" }),
+        makeExtra({
+          id: "writing",
+          workspace: "/sandbox/.openclaw/workspace-writing",
+          agentDir: "/sandbox/.openclaw/agents/writing",
+        }),
+      ]),
+    });
+    const list: Array<{ id: string; default?: boolean }> = config.agents.list;
+    const resolved = list.find((entry) => entry.default === true)?.id ?? list[0]?.id;
+    expect(resolved).toBe("main");
+  });
+
   it("keeps compatible endpoints on the managed inference.local OpenClaw provider", () => {
     const config = runConfigScript({
       NEMOCLAW_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
@@ -949,6 +1310,27 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
     expect(config.agents.defaults.model.primary).toBe("inference/deepseek-ai/DeepSeek-V4-Flash");
     expect(config.models.providers.deepinfra).toBeUndefined();
+  });
+
+  it("propagates ollama-local streaming usage compat through the managed inference route (#3947)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "qwen3.6:35b",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/qwen3.6:35b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsUsageInStreaming: true }),
+      ).toString("base64"),
+    });
+
+    expect(Object.keys(config.models.providers)).toEqual(["inference"]);
+    expect(config.models.providers.inference.models[0]).toMatchObject({
+      id: "qwen3.6:35b",
+      name: "inference/qwen3.6:35b",
+      compat: { supportsUsageInStreaming: true },
+    });
+    expect(config.agents.defaults.model.primary).toBe("inference/qwen3.6:35b");
   });
 
   it("adds Kimi K2.6 compat for managed inference.local chat completions", () => {
@@ -1012,9 +1394,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("enables supportsUsageInStreaming for Ollama provider keys (#2747)", () => {
     for (const providerKey of ["ollama", "ollama-local"]) {
       const config = runConfigScript({
-        NEMOCLAW_MODEL: "qwen2.5:7b",
+        NEMOCLAW_MODEL: "qwen3.5:9b",
         NEMOCLAW_PROVIDER_KEY: providerKey,
-        NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+        NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_INFERENCE_API: "openai-completions",
       });
@@ -1054,9 +1436,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // ollama-keyed default — including when a manifest opts the flag *off*.
   it("respects existing supportsUsageInStreaming from inference compat (#2747)", () => {
     const config = runConfigScript({
-      NEMOCLAW_MODEL: "qwen2.5:7b",
+      NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_PROVIDER_KEY: "ollama",
-      NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+      NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
@@ -1091,6 +1473,47 @@ describe("generate-openclaw-config.mts: config generation", () => {
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
+      expect(config.tools?.toolSearch).toBe(true);
+    }
+  }, 20_000);
+
+  // #4780: Nemotron generates invalid JS for OpenClaw's native code-based tool
+  // search (`tool_search_code`): CommonJS `require`, `openclaw.tools.search`
+  // called with an object instead of a string, `tool_describe`/`tool_call`
+  // invoked with bad ids. The run still succeeds via fallback, but the logs are
+  // flooded with `[tools] tool_search_code failed` errors. Disabling native
+  // tool search for this managed-inference route routes the model back to the
+  // structured tool-calling surface it handles correctly.
+  it("disables native OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+
+    expect(config.tools?.toolSearch).toBe(false);
+  });
+
+  it("does not disable native Tool Search for Nemotron on non-matching routes (#4780)", () => {
+    const cases = [
+      { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
+      { NEMOCLAW_PROVIDER_KEY: "nvidia" },
+      { NEMOCLAW_INFERENCE_API: "responses" },
+      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+    ];
+
+    for (const envCase of cases) {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_PROVIDER_KEY: "inference",
+        NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+        ...envCase,
+      });
+
       expect(config.tools?.toolSearch).toBe(true);
     }
   }, 20_000);

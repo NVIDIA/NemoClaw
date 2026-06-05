@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { redactFull } from "../security/redact";
+import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
 export interface SandboxEntry {
   name: string;
@@ -198,7 +199,8 @@ export async function getSandboxInventory(
   deps: ListSandboxesCommandDeps,
 ): Promise<SandboxInventoryResult> {
   const recovery = await deps.recoverRegistryEntries();
-  const defaultSandbox = recovery.defaultSandbox || null;
+  const resolvedDefault =
+    resolveDefaultSandboxName(() => ({ defaultSandbox: recovery.defaultSandbox ?? null })) ?? null;
   const lastSession = deps.loadLastSession();
   // #2753: only surface the last-onboarded name when its sandbox step
   // actually completed. Otherwise an interrupted onboard would leave the
@@ -210,14 +212,14 @@ export async function getSandboxInventory(
 
   return {
     schemaVersion: 1,
-    defaultSandbox,
+    defaultSandbox: resolvedDefault,
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
     lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
-      buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
+      buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
     ),
   };
 }
@@ -361,8 +363,9 @@ function normalizeGatewayHealth(health: GatewayHealth | null | undefined): Gatew
 }
 
 export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
-  const { sandboxes, defaultSandbox } = deps.listSandboxes();
-  const resolvedDefault = defaultSandbox || null;
+  const sandboxList = deps.listSandboxes();
+  const { sandboxes } = sandboxList;
+  const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   const liveInference = sandboxes.length > 0 ? deps.getLiveInference() : null;
   const gatewayHealth =
     deps.getGatewayHealth && sandboxes.length > 0 ? deps.getGatewayHealth() : null;
@@ -398,13 +401,15 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
  */
 export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const log = deps.log ?? console.log;
-  const { sandboxes, defaultSandbox } = deps.listSandboxes();
+  const sandboxList = deps.listSandboxes();
+  const { sandboxes } = sandboxList;
+  const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
   if (sandboxes.length > 0) {
     const live = deps.getLiveInference();
     log("");
     log("  Sandboxes:");
     for (const sb of sandboxes) {
-      const isDefault = sb.name === defaultSandbox;
+      const isDefault = sb.name === resolvedDefault;
       const def = isDefault ? " *" : "";
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
@@ -459,7 +464,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     }
   }
 
-  deps.showServiceStatus({ sandboxName: defaultSandbox || undefined });
+  deps.showServiceStatus({ sandboxName: resolvedDefault || undefined });
 
   if (deps.backfillAndFindOverlaps) {
     const overlaps = deps.backfillAndFindOverlaps();
@@ -480,15 +485,15 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     }
   }
 
-  if (deps.checkMessagingBridgeHealth && defaultSandbox) {
+  if (deps.checkMessagingBridgeHealth && resolvedDefault) {
     // Re-fetch: backfillAndFindOverlaps above may have populated
     // messagingChannels for the default sandbox on first run after upgrade,
     // and the original `sandboxes` snapshot is stale.
     const refreshed = deps.listSandboxes().sandboxes;
-    const defaultEntry = refreshed.find((sb) => sb.name === defaultSandbox);
+    const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
     const channels = defaultEntry?.messagingChannels;
     if (Array.isArray(channels) && channels.length > 0) {
-      const degraded = deps.checkMessagingBridgeHealth(defaultSandbox, channels);
+      const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
       if (degraded.length > 0) {
         log("");
         for (const { channel, conflicts } of degraded) {
@@ -502,7 +507,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
 
         // Surface gateway log tail for Hermes sandboxes when messaging is degraded.
         if (deps.readGatewayLog && defaultEntry?.agent === "hermes") {
-          const logTail = deps.readGatewayLog(defaultSandbox);
+          const logTail = deps.readGatewayLog(resolvedDefault);
           if (logTail) {
             log("");
             log("  Messaging gateway log (last 10 lines):");

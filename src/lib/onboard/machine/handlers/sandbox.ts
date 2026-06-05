@@ -3,6 +3,7 @@
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withSandboxPhaseTrace } from "../../tracing";
+import { branchTo, type OnboardStateTransitionResult } from "../result";
 
 export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
   resume: boolean;
@@ -77,7 +78,6 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       hermesToolGateways: string[],
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
-    setDefaultSandbox(sandboxName: string): void;
     getSandboxAgentRegistryFields(agent: Agent, agentVersionKnown: boolean): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -98,6 +98,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 function sameEffectiveTelegramRequireMention(left: boolean | null, right: boolean | null): boolean {
@@ -307,7 +308,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
       provider,
       ...deps.getSandboxAgentRegistryFields(agent, !fromDockerfile),
     });
-    deps.setDefaultSandbox(sandboxName);
+    // Default-marking is deferred to finalization so a cancelled onboard never
+    // leaves this sandbox registered as default (#4614).
     session = await deps.recordStepComplete(
       "sandbox",
       deps.toSessionUpdates({
@@ -335,5 +337,12 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     selectedMessagingChannels,
     webSearchSupported,
     session,
+    stateResult: branchTo(agent ? "agent_setup" : "openclaw", {
+      metadata: {
+        state: "sandbox",
+        sandboxName: completedSandboxName,
+        agent: (agent as { name?: string } | null)?.name ?? "openclaw",
+      },
+    }),
   };
 }

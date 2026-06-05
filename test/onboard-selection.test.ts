@@ -531,7 +531,11 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+    });
+  }
   if (cmd.includes("docker images")) return "";
   return "";
 };
@@ -542,7 +546,14 @@ const { setupNim } = require(${onboardPath});
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim({ type: "nvidia" }, null);
-    originalLog(JSON.stringify({ result, messages, lines }));
+    originalLog(
+      JSON.stringify({
+        result,
+        messages,
+        lines,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      }),
+    );
   } finally {
     console.log = originalLog;
   }
@@ -562,6 +573,7 @@ const { setupNim } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_EXPERIMENTAL: "",
         NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_CONTEXT_WINDOW: "",
       },
     });
 
@@ -571,11 +583,15 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "vllm-local");
     assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.contextWindow, "65536");
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Detected local inference option: vLLM"),
       ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
     );
     assert.ok(
       payload.lines.some((line: string) =>
@@ -585,6 +601,120 @@ const { setupNim } = require(${onboardPath});
       ),
     );
     assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
+  });
+
+  it("does not apply detected vLLM max_model_len when validation returns to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
+    const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const validationPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "inference-selection-validation.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const validationHelpers = require(${validationPath});
+
+class StopAfterValidationBackout extends Error {}
+
+const messages = [];
+const lines = [];
+const originalLog = console.log;
+let chooseCount = 0;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) {
+    chooseCount += 1;
+    if (chooseCount === 1) return findRunningVllmChoice();
+    throw new StopAfterValidationBackout("validation returned to provider selection");
+  }
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({
+      data: [{ id: "meta-llama/Llama-3.3-70B-Instruct", max_model_len: 65536 }],
+    });
+  }
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+validationHelpers.createInferenceSelectionValidationHelpers = () => ({
+  validateOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+  validateAnthropicSelectionWithRetryMessage: async () => ({ ok: false, retry: "selection" }),
+  validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
+  validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
+});
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await setupNim({ type: "nvidia" }, null);
+    throw new Error("setupNim unexpectedly completed");
+  } catch (error) {
+    if (!(error instanceof StopAfterValidationBackout)) throw error;
+    originalLog(
+      JSON.stringify({
+        messages,
+        lines,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW || null,
+      }),
+    );
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_CONTEXT_WINDOW: "",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.contextWindow, null);
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Detected model: meta-llama/Llama-3.3-70B-Instruct"),
+      ),
+    );
+    assert.ok(
+      !payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
+    );
   });
 
   it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
@@ -1066,7 +1196,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "7"];
+const answers = ["1", "8"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1167,7 +1297,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "8", "custom/provider-model"];
+const answers = ["1", "9", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -1263,7 +1393,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "8", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "9", "bad/model", "z-ai/glm-5.1"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -2685,7 +2815,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
     assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
     assert.ok(
       payload.lines.some((line: string) =>
@@ -2693,9 +2823,9 @@ const { setupNim } = require(${onboardPath});
       ),
     );
     assert.ok(
-      payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen2.5:7b")),
+      payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen3.5:9b")),
     );
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
   });
 
   it("reprompts inside the Ollama model flow when a pull fails", () => {
@@ -2731,7 +2861,7 @@ printf '%s' "$status"
       `#!/usr/bin/env bash
 if [ "$1" = "pull" ]; then
   echo "$2" >> ${JSON.stringify(pullLog)}
-  if [ "$2" = "qwen2.5:7b" ]; then
+  if [ "$2" = "qwen3.5:9b" ]; then
     exit 1
   fi
   exit 0
@@ -2803,7 +2933,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "llama3.2:3b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Failed to pull Ollama model 'qwen2.5:7b'"),
+        line.includes("Failed to pull Ollama model 'qwen3.5:9b'"),
       ),
     );
     assert.ok(
@@ -2815,7 +2945,7 @@ const { setupNim } = require(${onboardPath});
       payload.messages.filter((message: string) => /Ollama model id:/.test(message)).length,
       1,
     );
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b\nllama3.2:3b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b\nllama3.2:3b");
   });
 
   it("re-prompts for a model when the user declines the size confirmation", () => {
@@ -2915,14 +3045,14 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Skipped pulling Ollama model 'qwen2.5:7b'"),
+        line.includes("Skipped pulling Ollama model 'qwen3.5:9b'"),
       ),
     );
     // Pull only happened on the second confirmation, not on the declined first attempt.
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     const downloadPrompts = payload.messages.filter((message: string) =>
       /Download Ollama model/.test(message),
     );
@@ -3033,8 +3163,8 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen2.5:7b");
-    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen2.5:7b");
+    assert.equal(payload.result.model, "qwen3.5:9b");
+    assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     // No "Download Ollama model 'X'?" prompt was issued — the env var bypassed it.
     assert.equal(
       payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
@@ -3045,7 +3175,7 @@ const { setupNim } = require(${onboardPath});
     // includes a size label or the "size unknown" fallback.
     const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
     const pullingLine = payload.lines.find((line: string) =>
-      /Pulling Ollama model 'qwen2.5:7b'/.test(line),
+      /Pulling Ollama model 'qwen3.5:9b'/.test(line),
     );
     assert.ok(pullingLine, "expected a 'Pulling Ollama model' log line under NEMOCLAW_YES=1");
     assert.match(pullingLine, sizePattern);
@@ -4653,6 +4783,14 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake openshell: report the inference provider as absent so the
+    // gateway-credential-reuse fallback does NOT swallow the missing-key
+    // error path under test.
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!${process.execPath}\nprocess.exit(1);\n`,
+      { mode: 0o755 },
+    );
 
     const script = String.raw`
 const fs = require("fs");

@@ -4,9 +4,6 @@ description: "Describes the agent skills shipped with NemoClaw and how to access
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # NemoClaw Agent Skills for Your AI Coding Assistant
 
 NemoClaw ships agent skills that are generated directly from this documentation.
@@ -26,11 +23,11 @@ This page is for users who installed NemoClaw with the installer and do not have
 
 Fetch only the skills from the NemoClaw repository without downloading the full source tree.
 
-```console
-$ git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
-$ cd NemoClaw
-$ git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-*/**' '/.agents/skills/nemoclaw-skills-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
-$ git checkout
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-*/**' '/.agents/skills/nemoclaw-skills-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
+git checkout
 ```
 
 Open the `NemoClaw` directory in your AI coding assistant.

@@ -74,9 +74,9 @@ describe("openclaw-build-messaging-plugins.py", () => {
     });
 
     expect(payload.installSpecs).toEqual([
-      "@openclaw/discord@2026.5.22",
-      "@openclaw/slack@2026.5.22",
-      "@openclaw/whatsapp@2026.5.22",
+      "npm:@openclaw/discord@2026.5.22",
+      "npm:@openclaw/slack@2026.5.22",
+      "npm:@openclaw/whatsapp@2026.5.22",
     ]);
     expect(payload.doctorEnv).toEqual({
       DISCORD_BOT_TOKEN: "openshell:resolve:env:DISCORD_BOT_TOKEN",
@@ -93,13 +93,13 @@ describe("openclaw-build-messaging-plugins.py", () => {
     });
 
     expect(payload.channels).toEqual(["discord"]);
-    expect(payload.installSpecs).toEqual(["@openclaw/discord@2026.5.22"]);
+    expect(payload.installSpecs).toEqual(["npm:@openclaw/discord@2026.5.22"]);
     expect(payload.doctorEnv).toEqual({
       DISCORD_BOT_TOKEN: "openshell:resolve:env:DISCORD_BOT_TOKEN",
     });
   });
 
-  it("does not require OPENCLAW_VERSION when no external messaging plugin is selected", () => {
+  it("does not require OPENCLAW_VERSION when no external plugin is selected", () => {
     const payload = parseDryRun({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram"]),
     });
@@ -108,6 +108,34 @@ describe("openclaw-build-messaging-plugins.py", () => {
     expect(payload.doctorEnv).toEqual({
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     });
+  });
+
+  it("forces WhatsApp to the OpenClaw runtime version on 2026.5.18 sandboxes", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.18",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["whatsapp"]),
+    });
+
+    expect(payload.installSpecs).toEqual(["npm:@openclaw/whatsapp@2026.5.18"]);
+  });
+
+  it("pins the diagnostics OTEL plugin when OpenClaw OTEL is enabled", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.22",
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+    });
+
+    expect(payload.diagnosticsOtelEnabled).toBe(true);
+    expect(payload.installSpecs).toEqual(["npm:@openclaw/diagnostics-otel@2026.5.22"]);
+  });
+
+  it("requires OPENCLAW_VERSION when OpenClaw OTEL is enabled", () => {
+    const result = runDryRun({
+      NEMOCLAW_OPENCLAW_OTEL: "1",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENCLAW_VERSION is required");
   });
 
   it("fails fast on malformed channel payloads", () => {
@@ -155,9 +183,9 @@ describe("openclaw-build-messaging-plugins.py", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
-        "plugins|install|@openclaw/discord@2026.5.22||||",
-        "plugins|install|@openclaw/slack@2026.5.22||||",
-        "plugins|install|@openclaw/whatsapp@2026.5.22||||",
+        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|||",
+        "plugins|install|npm:@openclaw/slack@2026.5.22|--pin|||",
+        "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
         [
           "doctor",
           "--fix",
@@ -186,7 +214,8 @@ describe("openclaw-build-messaging-plugins.py", () => {
         "const args = process.argv.slice(2);",
         'fs.appendFileSync(process.env.OPENCLAW_TRACE, `${args.join("|")}|${process.env.DISCORD_BOT_TOKEN || ""}\\n`);',
         'if (args[0] === "plugins" && args[1] === "install") {',
-        '  if (args[2] !== "@openclaw/discord@2026.5.22") process.exit(41);',
+        '  if (args[2] !== "npm:@openclaw/discord@2026.5.22") process.exit(41);',
+        '  if (args[3] !== "--pin") process.exit(47);',
         "  process.exit(0);",
         "}",
         'if (args[0] === "doctor" && args[1] === "--fix" && args[2] === "--non-interactive") {',
@@ -233,7 +262,7 @@ describe("openclaw-build-messaging-plugins.py", () => {
 
       expect(pluginResult.status, pluginResult.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
-        "plugins|install|@openclaw/discord@2026.5.22|",
+        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|",
         "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN",
       ]);
     } finally {

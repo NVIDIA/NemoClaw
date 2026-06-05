@@ -1,6 +1,8 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Workspace Files
+
+import { AgentOnly } from "../_components/AgentGuide";
+
+<AgentOnly variant="openclaw">
 
 OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.
 These files live at `/sandbox/.openclaw/workspace/` and are collectively called **workspace files**.
@@ -11,7 +13,7 @@ These files live at `/sandbox/.openclaw/workspace/` and are collectively called 
 |---|---|
 | `SOUL.md` | Defines the agent's persona, tone, and communication style. |
 | `USER.md` | Stores information about the human the agent assists. |
-| `IDENTITY.md` | Short identity card — name, language, emoji, creature type. |
+| `IDENTITY.md` | Short identity card with name, language, emoji, and creature type. |
 | `AGENTS.md` | Behavioral rules, memory conventions, safety guidelines, and session workflow. |
 | `MEMORY.md` | Curated long-term memory distilled from daily notes. |
 | `memory/` | Directory of daily note files (`YYYY-MM-DD.md`) for session continuity. |
@@ -35,7 +37,7 @@ All workspace files reside inside the sandbox filesystem:
 ## Multi-Agent Deployments
 
 A single NemoClaw sandbox can host more than one OpenClaw agent.
-When OpenClaw is configured with multiple named agents (e.g., a shared `main` agent
+When you configure OpenClaw with multiple named agents (for example, a shared `main` agent
 plus per-user agents for a Teams-integrated deployment), each agent gets its own
 workspace directory alongside the default `workspace/`:
 
@@ -49,27 +51,23 @@ workspace directory alongside the default `workspace/`:
 
 Each per-agent workspace contains the same Markdown file structure as the default
 (`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, `memory/`).
-Files are per-agent — changes in `workspace-main/AGENTS.md` are not visible to
+Files are per-agent. Changes in `workspace-main/AGENTS.md` are not visible to
 `workspace-support/`.
 
-Persistence and snapshots are handled automatically for per-agent workspaces:
-the sandbox entrypoint provisions each `workspace-<name>/` directly under the
-writable `.openclaw/` tree so state survives sandbox restart, and
-`nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory
-and includes it in the snapshot bundle alongside the default `workspace/`.
+NemoClaw handles persistence and snapshots automatically for per-agent workspaces:
+the sandbox entrypoint provisions each `workspace-<name>/` directly under the writable `.openclaw/` tree so state survives sandbox restart, and `nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory and includes it in the snapshot bundle alongside the default `workspace/`.
 
 **Note:**
 
 Files that operators typically want consistent across every agent workspace
 (`AGENTS.md`, shared skills, common templates) are not synced automatically.
-Each workspace is independent; changes in one don't propagate. Tracking
-shared-file tooling (shared mount, `workspaces list` command) in
-[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+Each workspace is independent, and changes in one do not propagate.
+NVIDIA tracks shared-file tooling (shared mount, `workspaces list` command) in [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 
 ## Persistence Behavior
 
 Workspace files live in the sandbox's persistent state volume, not in the container image.
-This means they survive normal container restarts, but they are deleted when you destroy the sandbox.
+They survive normal container restarts, but NemoClaw deletes them when you destroy the sandbox.
 
 ### Preserved During Restart, Rebuild, and Upgrade
 
@@ -83,7 +81,7 @@ It does not continue with a partial backup.
 ### Deleted During Sandbox Destroy
 
 Running `nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
-Workspace files are removed from the sandbox unless you created a snapshot or backup first.
+NemoClaw removes workspace files from the sandbox unless you created a snapshot or backup first.
 
 **Warning:**
 
@@ -103,3 +101,26 @@ You can edit them in two ways:
 - Set Up Task-Specific Sub-Agents (use the `nemoclaw-user-configure-inference` skill)
 - [Backup and Restore workspace files](backup-restore.md)
 - Commands reference (use the `nemoclaw-user-reference` skill)
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes stores durable agent state under `/sandbox/.hermes/` instead of the OpenClaw workspace directory.
+The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`, environment settings live in `/sandbox/.hermes/.env`, and runtime state such as logs, memory, platform sessions, and the SQLite state database lives under the same `.hermes` tree.
+
+## Important Hermes State
+
+| Path | Purpose |
+|---|---|
+| `/sandbox/.hermes/config.yaml` | NemoClaw-generated Hermes runtime configuration. |
+| `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
+| `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
+| `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
+| `/sandbox/.hermes/logs/` | Hermes runtime logs. |
+| `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by NemoClaw snapshots. |
+
+## Editing State
+
+Prefer NemoClaw host commands for generated configuration such as model, provider, messaging, and policy settings.
+Direct edits to `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` can be overwritten by rebuilds.
+Use `nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.

@@ -53,6 +53,18 @@ const {
   isHashVerificationIssue,
   isSha256Hex,
 }: typeof import("./seal") = require("./seal");
+const {
+  applyStateDirLockMode,
+  preflightStateDirLock,
+}: typeof import("./state-dir-lock") = require("./state-dir-lock");
+const {
+  inspectMutableConfigPerms: inspectMutableConfigPermsCore,
+  repairMutableConfigPerms: repairMutableConfigPermsCore,
+}: typeof import("./mutable-config-perms") = require("./mutable-config-perms");
+type MutableConfigPermsInspection =
+  import("./mutable-config-perms").MutableConfigPermsInspection;
+type MutableConfigRepairResult =
+  import("./mutable-config-perms").MutableConfigRepairResult;
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -331,114 +343,184 @@ function isShieldsState(value: unknown): value is ShieldsState {
 }
 
 // ---------------------------------------------------------------------------
-// NC-2227-05: State directories locked by shields-up.
-//
-// During shields-up, these must be locked (root:root 755) so the sandbox
-// user cannot create new entries or modify existing ones. This covers both
-// executable state (skills, hooks, cron jobs, extensions, plugins, agent
-// definitions) and writable agent state entry points such as workspace and
-// memory, so a stale symlink bridge cannot bypass the lockdown.
-//
-// The list is a superset: directories that don't exist in a given agent's
-// config dir are silently skipped.
+// State-dir lock — adapter between this module's privileged-exec helpers and
+// the lock pipeline in ./state-dir-lock. The inventory of locked dirs, the
+// preflight/mutation/verification logic, and the `agents/*/sessions`
+// carve-out live in that sibling module so this file stays focused on
+// shields state transitions.
 // ---------------------------------------------------------------------------
 
-const HIGH_RISK_STATE_DIRS = [
-  "skills",
-  "hooks",
-  "cron",
-  "agents",
-  "extensions",
-  "plugins", // Hermes equivalent of extensions
-  "workspace",
-  "memory",
-  "credentials",
-  "identity",
-  "devices",
-  "canvas",
-  "telegram",
-];
+function stateDirLockExec(sandboxName: string) {
+  return {
+    exec: (cmd: string[]) => privilegedSandboxExec(sandboxName, cmd),
+    capture: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+  };
+}
 
-function applyStateDirLockMode(
+const CONFIG_UNLOCK_NOFOLLOW_SCRIPT = String.raw`
+import errno
+import fcntl
+import grp
+import os
+import pwd
+import stat
+import struct
+import sys
+
+FS_IMMUTABLE_FL = 0x00000010
+FS_IOC_GETFLAGS = 0x80086601
+FS_IOC_SETFLAGS = 0x40086602
+
+def die(message):
+    sys.stderr.write(message + "\n")
+    raise SystemExit(1)
+
+def resolve_user_group(owner):
+    user, group = owner.split(":", 1)
+    uid = int(user) if user.isdigit() else pwd.getpwnam(user).pw_uid
+    gid = int(group) if group.isdigit() else grp.getgrnam(group).gr_gid
+    return uid, gid
+
+def open_checked(path, want_dir, dir_fd=None):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if want_dir:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    else:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            die("refusing symlink path: " + path)
+        die("open failed for %s: %s" % (path, exc))
+    mode = os.fstat(fd).st_mode
+    if want_dir and not stat.S_ISDIR(mode):
+        os.close(fd)
+        die("not a directory: " + path)
+    if not want_dir and not stat.S_ISREG(mode):
+        os.close(fd)
+        die("not a regular file: " + path)
+    return fd
+
+def clear_immutable(fd):
+    try:
+        buf = bytearray(4)
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, buf, True)
+        flags = struct.unpack("I", buf)[0]
+        if flags & FS_IMMUTABLE_FL:
+            fcntl.ioctl(fd, FS_IOC_SETFLAGS, struct.pack("I", flags & ~FS_IMMUTABLE_FL))
+    except OSError:
+        # Best effort: fchown/fchmod and later lsattr verification surface failures.
+        pass
+
+def config_child_name(config_dir, path):
+    normalized_dir = os.path.normpath(config_dir)
+    normalized_path = os.path.normpath(path)
+    if os.path.dirname(normalized_path) != normalized_dir:
+        die("refusing config path outside config dir: " + path)
+    name = os.path.basename(normalized_path)
+    if name in ("", ".", ".."):
+        die("refusing invalid config path: " + path)
+    return name
+
+file_mode = int(sys.argv[1], 8)
+dir_mode = int(sys.argv[2], 8)
+uid, gid = resolve_user_group(sys.argv[3])
+config_dir = os.path.normpath(sys.argv[4])
+files = sys.argv[5:]
+
+parent_dir = os.path.dirname(config_dir)
+config_name = os.path.basename(config_dir)
+if parent_dir == "" or config_name in ("", ".", ".."):
+    die("refusing invalid config dir: " + config_dir)
+
+parent_fd = open_checked(parent_dir, True)
+parent_stat = os.fstat(parent_fd)
+dir_fd = None
+dir_stat = None
+unlock_ok = False
+body_error = None
+restore_errors = []
+try:
+    # Freeze the parent first. /sandbox is normally sandbox-owned, so otherwise
+    # the agent could rename the config directory itself between fd operations.
+    clear_immutable(parent_fd)
+    os.fchown(parent_fd, 0, 0)
+    os.fchmod(parent_fd, 0o755)
+
+    dir_fd = open_checked(config_name, True, dir_fd=parent_fd)
+    dir_stat = os.fstat(dir_fd)
+    clear_immutable(dir_fd)
+    os.fchown(dir_fd, 0, 0)
+    os.fchmod(dir_fd, 0o700)
+
+    for path in files:
+        name = config_child_name(config_dir, path)
+        fd = open_checked(name, False, dir_fd=dir_fd)
+        try:
+            clear_immutable(fd)
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, file_mode)
+        finally:
+            os.close(fd)
+
+    # Verify before reopening the directory for sandbox writes.
+    for path in files:
+        name = config_child_name(config_dir, path)
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if stat.S_ISLNK(st.st_mode):
+            die("refusing symlink path after unlock: " + path)
+        if not stat.S_ISREG(st.st_mode):
+            die("not a regular file after unlock: " + path)
+        if stat.S_IMODE(st.st_mode) != file_mode:
+            die("mode mismatch after unlock for %s: %o" % (path, stat.S_IMODE(st.st_mode)))
+        if st.st_uid != uid or st.st_gid != gid:
+            die("owner mismatch after unlock for " + path)
+    unlock_ok = True
+except BaseException as exc:
+    body_error = exc
+finally:
+    if dir_fd is not None:
+        try:
+            if unlock_ok:
+                os.fchown(dir_fd, uid, gid)
+                os.fchmod(dir_fd, dir_mode)
+            elif dir_stat is not None:
+                os.fchown(dir_fd, dir_stat.st_uid, dir_stat.st_gid)
+                os.fchmod(dir_fd, stat.S_IMODE(dir_stat.st_mode))
+        except OSError as exc:
+            restore_errors.append(str(exc))
+        os.close(dir_fd)
+    try:
+        os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
+        os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
+    except OSError as exc:
+        restore_errors.append(str(exc))
+    os.close(parent_fd)
+
+if restore_errors:
+    die("config path restore failed: " + "; ".join(restore_errors))
+if body_error is not None:
+    raise body_error
+`;
+
+function unlockConfigPathsNoSymlinkFollow(
   sandboxName: string,
-  configDir: string,
-  owner: string,
+  target: AgentConfigTarget,
+  fileMode: string,
+  dirMode: string,
+  filesToUnlock: string[],
 ): void {
-  // Locking (shields-up) strips group + world write. Unlocking (shields-down)
-  // restores the same group-readable/writable + o-rwx mutable-default contract
-  // as startup, plus setgid so the gateway UID — now in the sandbox group via
-  // Dockerfile.base — can write to OpenClaw's mutable config tree (#2681).
-  //
-  // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
-  // access from descendants. Without re-adding group read/write explicitly,
-  // shields-down would leave nested files readable/writable only by owner.
-  const isLocking = owner === "root:root";
-  const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
-  const dirMode = isLocking ? "755" : "2770";
-
-  for (const dirName of HIGH_RISK_STATE_DIRS) {
-    const dirPath = `${configDir}/${dirName}`;
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "-R", owner, dirPath]);
-    } catch {
-      // Directory may not exist for this agent — silently skip
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", dirMode, dirPath]);
-    } catch {
-      // Silently skip
-    }
-    if (isLocking) {
-      try {
-        privilegedSandboxExec(sandboxName, ["chmod", "g-s", dirPath]);
-      } catch {
-        // Best effort; do not skip recursive write stripping.
-      }
-    }
-    try {
-      privilegedSandboxExec(sandboxName, [
-        "chmod",
-        "-R",
-        recursiveMode,
-        dirPath,
-      ]);
-    } catch {
-      // Silently skip
-    }
-  }
-
-  // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
-  // discovered dynamically because they are configured by openclaw.json.
-  const clearSetgid = isLocking ? "1" : "0";
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-owner="$2"
-recursive_mode="$3"
-dir_mode="$4"
-clear_setgid="$5"
-for dir in "$config_dir"/workspace-*; do
-  [ -d "$dir" ] || continue
-  chown -R "$owner" "$dir" 2>/dev/null || true
-  chmod "$dir_mode" "$dir" 2>/dev/null || true
-  [ "$clear_setgid" = "1" ] && chmod g-s "$dir" 2>/dev/null || true
-  chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
-done
-`,
-      "sh",
-      configDir,
-      owner,
-      recursiveMode,
-      dirMode,
-      clearSetgid,
-    ]);
-  } catch {
-    // Best effort; verification below catches the primary config lock.
-  }
+  privilegedSandboxExec(sandboxName, [
+    "python3",
+    "-c",
+    CONFIG_UNLOCK_NOFOLLOW_SCRIPT,
+    fileMode,
+    dirMode,
+    "sandbox:sandbox",
+    target.configDir,
+    ...filesToUnlock,
+  ]);
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -508,42 +590,28 @@ function unlockAgentConfig(
   // the gateway UID cannot remove sandbox-owned config files.
   const fileMode = target.agentName === "hermes" ? "640" : "660";
   const dirMode = target.agentName === "hermes" ? "3770" : "2770";
-  for (const f of filesToUnlock) {
-    try {
-      privilegedSandboxExec(sandboxName, ["chattr", "-i", f]);
-    } catch {
-      errors.push(`chattr -i ${f}`);
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", f]);
-    } catch {
-      errors.push(`chown ${f}`);
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", fileMode, f]);
-    } catch {
-      errors.push(`chmod ${fileMode} ${f}`);
-    }
-  }
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "chown",
-      "sandbox:sandbox",
-      target.configDir,
-    ]);
-  } catch {
-    errors.push("chown config dir");
-  }
-  try {
-    privilegedSandboxExec(sandboxName, ["chmod", dirMode, target.configDir]);
-  } catch {
-    errors.push(`chmod ${dirMode} config dir`);
-  }
+  unlockConfigPathsNoSymlinkFollow(
+    sandboxName,
+    target,
+    fileMode,
+    dirMode,
+    filesToUnlock,
+  );
 
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
-  // locked to root:root by a prior shields-up).
-  applyStateDirLockMode(sandboxName, target.configDir, "sandbox:sandbox");
+  // locked to root:root by a prior shields-up). Surface fan-out issues
+  // so `shields down` cannot report success while a state dir is still
+  // root-owned or read-only.
+  const stateDirUnlockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "sandbox:sandbox",
+    false,
+  );
+  for (const issue of stateDirUnlockIssues) {
+    errors.push(`state dir unlock: ${issue}`);
+  }
 
   if (errors.length > 0) {
     console.error(
@@ -606,6 +674,41 @@ function unlockAgentConfig(
 }
 
 // ---------------------------------------------------------------------------
+// Mutable-config permission repair / diagnostics (#4538)
+//
+// Sandbox-bound wrappers around the pure contract logic in
+// ./mutable-config-perms.ts. See that module for the full rationale: in short,
+// `openclaw doctor --fix` tightens NemoClaw's mutable config tree (setgid +
+// group-writable 2770/660) back to single-user 700/600, which blocks the
+// gateway UID from persisting config edits. These detect the drift and restore
+// the contract without weakening an active shields-up lock.
+// ---------------------------------------------------------------------------
+
+function inspectMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigPermsInspection {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return inspectMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    (p) => privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
+  );
+}
+
+function repairMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigRepairResult {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return repairMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    () => unlockAgentConfig(sandboxName, target),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Config lock — used by shields-up (opt-in lockdown), auto-restore timer,
 // and rollback
 //
@@ -652,6 +755,18 @@ function lockAgentConfig(
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
 
+  // Symlink preflight runs before any file or directory mutation: if a
+  // pre-lockdown agent swapped e.g. `extensions/` for a symlink to /etc,
+  // we abort before the privileged chmod/chown touches anything, so the
+  // tree is never half-mutated against an attacker-controlled host path.
+  const preflightIssues = preflightStateDirLock(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+  );
+  if (preflightIssues.length > 0) {
+    throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
+  }
+
   for (const f of filesToLock) {
     try {
       privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
@@ -692,10 +807,24 @@ function lockAgentConfig(
     }
   }
 
-  // NC-2227-05: Lock state directories. Root-own the directory and set 755 so
-  // the sandbox user can read/execute but cannot create new entries or modify
-  // existing ones.
-  applyStateDirLockMode(sandboxName, target.configDir, "root:root");
+  // Lock state directories. High-risk dirs use `root:sandbox` ownership so
+  // the gateway (in the sandbox group) can still read plugin/agent code while
+  // the sandbox user is denied write through `chmod -R go-w`. Secret-bearing
+  // dirs (CONFIDENTIALITY_STATE_DIRS in ./state-dir-lock) go to `root:root`
+  // 700/go-rwX so neither the sandbox user nor the gateway can read them
+  // while shields are up. Top-level configDir stays root:root.
+  const stateDirLockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "root:sandbox",
+    true,
+  );
+  if (stateDirLockIssues.length > 0) {
+    // Symlinked state-dir roots are a security-relevant violation:
+    // continuing would let shields-up report "locked" while a state
+    // dir still points at a writable host path. Refuse the lock.
+    throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
+  }
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid
   // after descendant locking so shields-up verifies the root config dir as
@@ -1558,16 +1687,18 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
 // ---------------------------------------------------------------------------
 
 export {
-  shieldsDown,
-  shieldsUp,
-  shieldsStatus,
-  isShieldsDown,
-  getShieldsPosture,
-  killTimer,
-  deriveShieldsMode,
-  parseDuration,
-  lockAgentConfig,
-  unlockAgentConfig,
-  MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
+  deriveShieldsMode,
+  getShieldsPosture,
+  inspectMutableConfigPerms,
+  isShieldsDown,
+  killTimer,
+  lockAgentConfig,
+  MAX_TIMEOUT_SECONDS,
+  parseDuration,
+  repairMutableConfigPerms,
+  shieldsDown,
+  shieldsStatus,
+  shieldsUp,
+  unlockAgentConfig,
 };

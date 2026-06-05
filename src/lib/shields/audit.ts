@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Append-only JSONL audit log for shields operations.
+ * Append-only JSONL audit log for shields and operational events.
  *
- * Every shields-down/shields-up cycle is logged to
+ * Records shields lifecycle actions (up, down, auto-restore) and config
+ * mutations (inference-set, config-set, token rotation) to
  * ~/.nemoclaw/state/shields-audit.jsonl for forensics and compliance.
  * Entries never contain credential values — only key names and policy labels.
  */
@@ -24,7 +25,10 @@ export interface ShieldsAuditEntry {
     | "shields_up"
     | "shields_auto_restore"
     | "shields_up_failed"
-    | "shields_auto_restore_lock_warning";
+    | "shields_auto_restore_lock_warning"
+    | "inference_set"
+    | "config_set"
+    | "rotate_token";
   sandbox: string;
   timestamp: string;
   timeout_seconds?: number;

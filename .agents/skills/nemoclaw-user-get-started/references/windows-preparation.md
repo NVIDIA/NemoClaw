@@ -1,21 +1,35 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Prepare Windows for NemoClaw
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
-Complete these steps before following the [Quickstart](../SKILL.md).
+<AgentOnly variant="openclaw">
+Complete these steps before following the Quickstart.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Complete these steps before following Quickstart with Hermes.
+</AgentOnly>
 Linux and macOS users do not need this page and can go directly to the Quickstart.
 
 **Note:**
 
-This guide has been tested on x86-64.
+NVIDIA tested this guide on x86-64.
 
 ## Prerequisites
 
 Verify the following before you begin:
 
 - Windows 10 (build 19041 or later) or Windows 11.
-- Hardware requirements are the same as the [Quickstart](../SKILL.md).
+<AgentOnly variant="openclaw">
+
+- Hardware requirements are the same as the Quickstart.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Hardware requirements are the same as Quickstart with Hermes.
+
+</AgentOnly>
 
 ## Option: Use the Bootstrap Script
 
@@ -47,10 +61,11 @@ When Windows preparation is complete, it opens Ubuntu and prints the standard in
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-If the bootstrap script reports that Docker is not reachable from Ubuntu, open Docker Desktop Settings and confirm that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration), make sure Docker Desktop is running, then rerun the script.
+If the bootstrap script reports that Ubuntu cannot reach Docker, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for Ubuntu (**Settings** > **Resources** > **WSL integration**), make sure Docker Desktop is running, then rerun the script.
 
 If the bootstrap script reports that `winget.exe` is not available (common on Windows Server or stripped Windows installs), install **App Installer** from the Microsoft Store (which provides `winget`), or download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
-Rerun the bootstrap script after Docker Desktop is installed; the script skips the install step once it detects Docker Desktop is present.
+After you install Docker Desktop, rerun the bootstrap script.
+The script skips the install step after it detects Docker Desktop.
 
 The manual steps below describe the same Windows preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
 
@@ -80,9 +95,9 @@ Let the distribution launch and complete first-run setup (pick a Unix username a
 
 Do not use the `--no-launch` flag.
 The `--no-launch` flag downloads the package but does not register the distribution with WSL.
-Commands like `wsl -d Ubuntu-24.04` fail with "There is no distribution with the supplied name" until the distribution has been launched at least once.
+Commands like `wsl -d Ubuntu-24.04` fail with "There is no distribution with the supplied name" until you launch the distribution at least one time.
 
-Verify the distribution is registered and running WSL 2:
+Verify that WSL registered the distribution and runs it with WSL 2:
 
 ```powershell
 wsl -l -v
@@ -99,7 +114,7 @@ Expected output:
 
 Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the WSL 2 backend (the default on Windows 11).
 
-After installation, open Docker Desktop Settings and confirm that WSL integration is enabled for your Ubuntu distribution (Settings > Resources > WSL integration).
+After installation, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for your Ubuntu distribution (**Settings** > **Resources** > **WSL integration**).
 
 Open WSL from PowerShell:
 
@@ -114,7 +129,7 @@ docker info
 ```
 
 `docker info` prints server information.
-If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that WSL integration is enabled.
+If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is running and that Docker Desktop enables WSL integration.
 
 ## Set Up Local Inference with Ollama (Optional)
 
@@ -125,7 +140,7 @@ You can install Ollama inside WSL yourself:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-If Ollama is installed but not already running in WSL, the onboarding process starts it for you.
+If you installed Ollama but it is not already running in WSL, onboarding starts it for you.
 You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows.
@@ -139,10 +154,15 @@ Use one instance, or move one of them to a different port before running `nemocl
 
 Your Windows environment is ready.
 If you used the bootstrap script, follow the installer command it printed inside Ubuntu.
-If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.
+<AgentOnly variant="openclaw">
+If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart to install NemoClaw and launch your first sandbox.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with Quickstart with Hermes to install NemoClaw and launch your first Hermes sandbox.
+</AgentOnly>
 
 All NemoClaw commands run inside WSL, not in PowerShell.
 
 ## Troubleshooting
 
-For Windows-specific troubleshooting, refer to the Windows Subsystem for Linux section (use the `nemoclaw-user-reference` skill) in the Troubleshooting guide.
+For Windows-specific troubleshooting, refer to the Windows Subsystem for Linux section in the Troubleshooting guide.

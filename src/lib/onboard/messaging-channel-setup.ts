@@ -16,6 +16,11 @@ import {
   getMessagingToken,
   isMessagingTokenFormatValid,
 } from "./messaging-token";
+import {
+  formatSlackValidationFailure,
+  type SlackTokenKind,
+  validateSlackCredentials,
+} from "./slack-validation";
 
 type ChannelEntry = { name: string } & ChannelDef;
 
@@ -41,6 +46,127 @@ function getExistingMessagingToken(
   return token;
 }
 
+type SlackTokenSlot = {
+  envKey: string;
+  kind: SlackTokenKind;
+  label: "token" | "app token";
+  promptLabel: string;
+  help: string;
+};
+
+type CollectedSlackToken = {
+  token: string;
+  save: boolean;
+  label: "token" | "app token";
+};
+
+function skipSlack(enabled: Set<string>, reason: string): null {
+  console.log(`  Skipped slack (${reason})`);
+  enabled.delete("slack");
+  return null;
+}
+
+async function collectSlackToken(
+  ch: ChannelEntry,
+  slot: SlackTokenSlot,
+  enabled: Set<string>,
+): Promise<CollectedSlackToken | null> {
+  const existing = getExistingMessagingToken(ch, slot.envKey, slot.label);
+  if (existing) {
+    return { token: existing, save: false, label: slot.label };
+  }
+
+  console.log("");
+  console.log(`  ${slot.help}`);
+  const token = normalizeCredentialValue(await prompt(`  ${slot.promptLabel}: `, { secret: true }));
+  if (!token) {
+    const reason =
+      slot.kind === "app" ? "Socket Mode requires both tokens" : "no token entered";
+    return skipSlack(enabled, reason);
+  }
+
+  if (!isMessagingTokenFormatValid(ch, slot.envKey, token)) {
+    const formatHint =
+      slot.kind === "app"
+        ? ch.appTokenFormatHint || "Check the token and try again."
+        : ch.tokenFormatHint || "Check the token and try again.";
+    console.log(`  ✗ Invalid format. ${formatHint}`);
+    return skipSlack(enabled, "invalid token format");
+  }
+
+  return { token, save: true, label: slot.label };
+}
+
+async function setupSlackTokens(ch: ChannelEntry, enabled: Set<string>): Promise<boolean> {
+  if (!ch.envKey || !ch.appTokenEnvKey || !ch.appTokenHelp || !ch.appTokenLabel) {
+    return false;
+  }
+
+  const bot = await collectSlackToken(
+    ch,
+    {
+      envKey: ch.envKey,
+      kind: "bot",
+      label: "token",
+      promptLabel: ch.label,
+      help: ch.help,
+    },
+    enabled,
+  );
+  if (!bot) return false;
+
+  const app = await collectSlackToken(
+    ch,
+    {
+      envKey: ch.appTokenEnvKey,
+      kind: "app",
+      label: "app token",
+      promptLabel: ch.appTokenLabel,
+      help: ch.appTokenHelp,
+    },
+    enabled,
+  );
+  if (!app) return false;
+
+  const validation = validateSlackCredentials({ botToken: bot.token, appToken: app.token });
+  if (!validation.ok) {
+    if (!bot.save && validation.credential === "bot") {
+      console.log(`  ✗ Invalid existing ${ch.name} ${bot.label} ignored.`);
+    }
+    if (!app.save && validation.credential === "app") {
+      console.log(`  ✗ Invalid existing ${ch.name} ${app.label} ignored.`);
+    }
+    const prefix = validation.kind === "rejected" ? "✗" : "⚠";
+    console.log(`  ${prefix} ${formatSlackValidationFailure(validation)}`);
+    skipSlack(
+      enabled,
+      validation.kind === "rejected"
+        ? "invalid Slack credentials"
+        : "Slack API validation unavailable",
+    );
+    return false;
+  }
+  if (validation.skipped && validation.message) {
+    console.log(`  ⚠ ${validation.message}`);
+  }
+
+  if (bot.save) {
+    saveCredential(ch.envKey, bot.token);
+    process.env[ch.envKey] = bot.token;
+    console.log(`  ✓ ${ch.name} token saved`);
+  } else {
+    console.log(`  ✓ ${ch.name} — already configured`);
+  }
+  if (app.save) {
+    saveCredential(ch.appTokenEnvKey, app.token);
+    process.env[ch.appTokenEnvKey] = app.token;
+    console.log(`  ✓ ${ch.name} app token saved`);
+  } else {
+    console.log(`  ✓ ${ch.name} app token — already configured`);
+  }
+  return true;
+}
+
 /**
  * Prompt for token + per-channel config (app token, server ID, mention
  * mode, allowlist IDs) for each selected messaging channel. Mutates
@@ -63,7 +189,10 @@ export async function setupSelectedMessagingChannels(
       console.log(`  Unknown channel: ${name}`);
       continue;
     }
-    if (channelHasStaticToken(ch) && getExistingMessagingToken(ch, ch.envKey, "token")) {
+    if (ch.name === "slack" && channelHasStaticToken(ch)) {
+      const configured = await setupSlackTokens(ch, enabled);
+      if (!configured) continue;
+    } else if (channelHasStaticToken(ch) && getExistingMessagingToken(ch, ch.envKey, "token")) {
       console.log(`  ✓ ${ch.name} — already configured`);
     } else if (ch.loginMethod === "host-qr") {
       console.log("");
@@ -115,7 +244,7 @@ export async function setupSelectedMessagingChannels(
     for (const line of ch.setupNotes ?? []) {
       console.log(`  ${line}`);
     }
-    if (ch.appTokenEnvKey) {
+    if (ch.name !== "slack" && ch.appTokenEnvKey) {
       const existingAppToken = getExistingMessagingToken(ch, ch.appTokenEnvKey, "app token");
       if (existingAppToken) {
         console.log(`  ✓ ${ch.name} app token — already configured`);

@@ -22,10 +22,10 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers installation, inference configuration, network policy management, monitoring, remote deployment, security configuration, workspace management, and reference material.
 
-### `nemoclaw-maintainer-*` (12 skills)
+### `nemoclaw-maintainer-*` (13 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
+Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
 
 ### `nemoclaw-contributor-*` (2 skills)
 
@@ -57,11 +57,12 @@ Covers creating pull requests that follow the project template and drafting docu
 |-------|---------|
 | `nemoclaw-maintainer-morning` | Morning standup: triage the backlog, determine the day's target version, label selected items, surface stragglers, and output the daily plan. |
 | `nemoclaw-maintainer-triage` | Suggest and optionally apply labels for issues and PRs using the live NemoClaw triage instructions. |
+| `nemoclaw-maintainer-policies` | Read-only maintainer workflow policy reference for Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and workflow decisions. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Scan open issues for adjacent fixes or contradiction risks when reviewing a PR. |
 | `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, bump stragglers to the next patch, generate a QA handoff summary, and cut the release tag. |
-| `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on main, move the `latest` floating tag, and push both to origin. |
-| `nemoclaw-maintainer-release-notes` | Draft and publish release notes from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
+| `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on a maintainer-confirmed `origin/main` commit; the GitHub workflow moves `latest`, and `lkg` stays manual. |
+| `nemoclaw-maintainer-release-notes` | Draft release notes from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open PRs labeled security + priority-high, link each to its issue, detect duplicates, and present a review summary. |
 | `nemoclaw-maintainer-pr-comparator` | Compare competing PRs for the same issue and recommend which one to merge. |
 | `nemoclaw-maintainer-normalize-title-tags` | Preview and remove bracketed `NemoClaw` title tags from issues and PRs case-insensitively, even when the tag appears later in the title. |
@@ -89,6 +90,6 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 10 | `nemoclaw-user-get-started` |
 | Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 12 | `nemoclaw-user-overview` |
-| Maintainer | All skills | 24 | `nemoclaw-maintainer-morning` |
+| Maintainer | All skills | 25 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

@@ -12,6 +12,8 @@ import {
   buildDockerGpuCloneRunOptions,
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
+  captureDockerGpuPatchSandboxSnapshot,
+  classifyDockerGpuPatchFailure,
   collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
   detectSandboxFallbackDns,
@@ -22,7 +24,13 @@ import {
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
+  waitForOpenShellSupervisorReconnect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
+import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
+import {
+  getSandboxFailurePhase,
+  isSandboxReady,
+} from "../../../dist/lib/state/gateway";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -571,7 +579,11 @@ describe("docker-gpu-patch", () => {
       String(call[0]).includes("nemoclaw-gpu-backup"),
     );
     expect(backupRmCall).toBeGreaterThanOrEqual(0);
-    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeLessThan(
+    // Backup container is removed only AFTER supervisor reconnect confirms
+    // the GPU container is reachable. If reconnect fails the rollback path
+    // restores the backup under the original name (see the rollback test
+    // below), so the backup must outlive the supervisor probe.
+    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeGreaterThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
   });
@@ -584,6 +596,7 @@ describe("docker-gpu-patch", () => {
       return "";
     });
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
     const result = recreateOpenShellDockerSandboxWithGpu(
@@ -599,7 +612,7 @@ describe("docker-gpu-patch", () => {
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRm,
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
@@ -607,7 +620,16 @@ describe("docker-gpu-patch", () => {
     );
 
     expect(result.newContainerId).toBe("new-container-id");
+    expect(result.backupRemoved).toBe(false);
+    expect(result.originalName).toBe("openshell-alpha");
+    expect(result.backupContainerName).toContain("nemoclaw-gpu-backup");
     expect(runOpenshell).not.toHaveBeenCalled();
+    // The create path takes the supervisor wait into its own hands later in
+    // the flow. The patch helper must NOT remove the backup yet — that would
+    // re-introduce the deleted-backup / failed-new state #4664 fixes.
+    expect(
+      dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
+    ).toBe(false);
     expect(dockerRunDetached).toHaveBeenCalledWith(
       expect.arrayContaining([
         "--env",
@@ -775,5 +797,425 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     // has a loopback-only resolver.
     expect(args).not.toEqual(expect.arrayContaining(["--network", "host"]));
     expect(args).toEqual(expect.arrayContaining(["--dns", "8.8.8.8"]));
+  });
+});
+
+// Regression coverage for NemoClaw issue #4316: the Docker GPU patch path
+// must distinguish "sandbox never became executable" (Error phase / dead
+// container) from "GPU proof failed inside an executable sandbox", and the
+// readiness wait must short-circuit on a terminal failure phase instead of
+// burning the full timeout window.
+describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
+  it("detects terminal failure phases in `openshell sandbox list` output", () => {
+    const errorList = "my-sandbox   Error   2s ago";
+    expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
+    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox"))
+      .toBe("CrashLoopBackOff");
+    expect(getSandboxFailurePhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe("Failed");
+
+    expect(getSandboxFailurePhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBeNull();
+    expect(getSandboxFailurePhase("other   Error   3s ago", "my-sandbox")).toBeNull();
+    expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
+  });
+
+  it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
+    const outputs = [
+      "my-sandbox   Provisioning   1s ago",
+      "my-sandbox   Error          3s ago",
+    ];
+    let i = 0;
+    const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
+    const sleep = vi.fn();
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: "my-sandbox",
+      // 600 / 2 = 300 readyAttempts. Without short-circuit we'd loop 300
+      // times. With short-circuit we should bail out after the 2nd poll.
+      timeoutSecs: 600,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      sleep,
+    });
+
+    expect(ready).toEqual({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Error",
+    });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    // Should not sleep after detecting the terminal phase.
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
+    // Without the short-circuit, a patched container that crashes on startup
+    // leaves users waiting the full 900s+ supervisor-reconnect timeout before
+    // any Error-phase diagnostics run. With the debounce now in place, this
+    // test asserts the K=1 (no-debounce) behavior explicitly so the original
+    // fast-fail intent is preserved when the operator opts out of the
+    // debounce.
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+    const listOutputs = [
+      "alpha   Provisioning   1s ago",
+      "alpha   Error          3s ago",
+    ];
+    let i = 0;
+    const runCaptureOpenshell = vi.fn(
+      () => listOutputs[Math.min(i++, listOutputs.length - 1)],
+    );
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 1,
+    });
+
+    expect(ok).toBe(false);
+    // Without short-circuit we'd loop ~300 iterations. With K=1 the second
+    // iteration's list output shows Error and the wait bails out.
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers `sandbox list` phase over `sandbox get` when both are present (stale get)", () => {
+    // Regression guard for #4316 CodeRabbit feedback: when `sandbox get`
+    // returns a stale Phase (e.g. Provisioning while the gateway has already
+    // transitioned the row to Error), the list-derived phase must take
+    // precedence so the classifier doesn't act on stale data.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Provisioning\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Error   2s ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toContain("Error");
+  });
+
+  it("uses the list-derived phase whenever the sandbox row is present", () => {
+    // Regression guard for CodeRabbit feedback: `sandbox list` reflects the
+    // gateway's table row and should be the phase used by the failure
+    // classifier whenever that row is available, even if `sandbox get` reports
+    // a different phase.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Ready   1m ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Ready");
+    expect(snapshot.sandboxListLine).toContain("Ready");
+  });
+
+  it("keeps the get-derived phase when the sandbox row is absent from list output", () => {
+    // Complement to the precedence test: if `sandbox list` has no row for
+    // the named sandbox (e.g. the gateway lost track of it), the get-derived
+    // phase is the only signal we have — don't drop it.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Terminated\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "other-box   Ready   2s ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Terminated");
+    expect(snapshot.sandboxListLine).toBeNull();
+  });
+
+  it("captures sandbox phase and patched container State via the snapshot helper", () => {
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Error\nReason: ContainerExit\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Error   1m ago\n";
+      }
+      return "";
+    });
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .State}}") {
+        return JSON.stringify({
+          Status: "exited",
+          Running: false,
+          ExitCode: 125,
+          Error: 'could not select device driver "nvidia" with capabilities: [[gpu]]',
+          OOMKilled: false,
+          StartedAt: "2026-05-12T00:00:00Z",
+          FinishedAt: "2026-05-12T00:00:01Z",
+        });
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: "new-container-id" },
+      { runCaptureOpenshell, dockerCapture },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toBe("alpha   Error   1m ago");
+    expect(snapshot.patchedContainerState?.ExitCode).toBe(125);
+    expect(snapshot.patchedContainerState?.Error).toContain("could not select device driver");
+  });
+
+  it("classifies a dead patched container as patched_container_failed with the failed mode", () => {
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Error",
+        sandboxListLine: "alpha   Error   1m ago",
+        patchedContainerState: {
+          Status: "exited",
+          ExitCode: 125,
+          Error: 'could not select device driver "nvidia" with capabilities: [[gpu]]',
+        },
+      },
+      buildDockerGpuMode("gpus"),
+    );
+
+    expect(result.kind).toBe("patched_container_failed");
+    expect(result.headline).toContain("Patched GPU container exited with code 125");
+    expect(result.headline).toContain("--gpus all");
+    const flat = result.summaryLines.join("\n");
+    expect(flat).toContain("sandbox_phase=Error");
+    expect(flat).toContain("patched_container_exit_code=125");
+    expect(flat).toContain("could not select device driver");
+    expect(flat).toContain("patched_create_option=--gpus all");
+  });
+
+  it("classifies an Error-phase sandbox with unknown container state as sandbox_error_phase", () => {
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Error",
+        sandboxListLine: null,
+        patchedContainerState: null,
+      },
+      buildDockerGpuMode("gpus"),
+    );
+
+    expect(result.kind).toBe("sandbox_error_phase");
+    expect(result.headline).toContain("OpenShell sandbox entered Error phase");
+  });
+
+  it("classifies a live container but timed-out supervisor as supervisor_unreachable", () => {
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Provisioning",
+        sandboxListLine: "alpha   Provisioning   30s ago",
+        patchedContainerState: { Status: "running", Running: true, ExitCode: 0 },
+      },
+      buildDockerGpuMode("gpus"),
+    );
+
+    expect(result.kind).toBe("supervisor_unreachable");
+    expect(result.headline).toContain("Provisioning");
+  });
+
+  it("prefers supervisor_unreachable over proof_failure when the sandbox is non-live but non-terminal", () => {
+    // Regression guard for #4316 review: a proof failing while the sandbox is
+    // still in a transient/non-live phase (Provisioning, NotReady) is really
+    // a lifecycle failure — classifying it as proof_failure would tell users
+    // `nvidia-smi` failed inside an executable sandbox, which masks the real
+    // cause.
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Provisioning",
+        sandboxListLine: "alpha   Provisioning   30s ago",
+        patchedContainerState: null,
+      },
+      buildDockerGpuMode("gpus"),
+      { proofError: new Error("openshell sandbox exec refused: sandbox not ready") },
+    );
+
+    expect(result.kind).toBe("supervisor_unreachable");
+    expect(result.headline).toContain("Provisioning");
+    expect(result.summaryLines.join("\n")).toContain("proof_error=");
+  });
+
+  it("does not blame the supervisor when the patch failed before a container existed", () => {
+    // Regression guard for #4316 review: an early patch failure (e.g. all GPU
+    // mode probes were rejected, or detached `docker run` failed) leaves no
+    // patched container. If the original sandbox happens to still be in a
+    // transient phase like Provisioning, the classifier must not point at
+    // an OpenShell supervisor reconnect issue.
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Provisioning",
+        sandboxListLine: "alpha   Provisioning   3s ago",
+        patchedContainerState: null,
+      },
+      null,
+    );
+
+    expect(result.kind).toBe("unknown");
+    expect(result.headline).not.toMatch(/supervisor/i);
+  });
+
+  it("treats proof failures inside a Ready sandbox as proof_failure, not patched_container_failed", () => {
+    const result = classifyDockerGpuPatchFailure(
+      {
+        sandboxPhase: "Ready",
+        sandboxListLine: "alpha   Ready   30s ago",
+        patchedContainerState: { Status: "running", Running: true, ExitCode: 0 },
+      },
+      buildDockerGpuMode("gpus"),
+      { proofError: new Error("nvidia-smi exited with status 9") },
+    );
+
+    expect(result.kind).toBe("proof_failure");
+    expect(result.summaryLines.join("\n")).toContain("proof_error=nvidia-smi exited with status 9");
+  });
+
+  it("preserves the default Docker capture when callers omit dockerCapture from deps", () => {
+    // Regression guard for #4316 review: passing `dockerCapture: undefined`
+    // through to `depsWithDefaults` would shadow the module's real Docker
+    // adapter. The print/diagnostic helpers must NOT forward an explicit
+    // `undefined` — they should let the default flow through so `docker ps`
+    // and `docker inspect <container>` still run.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-default-"));
+    try {
+      const dockerCapture = vi.fn((_args: readonly string[]) => "");
+      const dockerLogs = vi.fn(() => "");
+      collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            selectedMode: buildDockerGpuMode("gpus"),
+          },
+        },
+        {
+          // `runCaptureOpenshell` intentionally omitted — exercises the
+          // "caller has no openshell capture either" path.
+          dockerCapture,
+          dockerLogs,
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+
+      // Without the fix, `depsWithDefaults` would still see `dockerCapture` as
+      // a function here (the explicit one), so this is more of a structural
+      // sanity check. The substantive regression is exercised at the print-
+      // helper level (printDockerGpuPatchFailureAndExit must not pass
+      // `dockerCapture: undefined`). Here we just confirm collect() invokes
+      // the supplied dockerCapture for ps/inspect.
+      expect(
+        dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps"),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not inspect the original/backup container when newContainerId is missing", () => {
+    // Regression guard for #4316 review: when `recreateOpenShellDockerSandboxWithGpu`
+    // throws before the patched container exists, only `oldContainerId` is set
+    // in the failure context. The snapshot must NOT inspect the old/backup
+    // container as if it were the patched one — that would mis-attribute the
+    // patched container's State.
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "inspect" && args[1] === "--format" && args[2] === "{{json .State}}") {
+        // If this is called for old-container-id, return State that *looks*
+        // like a failed patch; the test would then incorrectly classify it.
+        return JSON.stringify({ Status: "exited", ExitCode: 1 });
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { dockerCapture },
+    );
+
+    expect(snapshot.patchedContainerState).toBeNull();
+    // The `--format '{{json .State}}'` invocation should not have happened.
+    expect(
+      dockerCapture.mock.calls.some(
+        ([args]) => args[0] === "inspect" && args[1] === "--format",
+      ),
+    ).toBe(false);
+  });
+
+  it("writes patched-container-state.json and surfaces failure_kind/sandbox_phase in the summary", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-4316-"));
+    try {
+      const snapshot = {
+        sandboxPhase: "Error",
+        sandboxListLine: "alpha   Error   1m ago",
+        patchedContainerState: {
+          Status: "exited",
+          ExitCode: 125,
+          Error: 'could not select device driver "nvidia"',
+        },
+      };
+      const classification = classifyDockerGpuPatchFailure(snapshot, buildDockerGpuMode("gpus"));
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "new-container-id",
+            selectedMode: buildDockerGpuMode("gpus"),
+          },
+          selectedMode: buildDockerGpuMode("gpus"),
+          snapshot,
+          classification,
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+
+      expect(diagnostics?.dir).toBeTruthy();
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(summary).toContain("failure_kind=patched_container_failed");
+      expect(summary).toContain("sandbox_phase=Error");
+      expect(summary).toContain("patched_container_exit_code=125");
+      const state = fs.readFileSync(
+        path.join(diagnostics?.dir || "", "patched-container-state.json"),
+        "utf-8",
+      );
+      expect(state).toContain("could not select device driver");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

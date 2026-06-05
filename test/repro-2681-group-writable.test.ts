@@ -43,7 +43,11 @@ function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode;
 }
 
-function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
+function withMockedDockerExecFileSync<T>(
+  calls: string[][],
+  run: () => T,
+  options: { symlinkedPaths?: ReadonlySet<string> } = {},
+): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerExecModule = require("../dist/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
@@ -66,6 +70,14 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
     const separator = args.indexOf("--");
     const command = separator >= 0 ? args.slice(separator + 1) : [...args];
     calls.push(command);
+    if (command[0] === "python3" && command[1] === "-c") {
+      for (const target of command.slice(6)) {
+        if (options.symlinkedPaths?.has(target)) {
+          throw new Error(`refusing symlink path: ${target}`);
+        }
+      }
+      return "";
+    }
     if (command[0] === "stat" && command[1] === "-c") {
       const target = command.at(-1);
       if (target === "/sandbox/.openclaw") return "2770 sandbox:sandbox\n";
@@ -148,6 +160,59 @@ describe("mutable agent config permissions", () => {
     }
   });
 
+  it("re-normalizes a tree that `openclaw doctor --fix` tightened to 700/600 (#4538)", () => {
+    // OpenClaw's `doctor --fix` enforces a single-user 700/600 state layout,
+    // which silently breaks NemoClaw's group-writable mutable contract so the
+    // gateway UID can no longer persist config edits. A (re)start must restore
+    // the setgid + group-writable contract.
+    const tmpDir = mkdtempOnPosixFs("nemoclaw-4538-doctor-fix-");
+    const configDir = path.join(tmpDir, ".openclaw");
+    const nestedDir = path.join(configDir, "agents", "main");
+    const configFile = path.join(configDir, "openclaw.json");
+    const hashFile = path.join(configDir, ".config-hash");
+
+    try {
+      fs.mkdirSync(nestedDir, { recursive: true });
+      fs.writeFileSync(configFile, "{}\n");
+      fs.writeFileSync(hashFile, "deadbeef\n");
+      // Simulate the post-`doctor --fix` single-user 700/600 layout.
+      fs.chmodSync(configFile, 0o600);
+      fs.chmodSync(hashFile, 0o600);
+      fs.chmodSync(nestedDir, 0o700);
+      fs.chmodSync(configDir, 0o700);
+
+      // Sanity-check the starting (tightened) state.
+      expect(modeBits(configDir) & 0o7777).toBe(0o700);
+      expect(modeBits(configFile) & 0o7777).toBe(0o600);
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
+            normalizeMutableConfigPermsFor(configDir),
+            "normalize_mutable_config_perms",
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(result.status).toBe(0);
+      // Mutable contract restored: setgid + group rwx dir, group rw files.
+      expect(modeBits(configDir) & 0o7777).toBe(0o2770);
+      expect(modeBits(configFile) & 0o7777).toBe(0o660);
+      expect(modeBits(hashFile) & 0o7777).toBe(0o660);
+      expect(modeBits(configDir) & 0o2000).toBe(0o2000);
+      expect(modeBits(nestedDir) & 0o2000).toBe(0o2000);
+      expect(modeBits(nestedDir) & 0o070).toBe(0o070);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("shields-down restores OpenClaw group-writable file modes and setgid dirs", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
@@ -172,14 +237,100 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/openclaw.json"]);
-    expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/.config-hash"]);
-    expect(commands).toContainEqual(["chmod", "2770", "/sandbox/.openclaw"]);
-    expect(commands).toContainEqual(["chmod", "2770", "/sandbox/.openclaw/workspace"]);
-    expect(commands).toContainEqual(["chmod", "-R", "g+rwX,o-rwx", "/sandbox/.openclaw/workspace"]);
-    expect(commands.find((command) => command[0] === "sh" && command[1] === "-c")).toEqual(
-      expect.arrayContaining(["/sandbox/.openclaw", "sandbox:sandbox", "g+rwX,o-rwx", "2770"]),
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
     );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "660",
+        "2770",
+        "sandbox:sandbox",
+        "/sandbox/.openclaw",
+        "/sandbox/.openclaw/openclaw.json",
+        "/sandbox/.openclaw/.config-hash",
+      ]),
+    );
+    // The consolidated state-dir unlock script restores ownership and mode on
+    // every high-risk state dir (including `workspace`) inside a single
+    // `sh -c` invocation; the workspace-* glob is handled by a second
+    // `sh -c`. Both are asserted via the `arrayContaining` check below.
+    const shellInvocations = commands.filter(
+      (command) => command[0] === "sh" && command[1] === "-c",
+    );
+    expect(
+      shellInvocations.some((command) =>
+        command.includes("/sandbox/.openclaw") &&
+        command.includes("sandbox:sandbox") &&
+        command.includes("g+rwX,o-rwx") &&
+        command.includes("2770") &&
+        command.includes("workspace"),
+      ),
+    ).toBe(true);
+    expect(
+      shellInvocations.some(
+        (command) =>
+          typeof command[2] === "string" && command[2].includes('workspace-*'),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses to unlock OpenClaw config when a config path is a symlink", () => {
+    const commands: string[][] = [];
+    expect(() =>
+      withMockedDockerExecFileSync(
+        commands,
+        () => {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+            unlockAgentConfig: (
+              sandboxName: string,
+              target: {
+                agentName?: string;
+                configPath: string;
+                configDir: string;
+                sensitiveFiles?: string[];
+              },
+            ) => void;
+          };
+
+          unlockAgentConfig("sandbox-pod", {
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+            sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+          });
+        },
+        {
+          symlinkedPaths: new Set(["/sandbox/.openclaw/openclaw.json"]),
+        },
+      ),
+    ).toThrow("refusing symlink path");
+
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
+    );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "/sandbox/.openclaw",
+        "/sandbox/.openclaw/openclaw.json",
+        "/sandbox/.openclaw/.config-hash",
+      ]),
+    );
+    const script = configUnlock?.[2] ?? "";
+    expect(script).toContain("unlock_ok = False");
+    expect(script).toContain('flags |= getattr(os, "O_NONBLOCK", 0)');
+    expect(script).toContain("if unlock_ok:");
+    expect(script).toContain("elif dir_stat is not None:");
+    expect(script).toContain("os.fchmod(dir_fd, stat.S_IMODE(dir_stat.st_mode))");
+    expect(
+      commands.some(
+        (command) =>
+          command[0] === "sh" &&
+          command[1] === "-c" &&
+          typeof command[2] === "string" &&
+          command[2].includes("chown -R"),
+      ),
+    ).toBe(false);
   });
 
   it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
@@ -206,9 +357,19 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/config.yaml"]);
-    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/.env"]);
-    expect(commands).toContainEqual(["chmod", "3770", "/sandbox/.hermes"]);
+    const configUnlock = commands.find(
+      (command) => command[0] === "python3" && command[1] === "-c",
+    );
+    expect(configUnlock).toEqual(
+      expect.arrayContaining([
+        "640",
+        "3770",
+        "sandbox:sandbox",
+        "/sandbox/.hermes",
+        "/sandbox/.hermes/config.yaml",
+        "/sandbox/.hermes/.env",
+      ]),
+    );
   });
 
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {
@@ -275,7 +436,7 @@ process.stdout.write(JSON.stringify(calls));
         command[0] === "sh" &&
         command[1] === "-c" &&
         command.includes("/sandbox/.openclaw") &&
-        command.includes("root:root") &&
+        command.includes("root:sandbox") &&
         command.includes("go-w") &&
         command.includes("755"),
     );

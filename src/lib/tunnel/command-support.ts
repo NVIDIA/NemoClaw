@@ -17,5 +17,6 @@ export function printTunnelUsage(log: (message?: string) => void = console.log):
   log("  Subcommands:");
   log("    start                 Start the cloudflared public-URL tunnel");
   log("    stop                  Stop the cloudflared public-URL tunnel");
+  log("    status                Show cloudflared public-URL tunnel status");
   log("");
 }

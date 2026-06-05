@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes", "config");
@@ -20,6 +21,24 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({}),
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
+
+const REMOTE_PLATFORM_TOOLSETS = [
+  "web",
+  "browser",
+  "terminal",
+  "file",
+  "code_execution",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+  "nemoclaw",
+  "audio",
+];
 
 let tmpDir: string;
 
@@ -89,6 +108,48 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   return fixtureScriptPath;
 }
 
+function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[] = []): void {
+  expect(Array.isArray(toolsets)).toBe(true);
+  expect(toolsets).toEqual([...REMOTE_PLATFORM_TOOLSETS, ...extraToolsets]);
+  expect(toolsets).not.toContain("no_mcp");
+}
+
+function findRawSecretEnvEntries(envFile: string): string[] {
+  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)/;
+  const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
+  const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
+  const allowedLiterals = new Set(["", "[STRIPPED_BY_MIGRATION]"]);
+  const violations: string[] = [];
+
+  for (const [index, rawLine] of envFile.split(/\r?\n/).entries()) {
+    let line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
+    const [rawKey, ...valueParts] = line.split("=");
+    const key = rawKey.trim();
+    if (allowedNonsecretKeys.has(key)) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !secretKey.test(key)) continue;
+    let value = valueParts.join("=").trim();
+    if (
+      value.length >= 2 &&
+      value[0] === value[value.length - 1] &&
+      (value[0] === "'" || value[0] === '"')
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (
+      allowedLiterals.has(value) ||
+      value.startsWith("openshell:resolve:env:") ||
+      slackAlias.test(value)
+    ) {
+      continue;
+    }
+    violations.push(`${key} line ${index + 1}`);
+  }
+
+  return violations;
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-config-test-"));
 });
@@ -105,6 +166,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
     expect(config.platforms).toEqual({
       api_server: {
@@ -117,6 +179,98 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
+  });
+
+  it("flags bare API-named .env secrets while allowing API server config", () => {
+    const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
+
+    expect(
+      findRawSecretEnvEntries(
+        [
+          "API_SERVER_PORT=18642",
+          "API_SERVER_HOST=127.0.0.1",
+          `INTERNAL_API=${rawSecret}`,
+          "SERVICE_API=openshell:resolve:env:SERVICE_API",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual(["INTERNAL_API line 3"]);
+  });
+
+  it("regression #4230: configures Anthropic Messages routing for Hermes managed inference", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "anthropic",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local",
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+    });
+
+    expect(config.model).toEqual({
+      default: "test-model",
+      provider: "custom",
+      base_url: "https://inference.local",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+      api_mode: "anthropic_messages",
+    });
+  });
+
+  it("maps OpenAI Responses routing to Hermes' codex_responses api mode", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_INFERENCE_API: "openai-responses",
+    });
+
+    expect(config.model).toMatchObject({
+      api_mode: "codex_responses",
+    });
+  });
+
+  it("fails fast for unsupported Hermes inference API values", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_INFERENCE_API: "graphql",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      "Unsupported Hermes inference API: graphql",
+    );
+  });
+
+  it("emits a model.api_key placeholder that satisfies the LiteLLM sk- prefix gate", () => {
+    const { config } = runConfigScript();
+
+    expect(typeof config.model.api_key).toBe("string");
+    expect(config.model.api_key.startsWith("sk-")).toBe(true);
+    expect(config.model.api_key).not.toBe("no-key-required");
+    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+  });
+
+  it("keeps generated and inference-switch Hermes proxy placeholders in sync", () => {
+    const { config } = runConfigScript();
+
+    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+  });
+
+  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+        "discord",
+        "slack",
+        "telegram",
+        "wechat",
+        "whatsapp",
+      ]),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        accountId: "test_account_42",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+    });
+
+    for (const platform of ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"]) {
+      expectRemotePlatformToolsets(config.platform_toolsets[platform]);
+    }
+
+    // The local Hermes CLI keeps upstream defaults.
+    expect(config.platform_toolsets.cli).toBeUndefined();
   });
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
@@ -137,8 +291,10 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.browser).toEqual({ cloud_provider: "browser-use", use_gateway: true });
     expect(config.image_gen).toEqual({ use_gateway: true });
     expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
+    expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
+    expect(envFile).not.toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=");
     expect(envFile).toContain(
       "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl\n",
     );
@@ -164,6 +320,34 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(`${result.stderr}\n${result.stdout}`).toContain(
       "Unknown Hermes managed-tool gateway preset: nous-typo",
     );
+  });
+
+  it("emits only resolver placeholders for secret-shaped Hermes env keys", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
+        "discord",
+        "slack",
+        "telegram",
+        "wechat",
+        "whatsapp",
+      ]),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        accountId: "test_account_42",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson([
+        "nous-web",
+        "nous-audio",
+        "nous-browser",
+        "nous-image",
+        "nous-code",
+      ]),
+    });
+
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+    expect(envFile).not.toContain("OPENAI_API_KEY=");
   });
 
   it("writes Discord settings in Hermes' top-level schema and keeps tokens in .env", () => {
@@ -238,7 +422,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
-  it("does not emit generic platforms blocks for Telegram or Slack messaging tokens", () => {
+  it("enables Slack under platforms and keeps Telegram top-level only when messaging tokens are configured", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
@@ -253,7 +437,7 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toBeUndefined();
-    expect(config.platforms.slack).toBeUndefined();
+    expect(config.platforms.slack).toEqual({ enabled: true });
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
     expect(envFile).toContain(
@@ -266,6 +450,24 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
     expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
+  });
+
+  it("omits platforms.slack when Slack channel is not enabled", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
+    });
+
+    expect(config.platforms.slack).toBeUndefined();
+    expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+  });
+
+  it("enables Slack under platforms even when the slack token allowlist is empty", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
+    });
+
+    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.api_server.enabled).toBe(true);
   });
 
   it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
@@ -367,6 +569,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "moonshotai/kimi-k2.6",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
     expect(config.kimi).toBeUndefined();
     expect(config.openclawPlugins).toBeUndefined();

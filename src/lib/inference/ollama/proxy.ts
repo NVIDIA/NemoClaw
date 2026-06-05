@@ -376,18 +376,31 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
-async function promptOllamaModel(gpu: GpuInfo | null = null) {
+async function promptOllamaModel(
+  gpu: GpuInfo | null = null,
+  promptOptions: { excludeModels?: ReadonlySet<string> } = {},
+) {
+  const excludeModels = promptOptions.excludeModels;
+  const isExcluded = (tag: string): boolean =>
+    excludeModels !== undefined && excludeModels.has(tag);
   const installed = getOllamaModelOptions();
   // Filter installed entries by registry-known memory fit so a host that
   // currently cannot load the only installed model still gets a usable
   // default — without the filter, pressing Enter would re-select the
   // oversized model the runner is about to crash on. Unknown tags (user-
   // pulled models the registry has never seen) pass the filter so the
-  // user's prior selection is respected.
-  const installedFitting = installed.filter((tag: string) => modelFitsAvailableMemory(tag, gpu));
+  // user's prior selection is respected. `excludeModels` additionally drops
+  // tags the caller knows the local probe has already rejected this round.
+  const installedFitting = installed.filter(
+    (tag: string) => modelFitsAvailableMemory(tag, gpu) && !isExcluded(tag),
+  );
   const usingInstalled = installedFitting.length > 0;
-  const options = usingInstalled ? installedFitting : getBootstrapOllamaModelOptions(gpu);
-  const defaultModel = getDefaultOllamaModel(gpu);
+  const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag) => !isExcluded(tag));
+  const options = usingInstalled ? installedFitting : bootstrap;
+  const defaultModelCandidate = getDefaultOllamaModel(gpu);
+  const defaultModel = isExcluded(defaultModelCandidate)
+    ? options[0] ?? defaultModelCandidate
+    : defaultModelCandidate;
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");

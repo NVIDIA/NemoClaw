@@ -1,21 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CommandGroup, PublicCommandDisplayEntry } from "./command-display";
+import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
+import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
+import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
-type PublicDisplayLayout = {
-  group: CommandGroup;
-  order: number;
-  usage?: string;
-  description?: string;
-  flags?: string;
-  hidden?: boolean;
-  deprecated?: boolean;
-};
-
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
+  ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
       "group": "Backup",
@@ -237,7 +232,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "group": "Sandbox Management",
       "order": 5,
       "description": "Run host, gateway, sandbox, and inference health checks",
-      "flags": "[--json]"
+      "flags": "[--json] [--fix]"
     }
   ],
   "sandbox:exec": [
@@ -448,6 +443,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Services",
       "order": 33
+    }
+  ],
+  "tunnel:status": [
+    {
+      "group": "Services",
+      "order": 33.5,
+      "description": "Show cloudflared public-URL tunnel status"
     }
   ],
   "uninstall": [
