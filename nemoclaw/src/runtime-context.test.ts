@@ -129,14 +129,14 @@ describe("registerRuntimeContext", () => {
     registerRuntimeContext(api, defaultConfig);
 
     const result = (await api._trigger("before_prompt_build", {}, {})) as {
-      prependContext: string;
+      prependSystemContext: string;
     };
 
-    expect(result.prependContext).toContain("<nemoclaw-runtime>");
-    expect(result.prependContext).toContain('OpenShell sandbox "openclaw"');
-    expect(result.prependContext).toContain("Network policy:");
-    expect(result.prependContext).toContain("Filesystem policy:");
-    expect(result.prependContext).toContain("</nemoclaw-runtime>");
+    expect(result.prependSystemContext).toContain("<nemoclaw-runtime>");
+    expect(result.prependSystemContext).toContain('OpenShell sandbox "openclaw"');
+    expect(result.prependSystemContext).toContain("Network policy:");
+    expect(result.prependSystemContext).toContain("Filesystem policy:");
+    expect(result.prependSystemContext).toContain("</nemoclaw-runtime>");
   });
 
   it("uses the persisted sandbox name in the injected context", async () => {
@@ -145,9 +145,9 @@ describe("registerRuntimeContext", () => {
     registerRuntimeContext(api, defaultConfig);
 
     const result = (await api._trigger("before_prompt_build", {}, {})) as {
-      prependContext: string;
+      prependSystemContext: string;
     };
 
-    expect(result.prependContext).toContain('OpenShell sandbox "my-assistant"');
+    expect(result.prependSystemContext).toContain('OpenShell sandbox "my-assistant"');
   });
 });

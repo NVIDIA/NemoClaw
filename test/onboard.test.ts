@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import {
+  isValidInferenceInputsOverride,
+  maybePromptForInferenceInputCapability,
+  shouldPromptForInferenceInputCapability,
+} from "../dist/lib/onboard/inference-input-capability.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -503,6 +508,40 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_MODEL = previousModel;
       }
     }
+  });
+
+  it("prompts for input capability only on likely multimodal model names", () => {
+    expect(shouldPromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b")).toBe(
+      true,
+    );
+    expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
+    expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
+  });
+
+  it("accepts only supported inference input capability overrides", () => {
+    expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("image")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,image")).toBe(true);
+    expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,text")).toBe(false);
+    expect(isValidInferenceInputsOverride("image,image")).toBe(false);
+    expect(isValidInferenceInputsOverride("text, image")).toBe(false);
+    expect(isValidInferenceInputsOverride("audio")).toBe(false);
+  });
+
+  it("normalizes invalid inference input capability overrides when choosing text only", async () => {
+    const env = {
+      NEMOCLAW_INFERENCE_INPUTS: "audio",
+    } as NodeJS.ProcessEnv;
+
+    await maybePromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b", {
+      env,
+      isNonInteractive: () => false,
+      prompt: async () => "",
+    });
+
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text");
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
@@ -1450,7 +1489,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1483,7 +1522,7 @@ proxy.persistAndProbeOllamaProxy = async (token) => {
 const { setupInference } = require(${onboardPath});
 
 (async () => {
-  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   console.log(JSON.stringify({ commands, proxyCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1589,7 +1628,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1615,7 +1654,7 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   try {
-    await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+    await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   } catch (err) {
     if (!err || !err.__exit) {
       origErr("[TEST] outer error:", err && err.message);
@@ -2709,6 +2748,10 @@ const { createSandbox } = require(${onboardPath});
     [],
     null,
     agent,
+    null,
+    null,
+    null,
+    ["nous-web"],
   );
   console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
 })().catch((error) => {
@@ -2732,11 +2775,17 @@ const { createSandbox } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
+      commands: CommandEntry[];
       logs: string[];
       warnings: string[];
       baseResolutionCalls: unknown[];
     }>(result.stdout);
     assert.equal(payload.baseResolutionCalls.length, 0);
+    const createCommand = payload.commands.find((entry) => entry.command.includes("sandbox create"));
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
+    assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
       !payload.logs.some((line) => line.includes("Using sandbox base image")),
       "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",

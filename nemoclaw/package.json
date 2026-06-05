@@ -15,7 +15,7 @@
       "minGatewayVersion": "2026.5.22"
     },
     "build": {
-      "openclawVersion": "2026.5.22"
+      "openclawVersion": "2026.5.27"
     }
   },
   "scripts": {

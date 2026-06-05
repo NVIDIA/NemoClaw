@@ -6,6 +6,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import { withGatewayTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -68,6 +69,7 @@ export interface GatewayStateOptions<Gpu> {
 export interface GatewayStateResult {
   gatewayReuseState: GatewayReuseState;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleGatewayState<Gpu>({
@@ -202,9 +204,15 @@ export async function handleGatewayState<Gpu>({
       }
     }
     await deps.startRecordedStep("gateway");
-    if (deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
+    if (
+      deps.isLinuxDockerDriverGatewayEnabled() &&
+      gatewayReuseState !== "missing" &&
+      gatewayReuseState !== "foreign-active"
+    ) {
       deps.note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
       deps.retireLegacyGatewayForDockerDriverUpgrade();
+      gatewayReuseState = "missing";
+    } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
     await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
@@ -213,5 +221,11 @@ export async function handleGatewayState<Gpu>({
     session = await deps.recordStepComplete("gateway");
   }
 
-  return { gatewayReuseState, session };
+  return {
+    gatewayReuseState,
+    session,
+    stateResult: advanceTo("provider_selection", {
+      metadata: { state: "gateway", gatewayReuseState },
+    }),
+  };
 }

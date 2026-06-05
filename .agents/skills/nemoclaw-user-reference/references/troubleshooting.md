@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Troubleshooting
 
 This page covers common issues you may encounter when installing, onboarding, or running NemoClaw, along with their resolution steps.
@@ -660,7 +658,8 @@ Use the raw Bedrock Runtime host, not an Anthropic `/v1/messages` path, and veri
 For auth, export `AWS_BEARER_TOKEN_BEDROCK`, `AWS_PROFILE`, or standard IAM environment credentials before onboarding; if you paste a key at the `COMPATIBLE_ANTHROPIC_API_KEY` prompt, NemoClaw uses it only as the adapter's Bedrock bearer token.
 Region errors usually mean the pasted endpoint region, `AWS_REGION`, `AWS_DEFAULT_REGION`, or the model/inference profile ID do not match.
 
-For Ollama, vLLM, NIM, and compatible-endpoint setup, the default timeout is 180 seconds.
+For Ollama, vLLM, NIM, and compatible-endpoint inference validation, the default timeout is 180 seconds.
+The managed NIM startup health wait uses a separate 15-minute (900-second) default and still exits early if the container stops before it becomes healthy.
 If large prompts still cause timeouts, increase it with `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` before re-running onboard:
 
 ```bash
@@ -1249,9 +1248,9 @@ If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
 
 If onboarding reports `OpenShell supervisor did not reconnect to the GPU-enabled container.` even though the diagnostic bundle shows the patched container is running and healthy, the supervisor-reconnect wait is treating a transient Error phase (reported while the OpenShell host re-registers the new container) as fatal.
-The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to five consecutive polls of about 10 seconds in total.
+The reconnect wait debounces consecutive Error-phase polls before fast-failing, defaulting to fifteen consecutive polls of about 30 seconds in total.
 Increase the debounce window with `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE` if your host needs more time to re-register the patched container, for example slow WSL2 + Docker Desktop setups.
-Set it to a higher integer such as `15` (about 30 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
+Set it to a higher integer such as `30` (about 60 seconds) and rerun onboarding; the value is clamped to a minimum of `1`.
 
 ### `pip install` fails with a system-packages error
 

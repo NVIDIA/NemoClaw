@@ -1394,9 +1394,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("enables supportsUsageInStreaming for Ollama provider keys (#2747)", () => {
     for (const providerKey of ["ollama", "ollama-local"]) {
       const config = runConfigScript({
-        NEMOCLAW_MODEL: "qwen2.5:7b",
+        NEMOCLAW_MODEL: "qwen3.5:9b",
         NEMOCLAW_PROVIDER_KEY: providerKey,
-        NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+        NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_INFERENCE_API: "openai-completions",
       });
@@ -1436,9 +1436,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
   // ollama-keyed default — including when a manifest opts the flag *off*.
   it("respects existing supportsUsageInStreaming from inference compat (#2747)", () => {
     const config = runConfigScript({
-      NEMOCLAW_MODEL: "qwen2.5:7b",
+      NEMOCLAW_MODEL: "qwen3.5:9b",
       NEMOCLAW_PROVIDER_KEY: "ollama",
-      NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+      NEMOCLAW_PRIMARY_MODEL_REF: "qwen3.5:9b",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
       NEMOCLAW_INFERENCE_API: "openai-completions",
       NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
@@ -1473,6 +1473,47 @@ describe("generate-openclaw-config.mts: config generation", () => {
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
+      expect(config.tools?.toolSearch).toBe(true);
+    }
+  }, 20_000);
+
+  // #4780: Nemotron generates invalid JS for OpenClaw's native code-based tool
+  // search (`tool_search_code`): CommonJS `require`, `openclaw.tools.search`
+  // called with an object instead of a string, `tool_describe`/`tool_call`
+  // invoked with bad ids. The run still succeeds via fallback, but the logs are
+  // flooded with `[tools] tool_search_code failed` errors. Disabling native
+  // tool search for this managed-inference route routes the model back to the
+  // structured tool-calling surface it handles correctly.
+  it("disables native OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+
+    expect(config.tools?.toolSearch).toBe(false);
+  });
+
+  it("does not disable native Tool Search for Nemotron on non-matching routes (#4780)", () => {
+    const cases = [
+      { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
+      { NEMOCLAW_PROVIDER_KEY: "nvidia" },
+      { NEMOCLAW_INFERENCE_API: "responses" },
+      { NEMOCLAW_INFERENCE_BASE_URL: "https://integrate.api.nvidia.com/v1" },
+    ];
+
+    for (const envCase of cases) {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_PROVIDER_KEY: "inference",
+        NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+        ...envCase,
+      });
+
       expect(config.tools?.toolSearch).toBe(true);
     }
   }, 20_000);

@@ -111,14 +111,24 @@ function patchFollowupRunnerFile(file) {
     }
 
     // Source boundary: OpenClaw 2026.5.18 passed opts into runQueuedFollowup,
-    // while 2026.5.22 closes over params.opts. Both shapes must have opts in
+    // 2026.5.22 closes over params.opts and uses createReplyOperation, and
+    // 2026.5.27 closes over params.opts and admits a queued reply turn before
+    // creating the run id. All reviewed shapes must have opts and queued in
     // scope before this NemoClaw run-id preservation shim is inserted.
-    const next = source.replace(
+    let next = source.replace(
       /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
         `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
     );
+    if (next === source) {
+      next = source.replace(
+        /(const admission = await admitReplyTurn\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*kind: "queued_followup",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal\n\s*\}\);[\s\S]*?replyOperation = admission\.operation;[\s\S]*?\n\s*)const runId = crypto\.randomUUID\(\);/,
+        (_match, prefix) =>
+          `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
+          `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
+      );
+    }
     if (next === source) {
       fail(`OpenClaw followup runner run-id shape not recognized in ${file}`);
     }
@@ -215,7 +225,10 @@ const followupCandidates = listJsFiles(distDir).filter((file) => {
   const source = fs.readFileSync(file, "utf8");
   return (
     source.includes("function createFollowupRunner") &&
-    source.includes("replyOperation = createReplyOperation") &&
+    (source.includes("replyOperation = createReplyOperation") ||
+      (source.includes("admitReplyTurn") &&
+        source.includes("replyOperation = admission.operation")) ||
+      source.includes("preserve chat.send run ids in followup queue")) &&
     (source.includes("const runId = crypto.randomUUID();") ||
       source.includes("preserve chat.send run ids in followup queue"))
   );
