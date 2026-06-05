@@ -42,14 +42,15 @@ describe("E2E reusable workflow contract", () => {
       DOCKERHUB_TOKEN:
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
+    const trustedRefGuard = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
     const messagingLiveSecrets = {
-      TELEGRAM_BOT_TOKEN_REAL: "${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}",
-      TELEGRAM_CHAT_ID_E2E: "${{ secrets.TELEGRAM_CHAT_ID_E2E }}",
-      DISCORD_BOT_TOKEN_REAL: "${{ secrets.DISCORD_BOT_TOKEN_REAL }}",
-      DISCORD_CHANNEL_ID_E2E: "${{ secrets.DISCORD_CHANNEL_ID_E2E }}",
-      SLACK_BOT_TOKEN_REAL: "${{ secrets.SLACK_BOT_TOKEN_REAL }}",
-      SLACK_APP_TOKEN_REAL: "${{ secrets.SLACK_APP_TOKEN_REAL }}",
-      SLACK_CHANNEL_ID_E2E: "${{ secrets.SLACK_CHANNEL_ID_E2E }}",
+      TELEGRAM_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
+      TELEGRAM_CHAT_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
+      DISCORD_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.DISCORD_BOT_TOKEN_REAL || '' }}`,
+      DISCORD_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.DISCORD_CHANNEL_ID_E2E || '' }}`,
+      SLACK_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_BOT_TOKEN_REAL || '' }}`,
+      SLACK_APP_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_APP_TOKEN_REAL || '' }}`,
+      SLACK_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.SLACK_CHANNEL_ID_E2E || '' }}`,
     };
 
     expect(reusableJobs.length).toBeGreaterThan(20);
@@ -58,18 +59,39 @@ describe("E2E reusable workflow contract", () => {
       const expectedSecrets =
         expectsLiveMessaging ? { ...defaultSecrets, ...messagingLiveSecrets } : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
-      expect(job.with?.messaging_live_secrets ?? false, name).toBe(expectsLiveMessaging);
+      expect(job.with?.messaging_live_secrets ?? false, name).toBe(
+        expectsLiveMessaging
+          ? "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}"
+          : false,
+      );
     }
   });
 
-  it("requires an explicit opt-in before exposing live messaging secrets to scripts", () => {
+  it("requires trusted target refs and an explicit opt-in before exposing live messaging secrets", () => {
     const callInputs =
       runnerWorkflow.on?.workflow_call?.inputs ??
       runnerWorkflow.true?.workflow_call?.inputs ??
       {};
     const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+    const messagingJob = nightlyWorkflow.jobs["messaging-providers-e2e"];
 
     expect(callInputs.messaging_live_secrets?.default).toBe(false);
+    expect(messagingJob.with?.messaging_live_secrets).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}",
+    );
+    for (const name of [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ]) {
+      expect(messagingJob.secrets?.[name], name).toBe(
+        `\${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.${name} || '' }}`,
+      );
+    }
     expect(runStep?.env?.TELEGRAM_BOT_TOKEN_REAL).toBe(
       "${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}",
     );

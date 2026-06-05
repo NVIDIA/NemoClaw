@@ -17,18 +17,26 @@ const repoRoot = path.join(import.meta.dirname, "..");
  * Run a small inline Node script that mocks out the minimal dependencies of
  * onboard.js, calls the given async expression, and prints a JSON payload.
  */
-function runScript(scriptBody: string): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  envOverrides: Record<string, string | undefined> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tier-onboard-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: tmpDir,
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    ...envOverrides,
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete env[key];
+  }
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf-8",
-    env: {
-      ...process.env,
-      HOME: tmpDir,
-      NEMOCLAW_NON_INTERACTIVE: "1",
-    },
+    env,
     timeout: 15000,
   });
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -195,6 +203,44 @@ process.exit = (code = 0) => {
     );
     assert.doesNotMatch(result.stderr, /Third-Party Software Notice/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /\[1\/8\] Preflight checks/);
+    assert.ok(!result.stdout.includes("UNEXPECTED_SUCCESS"));
+  });
+
+  it("ignores invalid NEMOCLAW_POLICY_TIER during interactive onboarding", () => {
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const script = String.raw`
+process.env.NEMOCLAW_POLICY_TIER = "invalid_tier";
+delete process.env.NEMOCLAW_NON_INTERACTIVE;
+const { onboard } = require(${onboardPath});
+const exitMarker = "__NEMOCLAW_TEST_PROCESS_EXIT__";
+process.exit = (code = 0) => {
+  const err = new Error(exitMarker);
+  err.code = Number(code);
+  throw err;
+};
+(async () => {
+  try {
+    await onboard({
+      acceptThirdPartySoftware: true,
+      sandboxName: "tier-test",
+    });
+    process.stdout.write("UNEXPECTED_SUCCESS\n");
+    process.exitCode = 0;
+  } catch (err) {
+    if (!err || err.message !== exitMarker) {
+      process.stderr.write((err && err.stack) || String(err));
+      process.exitCode = 99;
+      return;
+    }
+    process.stdout.write(JSON.stringify({ exitCode: err.code }) + "\n");
+    process.exitCode = err.code;
+  }
+})();
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: undefined });
+    assert.equal(result.status, 1, result.stderr);
+    assert.doesNotMatch(result.stderr, /Unknown policy tier: invalid_tier/);
+    assert.match(result.stderr, /Interactive onboarding requires a TTY/);
     assert.ok(!result.stdout.includes("UNEXPECTED_SUCCESS"));
   });
 

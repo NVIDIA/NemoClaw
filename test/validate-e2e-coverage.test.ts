@@ -306,7 +306,9 @@ describe("nightly E2E workflow validation", () => {
     const messagingSecrets =
       (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
     const messagingWith = (messagingJob?.with as Record<string, unknown> | undefined) ?? {};
-    if (messagingWith.messaging_live_secrets !== true) {
+    const trustedRefExpression =
+      "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}";
+    if (messagingWith.messaging_live_secrets !== trustedRefExpression) {
       missing.push("nightly messaging-providers-e2e with.messaging_live_secrets");
     }
 
@@ -317,7 +319,10 @@ describe("nightly E2E workflow validation", () => {
       if (runStepEnv[name] !== `\${{ inputs.messaging_live_secrets && secrets.${name} || '' }}`) {
         missing.push(`e2e-script Run E2E script env.${name}`);
       }
-      if (messagingSecrets[name] !== `\${{ secrets.${name} }}`) {
+      if (
+        messagingSecrets[name] !==
+        `\${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.${name} || '' }}`
+      ) {
         missing.push(`nightly messaging-providers-e2e secrets.${name}`);
       }
     }

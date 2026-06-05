@@ -6132,9 +6132,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  A sandbox name cannot be prompted for in this context.");
     process.exit(1);
   }
-  // Same fail-fast contract for NEMOCLAW_POLICY_TIER (#3741):
-  // validate before usage-notice state, preflight, gateway, or inference work.
-  policyTierEnv.validatePolicyTierEnvEarly();
+  // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
+  if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,

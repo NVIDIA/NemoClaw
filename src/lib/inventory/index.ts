@@ -199,7 +199,8 @@ export async function getSandboxInventory(
   deps: ListSandboxesCommandDeps,
 ): Promise<SandboxInventoryResult> {
   const recovery = await deps.recoverRegistryEntries();
-  const defaultSandbox = recovery.defaultSandbox || null;
+  const resolvedDefault =
+    resolveDefaultSandboxName(() => ({ defaultSandbox: recovery.defaultSandbox ?? null })) ?? null;
   const lastSession = deps.loadLastSession();
   // #2753: only surface the last-onboarded name when its sandbox step
   // actually completed. Otherwise an interrupted onboard would leave the
@@ -211,14 +212,14 @@ export async function getSandboxInventory(
 
   return {
     schemaVersion: 1,
-    defaultSandbox,
+    defaultSandbox: resolvedDefault,
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
     },
     lastOnboardedSandbox,
     sandboxes: recovery.sandboxes.map((sandbox) =>
-      buildSandboxInventoryRow(sandbox, defaultSandbox, deps.getActiveSessionCount),
+      buildSandboxInventoryRow(sandbox, resolvedDefault, deps.getActiveSessionCount),
     ),
   };
 }

@@ -360,19 +360,19 @@ jobs:
       env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-token-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-msg-provider","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-e2e","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
       nvidia_api_key: true
       github_token: true
-      messaging_live_secrets: true
+      messaging_live_secrets: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
-      TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
-      TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
-      DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
-      DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
-      SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
-      SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
-      SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+      TELEGRAM_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
+      TELEGRAM_CHAT_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
+      DISCORD_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
+      DISCORD_CHANNEL_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DISCORD_CHANNEL_ID_E2E || '' }}
+      SLACK_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_BOT_TOKEN_REAL || '' }}
+      SLACK_APP_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_APP_TOKEN_REAL || '' }}
+      SLACK_CHANNEL_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_CHANNEL_ID_E2E || '' }}
   openclaw-slack-pairing-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||

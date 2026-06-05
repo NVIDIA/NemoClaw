@@ -150,6 +150,12 @@ describe("#1077 — status host service PID dir matches start/stop env", () => {
   const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
   const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 
+  beforeEach(() => {
+    delete process.env.SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX;
+    delete process.env.NEMOCLAW_SANDBOX_NAME;
+  });
+
   afterEach(() => {
     if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
     else delete process.env.SANDBOX_NAME;
@@ -165,8 +171,6 @@ describe("#1077 — status host service PID dir matches start/stop env", () => {
 
   it("reports running cloudflared when status passes env-resolved sandboxName", () => {
     resetIntegrationPidDirs();
-    delete process.env.NEMOCLAW_SANDBOX;
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
     process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
     seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
 
@@ -183,8 +187,6 @@ describe("#1077 — status host service PID dir matches start/stop env", () => {
 
   it("reports stopped cloudflared when status passes registry sandbox but env PID dir has the process", () => {
     resetIntegrationPidDirs();
-    delete process.env.NEMOCLAW_SANDBOX;
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
     process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
     seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
 
@@ -196,8 +198,6 @@ describe("#1077 — status host service PID dir matches start/stop env", () => {
 
   it("showStatus prints running cloudflared from env-resolved production PID dir", () => {
     resetIntegrationPidDirs();
-    delete process.env.NEMOCLAW_SANDBOX;
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
     process.env.SANDBOX_NAME = INTEGRATION_ENV_SANDBOX;
     seedAliveCloudflaredPid(INTEGRATION_ENV_PID_DIR);
 
