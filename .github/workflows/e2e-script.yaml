@@ -57,6 +57,11 @@ on:
         required: false
         type: boolean
         default: false
+      messaging_live_secrets:
+        description: Pass optional live messaging provider secrets to the script.
+        required: false
+        type: boolean
+        default: false
     secrets:
       NVIDIA_API_KEY:
         required: false
@@ -189,10 +194,10 @@ jobs:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
           NVIDIA_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_API_KEY || '' }}
-          TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
-          TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
-          DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
-          DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
-          SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
-          SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
-          SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
+          TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
+          DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
+          DISCORD_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.DISCORD_CHANNEL_ID_E2E || '' }}
+          SLACK_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_BOT_TOKEN_REAL || '' }}
+          SLACK_APP_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_APP_TOKEN_REAL || '' }}
+          SLACK_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.SLACK_CHANNEL_ID_E2E || '' }}

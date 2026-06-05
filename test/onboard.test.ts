@@ -2748,6 +2748,10 @@ const { createSandbox } = require(${onboardPath});
     [],
     null,
     agent,
+    null,
+    null,
+    null,
+    ["nous-web"],
   );
   console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
 })().catch((error) => {
@@ -2771,11 +2775,17 @@ const { createSandbox } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
+      commands: CommandEntry[];
       logs: string[];
       warnings: string[];
       baseResolutionCalls: unknown[];
     }>(result.stdout);
     assert.equal(payload.baseResolutionCalls.length, 0);
+    const createCommand = payload.commands.find((entry) => entry.command.includes("sandbox create"));
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
+    assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
       !payload.logs.some((line) => line.includes("Using sandbox base image")),
       "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",

@@ -87,7 +87,8 @@ yaml_stub.safe_load = lambda *_args, **_kwargs: {}
 sys.modules.setdefault("yaml", yaml_stub)
 
 os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER"] = "1"
-os.environ["TOOL_GATEWAY_USER_TOKEN"] = "broker-token"
+os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"] = "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"
+os.environ["TOOL_GATEWAY_USER_TOKEN"] = "raw-legacy-token"
 os.environ["FAL_QUEUE_GATEWAY_URL"] = "http://host.openshell.internal:11436/fal-queue"
 os.environ["FIRECRAWL_GATEWAY_URL"] = "http://host.openshell.internal:11436/firecrawl"
 os.environ["OPENAI_AUDIO_GATEWAY_URL"] = "http://host.openshell.internal:11436/openai-audio"
@@ -204,10 +205,12 @@ print(json.dumps(result))
     expect(result.managed_enabled).toBe(true);
     expect(result.web_enabled).toBe(true);
     expect(result.web_url).toBe("http://host.openshell.internal:11436/firecrawl");
-    expect(result.web_token).toBe("broker-token");
+    expect(result.web_token).toBe(
+      "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+    );
     expect(result.audio_key).toBe("");
     expect(result.stt_config).toEqual([
-      "broker-token",
+      "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
       "http://host.openshell.internal:11436/openai-audio/v1",
     ]);
     expect(result.fal_status_url).toBe(
