@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
-import type { OnboardStateResult } from "./machine/result";
+import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
-import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
+import type { ResumeConfigConflict } from "./resume-config";
 
 function assertSkippableTransitionResult(result: OnboardStateResult): void {
-  if (result.type !== "transition" || !result.updates || Object.keys(result.updates).length === 0) {
+  if (result.type !== "transition" || !result.updates) {
+    return;
+  }
+  if (!Object.values(result.updates).some((value) => value !== undefined)) {
     return;
   }
   throw new Error("Cannot skip onboarding state result with context updates");
@@ -48,6 +51,8 @@ export class OnboardRuntimeBoundary {
       recordRepairEvent: this.recordRepairEvent.bind(this),
       recordResumeConflict: this.recordResumeConflict.bind(this),
       recordStateResult: this.recordStateResult.bind(this),
+      recordStepCompleteWithStateResult: this.recordStepCompleteWithStateResult.bind(this),
+      recordStepFailedWithStateResult: this.recordStepFailedWithStateResult.bind(this),
       recordStateResultWithStepCompatibility: this.recordStateResultWithStepCompatibility.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
@@ -99,6 +104,36 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().applyResult(result);
   }
 
+  async recordStepCompleteWithStateResult(
+    stepName: string,
+    updates: SessionUpdates,
+    result: OnboardStateResult,
+  ): Promise<Session> {
+    await this.getRuntime().markStepComplete(stepName, updates, { updateMachine: false });
+    return this.recordStateResultWithStepCompatibility(result);
+  }
+
+  async recordStepFailedWithStateResult(
+    stepName: string,
+    message: string | null,
+    result: OnboardStateFailedResult,
+  ): Promise<Session> {
+    await this.getRuntime().markStepFailed(stepName, message, { updateMachine: false });
+    return this.recordStateResult(result);
+  }
+
+  /**
+   * Compatibility bridge for the live onboarding host glue while legacy step helpers remain a
+   * second machine snapshot writer. `markStepStarted()` and `markStepComplete()` still mutate
+   * `session.machine` in src/lib/state/onboard-session.ts, so handlers that also return FSM
+   * transition results can hand back a result whose target has already been reached or whose
+   * source state is stale after a later legacy step advanced the snapshot. This change is limited
+   * to consuming handler results at the runtime boundary; removing legacy step mutation is a
+   * broader persistence/resume migration. Skipped transition results must stay metadata-only:
+   * applying context updates after skipping a transition would
+   * make the stale result an implicit source of truth. Remove this bridge once legacy step helpers
+   * no longer advance `session.machine` and handler FSM results are the only transition source.
+   */
   async recordStateResultWithStepCompatibility(result: OnboardStateResult): Promise<Session> {
     const runtime = this.getRuntime();
     const current = await runtime.session();
