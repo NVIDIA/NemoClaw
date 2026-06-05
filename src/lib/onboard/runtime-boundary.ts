@@ -8,7 +8,10 @@ import type { OnboardMachineEventType, OnboardMachineState } from "./machine/typ
 import type { ResumeConfigConflict } from "./resume-config";
 
 function assertSkippableTransitionResult(result: OnboardStateResult): void {
-  if (result.type !== "transition" || !result.updates || Object.keys(result.updates).length === 0) {
+  if (result.type !== "transition" || !result.updates) {
+    return;
+  }
+  if (!Object.values(result.updates).some((value) => value !== undefined)) {
     return;
   }
   throw new Error("Cannot skip onboarding state result with context updates");

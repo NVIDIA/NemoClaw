@@ -226,6 +226,34 @@ describe("OnboardRuntimeBoundary", () => {
     ).rejects.toThrow("Cannot skip onboarding state result with context updates");
   });
 
+  it("allows skipped transition results whose updates are all undefined", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    const session = await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", {
+        metadata: { state: "missing" },
+        updates: { provider: undefined, model: undefined },
+      }),
+    );
+
+    expect(session.machine.state).toBe("init");
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.skipped",
+      state: "init",
+      metadata: {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        targetState: "preflight",
+        sourceState: "missing",
+      },
+    });
+  });
+
   it("records live legacy step/result compatibility through provider retry and finalization", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({

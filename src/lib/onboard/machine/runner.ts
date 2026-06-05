@@ -64,7 +64,7 @@ export class OnboardMachineTransitionLimitError extends Error {
 const DEFAULT_MAX_TRANSITIONS = 100;
 
 function normalizeMaxTransitions(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_MAX_TRANSITIONS;
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_TRANSITIONS;
   return Math.max(1, Math.trunc(value));
 }
 
