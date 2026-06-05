@@ -195,15 +195,18 @@ onboard_sandbox() {
   local start_time
   start_time="$(date +%s)"
   info "Starting onboard of '${name}' with NEMOCLAW_GATEWAY_PORT=${gateway_port}"
-  if NEMOCLAW_NON_INTERACTIVE=1 \
+  if COMPATIBLE_API_KEY=dummy \
+    NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-    NEMOCLAW_PROVIDER=openai-compatible \
-    NEMOCLAW_OPENAI_API_KEY=test-key \
-    NEMOCLAW_OPENAI_BASE_URL="${FAKE_BASE_URL}" \
+    NEMOCLAW_PROVIDER=custom \
+    NEMOCLAW_ENDPOINT_URL="${FAKE_BASE_URL}" \
     NEMOCLAW_MODEL=test-model \
+    NEMOCLAW_POLICY_MODE=skip \
+    NEMOCLAW_DASHBOARD_PORT='' \
+    CHAT_UI_URL='' \
     NEMOCLAW_GATEWAY_PORT="${gateway_port}" \
     NEMOCLAW_SANDBOX_NAME="${name}" \
-    timeout "${PHASE_TIMEOUT}" "${NEMOCLAW_CMD[@]}" onboard --fresh --name "${name}" \
+    timeout "${PHASE_TIMEOUT}" "${NEMOCLAW_CMD[@]}" onboard --non-interactive \
     >"/tmp/${name}-onboard.log" 2>&1; then
     local elapsed
     elapsed=$(($(date +%s) - start_time))
@@ -214,6 +217,31 @@ onboard_sandbox() {
   dump_diagnostics "${label}"
   tail -200 "/tmp/${name}-onboard.log" | sed 's/^/    /'
   return 1
+}
+
+destroy_default_install_sandbox() {
+  local default_name
+  default_name="$("${NEMOCLAW_CMD[@]}" list 2>/dev/null \
+    | grep -E '^[[:space:]]+[a-zA-Z0-9_-]+ \*' \
+    | awk '{print $1}' \
+    | head -1 || true)"
+  if [ -z "${default_name}" ]; then
+    info "no pre-existing default sandbox to destroy"
+    return 0
+  fi
+  if [ "${default_name}" = "${SANDBOX_A}" ] || [ "${default_name}" = "${SANDBOX_B}" ]; then
+    info "default sandbox is one under test (${default_name}); skipping pre-destroy"
+    return 0
+  fi
+  info "destroying pre-existing default sandbox '${default_name}' (created by install.sh)"
+  if NEMOCLAW_NON_INTERACTIVE=1 timeout 300 "${NEMOCLAW_CMD[@]}" "${default_name}" destroy --yes \
+    >"/tmp/${default_name}-predestroy.log" 2>&1; then
+    pass "pre-existing default sandbox '${default_name}' destroyed"
+  else
+    fail "could not destroy pre-existing default sandbox '${default_name}'"
+    tail -100 "/tmp/${default_name}-predestroy.log" | sed 's/^/    /'
+    return 1
+  fi
 }
 
 verify_sandbox_alive() {
@@ -233,6 +261,9 @@ verify_sandbox_alive() {
 
 section "Stage 0: prepare fake inference endpoint"
 start_fake_openai
+
+section "Stage 0.5: destroy default sandbox created by install.sh (if any)"
+destroy_default_install_sandbox || exit 1
 
 section "Stage 1: onboard sandbox A on default gateway port (${GATEWAY_PORT_A})"
 onboard_sandbox "${SANDBOX_A}" "${GATEWAY_PORT_A}" || exit 1
