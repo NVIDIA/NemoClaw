@@ -307,7 +307,10 @@ for req in sorted(pending, key=lambda item: item.get("ts") or 0, reverse=True):
         print(req["requestId"])
         raise SystemExit(0)
     if kind == "scope-upgrade" and paired_entry and roles(req).issubset(roles(paired_entry) or roles(req)):
-        if requested and not requested.issubset(approved):
+        # OpenClaw 2026.5.27 may create a follow-on operator.admin request after
+        # the write/read request has already been applied. Keep this selector
+        # focused on the NemoClaw gateway-mode upgrade contract.
+        if {"operator.write", "operator.read"}.intersection(requested) and not requested.issubset(approved):
             print(req["requestId"])
             raise SystemExit(0)
 raise SystemExit(1)
@@ -363,7 +366,32 @@ for device in sorted(paired, key=lambda item: item.get("approvedAtMs") or 0, rev
     if not is_cli(device):
         continue
     approved = scopes(device)
-    if "operator.admin" in approved or {"operator.write", "operator.read"}.issubset(approved):
+    if {"operator.write", "operator.read"}.issubset(approved):
+        print(norm(device.get("deviceId")) or "cli-device")
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
+select_cli_paired_with_admin() {
+  python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+paired = [p for p in doc.get("paired") or [] if isinstance(p, dict)]
+
+def norm(value):
+    return str(value or "").strip()
+
+def is_cli(entry):
+    return norm(entry.get("clientMode")).lower() == "cli" or "cli" in norm(entry.get("clientId")).lower()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+for device in sorted(paired, key=lambda item: item.get("approvedAtMs") or 0, reverse=True):
+    if is_cli(device) and "operator.admin" in scopes(device):
         print(norm(device.get("deviceId")) or "cli-device")
         raise SystemExit(0)
 raise SystemExit(1)
@@ -957,6 +985,7 @@ state="$(device_state_json 2>&1)" || {
 printf '=== state after scope-upgrade approval ===\n%s\n' "$state" >>"$STATE_LOG"
 pending_after_approval=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || pending_after_approval=""
 paired_with_agent_scopes=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || paired_with_agent_scopes=""
+paired_with_admin=$(printf '%s' "$state" | select_cli_paired_with_admin 2>/dev/null) || paired_with_admin=""
 if [ -n "$pending_after_approval" ]; then
   fail "Scope-upgrade request is still pending after approval (${pending_after_approval})"
   exit 1
@@ -965,7 +994,11 @@ if [ -z "$paired_with_agent_scopes" ]; then
   fail "No CLI paired device has operator.write and operator.read after approval: $(printf '%s' "$state" | summarize_device_state)"
   exit 1
 fi
-pass "scope-upgrade approval grants the CLI device operator.write and operator.read"
+if [ -n "$paired_with_admin" ]; then
+  fail "Unexpected operator.admin approval for CLI device (${paired_with_admin})"
+  exit 1
+fi
+pass "scope-upgrade approval grants the CLI device operator.write and operator.read without approving operator.admin"
 
 section "Phase 5: Verify agent stays on gateway path"
 

@@ -57,6 +57,13 @@ reviews:
           `bash`, `sh`, or `powershell`, and must not include prompt markers
           such as `$`. Reserve `console` blocks for terminal transcripts that
           include prompts, output, or interactive sessions.
+        - Do not flag `$$nemoclaw` in docs. It is the correct build-time
+          variant placeholder for shared OpenClaw and Hermes command examples.
+        - When a docs PR adds a command-line example that works across all
+          NemoClaw agent aliases, comment if it uses a concrete alias such as
+          `nemoclaw` or `nemohermes`; ask the author to use `$$nemoclaw`
+          instead so generated OpenClaw and Hermes docs render the right
+          command name.
         - Use Fern callout components (<Note>, <Tip>, <Warning>) for callouts
           in MDX pages, not bold text or blockquotes. MyST admonitions are
           acceptable only in legacy .md pages that have not migrated yet.
