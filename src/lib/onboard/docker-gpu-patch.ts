@@ -12,9 +12,9 @@ import {
   dockerRm,
   dockerRun,
   dockerRunDetached,
-  dockerStart,
   dockerStop,
 } from "../adapters/docker";
+import { rollbackPatchToBackup } from "./docker-gpu-patch-finalize";
 import {
   type DockerGpuSupervisorReconnectDeps,
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
@@ -255,7 +255,6 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
-    | "dockerStart"
     | "dockerStop"
     | "dockerLogs"
     | "sleep"
@@ -271,7 +270,6 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     dockerRunDetached,
     dockerRename,
     dockerRm,
-    dockerStart,
     dockerStop,
     dockerLogs,
     sleep: (seconds: number) => {
@@ -879,86 +877,6 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
-// Tear down the newly-created GPU container and put the pre-patch backup
-// container back in its place. Used when supervisor reconnect cannot confirm
-// the GPU container is reachable — keeps the user on the CPU-only sandbox
-// they had before the patch attempt rather than a deleted-backup / failed-new
-// state that requires manual cleanup.
-function rollbackToBackupContainer(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  d: {
-    dockerStop: DockerContainerFn;
-    dockerRm: DockerContainerFn;
-    dockerRename: DockerRenameFn;
-    dockerStart: DockerContainerFn;
-  },
-): boolean {
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  d.dockerStop(refs.newContainerId, containerOpts);
-  d.dockerRm(refs.newContainerId, containerOpts);
-  const restored = d.dockerRename(
-    refs.backupContainerName,
-    refs.originalName,
-    containerOpts,
-  );
-  if (!isZeroStatus(restored)) return false;
-  const started = d.dockerStart(refs.originalName, containerOpts);
-  return isZeroStatus(started);
-}
-
-// Post-reconnect finaliser for callers that ran `recreateOpenShellDockerSandboxWithGpu`
-// with `waitForSupervisor: false`. The patch path defers backup cleanup so the
-// create flow can keep the pre-patch container available until its own
-// supervisor probe completes. The caller must invoke this function after that
-// probe with the observed outcome.
-//
-// `supervisorReady: true`  → remove the backup container.
-// `supervisorReady: false` → roll back to the backup container; the boolean
-//    return reflects whether the rollback completed (rename + start both
-//    succeeded). On a false return the caller is expected to surface the
-//    rollback-failed error path to the user.
-export type DockerGpuPatchFinalizeOptions = {
-  result: DockerGpuPatchResult;
-  supervisorReady: boolean;
-};
-
-export type DockerGpuPatchFinalizeOutcome = {
-  backupRemoved: boolean;
-  rolledBack: boolean;
-};
-
-export function finalizeDockerGpuPatchBackup(
-  options: DockerGpuPatchFinalizeOptions,
-  deps: DockerGpuPatchDeps = {},
-): DockerGpuPatchFinalizeOutcome {
-  const d = depsWithDefaults(deps);
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  if (options.result.backupRemoved) {
-    return { backupRemoved: true, rolledBack: false };
-  }
-  if (options.supervisorReady) {
-    d.dockerRm(options.result.backupContainerName, containerOpts);
-    return { backupRemoved: true, rolledBack: false };
-  }
-  const rolledBack = rollbackToBackupContainer(
-    {
-      newContainerId: options.result.newContainerId,
-      backupContainerName: options.result.backupContainerName,
-      originalName: options.result.originalName,
-    },
-    d,
-  );
-  return { backupRemoved: false, rolledBack };
-}
-
 export function recreateOpenShellDockerSandboxWithGpu(
   options: {
     sandboxName: string;
@@ -1078,9 +996,9 @@ export function recreateOpenShellDockerSandboxWithGpu(
     );
 
     if (!execReady) {
-      const rolledBack = rollbackToBackupContainer(
+      const rolledBack = rollbackPatchToBackup(
         { newContainerId, backupContainerName, originalName },
-        d,
+        deps,
       );
       context.rolledBack = rolledBack;
       throw new Error(

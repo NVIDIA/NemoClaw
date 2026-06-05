@@ -12,7 +12,6 @@ import type {
 } from "./docker-gpu-patch";
 import {
   applyDockerGpuPatchOrExit,
-  finalizeDockerGpuPatchBackup,
   findOpenShellDockerSandboxContainerIds,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -22,6 +21,7 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
