@@ -287,6 +287,25 @@ export class OnboardRuntime {
     return session;
   }
 
+  async emitResultSkipped(options: {
+    reason: "already_at_target" | "source_state_mismatch";
+    currentState: OnboardMachineState;
+    targetState: OnboardMachineState;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<Session> {
+    const session = this.ensureSession();
+    this.emit("state.result.skipped", session, {
+      state: session.machine.state,
+      metadata: {
+        ...eventMetadata(options.metadata),
+        reason: options.reason,
+        currentState: options.currentState,
+        targetState: options.targetState,
+      },
+    });
+    return session;
+  }
+
   async emitResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     const session = this.ensureSession();
     this.emit("resume.conflict", session, {

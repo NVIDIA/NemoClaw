@@ -1,12 +1,10 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Architecture Details
 
-NemoClaw combines a host CLI, a TypeScript plugin that runs with OpenClaw inside the sandbox, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
+NemoClaw combines a host CLI, an in-sandbox integration layer, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
 
 ## System Overview
 
-NVIDIA OpenShell is a general-purpose agent runtime. It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but has no opinions about what runs inside. NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox and makes the setup accessible.
+NVIDIA OpenShell is a general-purpose agent runtime. It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but has no opinions about what runs inside. NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox, prepares agent-specific integration, and makes the setup accessible.
 
 ```mermaid
 graph LR
@@ -42,8 +40,8 @@ graph LR
 
             subgraph SANDBOX["Sandbox Container 🔒"]
                 direction TB
-                AGENT["Agent<br/><small>OpenClaw or any<br/>compatible agent</small>"]:::agent
-                PLUG["NemoClaw Plugin<br/><small>Extends agent with<br/>managed configuration</small>"]:::sandbox
+                AGENT["Compatible Agent<br/><small>OpenClaw, Hermes,<br/>or another supported runtime</small>"]:::agent
+                PLUG["NemoClaw Integration<br/><small>Managed configuration<br/>and runtime context</small>"]:::sandbox
             end
         end
     end
@@ -91,7 +89,7 @@ graph TB
 
         subgraph DOCKER["Docker daemon"]
             direction TB
-            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>OpenClaw agent + NemoClaw plugin</small>"]:::sandbox
+            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>Compatible agent + NemoClaw integration</small>"]:::sandbox
         end
     end
 
@@ -115,44 +113,33 @@ Layering from top to bottom:
 | Host CLI | Host process (`nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
 | OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
-| Sandbox container | Docker container | Runs the OpenClaw agent and the NemoClaw plugin under Landlock + seccomp + netns. |
+| Sandbox container | Docker container | Runs the selected compatible agent and NemoClaw integration under Landlock + seccomp + netns. |
 | OpenShell L7 proxy | Gateway process | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider/placeholder system, and the L7 proxy substitutes the real value into outbound requests at egress.
-The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model — it is not a runtime component.
+The CLI helper `isInferenceRouteReady` (in `src/lib/onboard.ts`) is a host-side readiness check used by the resume flow to decide whether the active route already covers the chosen provider and model.
+It is not a runtime component.
 
 For the DGX Spark-specific variant of this topology (cgroup v2, aarch64, unified memory), refer to the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw).
 
-## NemoClaw Plugin
+## NemoClaw Agent Integration
 
-The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
-It runs in-process with the OpenClaw gateway inside the sandbox.
-It also registers runtime hooks that keep the agent aware of its environment.
-Before an agent turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+NemoClaw integrates with each supported agent through a runtime layer that adapts the agent to OpenShell-managed providers, policies, and sandbox state.
+The concrete files differ by agent because each runtime has its own plugin system, config format, state layout, and startup command.
+
+| Agent | Integration files | Runtime behavior |
+|---|---|---|
+| OpenClaw | `nemoclaw/openclaw.plugin.json`, `nemoclaw/src/runtime-context.ts`, and the TypeScript package under `nemoclaw/src/` | Registers the `/nemoclaw` slash command, adds the NemoClaw inference provider, and injects sandbox and policy context into OpenClaw turns. |
+| Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/plugin/plugin.yaml`, `agents/hermes/generate-config.ts`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, installs the NemoClaw Hermes plugin, writes `/sandbox/.hermes/config.yaml` and `/sandbox/.hermes/.env`, and launches `hermes gateway run` behind the OpenShell proxy. |
+
+The OpenClaw integration is a thin TypeScript plugin that runs in-process with the OpenClaw gateway inside the sandbox.
+Before an OpenClaw turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
 When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
 
-```text
-nemoclaw/
-├── src/
-│   ├── index.ts                    Plugin entry: registers all commands
-│   ├── cli.ts                      Commander.js subcommand wiring
-│   ├── runtime-context.ts          Sandbox and policy context injection
-│   ├── commands/
-│   │   ├── launch.ts               Fresh install into OpenShell
-│   │   ├── connect.ts              Interactive shell into sandbox
-│   │   ├── status.ts               Blueprint run state + sandbox health
-│   │   ├── logs.ts                 Stream blueprint and sandbox logs
-│   │   └── slash.ts                /nemoclaw chat command handler
-│   └── blueprint/
-│       ├── resolve.ts              Version resolution, cache management
-│       ├── fetch.ts                Download blueprint from OCI registry
-│       ├── verify.ts               Digest verification, compatibility checks
-│       ├── exec.ts                 Subprocess execution of blueprint runner
-│       └── state.ts                Persistent state (run IDs)
-├── openclaw.plugin.json            Plugin manifest
-└── package.json                    Commands declared under openclaw.extensions
-```
+The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
+The manifest declares Hermes' binary, health probe, config directory, state directories, messaging support, and OpenAI-compatible API endpoint.
+The build-time config generator turns NemoClaw onboarding choices into Hermes YAML and environment files, and the Hermes plugin manifest exposes NemoClaw tools and an `on_session_start` hook.
 
 ## NemoClaw Blueprint
 
@@ -166,10 +153,13 @@ nemoclaw-blueprint/
 ├── model-specific-setup/           Agent-scoped model/provider compatibility manifests
 ├── router/                         Model Router config and routing engine
 ├── policies/
-│   └── openclaw-sandbox.yaml       Default network + filesystem policy
+│   └── openclaw-sandbox.yaml       Default network + filesystem policy for the OpenClaw profile
 ```
 
-The blueprint runtime (TypeScript) lives in the plugin source tree:
+Hermes keeps its agent-owned image, plugin, config, entrypoint, and policy additions under `agents/hermes/`.
+The default Hermes policy starts from `agents/hermes/policy-additions.yaml`.
+
+The current blueprint runner implementation lives in the `nemoclaw/` TypeScript package:
 
 ```text
 nemoclaw/src/blueprint/
@@ -189,8 +179,8 @@ flowchart LR
     D --> E[status]
 ```
 
-1. Resolve. The plugin locates the blueprint artifact and checks the version against `min_openshell_version` and `min_openclaw_version` constraints in `blueprint.yaml`.
-2. Verify. The plugin checks the artifact digest against the expected value.
+1. Resolve. The integration layer locates the blueprint artifact and checks the version against the OpenShell and agent runtime constraints in `blueprint.yaml`.
+2. Verify. The integration layer checks the artifact digest against the expected value.
 3. Plan. The runner determines what OpenShell resources to create or update, such as the gateway, providers, sandbox, inference route, and policy.
 4. Apply. The runner executes the plan by calling `openshell` CLI commands.
 5. Status. The runner reports current state.
@@ -203,11 +193,11 @@ base image and layers the NemoClaw runtime Dockerfile on top. The direct bluepri
 runner still carries a pinned OpenShell Community OpenClaw image for legacy
 `openshell sandbox create --from` compatibility. Inside the sandbox:
 
-- OpenClaw runs with the NemoClaw plugin pre-installed.
+- The selected compatible agent runs with the NemoClaw integration layer installed or generated for that agent.
 - Inference calls are routed through OpenShell to the configured provider.
-- Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
+- Network egress is restricted by the baseline policy for the selected agent profile.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
-- The NemoClaw plugin injects sandbox and policy context into agent turns so the agent can report policy blocks accurately.
+- NemoClaw injects sandbox and policy context into agent turns when the selected agent supports runtime context hooks, so the agent can report policy blocks accurately.
 - The image exposes a Docker health check that probes the in-sandbox gateway, so container runtimes can report whether the agent service is responding.
 - The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
 
@@ -217,14 +207,14 @@ Inference requests from the agent never leave the sandbox directly.
 OpenShell intercepts them and routes to the configured provider:
 
 ```text
-Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
+Compatible agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
 ```
 
 When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
 The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
 
 Some model and provider combinations need agent-specific compatibility setup.
-NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so OpenClaw and Hermes fixes can be tested and reviewed independently.
+NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so fixes for each supported agent can be tested and reviewed independently.
 
 Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 
