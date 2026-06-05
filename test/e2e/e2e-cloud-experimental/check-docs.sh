@@ -691,9 +691,11 @@ extract_targets() {
       next;
     }
 
-    while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
-    while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
-    while ($visible =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
+    my $scan = $visible;
+    $scan =~ s/`[^`]*`//g;
+    while ($scan =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
     END {
       die "malformed HTML comment\n" if $in_comment;
     }

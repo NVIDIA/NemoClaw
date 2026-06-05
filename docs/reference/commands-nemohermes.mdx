@@ -8,6 +8,7 @@ description-agent: "Includes the full CLI reference for standalone NemoHermes co
 keywords: ["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]
 content:
   type: "reference"
+exclude-from-skills-gen: true
 ---
 {/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}
 
@@ -139,6 +140,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 ```bash
 NEMOCLAW_POLICY_TIER=restricted nemohermes onboard --non-interactive --yes-i-accept-third-party-software
 ```
+
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+Any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight with an error listing the valid options.
 
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
@@ -1214,6 +1218,15 @@ nemohermes tunnel stop
 ```
 
 `nemohermes stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
+
+### `nemohermes tunnel status`
+
+Show the current cloudflared public-URL tunnel status for the default sandbox dashboard.
+The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `nemohermes status`.
+
+```console
+nemohermes tunnel status
+```
 
 ### `nemohermes start`
 

@@ -182,6 +182,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 NEMOCLAW_POLICY_TIER=restricted $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+Any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight with an error listing the valid options.
+
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy-add`](#$$nemoclaw-name-policy-add) across re-onboards.
@@ -576,7 +579,7 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 ```console
 $ $$nemoclaw my-assistant status
 ...
-    Agent:    OpenClaw v2026.5.22
+    Agent:    OpenClaw v2026.5.27
 ...
 ```
 
@@ -1423,6 +1426,15 @@ $$nemoclaw tunnel stop
 
 `$$nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
+### `$$nemoclaw tunnel status`
+
+Show the current cloudflared public-URL tunnel status for the default sandbox dashboard.
+The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `$$nemoclaw status`.
+
+```console
+$$nemoclaw tunnel status
+```
+
 ### `$$nemoclaw start`
 
 <Warning>
@@ -1978,6 +1990,7 @@ For narrative how-to coverage of `NEMOCLAW_BREV_PROVIDER` and `NEMOCLAW_GPU`, se
 | `NEMOCLAW_GPU` | `a2-highgpu-1g:nvidia-tesla-a100:1` | GPU specification (instance type and GPU model) for the Brev instance. |
 | `NEMOCLAW_DEPLOY_NO_CONNECT` | unset | When set to `1`, skips the automatic `connect` step after the remote deploy completes. |
 | `NEMOCLAW_DEPLOY_NO_START_SERVICES` | unset | When set to `1`, skips starting services automatically after the remote deploy. |
+
 </AgentOnly>
 
 ### Legacy `$$nemoclaw setup`

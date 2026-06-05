@@ -8,7 +8,7 @@
 # attempts fail with transient upstream/network symptoms.
 
 is_transient_inference_set_failure() {
-  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|502|503|504|temporar' <<<"$1"
+  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|failed to verify inference endpoint|502|503|504|temporar' <<<"$1"
 }
 
 log_inference_switch_retry_info() {

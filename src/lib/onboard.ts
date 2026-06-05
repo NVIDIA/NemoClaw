@@ -16,9 +16,8 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { createSelectOnboardAgent }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
-const {
-  createInferenceSelectionValidationHelpers,
-}: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const { createInferenceSelectionValidationHelpers }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
@@ -434,6 +433,7 @@ const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = 
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
+const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
@@ -5160,6 +5160,7 @@ async function setupNim(
   }
 
   const selectedModel = isBackToSelection(model) ? null : model;
+  await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, { isNonInteractive, prompt });
   return {
     model: selectedModel,
     provider,
@@ -5534,13 +5535,7 @@ async function selectPolicyTier(): Promise<string> {
   const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
 
   if (isNonInteractive()) {
-    const name = (process.env.NEMOCLAW_POLICY_TIER || "balanced").trim().toLowerCase();
-    if (!tiers.getTier(name)) {
-      console.error(
-        `  Unknown policy tier: ${name}. Valid: ${allTiers.map((t) => t.name).join(", ")}`,
-      );
-      process.exit(1);
-    }
+    const name = policyTierEnv.resolvePolicyTierFromEnv();
     note(`  [non-interactive] Policy tier: ${name}`);
     return name;
   }
@@ -6061,7 +6056,7 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-const recordStateResult = onboardRuntimeBoundary.recordStateResult.bind(onboardRuntimeBoundary);
+const recordStateResult = onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
 function skippedStepMessage(
@@ -6158,6 +6153,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  A sandbox name cannot be prompted for in this context.");
     process.exit(1);
   }
+  // Same fail-fast contract for NEMOCLAW_POLICY_TIER (#3741):
+  // validate before usage-notice state, preflight, gateway, or inference work.
+  policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,
@@ -6457,7 +6455,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
-    session = preflightResult.session;
+    session = (await recordStateResult(preflightResult.stateResult), preflightResult.session);
     const {
       sandboxGpuConfig,
       resumeHasResolvedGpuIntent,
@@ -6529,7 +6527,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
-    session = gatewayResult.session;
+    session = (await recordStateResult(gatewayResult.stateResult), gatewayResult.session);
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
@@ -6614,7 +6612,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    session = providerInferenceResult.session;
+    session = (await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility([...providerInferenceResult.retryStateResults, providerInferenceResult.stateResult]), providerInferenceResult.session);
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
@@ -6689,7 +6687,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
-    session = sandboxStateResult.session;
+    session = (await recordStateResult(sandboxStateResult.stateResult), sandboxStateResult.session);
     sandboxName = sandboxStateResult.sandboxName;
     webSearchConfig = sandboxStateResult.webSearchConfig ?? null;
     selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
@@ -6731,7 +6729,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
-    session = agentSetupResult.session;
+    await recordStateResult(agentSetupResult.stateResult);
 
     const policiesResult = await handlePoliciesState({
       resume,
@@ -6768,7 +6766,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
     });
-    session = policiesResult.session;
+    await recordStateResult(policiesResult.stateResult);
     sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
 
     const finalizationResult = await handleFinalizationState({

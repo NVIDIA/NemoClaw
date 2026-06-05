@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import {
+  isValidInferenceInputsOverride,
+  maybePromptForInferenceInputCapability,
+  shouldPromptForInferenceInputCapability,
+} from "../dist/lib/onboard/inference-input-capability.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -503,6 +508,40 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_MODEL = previousModel;
       }
     }
+  });
+
+  it("prompts for input capability only on likely multimodal model names", () => {
+    expect(shouldPromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b")).toBe(
+      true,
+    );
+    expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
+    expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
+  });
+
+  it("accepts only supported inference input capability overrides", () => {
+    expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("image")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,image")).toBe(true);
+    expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,text")).toBe(false);
+    expect(isValidInferenceInputsOverride("image,image")).toBe(false);
+    expect(isValidInferenceInputsOverride("text, image")).toBe(false);
+    expect(isValidInferenceInputsOverride("audio")).toBe(false);
+  });
+
+  it("normalizes invalid inference input capability overrides when choosing text only", async () => {
+    const env = {
+      NEMOCLAW_INFERENCE_INPUTS: "audio",
+    } as NodeJS.ProcessEnv;
+
+    await maybePromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b", {
+      env,
+      isNonInteractive: () => false,
+      prompt: async () => "",
+    });
+
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text");
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
