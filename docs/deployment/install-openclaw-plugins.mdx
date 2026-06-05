@@ -66,9 +66,11 @@ If you need a second sandbox alongside an existing one, use a dedicated build di
 
 ## Keep Custom Builds Fast
 
-Custom plugin images are normal Docker builds, so most build-time surprises come from the build context and Docker cache state rather than the plugin itself.
+Custom plugin images are normal Docker builds.
+Most build-time surprises come from the build context and Docker cache state rather than the plugin itself.
 Use a small, dedicated build directory for every custom image.
-The Dockerfile's parent directory is the context that NemoClaw stages before the Docker build starts; broad directories such as your home directory, `/tmp`, or a repo root with large generated artifacts can make onboarding look stuck while Docker is only preparing context.
+The Dockerfile's parent directory is the context that NemoClaw stages before the Docker build starts.
+Broad directories such as your home directory, `/tmp`, or a repo root with large generated artifacts can make onboarding look stuck while Docker is only preparing context.
 
 Use this checklist before running `nemoclaw onboard --from` or rebuilding a sandbox from a custom Dockerfile:
 
