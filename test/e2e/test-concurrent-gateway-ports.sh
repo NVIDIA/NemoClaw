@@ -93,15 +93,75 @@ cleanup() {
 trap cleanup EXIT
 
 start_fake_openai() {
-  python3 - "$FAKE_HOST" "$FAKE_PORT" >"$FAKE_LOG" 2>&1 &
+  python3 - "$FAKE_HOST" "$FAKE_PORT" >"$FAKE_LOG" 2>&1 <<'PY' &
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+HOST = sys.argv[1]
+PORT = int(sys.argv[2])
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        return
+
+    def do_GET(self):
+        if self.path in ("/v1/models", "/models"):
+            self._send(200, {"data": [{"id": "test-model", "object": "model"}]})
+            return
+        self._send(404, {"error": {"message": "not found"}})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length:
+            self.rfile.read(length)
+        if self.path in ("/v1/chat/completions", "/chat/completions"):
+            self._send(
+                200,
+                {
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                },
+            )
+            return
+        if self.path in ("/v1/responses", "/responses"):
+            self._send(
+                200,
+                {
+                    "id": "resp-test",
+                    "object": "response",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                },
+            )
+            return
+        self._send(404, {"error": {"message": "not found"}})
+
+
+HTTPServer((HOST, PORT), Handler).serve_forever()
+PY
   FAKE_PID=$!
-  sleep 1
-  if ! kill -0 "$FAKE_PID" 2>/dev/null; then
-    fail "Fake OpenAI server did not start; see ${FAKE_LOG}"
-    cat "$FAKE_LOG"
-    exit 1
-  fi
-  info "Fake OpenAI server up on ${FAKE_BASE_URL} (pid ${FAKE_PID})"
+
+  for _ in $(seq 1 20); do
+    if curl -sf "${FAKE_BASE_URL}/models" >/dev/null 2>&1; then
+      info "Fake OpenAI server up on ${FAKE_BASE_URL} (pid ${FAKE_PID})"
+      return 0
+    fi
+    sleep 1
+  done
+
+  fail "Fake OpenAI server did not become ready on ${FAKE_BASE_URL}; see ${FAKE_LOG}"
+  cat "$FAKE_LOG"
+  exit 1
 }
 
 dashboard_port_from_list() {
@@ -136,17 +196,17 @@ onboard_sandbox() {
   start_time="$(date +%s)"
   info "Starting onboard of '${name}' with NEMOCLAW_GATEWAY_PORT=${gateway_port}"
   if NEMOCLAW_NON_INTERACTIVE=1 \
-     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-     NEMOCLAW_PROVIDER=openai-compatible \
-     NEMOCLAW_OPENAI_API_KEY=test-key \
-     NEMOCLAW_OPENAI_BASE_URL="${FAKE_BASE_URL}" \
-     NEMOCLAW_MODEL=test-model \
-     NEMOCLAW_GATEWAY_PORT="${gateway_port}" \
-     NEMOCLAW_SANDBOX_NAME="${name}" \
-     timeout "${PHASE_TIMEOUT}" "${NEMOCLAW_CMD[@]}" onboard --fresh --name "${name}" \
-       >"/tmp/${name}-onboard.log" 2>&1; then
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_PROVIDER=openai-compatible \
+    NEMOCLAW_OPENAI_API_KEY=test-key \
+    NEMOCLAW_OPENAI_BASE_URL="${FAKE_BASE_URL}" \
+    NEMOCLAW_MODEL=test-model \
+    NEMOCLAW_GATEWAY_PORT="${gateway_port}" \
+    NEMOCLAW_SANDBOX_NAME="${name}" \
+    timeout "${PHASE_TIMEOUT}" "${NEMOCLAW_CMD[@]}" onboard --fresh --name "${name}" \
+    >"/tmp/${name}-onboard.log" 2>&1; then
     local elapsed
-    elapsed=$(( $(date +%s) - start_time ))
+    elapsed=$(($(date +%s) - start_time))
     pass "${label} completed in ${elapsed}s"
     return 0
   fi
@@ -220,7 +280,7 @@ fi
 
 LIST_OUTPUT="$("${NEMOCLAW_CMD[@]}" list 2>&1 || true)"
 if echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]*${SANDBOX_A}[[:space:]]" \
-   && echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]*${SANDBOX_B}[[:space:]]"; then
+  && echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]*${SANDBOX_B}[[:space:]]"; then
   pass "nemoclaw list shows both sandbox A and B"
 else
   fail "nemoclaw list missing one of A/B"
@@ -230,7 +290,7 @@ fi
 
 section "Stage 4: destroy sandbox B; assert sandbox A still healthy"
 if NEMOCLAW_NON_INTERACTIVE=1 timeout 300 "${NEMOCLAW_CMD[@]}" "${SANDBOX_B}" destroy --yes \
-     >"/tmp/${SANDBOX_B}-destroy.log" 2>&1; then
+  >"/tmp/${SANDBOX_B}-destroy.log" 2>&1; then
   pass "Sandbox B destroyed"
 else
   fail "Sandbox B destroy timed out or failed"
