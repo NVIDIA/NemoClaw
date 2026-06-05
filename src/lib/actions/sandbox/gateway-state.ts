@@ -7,17 +7,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
-import { DEFAULT_GATEWAY_NAME } from "../../state/gateway-name";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
-import * as onboardSession from "../../state/onboard-session";
-import type { Session } from "../../state/onboard-session";
+
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -36,7 +35,6 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import * as registry from "../../state/registry";
 import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
@@ -220,7 +218,7 @@ export function reconcileMissingAgainstNamedGateway(
 ): SandboxGatewayState {
   const lifecycle = getNamedGatewayLifecycleState();
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", DEFAULT_GATEWAY_NAME], {
+    runOpenshell(["gateway", "select", "nemoclaw"], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -262,12 +260,12 @@ export function printWrongGatewayActiveGuidance(
   activeGateway: string | null | undefined,
   writer: (message: string) => void = console.error,
 ): void {
-  const other = activeGateway && activeGateway !== DEFAULT_GATEWAY_NAME ? activeGateway : "another gateway";
+  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
   writer(
     `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );
   writer("  Switch gateways and retry:");
-  writer(`      openshell gateway select ${DEFAULT_GATEWAY_NAME}`);
+  writer("      openshell gateway select nemoclaw");
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
 }
 
@@ -283,7 +281,7 @@ export function printGatewayLifecycleHint(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
     writer(
-      `  Start the gateway again with \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` before expecting existing sandboxes to reconnect.`,
+      "  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.",
     );
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
@@ -292,14 +290,14 @@ export function printGatewayLifecycleHint(
   }
   if (
     /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    new RegExp(`Gateway:\\s+${DEFAULT_GATEWAY_NAME}`, "i").test(cleanOutput)
+    /Gateway:\s+nemoclaw/i.test(cleanOutput)
   ) {
     writer(
-      `  The selected ${CLI_DISPLAY_NAME} gateway exists in metadata, but its API is refusing connections after restart.`,
+      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      `  Retry \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
+      "  Retry `openshell gateway start --name nemoclaw`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.",
     );
     return;
   }
@@ -368,7 +366,7 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      new RegExp(`Gateway:\\s+${DEFAULT_GATEWAY_NAME}`, "i").test(latestStatus)
+      /Gateway:\s+nemoclaw/i.test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -432,18 +430,23 @@ export async function ensureLiveSandboxOrExit(
       }
       process.exit(1);
     }
-    registry.removeSandbox(sandboxName);
-    const session = onboardSession.loadSession();
-    if (session && session.sandboxName === sandboxName) {
-      onboardSession.updateSession((state: Session) => {
-        state.sandboxName = null;
-        return state;
-      });
-    }
-    console.error(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-    console.error("  Removed stale local registry entry.");
+    // The sandbox is absent from a healthy NemoClaw gateway, but the local
+    // registry entry still holds the metadata that `rebuild` / `onboard
+    // --recreate-sandbox` need to recover it. Removing it here would race with
+    // the recovery guidance `status` prints for a stuck/stale sandbox: a
+    // routine `connect` would delete the very state the recommended
+    // `rebuild --yes` depends on, so the rebuild then fails with "does not
+    // exist" (#4497). Preserve the entry and route intentional purges through
+    // the explicit `destroy` command instead of deleting state automatically.
     console.error(
-      `  Run \`${CLI_NAME} list\` to confirm the remaining sandboxes, or \`${CLI_NAME} onboard\` to create a new one.`,
+      `  Sandbox '${sandboxName}' is registered locally, but is not present in the live OpenShell gateway.`,
+    );
+    console.error("  Your local registry entry has been preserved — nothing was removed.");
+    console.error(
+      `  If the live sandbox is stuck mid-provision, retry \`${CLI_NAME} ${sandboxName} rebuild --yes\` once it reappears to recreate it (workspace state is preserved when the live sandbox still exists).`,
+    );
+    console.error(
+      `  If the sandbox was intentionally deleted, run \`${CLI_NAME} ${sandboxName} destroy\` to remove the stale local entry, or \`${CLI_NAME} onboard\` to create a new one.`,
     );
     process.exit(1);
   }
@@ -487,7 +490,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Retry \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` and verify \`openshell status\` is healthy before reconnecting.`,
+      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -502,7 +505,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      `  Start the gateway again with \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` before retrying.`,
+      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
     );
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",

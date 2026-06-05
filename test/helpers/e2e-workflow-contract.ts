@@ -11,11 +11,13 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export type WorkflowJob = {
   uses?: string;
   secrets?: Record<string, string>;
+  steps?: WorkflowStep[];
   with?: Record<string, string>;
 };
 
 export type WorkflowStep = {
   name?: string;
+  if?: string;
   uses?: string;
   with?: Record<string, unknown>;
   env?: Record<string, string>;

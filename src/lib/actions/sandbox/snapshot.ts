@@ -14,7 +14,6 @@ import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { isShieldsDown } from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
-import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -27,6 +26,8 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+
+const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -215,6 +216,10 @@ async function autoCreateSandboxFromSource(
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
+    // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+    // so clear src's proof rather than inheriting it — otherwise dst could show
+    // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+    sandboxGpuProof: null,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);

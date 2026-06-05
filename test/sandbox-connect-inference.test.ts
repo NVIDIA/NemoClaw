@@ -393,7 +393,123 @@ function runConnect(
   );
 }
 
+function extractApprovalPassScript(stateFile: string, sandboxName: string): string {
+  const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+  const approvalExec = (state.sandboxExecCalls as string[][]).find(
+    (call) =>
+      call.includes("--") &&
+      call.some((segment) => segment.includes("openclaw")) &&
+      call.some((segment) => segment.includes("devices")) &&
+      call.some((segment) => segment.includes("approve")),
+  );
+  expect(approvalExec).toBeDefined();
+  expect(approvalExec).toContain("sandbox");
+  expect(approvalExec).toContain("exec");
+  expect(approvalExec).toContain("--name");
+  expect(approvalExec).toContain(sandboxName);
+  return approvalExec?.[approvalExec.length - 1] || "";
+}
+
+function runApprovalPassScript(
+  script: string,
+  pending: unknown[],
+  extraEnv: NodeJS.ProcessEnv = {},
+) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-pass-"));
+  const openclawPath = path.join(tmpDir, "openclaw");
+  const approvalsFile = path.join(tmpDir, "approvals.log");
+  const approvalEnvFile = path.join(tmpDir, "approval-env.log");
+  const pendingResponse = JSON.stringify({ pending, paired: [] });
+
+  try {
+    fs.writeFileSync(
+      openclawPath,
+      `#!${process.execPath}
+const fs = require("fs");
+const args = process.argv.slice(2);
+if (args[0] === "devices" && args[1] === "list") {
+  process.stdout.write(${JSON.stringify(`${pendingResponse}\n`)});
+  process.exit(0);
+}
+if (args[0] === "devices" && args[1] === "approve") {
+  fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
+  fs.appendFileSync(
+    ${JSON.stringify(approvalEnvFile)},
+    [
+      process.env.OPENCLAW_GATEWAY_URL || "unset",
+      process.env.OPENCLAW_GATEWAY_PORT || "unset",
+      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
+    ].join(":") + "\\n",
+  );
+  process.stdout.write("{}\\n");
+  process.exit(0);
+}
+process.stderr.write("unexpected openclaw args: " + args.join(" ") + "\\n");
+process.exit(2);
+`,
+      { mode: 0o755 },
+    );
+
+    const result = spawnSync("sh", ["-c", script], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${tmpDir}:/usr/bin:/bin`,
+        OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+        OPENCLAW_GATEWAY_PORT: "18789",
+        OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+        ...extraEnv,
+      },
+      timeout: 10_000,
+    });
+    const approvals = fs.existsSync(approvalsFile)
+      ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
+      : [];
+    const approvalEnv = fs.existsSync(approvalEnvFile)
+      ? fs.readFileSync(approvalEnvFile, "utf-8").trim().split("\n").filter(Boolean)
+      : [];
+    return { result, approvals, approvalEnv };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("sandbox connect inference route swap (#1248)", () => {
+  it(
+    "skips the vLLM model preflight on connect --probe-only but keeps it for a full connect (#4585)",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture(
+        {
+          name: "my-sandbox",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+      const bogus = { NEMOCLAW_VLLM_MODEL: "definitely-not-a-real-vllm-model" };
+      const PREFLIGHT_HINT = "NEMOCLAW_VLLM_MODEL is consumed by";
+
+      // probe-only / recover never install or serve a model, so the express-vLLM
+      // model preflight must be skipped rather than hard-exiting the probe.
+      const probe = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, ["--probe-only"]);
+      const probeOut = (probe.stdout || "") + (probe.stderr || "");
+      // probe-only must proceed (not just avoid the hint): a non-zero exit would
+      // mean it failed for some other reason before the skipped preflight.
+      expect(probe.status).toBe(0);
+      expect(probeOut).not.toContain(PREFLIGHT_HINT);
+
+      // A full connect still runs the preflight and fails fast on the bogus value.
+      const full = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, []);
+      const fullOut = (full.stdout || "") + (full.stderr || "");
+      expect(full.status).toBe(1);
+      expect(fullOut).toContain(PREFLIGHT_HINT);
+    },
+  );
+
   it(
     "swaps inference route when live route does not match sandbox provider",
     testTimeoutOptions(20_000),
@@ -423,11 +539,51 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "--no-verify",
       ]);
 
-      // Verify the notice was printed
+      // Override must be loud (#3726), not a silent status-style line.
       const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("differs from the recorded route");
       expect(combined).toContain(
-        "Switching inference route to anthropic-prod/claude-sonnet-4-20250514",
+        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
       );
+    },
+  );
+
+  it(
+    "warns and aligns the route even in --probe-only quiet mode (#3726)",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "probe-diverged-sandbox",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "nvidia-prod", // live gateway route differs from the recorded route
+        "nvidia/nemotron-3-super-120b-a12b",
+      );
+
+      const result = runConnect(tmpDir, sandboxName, {}, ["--probe-only"]);
+      expect(result.status).toBe(0);
+
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      // Divergence warning is emitted even though the probe path runs quiet.
+      const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("differs from the recorded route");
+      expect(combined).toContain(
+        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
+      );
+      // Gateway is still re-pointed to the recorded route...
+      expect(state.inferenceSetCalls).toContainEqual([
+        "--provider",
+        "anthropic-prod",
+        "--model",
+        "claude-sonnet-4-20250514",
+        "--no-verify",
+      ]);
+      // ...and probe-only never opens an SSH session.
+      expect(state.sandboxConnectCalls).toEqual([]);
     },
   );
 
@@ -1233,43 +1389,145 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const result = runConnect(tmpDir, sandboxName);
       expect(result.status).toBe(0);
 
-      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      // Look for the approval-pass sandbox-exec invocation specifically.
-      const approvalExec = (state.sandboxExecCalls as string[][]).find(
-        (call) =>
-          call.includes("--") &&
-          call.some((segment) => segment.includes("openclaw")) &&
-          call.some((segment) => segment.includes("devices")) &&
-          call.some((segment) => segment.includes("approve")),
-      );
-      expect(approvalExec).toBeDefined();
-      // The exec must target the requested sandbox and use `sh -c <script>`.
-      expect(approvalExec).toContain("sandbox");
-      expect(approvalExec).toContain("exec");
-      expect(approvalExec).toContain("--name");
-      expect(approvalExec).toContain(sandboxName);
-      const script = approvalExec?.[approvalExec.length - 1] || "";
-      // Hardened script content: sources the proxy env, allowlists only
-      // openclaw-control-ui plus webchat/cli, and short-circuits when the
-      // tools aren't present.
+      const script = extractApprovalPassScript(stateFile, sandboxName);
+      // Hardened script content: source the proxy env, require local tools,
+      // and execute the trusted helper payload in memory instead of importing
+      // authorization code from predictable shared temp storage.
       expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
       expect(script).toContain("command -v openclaw");
       expect(script).toContain("command -v python3");
       expect(script).toContain("devices");
       expect(script).toContain("list");
       expect(script).toContain("approve");
-      expect(script).toContain("approve_env = os.environ.copy()");
-      expect(script).toContain("approve_env.pop('OPENCLAW_GATEWAY_URL', None)");
+      expect(script).toContain("NEMOCLAW_APPROVAL_POLICY_B64=");
+      expect(script).toContain("base64.b64decode");
+      expect(script).toContain("exec(compile(policy_source");
+      expect(script).toContain("decision = approval_request_decision(device)");
+      expect(script).toContain("if not decision['allowed']:");
+      expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
       expect(script).toContain("env=approve_env");
       expect(script).toContain("if approve_proc.returncode == 0");
-      expect(script).toContain("openclaw-control-ui");
-      expect(script).toContain("webchat");
-      expect(script).toContain("cli");
+      expect(script).not.toContain("/tmp/openclaw_device_approval_policy.py");
+      expect(script).not.toContain("sys.path.insert(0, '/tmp')");
       expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
-        script.indexOf("approve_env = os.environ.copy()"),
+        script.indexOf("approve_env = gateway_approval_env(os.environ)"),
       );
-      // Allowlist must NOT silently approve arbitrary clients.
-      expect(script).not.toContain("evil-client");
+    },
+  );
+
+  it(
+    "rejects malformed and disallowed scope requests when the approval pass runs",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "approval-pass-policy",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+      const script = extractApprovalPassScript(stateFile, sandboxName);
+      const run = runApprovalPassScript(script, [
+        {
+          requestId: "ok-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: ["operator.read", "operator.write"],
+        },
+        {
+          requestId: "admin-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: ["operator.admin"],
+        },
+        {
+          requestId: "malformed-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          requestedScopes: "operator.write",
+        },
+        {
+          requestId: "unknown-client",
+          clientId: "evil-client",
+          clientMode: "unknown",
+          scopes: ["operator.read"],
+        },
+        {
+          requestId: "dedupe-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          requestedScopes: ["operator.read"],
+        },
+        {
+          requestId: "dedupe-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          requestedScopes: ["operator.read"],
+        },
+      ]);
+
+      expect(run.result.status).toBe(0);
+      expect(run.approvals).toEqual(["ok-cli", "dedupe-cli"]);
+      expect(run.approvalEnv).toEqual(["unset:unset:unset", "unset:unset:unset"]);
+    },
+  );
+
+  it(
+    "does not import approval policy from PYTHONPATH",
+    testTimeoutOptions(20_000),
+    () => {
+      const { tmpDir, stateFile, sandboxName } = setupFixture(
+        {
+          name: "approval-pass-tmp-tamper",
+          model: "claude-sonnet-4-20250514",
+          provider: "anthropic-prod",
+          gpuEnabled: false,
+          policies: [],
+        },
+        "anthropic-prod",
+        "claude-sonnet-4-20250514",
+      );
+      const maliciousPolicy = [
+        "def approval_request_decision(_device):",
+        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+        "",
+        "def gateway_approval_env(source_env=None):",
+        "    return dict(source_env or {})",
+        "",
+      ].join("\n");
+      const maliciousPythonPath = path.join(tmpDir, "malicious-pythonpath");
+
+      fs.mkdirSync(maliciousPythonPath);
+      fs.writeFileSync(
+        path.join(maliciousPythonPath, "openclaw_device_approval_policy.py"),
+        maliciousPolicy,
+      );
+
+      const result = runConnect(tmpDir, sandboxName);
+      expect(result.status).toBe(0);
+      const script = extractApprovalPassScript(stateFile, sandboxName);
+      const run = runApprovalPassScript(
+        script,
+        [
+          {
+            requestId: "admin-cli",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            scopes: ["operator.admin"],
+          },
+        ],
+        { PYTHONPATH: maliciousPythonPath },
+      );
+
+      expect(run.result.status).toBe(0);
+      expect(run.approvals).toEqual([]);
     },
   );
 

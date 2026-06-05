@@ -3,7 +3,6 @@
 
 import type { CaptureOpenshellResult } from "../adapters/openshell/client";
 import { stripAnsi } from "../adapters/openshell/client";
-import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 import { parseGatewayInference, type GatewayInference } from "./config";
 
 type CaptureLiveInference = (
@@ -27,7 +26,7 @@ export function getLiveGatewayInference(
   opts: { timeout?: number } = {},
 ): LiveGatewayInferenceResult {
   const attempts = [
-    ["inference", "get", "-g", DEFAULT_GATEWAY_NAME],
+    ["inference", "get", "-g", "nemoclaw"],
     ["inference", "get"],
   ];
   let last: LiveGatewayInferenceResult = {

@@ -8,6 +8,7 @@ import {
   getLocalProviderValidationBaseUrl,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
 } from "../inference/local";
+import type { SandboxGpuProofResult } from "../state/registry";
 import {
   DOCKER_GPU_PATCH_NETWORK_ENV,
   type DockerGpuPatchMode,
@@ -31,6 +32,10 @@ const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS = 2;
 type DockerGpuLocalInferenceConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
+  // Written back by `verifyGpuSandboxAfterReady` with the CUDA-usability proof
+  // result so the registry/`status` can distinguish a configured GPU from a
+  // proven-usable one (#4231).
+  sandboxGpuProof?: SandboxGpuProofResult | null;
 };
 
 type DockerGpuLocalInferenceOptions = {
@@ -369,8 +374,10 @@ export type GpuSandboxAfterReadyOptions = {
   sandboxName: string;
   dockerDriverGateway: boolean;
   useDockerGpuPatch: boolean;
-  verifyDirectSandboxGpu: (sandboxName: string) => void;
-  verifyGpuOrExit?: (verifyDirectSandboxGpu: (sandboxName: string) => void) => void;
+  verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
+  verifyGpuOrExit?: (
+    verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
+  ) => SandboxGpuProofResult;
   selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
@@ -393,11 +400,12 @@ export function verifyGpuSandboxAfterReady(
   options: GpuSandboxAfterReadyOptions,
 ): void {
   try {
-    if (options.verifyGpuOrExit) {
-      options.verifyGpuOrExit(options.verifyDirectSandboxGpu);
-    } else {
-      options.verifyDirectSandboxGpu(options.sandboxName);
-    }
+    // Capture the CUDA-usability proof result and write it back onto the shared
+    // config so onboarding can persist it to the registry and `status` can
+    // report proven usability rather than mere configuration (#4231).
+    config.sandboxGpuProof = options.verifyGpuOrExit
+      ? options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
+      : options.verifyDirectSandboxGpu(options.sandboxName);
   } catch (error) {
     // `verifyGpuOrExit` is supplied by the Docker GPU create patch and already
     // prints the richer Error-phase / patched-container diagnostics before

@@ -11,30 +11,19 @@ export interface SandboxRegistryMetadataDeps {
   isLinuxDockerDriverGatewayEnabled(): boolean;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
-  /**
-   * Resolve the active OpenShell gateway name for this process. Injected so
-   * the legacy-reuse backfill records the active gateway binding without
-   * reaching for `getGatewayName(dashboardPort)` — `dashboardPort` is the
-   * chat-UI forward, not the gateway port, and would produce a wrong
-   * binding once the resolver flips to per-port names.
-   */
-  getActiveGatewayName(): string;
 }
 
 export interface SandboxRegistryMetadataHelpers {
-  getSandboxRuntimeRegistryFields(
-    config: SandboxGpuConfig,
-    gatewayName?: string,
-  ): Pick<
+  getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
-    | "gatewayName"
   >;
   hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
   updateReusedSandboxMetadata(
@@ -51,19 +40,16 @@ export interface SandboxRegistryMetadataHelpers {
 export function createSandboxRegistryMetadataHelpers(
   deps: SandboxRegistryMetadataDeps,
 ): SandboxRegistryMetadataHelpers {
-  function getSandboxRuntimeRegistryFields(
-    config: SandboxGpuConfig,
-    gatewayName?: string,
-  ): Pick<
+  function getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
-    | "gatewayName"
   > {
     // OpenShell's Docker-driver gateway always starts with OPENSHELL_DRIVERS=docker,
     // including on macOS arm64 (#3454). Recording "vm" for darwin here makes later
@@ -75,11 +61,13 @@ export function createSandboxRegistryMetadataHelpers(
       sandboxGpuEnabled: config.sandboxGpuEnabled,
       sandboxGpuMode: config.mode,
       sandboxGpuDevice: config.sandboxGpuDevice,
+      // Only persist a proof when this run produced one; omit on reuse/update
+      // paths so a prior proof result is preserved rather than nulled out.
+      ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
       openshellDriver: deps.isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),
-      ...(gatewayName ? { gatewayName } : {}),
     };
   }
 
@@ -105,26 +93,12 @@ export function createSandboxRegistryMetadataHelpers(
     const existingEntry = registry.getSandbox(sandboxName);
     const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
-    // Migrate legacy reused entries that predate per-sandbox gateway tracking
-    // by recording the port-resolved gateway name on first reuse. When existing
-    // entries already carry a binding, preserve it untouched.
-    //
-    // Removal boundary: drop this branch once every on-disk registry has been
-    // migrated through at least one onboard reuse (paired with the legacy
-    // backfill in `getSandboxGatewayName`). A future PR introducing a
-    // registry schema version field is the recommended trigger for that
-    // cleanup.
-    const gatewayMigration =
-      existingEntry && existingEntry.gatewayName === undefined
-        ? { gatewayName: deps.getActiveGatewayName() }
-        : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
       agent: agentFields.agent,
       agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
-      ...gatewayMigration,
     });
     registry.setDefault(sandboxName);
   }

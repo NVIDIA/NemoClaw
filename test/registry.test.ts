@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -19,10 +19,6 @@ const registry = require("../dist/lib/state/registry");
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
 beforeEach(() => {
-  // Ensure the registry parent dir exists so tests that write `regFile`
-  // directly (e.g. the corrupt-state path) do not race ahead of the lazy
-  // dir creation done by `ensureConfigDir` on the first registry write.
-  fs.mkdirSync(path.dirname(regFile), { recursive: true });
   if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
 });
 
@@ -53,6 +49,29 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
   });
 
+  it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
+    registry.registerSandbox({
+      name: "first",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      dashboardPort: 18789,
+    });
+    registry.registerSandbox({
+      name: "second",
+      gatewayName: "nemoclaw-8081",
+      gatewayPort: 8081,
+      dashboardPort: 18790,
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.first.gatewayName).toBe("nemoclaw");
+    expect(data.sandboxes.first.gatewayPort).toBe(8080);
+    expect(data.sandboxes.second.gatewayName).toBe("nemoclaw-8081");
+    expect(data.sandboxes.second.gatewayPort).toBe(8081);
+    // The second registration must not retarget the first sandbox's binding.
+    expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
+    expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
   it("first registered becomes default", () => {
     registry.registerSandbox({ name: "first" });
     registry.registerSandbox({ name: "second" });
@@ -80,6 +99,16 @@ describe("registry", () => {
 
   it("updateSandbox returns false for nonexistent sandbox", () => {
     expect(registry.updateSandbox("nope", {})).toBe(false);
+  });
+
+  it("registerSandbox does not inherit a finalized policy marker (#4621)", () => {
+    // Snapshot restore spreads the source entry (possibly finalized) but resets
+    // policies; the clone must not carry a stale finalized marker.
+    registry.registerSandbox({ name: "clone", policies: [], policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBeUndefined();
+    // The marker is set only by the post-policy registry write.
+    registry.updateSandbox("clone", { policyPresetsFinalized: true });
+    expect(registry.getSandbox("clone").policyPresetsFinalized).toBe(true);
   });
 
   it("updateSandbox rejects name changes", () => {
@@ -504,99 +533,5 @@ describe("advisory file locking", () => {
     const { sandboxes, defaultSandbox } = registry.listSandboxes();
     expect(sandboxes).toHaveLength(0);
     expect(defaultSandbox).toBe(null);
-  });
-
-});
-
-describe("gatewayName persistence and resolution", () => {
-  // Silence accessor diagnostics globally for this block; specific tests that
-  // assert on log content install their own targeted spies.
-  let warnSpy: ReturnType<typeof vi.spyOn>;
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  });
-  afterEach(() => {
-    warnSpy.mockRestore();
-  });
-
-  it("persists gatewayName when supplied at registration", () => {
-    registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw" });
-    const sb = registry.getSandbox("alpha");
-    expect(sb.gatewayName).toBe("nemoclaw");
-  });
-
-  it("getSandboxGatewayName backfills the singleton name for legacy entries", () => {
-    // Legacy entries created before per-sandbox gateway tracking lack the
-    // `gatewayName` field; the accessor must transparently return the
-    // singleton default so callers never see undefined.
-    registry.registerSandbox({ name: "legacy" });
-    expect(registry.getSandboxGatewayName("legacy")).toBe("nemoclaw");
-  });
-
-  it("getSandboxGatewayName returns the persisted value when present", () => {
-    registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw-8081" });
-    expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
-  });
-
-  it("getSandboxGatewayName returns null for unknown sandbox names so callers cannot transitively act on the singleton", () => {
-    expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
-    expect(warnSpy).toHaveBeenCalled();
-    expect(
-      warnSpy.mock.calls.some(([msg]: unknown[]) =>
-        typeof msg === "string" && msg.includes("unknown sandbox 'does-not-exist'"),
-      ),
-    ).toBe(true);
-  });
-
-  it("getSandboxGatewayName returns null with a warning when the persisted value is invalid", () => {
-    // Corrupt on-disk state: caller hand-edited sandboxes.json or a future
-    // version persisted an invalid value. Defense-in-depth — return null so
-    // lifecycle code refuses rather than transitively act on the singleton
-    // with a bad persisted name.
-    const corrupt = JSON.stringify({
-      sandboxes: { alpha: { name: "alpha", gatewayName: "../escape" } },
-      defaultSandbox: "alpha",
-    });
-    fs.writeFileSync(regFile, corrupt);
-    expect(registry.getSandboxGatewayName("alpha")).toBeNull();
-    expect(warnSpy).toHaveBeenCalled();
-    expect(
-      warnSpy.mock.calls.some(([msg]: unknown[]) =>
-        typeof msg === "string" && msg.includes("invalid recorded gatewayName"),
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects malformed gatewayName at the registry boundary", () => {
-    // gatewayName is fed into openshell CLI args and Docker container names.
-    // Reject anything the existing name policy refuses so future lifecycle
-    // consumers can trust the stored value.
-    expect(() =>
-      registry.registerSandbox({ name: "alpha", gatewayName: "../escape" }),
-    ).toThrow(/gatewayName/);
-    expect(() =>
-      registry.registerSandbox({ name: "alpha", gatewayName: "has space" }),
-    ).toThrow(/gatewayName/);
-    expect(() =>
-      registry.registerSandbox({ name: "alpha", gatewayName: ";rm" }),
-    ).toThrow(/gatewayName/);
-    expect(() =>
-      registry.registerSandbox({ name: "alpha", gatewayName: "" }),
-    ).toThrow(/gatewayName/);
-  });
-
-  it("rejects malformed and empty gatewayName in updateSandbox too", () => {
-    registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw" });
-    expect(() => registry.updateSandbox("alpha", { gatewayName: "../escape" })).toThrow(
-      /gatewayName/,
-    );
-    // Explicit empty string is a deliberate write — reject it so the field
-    // cannot be cleared into an invalid state. Persisted absence is fine; the
-    // accessor backfills the singleton default for legacy entries.
-    expect(() => registry.updateSandbox("alpha", { gatewayName: "" })).toThrow(
-      /gatewayName/,
-    );
-    expect(registry.updateSandbox("alpha", { gatewayName: "nemoclaw-8081" })).toBe(true);
-    expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
   });
 });

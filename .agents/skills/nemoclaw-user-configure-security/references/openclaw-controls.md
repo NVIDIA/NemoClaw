@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # OpenClaw Security Controls Beyond NemoClaw's Scope
 
 NemoClaw provides infrastructure-layer security through sandbox isolation, network policy, filesystem restrictions, SSRF validation, and credential handling.
@@ -7,7 +5,7 @@ It delegates all application-layer security to OpenClaw.
 This page documents areas where NemoClaw adds no independent protection beyond what OpenClaw already provides.
 
 The details below reflect the OpenClaw documentation at the time of writing.
-Consult the [OpenClaw Security docs](https://docs.openclaw.ai/gateway/security/index) for the current state.
+Consult the [OpenClaw Security docs](https://docs.openclaw.ai/gateway/security) for the current state.
 
 ## Prompt Injection Detection and Prevention
 
@@ -58,7 +56,7 @@ OpenClaw blocks environment variables that could enable code injection, privileg
 
 ## Security Audit Framework
 
-OpenClaw runs automated security checks (50+ distinct check types) that cover configuration, credential handling, and sandbox posture.
+OpenClaw runs more than 50 distinct automated security checks that cover configuration, credential handling, and sandbox posture.
 Run `openclaw security audit` to see all findings for your deployment.
 
 These checks include:
@@ -94,7 +92,7 @@ OpenClaw controls who can interact with the agent through direct messages and gr
 
 | Control | Detail |
 |---|---|
-| DM policy modes | 4 modes: open, disabled, pairing, allowlist |
+| DM policy modes | Four modes: open, disabled, pairing, allowlist |
 | Group policies | Per-group access rules |
 | Per-sender authorization | Individual sender gating |
 | Command authorization | Command-level access control |
@@ -112,7 +110,7 @@ OpenClaw restricts what supplemental context the agent can see and how it can mo
 
 ## Safe Regex (ReDoS Prevention)
 
-OpenClaw includes safe regex compilation to prevent Regular Expression Denial of Service (ReDoS) attacks.
+OpenClaw includes safe regex compilation to prevent regular expression denial of service (ReDoS) attacks.
 The implementation detects unsafe nested quantifiers, bounds input length, and caches results.
 
 ## Next Steps

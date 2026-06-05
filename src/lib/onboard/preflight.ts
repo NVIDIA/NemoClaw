@@ -17,9 +17,21 @@ import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
 import {
+  assessNvidiaCdiHost,
+  buildNvidiaCdiRefreshCommands,
+  buildNvidiaCdiRepairCommands,
+  buildStaleCdiManualWarnCommands,
+  buildStaleCdiWarnCommands,
+  explainNvidiaCdiRepairReason,
+  explainStaleCdiReason,
+  extractCdiMismatchFilePath,
+  getNvidiaCdiSpecPath,
+} from "./docker-cdi";
+import {
   isWslDockerDesktopRuntime,
   wslDockerDesktopGpuCompatibilityAction,
 } from "./wsl-docker-desktop-gpu";
+export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
@@ -124,6 +136,14 @@ export interface HostAssessment {
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecStale?: boolean;
+  cdiNvidiaGpuSpecMismatch?: string;
+  cdiNvidiaGpuRefreshUnhealthy?: boolean;
+  cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  nvidiaCdiRefreshPathActive?: boolean | null;
+  nvidiaCdiRefreshPathEnabled?: boolean | null;
+  nvidiaCdiRefreshServiceEnabled?: boolean | null;
+  nvidiaCdiRefreshServiceFailed?: boolean | null;
   nvidiaContainerToolkitInstalled: boolean;
   notes: string[];
 }
@@ -283,74 +303,6 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
-}
-
-// Parses the Docker daemon's configured CDI spec directories from `docker
-// info --format '{{json .}}'` output. Docker 25+ surfaces these as
-// `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` whenever the daemon is built
-// with CDI support and `features.cdi=true` (the default on recent installs).
-// An empty list means CDI device injection is not enabled, so OpenShell will
-// fall back to the legacy `nvidia` runtime path and there is no spec gap to
-// worry about.
-export function parseDockerCdiSpecDirs(info = ""): string[] {
-  const match = info.match(/"CDISpecDirs"\s*:\s*\[([^\]]*)\]/);
-  if (!match) return [];
-  return Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1]).filter(Boolean);
-}
-
-function normalizeCdiSpecDir(specDir: string | undefined): string {
-  const trimmed = String(specDir || "/etc/cdi")
-    .trim()
-    .replace(/\/+$/, "");
-  return trimmed || "/etc/cdi";
-}
-
-export function getNvidiaCdiSpecPath(
-  assessment: Pick<HostAssessment, "dockerCdiSpecDirs">,
-): string {
-  return path.join(normalizeCdiSpecDir(assessment.dockerCdiSpecDirs[0]), "nvidia.yaml");
-}
-
-// True when at least one CDI spec under the configured directories declares
-// `kind: nvidia.com/gpu` (the device class OpenShell injects with `--gpu`).
-// Specs are typically YAML, but the JSON shape is also accepted because
-// `nvidia-ctk cdi generate --format=json` is supported. Errors reading any
-// individual file or directory are tolerated — a missing dir is the same
-// shape as "no spec found there".
-function hasNvidiaCdiSpec(
-  specDirs: readonly string[],
-  readdirImpl: (dir: string) => string[],
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): boolean {
-  // YAML keys are unquoted; JSON quotes the kind value. Anchor both patterns
-  // to the *exact* device-class string `nvidia.com/gpu` and require a value
-  // terminator (end of line, whitespace + comment, or whitespace + EOL) so a
-  // sibling spec like `nvidia.com/gpu-extra` does not silently satisfy the
-  // check and suppress the preflight warning. A comment that merely mentions
-  // `nvidia.com/gpu` is also rejected because `kindRe` only matches when the
-  // *whole* scalar value is the device class.
-  const kindRe =
-    /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
-  const jsonRe = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
-  for (const dir of specDirs) {
-    let entries: string[];
-    try {
-      entries = readdirImpl(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
-      let raw: string;
-      try {
-        raw = readFileImpl(path.join(dir, entry), "utf-8");
-      } catch {
-        continue;
-      }
-      if (kindRe.test(raw) || jsonRe.test(raw)) return true;
-    }
-  }
-  return false;
 }
 
 export function parseDockerInfoCpus(info = ""): number | undefined {
@@ -514,7 +466,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const nvidiaContainerToolkitInstalled =
     opts.commandExistsImpl?.("nvidia-ctk") ?? commandExists("nvidia-ctk", runCaptureImpl);
   const packageManager = detectPackageManager(runCaptureImpl);
-  const systemctlAvailable = commandExists("systemctl", runCaptureImpl);
+  const systemctlAvailable =
+    opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
 
   let dockerInfoOutput = opts.dockerInfoOutput;
   let dockerReachable = false;
@@ -543,6 +496,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
+  const isWslHost = detectWsl({ platform, env, release, procVersion });
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
@@ -556,20 +510,19 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerMemTotalBytes = dockerReachable
     ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
     : undefined;
-  // CDI spec gap: Docker 25+ on hosts with `nvidia-container-toolkit` installed
-  // typically advertises `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` in its
-  // info output. OpenShell's `gateway start --gpu` then opportunistically
-  // selects CDI mode and tries to inject `nvidia.com/gpu=all`. If no spec has
-  // been generated yet (`/etc/cdi/nvidia.yaml` is missing), the gateway start
-  // fails with `unresolvable CDI devices nvidia.com/gpu=all`. Detect this up
-  // front so preflight can point the user at `nvidia-ctk cdi generate` before
-  // we waste minutes downloading the gateway image. See issue #3152.
-  const dockerCdiSpecDirs = dockerReachable ? parseDockerCdiSpecDirs(dockerInfoOutput) : [];
-  const cdiNvidiaGpuSpecMissing =
-    platform === "linux" &&
-    hasNvidiaGpu &&
-    dockerCdiSpecDirs.length > 0 &&
-    !hasNvidiaCdiSpec(dockerCdiSpecDirs, readdirImpl, readFileImpl);
+  const cdiAssessment = assessNvidiaCdiHost({
+    dockerInfoOutput,
+    dockerReachable,
+    hasNvidiaGpu,
+    isWsl: isWslHost,
+    nvidiaContainerToolkitInstalled,
+    platform,
+    readFileImpl,
+    readdirImpl,
+    runCaptureImpl,
+    runtime,
+    systemctlAvailable,
+  });
   const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
     dockerCpus,
     dockerMemTotalBytes,
@@ -588,7 +541,6 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // the user-confirmed reproducer. Engaging the auto-fix there could
   // build an unnecessary patched image; preferring to leave WSL alone
   // until we have a confirmed repro is the conservative call.
-  const isWslHost = detectWsl({ platform, env, release, procVersion });
   const hasNestedOverlayConflict =
     platform === "linux" &&
     !isWslHost &&
@@ -635,8 +587,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     hasNvidiaGpu,
-    dockerCdiSpecDirs,
-    cdiNvidiaGpuSpecMissing,
+    ...cdiAssessment,
     nvidiaContainerToolkitInstalled,
     notes: [],
   };
@@ -658,6 +609,23 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
   const actions: RemediationAction[] = [];
 
   if (!assessment.dockerInstalled) {
+    if (assessment.isWsl) {
+      actions.push({
+        id: "enable_docker_desktop_wsl_integration",
+        title: "Enable Docker Desktop WSL integration",
+        kind: "manual",
+        reason:
+          "Docker is not available inside this WSL distro. When using Docker Desktop on Windows, WSL integration must be enabled for the Ubuntu distro before NemoClaw can create a gateway or sandbox.",
+        commands: [
+          "Open Docker Desktop → Settings → Resources → WSL integration.",
+          "Enable integration for this Ubuntu distro, apply the change, then run `wsl --shutdown` from Windows PowerShell.",
+          "Reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
+        ],
+        blocking: true,
+      });
+      return actions;
+    }
+
     const installCommands: Record<PackageManager, string> = {
       apt: "Install Docker Engine, then rerun `nemoclaw onboard`.",
       dnf: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
@@ -684,15 +652,27 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     const likelyGroupIssue =
       assessment.platform === "linux" && assessment.dockerServiceActive === true;
 
-    if (likelyGroupIssue) {
+    if (assessment.isWsl) {
+      actions.push({
+        id: "enable_docker_desktop_wsl_integration",
+        title: "Enable Docker Desktop WSL integration",
+        kind: "manual",
+        reason:
+          "Docker is installed but this WSL distro cannot reach the Docker daemon. Docker Desktop may not be running, or WSL integration may be disabled for this distro.",
+        commands: [
+          "Start Docker Desktop on Windows.",
+          "Open Docker Desktop → Settings → Resources → WSL integration and enable integration for this Ubuntu distro.",
+          "Apply the change, run `wsl --shutdown` from Windows PowerShell, reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
+        ],
+        blocking: true,
+      });
+      return actions;
+    } else if (likelyGroupIssue) {
       const commands = [
         "sudo usermod -aG docker $USER",
         "newgrp docker   # or log out and back in",
         "nemoclaw onboard",
       ];
-      if (assessment.isWsl) {
-        commands.unshift(DOCKER_DESKTOP_WSL_INTEGRATION_HINT);
-      }
       actions.push({
         id: "docker_group_permission",
         title: "Add user to docker group",
@@ -818,43 +798,65 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     });
   }
 
-  if (assessment.cdiNvidiaGpuSpecMissing) {
+  if (
+    assessment.cdiNvidiaGpuRefreshUnhealthy &&
+    !assessment.cdiNvidiaGpuSpecNeedsRepair &&
+    !assessment.cdiNvidiaGpuSpecMissing &&
+    !isWslDockerDesktopRuntime(assessment)
+  ) {
+    actions.push({
+      id: "warn_nvidia_cdi_refresh_unhealthy",
+      title: "Enable NVIDIA CDI refresh service",
+      kind: "sudo",
+      reason: explainNvidiaCdiRepairReason({
+        ...assessment,
+        cdiNvidiaGpuSpecMissing: false,
+        cdiNvidiaGpuSpecStale: false,
+        cdiNvidiaGpuSpecMismatch: undefined,
+      }),
+      commands: buildNvidiaCdiRefreshCommands(),
+      blocking: false,
+    });
+  }
+
+  if (assessment.cdiNvidiaGpuSpecNeedsRepair || assessment.cdiNvidiaGpuSpecMissing) {
+    const missingSpec = assessment.cdiNvidiaGpuSpecMissing;
+    const flaggedFilePath = extractCdiMismatchFilePath(assessment.cdiNvidiaGpuSpecMismatch);
     const specPath = getNvidiaCdiSpecPath(assessment);
-    const specDir = path.dirname(specPath);
-    const generateCommands = [
-      `sudo mkdir -p ${specDir}`,
-      `sudo nvidia-ctk cdi generate --output=${specPath}`,
-      "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-      "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
-    ];
+    const repairCommands = missingSpec
+      ? buildNvidiaCdiRepairCommands(assessment, specPath)
+      : assessment.systemctlAvailable
+        ? buildStaleCdiWarnCommands(flaggedFilePath)
+        : buildStaleCdiManualWarnCommands(flaggedFilePath);
+    const reason = missingSpec
+      ? explainNvidiaCdiRepairReason(assessment)
+      : explainStaleCdiReason(assessment.cdiNvidiaGpuSpecMismatch);
     if (isWslDockerDesktopRuntime(assessment)) {
       actions.push(wslDockerDesktopGpuCompatibilityAction());
     } else if (assessment.nvidiaContainerToolkitInstalled) {
+      const title = missingSpec
+        ? "Generate NVIDIA CDI device specs"
+        : "Refresh NVIDIA CDI device specs";
       actions.push({
-        id: "generate_nvidia_cdi_spec",
-        title: "Generate NVIDIA CDI device specs",
-        kind: "sudo",
-        reason:
-          "Docker is configured for CDI device injection (CDISpecDirs is set) but no " +
-          "nvidia.com/gpu CDI spec is present on the host. OpenShell's `gateway start --gpu` " +
-          "will fail with `unresolvable CDI devices nvidia.com/gpu=all` until a spec is generated.",
-        commands: generateCommands,
+        id: missingSpec ? "generate_nvidia_cdi_spec" : "refresh_nvidia_cdi_spec",
+        title,
+        kind: missingSpec || assessment.systemctlAvailable ? "sudo" : "manual",
+        reason,
+        commands: repairCommands,
         blocking: true,
       });
     } else {
+      const title = missingSpec
+        ? "Install NVIDIA Container Toolkit and generate CDI device specs"
+        : "Install NVIDIA Container Toolkit and refresh CDI device specs";
       actions.push({
         id: "install_nvidia_container_toolkit",
-        title: "Install NVIDIA Container Toolkit and generate CDI device specs",
+        title,
         kind: "sudo",
-        reason:
-          "Docker is configured for CDI device injection (CDISpecDirs is set) but the " +
-          "`nvidia-container-toolkit` package (which provides `nvidia-ctk`) is not installed " +
-          "on the host. OpenShell's `gateway start --gpu` will fail with " +
-          "`unresolvable CDI devices nvidia.com/gpu=all` until the toolkit is installed and a " +
-          "CDI spec is generated.",
+        reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
         commands: buildContainerToolkitBootstrapCommands(
           assessment.packageManager,
-          generateCommands,
+          repairCommands,
         ),
         blocking: true,
       });

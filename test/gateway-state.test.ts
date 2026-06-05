@@ -222,6 +222,27 @@ describe("isGatewayHealthy", () => {
     const ansiOnly = "\x1b[0m\x1b[32m";
     expect(isGatewayHealthy(ansiOnly, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
   });
+
+  // Per-port gateway (#4422): a second sandbox onboarded on a non-default
+  // NEMOCLAW_GATEWAY_PORT runs gateway `nemoclaw-<port>`. Health/reuse
+  // classification must match against that resolved name, not the `nemoclaw`
+  // singleton, so the second sandbox recognizes its own gateway.
+  it("recognizes a non-default-port gateway under its resolved name", () => {
+    const status = STATUS_CONNECTED.replace("nemoclaw", "nemoclaw-8081");
+    const info = GW_INFO_NAMED.replace("nemoclaw", "nemoclaw-8081");
+    expect(isGatewayHealthy(status, info, info, "nemoclaw-8081")).toBe(true);
+    expect(hasStaleGateway(info, "nemoclaw-8081")).toBe(true);
+    expect(getGatewayReuseState(status, info, info, "nemoclaw-8081")).toBe("healthy");
+  });
+
+  it("does not match a non-default-port gateway against the nemoclaw singleton", () => {
+    const status = STATUS_CONNECTED.replace("nemoclaw", "nemoclaw-8081");
+    const info = GW_INFO_NAMED.replace("nemoclaw", "nemoclaw-8081");
+    // The default-named classifier sees a foreign gateway, not its own.
+    expect(isGatewayHealthy(status, info, info)).toBe(false);
+    expect(hasStaleGateway(info)).toBe(false);
+    expect(getGatewayReuseState(status, info, info)).toBe("foreign-active");
+  });
 });
 
 describe("parseSandboxPhase", () => {

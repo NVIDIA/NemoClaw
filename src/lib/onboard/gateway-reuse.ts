@@ -36,7 +36,12 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
       gatewayStatus,
       gwInfo,
       activeGatewayInfo,
-      gatewayReuseState: getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo),
+      gatewayReuseState: getGatewayReuseState(
+        gatewayStatus,
+        gwInfo,
+        activeGatewayInfo,
+        deps.gatewayName,
+      ),
     };
   }
 
@@ -46,6 +51,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
         snapshot.gatewayStatus,
         snapshot.gwInfo,
         snapshot.activeGatewayInfo,
+        deps.gatewayName,
       )
     ) {
       return snapshot;

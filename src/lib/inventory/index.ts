@@ -4,7 +4,6 @@
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
 import { redactFull } from "../security/redact";
-import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 
 export interface SandboxEntry {
   name: string;
@@ -454,7 +453,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       const detail = health.reason ? ` (${health.reason})` : "";
       log(`  gateway: down [${health.state}]${detail}`);
       log(
-        `    Run 'openshell gateway start --name ${DEFAULT_GATEWAY_NAME}' or 'nemoclaw onboard --resume' to recover.`,
+        `    Run 'openshell gateway start --name nemoclaw' or 'nemoclaw onboard --resume' to recover.`,
       );
       process.exitCode = 1;
     }

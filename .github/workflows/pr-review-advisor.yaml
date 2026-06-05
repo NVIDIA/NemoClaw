@@ -74,7 +74,7 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
       - name: Checkout trusted advisor code (main)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: NVIDIA/NemoClaw
           ref: main
@@ -83,7 +83,7 @@ jobs:
 
       - name: Checkout PR workspace (read-only data)
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr-workdir
@@ -92,7 +92,7 @@ jobs:
 
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           path: pr-workdir
           fetch-depth: 0

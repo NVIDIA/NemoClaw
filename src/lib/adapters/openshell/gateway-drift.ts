@@ -17,12 +17,13 @@ import {
 } from "../../onboard/host-gateway-process";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
 import { isGatewayHealthy } from "../../state/gateway";
-import { DEFAULT_GATEWAY_NAME } from "../../state/gateway-name";
 import { dockerContainerInspectFormat } from "../docker";
 import { parseVersionFromText, stripAnsi } from "./client";
 import { resolveOpenshell } from "./resolve";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
+
+const DEFAULT_GATEWAY_NAME = "nemoclaw";
 
 export type GatewayClusterImageDrift = {
   containerName: string;
@@ -202,7 +203,7 @@ export function isGatewayClusterActiveForGateway(
     ignoreError: true,
     timeout: timeoutMs,
   });
-  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output)) {
+  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output, gatewayName)) {
     return false;
   }
 

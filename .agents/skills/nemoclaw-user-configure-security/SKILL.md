@@ -4,9 +4,6 @@ description: "Presents a risk framework for every configurable security control 
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # NemoClaw User Configure Security
 
 ## References

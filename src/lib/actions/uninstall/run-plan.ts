@@ -9,7 +9,7 @@ import path from "node:path";
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { getAgentBranding, type AgentBranding } from "../../cli/branding";
 import { sleepMs } from "../../core/wait";
-import { DEFAULT_GATEWAY_NAME, defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
+import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
@@ -470,7 +470,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
   for (const provider of NEMOCLAW_PROVIDERS) {
     runOptional(runtime, `Deleted provider '${provider}'`, "openshell", ["provider", "delete", provider]);
   }
-  const gatewayLabel = options.gatewayName || DEFAULT_GATEWAY_NAME;
+  const gatewayLabel = options.gatewayName || "nemoclaw";
   runOptional(
     runtime,
     `Destroyed gateway '${gatewayLabel}'`,
