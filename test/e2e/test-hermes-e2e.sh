@@ -304,11 +304,10 @@ else
 fi
 
 if hermes_dashboard_e2e_enabled; then
-  if grep -Fq "Hermes API" "$INSTALL_LOG" \
-    && grep -Fq "http://127.0.0.1:8642/v1" "$INSTALL_LOG"; then
-    pass "Install output advertises Hermes API on 8642/v1"
+  if grep -Fq "Deployment verified — gateway and dashboard are healthy." "$INSTALL_LOG"; then
+    pass "Install output confirms Hermes gateway and dashboard health"
   else
-    fail "Install output did not advertise Hermes API on 8642/v1"
+    fail "Install output did not confirm Hermes gateway and dashboard health"
   fi
 
   if grep -Fq "Hermes Agent Dashboard" "$INSTALL_LOG" \
