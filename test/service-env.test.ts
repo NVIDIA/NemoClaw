@@ -816,6 +816,83 @@ describe("service environment", () => {
       }
     });
 
+    // Reproduces the #4713 deployment failure shape end-to-end in the startup
+    // sequence: write_runtime_shell_env emits the proxy env file with mode 444,
+    // ensure_runtime_shell_env_shim then sees a foreign-owned .bashrc and must
+    // exit 0 (otherwise the entrypoint would terminate the container with
+    // exit code 1 as reported). The composed assertion proves the legacy
+    // trust-boundary file remains non-user-writable across the skip path.
+    it("composed startup leaves the proxy env file at mode 444 when the rc cleanup skips a foreign-owned rc file (#4713)", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-composed-"));
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-home-"));
+      const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const tmpFile = join(tmpdir(), `nemoclaw-rc-skip-composed-${process.pid}.sh`);
+      try {
+        const shimLine = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
+        const originalBashrc = [
+          "# user-managed bashrc owned by a foreign uid (e.g. root)",
+          "# Source runtime proxy config",
+          shimLine,
+          "export PATH=/usr/local/bin:$PATH",
+          "",
+        ].join("\n");
+        writeFileSync(rcPath, originalBashrc, { mode: 0o644 });
+
+        const persistBlock = extractRuntimeShellEnvSnippet()
+          .trimEnd()
+          .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath);
+        // Foreign uid that does not match the test-runner's actual file owner.
+        // Overriding `id -u` for the bash function-level shim invocation is
+        // the cheapest way to drive the "uid != owner" branch without root.
+        const foreignUid = (process.getuid?.() ?? 1000) + 99999;
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "_TOOL_REDIRECTS=()",
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          `_RUNTIME_SHELL_ENV_SHIM="[ -f \${_RUNTIME_SHELL_ENV_FILE} ] && . \${_RUNTIME_SHELL_ENV_FILE}"`,
+          rcShimWrapperHeader(),
+          // Override `id -u` BEFORE the entrypoint snippets are sourced so the
+          // function-shadow is in place when both write_runtime_shell_env and
+          // ensure_runtime_shell_env_shim consult `$(id -u)`.
+          `id() { case "\${1:-}" in -u) echo ${foreignUid};; *) command id "$@";; esac; }`,
+          "set +u",
+          persistBlock,
+          extractRuntimeShellEnvShimSnippet(),
+          "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const result = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(result).not.toContain("[SECURITY] " + proxyEnvPath + " has unsafe permissions");
+
+        const finalMode = (lstatSync(proxyEnvPath).mode & 0o777).toString(8);
+        expect(finalMode).toBe("444");
+
+        const rcAfter = readFileSync(rcPath, "utf-8");
+        expect(rcAfter).toBe(originalBashrc);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
     it("entrypoint overwrites proxy-env.sh cleanly on repeated invocations", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);

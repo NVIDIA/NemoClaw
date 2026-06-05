@@ -153,11 +153,22 @@ def main(argv):
 
         # When the rc file is not owned by us (and we are not root) we cannot
         # safely rewrite it: fchmod would raise EPERM without CAP_FOWNER, and
-        # the in-place reopen via /proc/self/fd would fail anyway. The legacy
-        # shim line we would have removed is functionally inert (it sources
-        # /tmp/nemoclaw-proxy-env.sh only if that file exists), so leaving it
-        # in place is safer than crashing the container under errexit. A later
-        # root-mode boot can finish the cleanup.
+        # the in-place reopen via /proc/self/fd would fail anyway.
+        #
+        # Threat model: the legacy shim line we would have removed is still an
+        # active trust-boundary hook. It sources /tmp/nemoclaw-proxy-env.sh on
+        # every shell start and pulls in the proxy and gateway-token exports
+        # from that file. That file is written exclusively via
+        # `emit_sandbox_sourced_file` in scripts/lib/sandbox-init.sh, which
+        # forces mode 444 (and root ownership when the entrypoint runs as
+        # root) before placing the file. The startup sequence validates that
+        # invariant via `validate_tmp_permissions` before launching services.
+        # The composed test in test/service-env.test.ts proves the file stays
+        # at mode 444 through this skip path. As long as the proxy-env file
+        # remains non-user-writable, the leftover shim does not widen the
+        # sandbox's trust boundary; crashing the container under errexit
+        # (which the original code did) was the strictly worse outcome. A
+        # later root-mode boot can finish the cleanup.
         if uid != 0 and st.st_uid != uid:
             print(
                 f"[SECURITY] skipping rc cleanup for {rc_path}: not owned by uid={uid} "

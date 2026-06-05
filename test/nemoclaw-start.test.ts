@@ -4906,4 +4906,3 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     }
   });
 });
-
