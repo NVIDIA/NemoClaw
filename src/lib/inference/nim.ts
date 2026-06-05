@@ -72,6 +72,12 @@ export interface GpuDetection {
   unifiedMemory?: boolean;
   spark?: boolean;
   platform?: NvidiaPlatform;
+  // `true` for integrated/iGPU class NVIDIA platforms (Jetson Tegra/Thor/Orin)
+  // whose token-generation throughput on 30B+ class Ollama models cannot clear
+  // agent-loop timeouts even when advertised memory ostensibly fits. Mirrored
+  // onto `GpuInfo.computeConstrained` so the Ollama bootstrap-model selector
+  // skips `computeIntensive` registry entries on these hosts.
+  computeConstrained?: boolean;
   // Set when a denylisted `JMJWOA-Generic-*` placeholder name was accepted only
   // because a bounded Docker `--gpus` CUDA proof passed (Windows-ARM N1X + WSL2
   // + Docker Desktop, #4565). Diagnostic marker that this detection cleared a
@@ -465,6 +471,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
+          ...(platform === "jetson" ? { computeConstrained: true } : {}),
           ...(wslDockerDesktopGpuProofPassed ? { wslDockerDesktopGpuProofPassed: true } : {}),
         };
       }
@@ -553,6 +560,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
         spark: platform === "spark",
+        ...(platform === "jetson" ? { computeConstrained: true } : {}),
         platform,
       };
     }
@@ -577,6 +585,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
       nimCapable: canRunNimWithMemory(totalMemoryMB),
       unifiedMemory: true,
       spark: false,
+      computeConstrained: tegraGpu.platform === "jetson",
       platform: tegraGpu.platform,
     };
   }

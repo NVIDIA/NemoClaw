@@ -960,7 +960,7 @@ describe("local inference helpers", () => {
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
-  it("does not retry on non-Spark hosts when first probe returns empty", () => {
+  it("does not retry on any host when probe fails fast (connection refused, not a timeout)", () => {
     let callCount = 0;
     const captureEx = () => { callCount++; return { stdout: "", exitCode: 7, timedOut: false }; };
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
