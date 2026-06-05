@@ -1045,16 +1045,20 @@ function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates =
   return updatedSession;
 }
 
-export function markStepStarted(stepName: string): Session {
-  return markStepStartedWithOptions(stepName);
+export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+  return markStepStartedWithOptions(stepName, options);
 }
 
 export function markStepStartedRecordOnly(stepName: string): Session {
   return markStepStartedWithOptions(stepName, { updateMachine: false });
 }
 
-export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
-  return markStepCompleteWithOptions(stepName, updates);
+export function markStepComplete(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
+  return markStepCompleteWithOptions(stepName, updates, options);
 }
 
 export function markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Session {
@@ -1121,8 +1125,12 @@ function markStepFailedWithOptions(stepName: string, message: string | null = nu
   return updatedSession;
 }
 
-export function markStepFailed(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message);
+export function markStepFailed(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
+  return markStepFailedWithOptions(stepName, message, options);
 }
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {

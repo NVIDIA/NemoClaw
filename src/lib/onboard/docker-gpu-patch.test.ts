@@ -579,7 +579,11 @@ describe("docker-gpu-patch", () => {
       String(call[0]).includes("nemoclaw-gpu-backup"),
     );
     expect(backupRmCall).toBeGreaterThanOrEqual(0);
-    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeLessThan(
+    // Backup container is removed only AFTER supervisor reconnect confirms
+    // the GPU container is reachable. If reconnect fails the rollback path
+    // restores the backup under the original name (see the rollback test
+    // below), so the backup must outlive the supervisor probe.
+    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeGreaterThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
   });
@@ -592,6 +596,7 @@ describe("docker-gpu-patch", () => {
       return "";
     });
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
     const result = recreateOpenShellDockerSandboxWithGpu(
@@ -607,7 +612,7 @@ describe("docker-gpu-patch", () => {
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRm,
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
@@ -615,7 +620,16 @@ describe("docker-gpu-patch", () => {
     );
 
     expect(result.newContainerId).toBe("new-container-id");
+    expect(result.backupRemoved).toBe(false);
+    expect(result.originalName).toBe("openshell-alpha");
+    expect(result.backupContainerName).toContain("nemoclaw-gpu-backup");
     expect(runOpenshell).not.toHaveBeenCalled();
+    // The create path takes the supervisor wait into its own hands later in
+    // the flow. The patch helper must NOT remove the backup yet — that would
+    // re-introduce the deleted-backup / failed-new state #4664 fixes.
+    expect(
+      dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
+    ).toBe(false);
     expect(dockerRunDetached).toHaveBeenCalledWith(
       expect.arrayContaining([
         "--env",
