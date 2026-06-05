@@ -2037,8 +2037,21 @@ jobs:
     steps:
       - *target-ref-checkout
       - *dockerhub-auth-step
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run concurrent gateway ports E2E test
-        run: bash test/e2e/test-concurrent-gateway-ports.sh
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-concurrent-gateway-ports.sh
       - name: Upload sandbox A onboard log on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
