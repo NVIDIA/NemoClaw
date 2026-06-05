@@ -13,10 +13,14 @@ import {
   getGatewayHttpsEndpoint,
 } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
-import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import {
+  hasOpenShellGatewayUserService,
+  startPackageManagedDockerDriverGateway,
+  type PackageManagedDockerDriverGatewayOptions,
+} from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint };
-export { startPackageManagedDockerDriverGateway } from "./docker-driver-gateway-service";
+export { startPackageManagedDockerDriverGateway };
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DRIVERS",
@@ -42,6 +46,13 @@ export interface BuildDockerDriverGatewayEnvOptions {
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
 }
+
+export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
+  PackageManagedDockerDriverGatewayOptions,
+  "prepareOpenShellGatewayUserServiceEnv"
+> & {
+  gatewayEnv: Record<string, string>;
+};
 
 export function getGatewayPortCheckOptions(): { host: string } {
   return { host: GATEWAY_BIND_ADDRESS };
@@ -159,4 +170,15 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
   if (!writeDockerGatewayDebEnvOverride(getOverride, opts)) {
     throw new Error("OpenShell gateway user service env file is not available");
   }
+}
+
+export function startPackageManagedDockerDriverGatewayWithEnvOverride({
+  gatewayEnv,
+  ...options
+}: PackageManagedDockerDriverGatewayWithEnvOverrideOptions): Promise<boolean> {
+  return startPackageManagedDockerDriverGateway({
+    ...options,
+    prepareOpenShellGatewayUserServiceEnv: () =>
+      writeDockerGatewayDebEnvOverrideOrThrow(() => gatewayEnv),
+  });
 }
