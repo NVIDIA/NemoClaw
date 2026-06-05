@@ -173,6 +173,21 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {
+    const envArgs: string[] = [];
+    appendHostProxyEnvArgs(envArgs, { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" });
+    expect(envArgs).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
+  });
+
+  it("omits NEMOCLAW_MINIMAL_BOOTSTRAP when unset or not the literal '1' (#2598)", () => {
+    for (const value of [undefined, "", "0", "true", "yes"]) {
+      const envArgs: string[] = [];
+      const env: NodeJS.ProcessEnv = value === undefined ? {} : { NEMOCLAW_MINIMAL_BOOTSTRAP: value };
+      appendHostProxyEnvArgs(envArgs, env);
+      expect(envArgs.some((e) => e.startsWith("NEMOCLAW_MINIMAL_BOOTSTRAP="))).toBe(false);
+    }
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));

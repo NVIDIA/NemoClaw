@@ -2746,6 +2746,14 @@ seed_default_workspace_templates() {
   local templates_dir="${2:-}"
   local config_file="${3:-/sandbox/.openclaw/openclaw.json}"
 
+  # #2598: opt-in flag that skips default workspace template seeding for
+  # new/pristine workspaces (does NOT delete files already present). Cuts
+  # ~3k tokens off OpenClaw's per-turn bootstrap context injection.
+  if [ "${NEMOCLAW_MINIMAL_BOOTSTRAP:-}" = "1" ]; then
+    echo "[setup] NEMOCLAW_MINIMAL_BOOTSTRAP=1; skipping default workspace template seed" >&2
+    return 0
+  fi
+
   if [ ! -f "$config_file" ]; then
     return 0
   fi
