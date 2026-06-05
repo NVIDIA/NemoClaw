@@ -19,13 +19,14 @@ tiers:
 
   - name: balanced
     label: Balanced
-    description: Full dev tooling and web search. Package installs, model downloads, and inference. No messaging platform access.
+    description: Full dev tooling, web search, and core weather lookups. Package installs, model downloads, and inference. No messaging platform access.
     presets:
       - { name: npm,          access: read-write }
       - { name: pypi,         access: read-write }
       - { name: huggingface,  access: read-write }
       - { name: brew,         access: read-write }
       - { name: brave,        access: read-write }
+      - { name: weather,      access: read }
 
   - name: open
     label: Open
@@ -36,6 +37,8 @@ tiers:
       - { name: huggingface,  access: read-write }
       - { name: brew,         access: read-write }
       - { name: brave,        access: read-write }
+      - { name: weather,      access: read }
+      - { name: public-reference, access: read }
       - { name: slack,        access: read-write }
       - { name: discord,      access: read-write }
       - { name: telegram,     access: read-write }

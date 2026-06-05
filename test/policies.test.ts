@@ -33,6 +33,7 @@ type PolicyCall = {
   sandboxName?: string;
   presetName?: string;
   path?: string;
+  presets?: string[];
 };
 
 type AppliedOptions = {
@@ -63,6 +64,7 @@ function runPolicyAdd(
   extraArgs: string[] = [],
   envOverrides: Record<string, string | undefined> = {},
   presetName: string = "pypi",
+  agent: string | null = null,
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
@@ -71,19 +73,25 @@ const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
-policies.selectFromList = async () => ${JSON.stringify(presetName)};
+policies.selectFromList = async (items) => {
+  calls.push({ type: "select", presets: items.map((item) => item.name) });
+  return ${JSON.stringify(presetName)};
+};
 policies.loadPreset = () => "network_policies:\n  example:\n    host: example.com\n";
 policies.getPresetEndpoints = () => ["example.com"];
 credentials.prompt = async (message) => {
   calls.push({ type: "prompt", message });
   return ${JSON.stringify(confirmAnswer)};
 };
-registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
-registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name, agent: ${JSON.stringify(agent)} } : null);
+registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox", agent: ${JSON.stringify(agent)} }] });
 policies.listPresets = () => [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
   { name: "discord", description: "Discord API, gateway, and CDN access" },
+  { name: "openclaw-pricing", description: "OpenClaw pricing lookup" },
+  { name: "nous-web", description: "Nous Portal managed web search and crawl gateway" },
+  { name: "nous-code", description: "Nous Portal managed sandboxed code execution gateway" },
 ];
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
@@ -180,9 +188,11 @@ describe("policies", () => {
         "openclaw-diagnostics-otel-local",
         "openclaw-pricing",
         "outlook",
+        "public-reference",
         "pypi",
         "slack",
         "telegram",
+        "weather",
         "wechat",
         "whatsapp",
       ];
@@ -1584,6 +1594,22 @@ exit 1
       expect(content.includes("method: DELETE")).toBe(false);
     });
 
+    it("weather and public-reference presets stay read-only and narrowly client-scoped", () => {
+      for (const preset of ["weather", "public-reference"]) {
+        const content = requirePresetContent(policies.loadPreset(preset));
+        expect(content).toContain("protocol: rest");
+        expect(content).toContain("method: GET");
+        expect(content).toContain("method: HEAD");
+        expect(content).not.toContain("method: POST");
+        expect(content).not.toContain("method: PUT");
+        expect(content).not.toContain("method: PATCH");
+        expect(content).not.toContain("method: DELETE");
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/opt/hermes/.venv/bin/python");
+        expect(content).toContain("/usr/bin/curl");
+      }
+    });
+
     it("npm preset uses L4 tunnel for CONNECT compatibility (#2767)", () => {
       // npm on Node 22 uses undici's built-in fetch which bypasses
       // http.request() and issues CONNECT directly through HTTPS_PROXY.
@@ -2367,6 +2393,48 @@ selectForRemoval(items, options)
       expect(`${result.stdout}${result.stderr}`).toMatch(
         /Non-interactive mode requires a preset name/,
       );
+    });
+
+    it("filters Hermes-only presets from the OpenClaw policy-add picker", () => {
+      const result = runPolicyAdd("y", [], {}, "pypi", "openclaw");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const selectCall = calls.find((call) => call.type === "select");
+      expect(selectCall?.presets).toEqual(
+        expect.arrayContaining(["npm", "pypi", "discord", "openclaw-pricing"]),
+      );
+      expect(selectCall?.presets).not.toContain("nous-web");
+      expect(selectCall?.presets).not.toContain("nous-code");
+    });
+
+    it("rejects Hermes-only preset names for OpenClaw policy-add", () => {
+      const result = runPolicyAdd("y", ["nous-web", "--yes"], {}, "pypi", "openclaw");
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Unknown preset 'nous-web'/);
+      expect(result.stderr).toMatch(/Valid presets: npm, pypi, discord, openclaw-pricing/);
+      expect(result.stderr).not.toMatch(/nous-code/);
+    });
+
+    it("filters OpenClaw-only presets from the Hermes policy-add picker", () => {
+      const result = runPolicyAdd("y", [], {}, "pypi", "hermes");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const selectCall = calls.find((call) => call.type === "select");
+      expect(selectCall?.presets).toEqual(
+        expect.arrayContaining(["npm", "pypi", "discord", "nous-web", "nous-code"]),
+      );
+      expect(selectCall?.presets).not.toContain("openclaw-pricing");
+    });
+
+    it("rejects OpenClaw-only preset names for Hermes policy-add", () => {
+      const result = runPolicyAdd("y", ["openclaw-pricing", "--yes"], {}, "pypi", "hermes");
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Unknown preset 'openclaw-pricing'/);
+      expect(result.stderr).toMatch(/Valid presets: npm, pypi, discord, nous-web, nous-code/);
     });
 
     it("warns the user that the telegram preset alone does not enable Telegram messaging", () => {

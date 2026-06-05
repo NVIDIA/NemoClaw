@@ -55,6 +55,9 @@
 #   hermes-inference-switch-e2e
 #                            Switches a running Hermes sandbox with `nemohermes inference set`
 #                            and verifies route, config.yaml, hashes, and live requests.
+#   hermes-anthropic-inference-switch-e2e
+#                            Switches a running Hermes sandbox to a compatible
+#                            Anthropic Messages provider and verifies agent traffic.
 #   hermes-discord-e2e       Hermes Discord onboarding — validates the top-level Hermes
 #                            Discord schema plus OpenShell placeholder/token isolation.
 #   hermes-slack-e2e         Hermes Slack onboarding — validates the Hermes Slack policy,
@@ -62,6 +65,9 @@
 #   openclaw-inference-switch-e2e
 #                            Switches a running OpenClaw sandbox with `nemoclaw inference set`
 #                            and verifies route, openclaw.json, hashes, and live requests.
+#   openclaw-anthropic-inference-switch-e2e
+#                            Switches a running OpenClaw sandbox to a compatible
+#                            Anthropic Messages provider and verifies agent traffic.
 #   issue-4434-tui-unreachable-inference-e2e
 #                            Recreates #4434's NVIDIA endpoint firewall block and verifies
 #                            OpenClaw TUI shows a visible error and stops the active spinner.
@@ -104,12 +110,15 @@ on:
           issue-4462-gateway-pinned-approval-characterization-e2e,
           messaging-compatible-endpoint-e2e, sessions-agents-cli-e2e,
           channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
-          kimi-inference-compat-e2e, bedrock-runtime-compatible-anthropic-e2e,
-          token-rotation-e2e, sandbox-survival-e2e, issue-2478-crash-loop-recovery-e2e,
+          common-egress-agent-e2e, kimi-inference-compat-e2e,
+          bedrock-runtime-compatible-anthropic-e2e, token-rotation-e2e,
+          sandbox-survival-e2e, issue-2478-crash-loop-recovery-e2e,
           hermes-e2e, hermes-dashboard-e2e, hermes-root-entrypoint-smoke-e2e,
           openclaw-onboard-security-posture-e2e, hermes-onboard-security-posture-e2e,
-          hermes-inference-switch-e2e, hermes-discord-e2e, hermes-slack-e2e,
-          sandbox-operations-e2e, inference-routing-e2e, openclaw-inference-switch-e2e,
+          hermes-inference-switch-e2e, hermes-anthropic-inference-switch-e2e,
+          hermes-discord-e2e, hermes-slack-e2e, sandbox-operations-e2e,
+          inference-routing-e2e, openclaw-inference-switch-e2e,
+          openclaw-anthropic-inference-switch-e2e,
           network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e,
           diagnostics-e2e, credential-migration-e2e, snapshot-commands-e2e,
           shields-config-e2e, vm-driver-privileged-exec-routing-e2e, rebuild-openclaw-e2e,
@@ -717,6 +726,22 @@ jobs:
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
+  common-egress-agent-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',common-egress-agent-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-common-egress-agent-e2e.sh
+      timeout_minutes: 120
+      artifact_name: "common-egress-agent-e2e-logs"
+      artifact_path: "/tmp/nemoclaw-e2e-common-egress-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets: *nightly-e2e-default-secrets
   kimi-inference-compat-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -994,6 +1019,21 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-inference-switch"}'
       nvidia_api_key: true
       github_token: true
+    secrets: *nightly-e2e-default-secrets
+  hermes-anthropic-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-anthropic-inference-switch-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-inference-switch.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-anthropic-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-anthropic-inference-switch","NEMOCLAW_SWITCH_INFERENCE_API":"anthropic-messages","NEMOCLAW_SWITCH_MOCK_ANTHROPIC":"1","NEMOCLAW_SWITCH_MODEL":"mock-anthropic-model","NEMOCLAW_SWITCH_PROVIDER":"compatible-anthropic-endpoint"}'
+      nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   hermes-discord-e2e:
     if: >-
@@ -1304,6 +1344,20 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-inference-switch"}'
       nvidia_api_key: true
       github_token: true
+    secrets: *nightly-e2e-default-secrets
+  openclaw-anthropic-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-anthropic-inference-switch-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-inference-switch.sh
+      artifact_name: "openclaw-anthropic-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"openclaw","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-anthropic-inference-switch","NEMOCLAW_SWITCH_INFERENCE_API":"anthropic-messages","NEMOCLAW_SWITCH_MOCK_ANTHROPIC":"1","NEMOCLAW_SWITCH_MODEL":"mock-anthropic-model","NEMOCLAW_SWITCH_PROVIDER":"compatible-anthropic-endpoint"}'
+      nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   network-policy-e2e:
     if: >-
@@ -2033,6 +2087,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2044,11 +2099,13 @@ jobs:
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
@@ -2144,6 +2201,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2155,11 +2213,13 @@ jobs:
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
@@ -2312,6 +2372,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2323,11 +2384,13 @@ jobs:
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
