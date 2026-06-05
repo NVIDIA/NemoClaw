@@ -11,13 +11,19 @@ import { buildDiscordConfig } from "./messaging-config.ts";
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
+  "terminal",
+  "file",
+  "code_execution",
   "vision",
   "image_gen",
   "skills",
   "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
   "nemoclaw",
   "audio",
-  "no_mcp",
 ];
 
 const MESSAGING_PLATFORM_BY_CHANNEL: Record<string, string> = {

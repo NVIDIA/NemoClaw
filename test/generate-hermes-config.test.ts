@@ -21,25 +21,22 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
-const REMOTE_ONLY_TOOLSETS = [
+const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
+  "terminal",
+  "file",
+  "code_execution",
   "vision",
   "image_gen",
   "skills",
   "todo",
-  "nemoclaw",
-  "audio",
-  "no_mcp",
-];
-const SANDBOX_LOCAL_TOOLSETS = [
-  "terminal",
-  "file",
-  "code_execution",
   "memory",
   "session_search",
   "delegation",
   "cronjob",
+  "nemoclaw",
+  "audio",
 ];
 
 let tmpDir: string;
@@ -110,12 +107,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   return fixtureScriptPath;
 }
 
-function expectNoSandboxLocalToolsets(toolsets: unknown): void {
+function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[] = []): void {
   expect(Array.isArray(toolsets)).toBe(true);
-  for (const toolset of SANDBOX_LOCAL_TOOLSETS) {
-    expect(toolsets).not.toContain(toolset);
-  }
-  expect(toolsets).toContain("no_mcp");
+  expect(toolsets).toEqual([...REMOTE_PLATFORM_TOOLSETS, ...extraToolsets]);
+  expect(toolsets).not.toContain("no_mcp");
 }
 
 function findRawSecretEnvEntries(envFile: string): string[] {
@@ -229,7 +224,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toMatch(/OPENSHELL/);
   });
 
-  it("keeps remote API and messaging platforms away from local sandbox toolsets", () => {
+  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", () => {
     const { config } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
         "discord",
@@ -245,14 +240,11 @@ describe("agents/hermes/generate-config.ts", () => {
       }),
     });
 
-    expect(config.platform_toolsets.api_server).toEqual(REMOTE_ONLY_TOOLSETS);
     for (const platform of ["api_server", "discord", "slack", "telegram", "weixin", "whatsapp"]) {
-      expect(config.platform_toolsets[platform]).toEqual(REMOTE_ONLY_TOOLSETS);
-      expectNoSandboxLocalToolsets(config.platform_toolsets[platform]);
+      expectRemotePlatformToolsets(config.platform_toolsets[platform]);
     }
 
-    // The local Hermes CLI keeps upstream defaults. NemoClaw only narrows
-    // remote and messaging surfaces that can echo results back to users.
+    // The local Hermes CLI keeps upstream defaults.
     expect(config.platform_toolsets.cli).toBeUndefined();
   });
 
@@ -274,8 +266,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.browser).toEqual({ cloud_provider: "browser-use", use_gateway: true });
     expect(config.image_gen).toEqual({ use_gateway: true });
     expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
-    expect(config.platform_toolsets.api_server).toContain("tts");
-    expectNoSandboxLocalToolsets(config.platform_toolsets.api_server);
+    expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
     expect(envFile).toContain(

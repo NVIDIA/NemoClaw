@@ -4,7 +4,7 @@
 
 # Hermes sandbox secret-boundary smoke:
 #   - inspects the built Hermes image for raw secret-shaped .env values
-#   - verifies remote platform toolsets cannot expose local sandbox tools
+#   - verifies remote platform toolsets preserve Hermes capabilities
 #   - proves startup rejects newly introduced raw secret-shaped .env values
 
 set -euo pipefail
@@ -50,14 +50,22 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
-forbidden_toolsets = {
+required_remote_toolsets = {
+    "web",
+    "browser",
     "terminal",
     "file",
     "code_execution",
+    "vision",
+    "image_gen",
+    "skills",
+    "todo",
     "memory",
     "session_search",
     "delegation",
     "cronjob",
+    "nemoclaw",
+    "audio",
 }
 
 
@@ -143,19 +151,15 @@ api_server_toolsets = set(toolsets.get("api_server", []))
 if not api_server_toolsets:
     print("platform_toolsets.api_server missing", file=sys.stderr)
     sys.exit(1)
-if "no_mcp" not in api_server_toolsets:
-    print("platform_toolsets.api_server missing no_mcp", file=sys.stderr)
+missing = sorted(required_remote_toolsets - api_server_toolsets)
+if missing:
+    print(f"platform_toolsets.api_server missing expected Hermes toolsets: {missing}", file=sys.stderr)
     sys.exit(1)
-bad_toolsets = {
-    platform: sorted(set(values) & forbidden_toolsets)
-    for platform, values in toolsets.items()
-    if set(values) & forbidden_toolsets
-}
-if bad_toolsets:
-    print(f"remote platform toolsets expose sandbox-local tools: {bad_toolsets}", file=sys.stderr)
+if "no_mcp" in api_server_toolsets:
+    print("platform_toolsets.api_server unexpectedly disables default MCP servers with no_mcp", file=sys.stderr)
     sys.exit(1)
 PY
-  pass "Built Hermes image has no raw secret-shaped .env values or remote local-tool exposure"
+  pass "Built Hermes image has no raw secret-shaped .env values and preserves remote toolsets"
 }
 
 assert_startup_rejects_env_entry() {

@@ -3501,15 +3501,6 @@ async function createSandbox(
       provider,
       { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
     );
-  let hermesToolBrokerToken: string | null = null;
-  if (hermesToolGateways.length > 0) {
-    hermesToolBrokerToken = getHermesToolGatewayBroker().getHermesToolGatewayBrokerToken(sandboxName);
-    if (!hermesToolBrokerToken) {
-      console.error("  Hermes managed tools were selected, but no broker token was prepared.");
-      console.error("  Re-run OAuth setup with managed tools enabled and retry onboarding.");
-      process.exit(1);
-    }
-  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -3574,10 +3565,6 @@ async function createSandbox(
   const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-  if (hermesToolBrokerToken) {
-    // Runtime-only: do not bake the per-sandbox broker token into image layers.
-    envArgs.push(formatEnvAssignment("TOOL_GATEWAY_USER_TOKEN", hermesToolBrokerToken));
   }
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
