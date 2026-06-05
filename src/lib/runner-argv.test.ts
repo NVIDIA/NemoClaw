@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { createRequire } from "module";
+import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const runner = require("../../dist/lib/runner");
@@ -33,6 +33,13 @@ describe("run with argv array", () => {
 
   it("rejects shell: true to prevent security bypass", () => {
     expect(() => runner.run(["echo", "hi"], { shell: true })).toThrow(/shell option is forbidden/);
+  });
+
+  it("rejects NUL bytes before spawning", () => {
+    expect(() => runner.run(["echo", "bad\0arg"], { suppressOutput: true })).toThrow(
+      /NUL bytes/,
+    );
+    expect(() => runner.run(["\0echo"], { suppressOutput: true })).toThrow(/NUL bytes/);
   });
 
   it("does not interpret shell metacharacters in arguments", () => {

@@ -10,11 +10,43 @@
 // Credentials must never be baked into sandbox filesystems or local backups.
 // They are injected at runtime via OpenShell's provider credential mechanism.
 
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
+}
+
+function readRegularFileNoFollow(filePath: string): string | null {
+  let fd: number;
+  try {
+    fd = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    if (!fstatSync(fd).isFile()) return null;
+    return String(readFileSync(fd, "utf-8"));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function writeFileAtomically(filePath: string, contents: string): void {
+  const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  writeFileSync(tmpPath, contents, { mode: 0o600 });
+  renameSync(tmpPath, filePath);
+  chmodSync(filePath, 0o600);
 }
 
 /**
@@ -145,10 +177,11 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
  * Removes the "gateway" section (contains auth tokens — regenerated at startup).
  */
 export function sanitizeConfigFile(configPath: string): void {
-  if (!existsSync(configPath)) return;
+  const rawConfig = readRegularFileNoFollow(configPath);
+  if (rawConfig === null) return;
   let parsed: ConfigValue;
   try {
-    parsed = parseJson<ConfigValue>(readFileSync(configPath, "utf-8"));
+    parsed = parseJson<ConfigValue>(rawConfig);
   } catch {
     return; // Not valid JSON — skip (may be YAML for Hermes)
   }
@@ -156,8 +189,7 @@ export function sanitizeConfigFile(configPath: string): void {
 
   const { gateway: _gateway, ...config } = parsed;
   const sanitized = stripCredentials(config);
-  writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
-  chmodSync(configPath, 0o600);
+  writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
 }
 
 /**

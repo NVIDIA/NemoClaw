@@ -463,6 +463,26 @@ function pullTimeoutErrorHint(timeoutMs: number): string {
   ].join("\n");
 }
 
+function normalizeOllamaPullModel(model): string {
+  const value = String(model || "").trim();
+  if (!value || /[\0\r\n]/.test(value)) {
+    throw new Error("Invalid Ollama model id for pull request");
+  }
+  return value;
+}
+
+function buildLocalOllamaPullUrl(): string {
+  const host = getResolvedOllamaHost();
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1", OLLAMA_HOST_DOCKER_INTERNAL]);
+  if (!allowedHosts.has(host)) {
+    throw new Error(`Refusing to pull from unexpected Ollama host: ${host}`);
+  }
+  const url = new URL("http://127.0.0.1/api/pull");
+  url.hostname = host;
+  url.port = String(OLLAMA_PORT);
+  return url.toString();
+}
+
 function pullOllamaModelViaCli(model) {
   const timeoutMs = getOllamaPullTimeoutMs();
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
@@ -485,13 +505,15 @@ function pullOllamaModelViaCli(model) {
 // keeps the CLI path so existing behavior is unchanged.
 function pullOllamaModelViaHttp(model) {
   return new Promise((resolve) => {
-    const host = getResolvedOllamaHost();
-    const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
-    const body = JSON.stringify({ model, stream: true });
+    const url = buildLocalOllamaPullUrl();
+    const body = JSON.stringify({ model: normalizeOllamaPullModel(model), stream: true });
     const TIMEOUT_MS = getOllamaPullTimeoutMs();
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
 
+    // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
+    // the model id is normalized before being serialized as JSON request data.
+    // lgtm[js/file-access-to-http]
     const proc = spawn(
       "curl",
       [

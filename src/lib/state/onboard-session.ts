@@ -573,6 +573,29 @@ function parseLockFile(contents: string): LockInfo | null {
   }
 }
 
+interface LockFileSnapshot {
+  info: LockInfo | null;
+  inode: bigint;
+  mtimeMs: number;
+}
+
+function readLockFileSnapshot(): LockFileSnapshot {
+  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isFile()) {
+      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
+    }
+    return {
+      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
+      inode: stat.ino,
+      mtimeMs: Number(stat.mtimeMs),
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 const MALFORMED_STALE_SECONDS = 30;
 
 function isProcessAlive(pid: number): boolean {
@@ -674,34 +697,25 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // the same stale lock, and the slower one will unlink the fresh
       // lock the faster one just claimed, breaking mutual exclusion.
       // See issue #1281.
-      let existing: LockInfo | null;
-      let staleInode: bigint | null;
+      let snapshot: LockFileSnapshot;
       try {
-        const stat = fs.statSync(LOCK_FILE, { bigint: true });
-        staleInode = stat.ino;
-        existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+        snapshot = readLockFileSnapshot();
       } catch (readError) {
         if (isErrnoException(readError) && readError.code === "ENOENT") {
           continue;
         }
         throw readError;
       }
+      const { info: existing, inode: staleInode } = snapshot;
       if (!existing) {
         // Malformed lock file. If the file is very recent (<30 s), a
         // concurrent process may be mid-write — leave it and retry.
         // Otherwise the file is stale debris from a crash between
         // openSync("wx") and writeSync() — remove it so subsequent
         // onboard runs are not permanently blocked (#2765).
-        try {
-          const lockStat = fs.statSync(LOCK_FILE);
-          const ageMs = Date.now() - lockStat.mtimeMs;
-          if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
-            unlinkIfInodeMatches(LOCK_FILE, staleInode);
-          }
-        } catch (statErr) {
-          if (!(isErrnoException(statErr) && statErr.code === "ENOENT")) {
-            throw statErr;
-          }
+        const ageMs = Date.now() - snapshot.mtimeMs;
+        if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
+          unlinkIfInodeMatches(LOCK_FILE, staleInode);
         }
         continue;
       }
@@ -832,17 +846,16 @@ export function releaseOnboardLock(): void {
   // behavior so we never unlink a malformed lock and never unlink a
   // lock owned by another pid.
   try {
-    if (!fs.existsSync(LOCK_FILE)) return;
-    let existing: LockInfo | null = null;
+    let snapshot: LockFileSnapshot;
     try {
-      existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+      snapshot = readLockFileSnapshot();
     } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
-    if (!existing) return;
-    if (existing.pid !== process.pid) return;
-    fs.unlinkSync(LOCK_FILE);
+    if (!snapshot.info) return;
+    if (snapshot.info.pid !== process.pid) return;
+    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
   } catch {
     return;
   }

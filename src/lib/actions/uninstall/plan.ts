@@ -8,7 +8,10 @@ import { buildUninstallPlan, type UninstallPlan, type UninstallPlanOptions } fro
 import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
 
 export interface FileSystemDeps {
+  closeSync?: typeof fs.closeSync;
+  fstatSync?: typeof fs.fstatSync;
   lstatSync?: typeof fs.lstatSync;
+  openSync?: typeof fs.openSync;
   readFileSync?: typeof fs.readFileSync;
 }
 
@@ -19,12 +22,27 @@ export interface HostUninstallPlanOptions extends Omit<UninstallPlanOptions, "sh
 
 export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): ShimClassification {
   const lstatSync = deps.lstatSync ?? fs.lstatSync;
+  const openSync = deps.openSync ?? fs.openSync;
+  const fstatSync = deps.fstatSync ?? fs.fstatSync;
   const readFileSync = deps.readFileSync ?? fs.readFileSync;
+  const closeSync = deps.closeSync ?? fs.closeSync;
   try {
     const stat = lstatSync(shimPath);
     const isFile = stat.isFile();
+    let contents: string | undefined;
+    if (isFile) {
+      const fd = openSync(shimPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const fdStat = fstatSync(fd);
+        if (fdStat.isFile()) {
+          contents = String(readFileSync(fd, "utf-8"));
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
     return classifyNemoclawShim({
-      contents: isFile ? String(readFileSync(shimPath, "utf-8")) : undefined,
+      contents,
       exists: true,
       isFile,
       isSymlink: stat.isSymbolicLink(),

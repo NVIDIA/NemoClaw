@@ -210,6 +210,34 @@ describe("http-probe helpers", () => {
     expect(result.curlStatus).toBe(-110);
     expect(result.message).toContain("ETIMEDOUT");
   });
+
+  it("rejects non-http probe URLs before spawning curl", () => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", "file:///etc/passwd"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("curl probe URL must use http or https");
+  });
+
+  it("rejects curl probe request bodies that read from local files", () => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", "--data-binary", "@/etc/passwd", "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must not read request data from a file");
+  });
 });
 
 describe("runChatCompletionsStreamingProbe", () => {

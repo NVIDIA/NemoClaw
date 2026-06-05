@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
 import { homedir } from "node:os";
-import { loadState, saveState, clearState, type NemoClawState } from "./state.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearState, loadState, type NemoClawState, saveState } from "./state.js";
 
 const store = new Map<string, string>();
 
@@ -21,6 +21,12 @@ vi.mock("node:fs", async (importOriginal) => {
     },
     writeFileSync: (p: string, data: string) => {
       store.set(p, data);
+    },
+    renameSync: (from: string, to: string) => {
+      const content = store.get(from);
+      if (content === undefined) throw new Error(`ENOENT: ${from}`);
+      store.set(to, content);
+      store.delete(from);
     },
   };
 });

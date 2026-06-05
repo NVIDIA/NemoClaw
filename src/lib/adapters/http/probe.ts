@@ -126,6 +126,66 @@ function sanitizeCurlUrl(value: string): string {
   }
 }
 
+const CURL_OPTIONS_THAT_READ_FILES = new Set(["--config", "-K", "--cookie", "-b", "--netrc-file"]);
+const CURL_DATA_OPTIONS = new Set([
+  "--data",
+  "--data-raw",
+  "--data-binary",
+  "--data-ascii",
+  "--json",
+  "--form",
+  "-d",
+  "-F",
+]);
+
+function normalizeHttpProbeUrl(rawUrl: unknown): string {
+  if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
+    throw new Error("curl probe URL is required");
+  }
+  const url = new URL(rawUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`curl probe URL must use http or https: ${url.protocol}`);
+  }
+  if (url.username || url.password) {
+    throw new Error("curl probe URL must not embed credentials");
+  }
+  return url.toString();
+}
+
+function curlValueReadsFromFile(value: string): boolean {
+  return (value.startsWith("@") && value !== "@-") || /(^|=)@[^-]/.test(value);
+}
+
+function validateCurlProbeArgs(argv: string[]): { args: string[]; url: string } {
+  const args = [...argv];
+  const url = normalizeHttpProbeUrl(args.pop());
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const [option, inlineValue] = arg.includes("=") ? arg.split(/=(.*)/s, 2) : [arg, undefined];
+    if (CURL_OPTIONS_THAT_READ_FILES.has(option)) {
+      throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
+    }
+    if (arg === "--url" || arg.startsWith("--url=")) {
+      throw new Error("curl probe URLs must be passed as the final argv entry");
+    }
+    if ((arg.startsWith("-d") || arg.startsWith("-F")) && arg.length > 2 && !arg.startsWith("--")) {
+      const value = arg.slice(2);
+      if (curlValueReadsFromFile(value)) {
+        throw new Error(`curl probe option must not read request data from a file: ${arg.slice(0, 2)}`);
+      }
+      continue;
+    }
+    if (CURL_DATA_OPTIONS.has(option)) {
+      const value = inlineValue ?? args[index + 1] ?? "";
+      if (curlValueReadsFromFile(value)) {
+        throw new Error(`curl probe option must not read request data from a file: ${option}`);
+      }
+      if (inlineValue === undefined) index += 1;
+    }
+  }
+  return { args, url };
+}
+
 function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Record<string, unknown> {
   const url = argv.at(-1) || "";
   const methodIndex = argv.findIndex((arg) => arg === "-X" || arg === "--request");
@@ -212,13 +272,15 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
 function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
+    // The URL is normalized to http(s) and curl argv is screened for options
+    // that make curl read local files into the outbound request.
+    // lgtm[js/file-access-to-http]
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      [...args, "-o", bodyFile, "-w", "%{http_code}", url],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -320,13 +382,15 @@ function runChatCompletionsStreamingProbeImpl(
 ): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-chat-streaming-probe", ".sse");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
+    // The URL is normalized to http(s) and curl argv is screened for options
+    // that make curl read local files into the outbound request.
+    // lgtm[js/file-access-to-http]
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
+      [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", url],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -440,11 +504,13 @@ function runStreamingEventProbeImpl(
 ): StreamingProbeResult {
   const bodyFile = secureTempFile("nemoclaw-streaming-probe", ".sse");
   try {
-    const args = [...argv];
-    const url = args.pop();
+    const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, String(url || "")], {
+    // The URL is normalized to http(s) and curl argv is screened for options
+    // that make curl read local files into the outbound request.
+    // lgtm[js/file-access-to-http]
+    const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, url], {
       cwd: opts.cwd ?? ROOT,
       encoding: "utf8",
       timeout,
