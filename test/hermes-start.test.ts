@@ -584,7 +584,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects raw secret-shaped values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
       envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
     });
@@ -596,7 +596,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects bare API-named raw values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
       envFile: `INTERNAL_API=${rawToken}\n`,
     });
@@ -645,7 +645,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects raw secret-shaped process env values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesRuntimeEnvSecretBoundary({
       DEVTEST_API_TOKEN: rawToken,
       NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "raw-refresh-token",
