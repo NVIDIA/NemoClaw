@@ -305,12 +305,16 @@ describe("nightly E2E workflow validation", () => {
     }
     const messagingSecrets =
       (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
+    const messagingWith = (messagingJob?.with as Record<string, unknown> | undefined) ?? {};
+    if (messagingWith.messaging_live_secrets !== true) {
+      missing.push("nightly messaging-providers-e2e with.messaging_live_secrets");
+    }
 
     for (const name of expectedSecretNames) {
       if (!reusableSecretDefs[name]) {
         missing.push(`workflow_call.secrets.${name}`);
       }
-      if (runStepEnv[name] !== `\${{ secrets.${name} }}`) {
+      if (runStepEnv[name] !== `\${{ inputs.messaging_live_secrets && secrets.${name} || '' }}`) {
         missing.push(`e2e-script Run E2E script env.${name}`);
       }
       if (messagingSecrets[name] !== `\${{ secrets.${name} }}`) {

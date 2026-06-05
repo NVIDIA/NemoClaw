@@ -54,12 +54,34 @@ describe("E2E reusable workflow contract", () => {
 
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
+      const expectsLiveMessaging = name === "messaging-providers-e2e";
       const expectedSecrets =
-        name === "messaging-providers-e2e"
-          ? { ...defaultSecrets, ...messagingLiveSecrets }
-          : defaultSecrets;
+        expectsLiveMessaging ? { ...defaultSecrets, ...messagingLiveSecrets } : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
+      expect(job.with?.messaging_live_secrets ?? false, name).toBe(expectsLiveMessaging);
     }
+  });
+
+  it("requires an explicit opt-in before exposing live messaging secrets to scripts", () => {
+    const callInputs =
+      runnerWorkflow.on?.workflow_call?.inputs ??
+      runnerWorkflow.true?.workflow_call?.inputs ??
+      {};
+    const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+
+    expect(callInputs.messaging_live_secrets?.default).toBe(false);
+    expect(runStep?.env?.TELEGRAM_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.DISCORD_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.SLACK_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.SLACK_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.SLACK_APP_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.SLACK_APP_TOKEN_REAL || '' }}",
+    );
   });
 
   it("authenticates Docker Hub pulls without exposing credentials to target-ref dispatches", () => {

@@ -173,6 +173,9 @@ RUN mkdir -p /opt/hermes \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
 WORKDIR /opt/hermes
+# ui-tui and web are part of the checksum-pinned Hermes release tarball.
+# npm ci uses the lockfiles from that pinned tree; re-review on every
+# HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -194,5 +197,6 @@ RUN set -eu; \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
-ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
+    HERMES_TUI_DIR="/opt/hermes/ui-tui"
 RUN /usr/local/bin/hermes --version
