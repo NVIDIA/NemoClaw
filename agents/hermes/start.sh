@@ -40,6 +40,15 @@ fi
 # SECURITY: Lock down PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Hermes' browser Chat tab shells out to the React/Ink TUI. Force it to the
+# trusted prebuilt bundle baked into the image so `hermes dashboard --tui
+# --skip-build` never honors a stale/user-controlled TUI path or tries to run
+# npm under root-owned /opt/hermes at runtime. Remove this when upstream Hermes
+# reliably discovers the prebaked ui-tui bundle without HERMES_TUI_DIR.
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
 # failures before /tmp/gateway.log exists are still diagnosable.
@@ -646,6 +655,11 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
+    cat <<'TUIENVEOF'
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+TUIENVEOF
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
