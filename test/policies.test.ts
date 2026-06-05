@@ -145,9 +145,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 19 presets", () => {
+    it("includes the OpenClaw OTEL diagnostics preset", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(19);
+      expect(presets.map((preset) => preset.name)).toContain("openclaw-diagnostics-otel-local");
     });
 
     it("each preset has name and description", () => {
@@ -165,6 +165,7 @@ describe("policies", () => {
       const expected = [
         "brave",
         "brew",
+        "claude-code",
         "discord",
         "github",
         "huggingface",
@@ -176,6 +177,8 @@ describe("policies", () => {
         "nous-image",
         "nous-web",
         "npm",
+        "openclaw-diagnostics-otel-local",
+        "openclaw-pricing",
         "outlook",
         "pypi",
         "slack",
@@ -316,6 +319,77 @@ describe("policies", () => {
       }
     });
 
+    it("openclaw-pricing preset pins LiteLLM and OpenRouter reference fetches to GET-only paths", () => {
+      // OpenClaw's gateway/model-pricing subsystem fetches the LiteLLM
+      // pricing table and the OpenRouter model catalogue on every start.
+      // Both endpoints are read-only metadata fetches, so the preset must
+      // expose exactly one GET rule per host on the specific path each
+      // fetch reads, with no wildcards that could widen into a general
+      // raw.githubusercontent.com or openrouter.ai escape hatch.
+      const parsed = parsePresetYaml("openclaw-pricing");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-pricing"]?.endpoints ?? [];
+      expect(endpoints).toHaveLength(2);
+
+      const litellm = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!litellm) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(litellm.port).toBe(443);
+      expect(litellm.protocol).toBe("rest");
+      expect(litellm.enforcement).toBe("enforce");
+      expect(litellm.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/BerriAI/litellm/main/model_prices_and_context_window.json",
+          },
+        },
+      ]);
+
+      const openrouter = endpoints.find((item) => item.host === "openrouter.ai");
+      if (!openrouter) throw new Error("expected openrouter.ai endpoint");
+      expect(openrouter.port).toBe(443);
+      expect(openrouter.protocol).toBe("rest");
+      expect(openrouter.enforcement).toBe("enforce");
+      expect(openrouter.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-pricing"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    });
+
+    it("openclaw-diagnostics-otel-local preset pins OTLP traces to the host collector path", () => {
+      const parsed = parsePresetYaml("openclaw-diagnostics-otel-local");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.endpoints ?? [];
+
+      expect(endpoints).toHaveLength(1);
+      expect(endpoints[0]).toMatchObject({
+        host: "host.openshell.internal",
+        port: 4318,
+        protocol: "rest",
+        enforcement: "enforce",
+        rules: [
+          { allow: { method: "POST", path: "/v1/traces" } },
+          { allow: { method: "POST", path: "/v1/traces/**" } },
+        ],
+      });
+      expect(endpoints[0].allowed_ips).toEqual([
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+      ]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual([
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+        "/usr/local/bin/openclaw",
+      ]);
+    });
+
     it("local-inference preset includes openclaw and common tool binaries", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("/usr/local/bin/openclaw");
@@ -453,8 +527,8 @@ describe("policies", () => {
       const warning = policies.getPresetValidationWarning("jira");
 
       expect(warning).toContain("curl -s");
-      expect(warning).toContain("curl -sS -o /dev/null -w '%{http_code}'");
-      expect(warning).toContain("000");
+      expect(warning).toContain("api.atlassian.com/oauth/token/accessible-resources");
+      expect(warning).toContain("401 JSON");
       expect(warning).toContain("Node HTTPS");
       expect(warning).toContain("https://api.atlassian.com");
     });
@@ -989,6 +1063,206 @@ exit 1
         errSpy.mockRestore();
         logSpy.mockRestore();
         exitSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("issue 4586: preset apply must not overwrite a live policy that could not be read", () => {
+    const registryModule = requireForTest(
+      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+    ) as Record<string, any>;
+    const CUSTOM = "network_policies:\n  example:\n    host: example.com\n";
+    const DEGRADED =
+      '#!/bin/sh\nif [ "$1" = "policy" ] && [ "$2" = "get" ]; then echo "error: gateway is restarting"; fi\nexit 0\n';
+    const EMPTY_OK = "#!/bin/sh\nexit 0\n";
+
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let resolveSpy: ReturnType<typeof vi.spyOn>;
+    let savedGetSandbox: any;
+    let savedAddCustomPolicy: any;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4586-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      origHome = process.env.HOME;
+      process.env.HOME = tmpHome;
+      resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      savedGetSandbox = registryModule.getSandbox;
+      savedAddCustomPolicy = registryModule.addCustomPolicy;
+      registryModule.getSandbox = (name: string) => ({ name });
+      registryModule.addCustomPolicy = () => true;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      resolveSpy.mockRestore();
+      registryModule.getSandbox = savedGetSandbox;
+      registryModule.addCustomPolicy = savedAddCustomPolicy;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("aborts applyPresetContent (returns false) when policy get exits 0 with degraded output", () => {
+      fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
+      const errs: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errs.push(a.map((x) => String(x)).join(" "));
+      });
+      const logs: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+        logs.push(a.map((x) => String(x)).join(" "));
+      });
+      try {
+        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
+          custom: { sourcePath: "/tmp/x.yaml" },
+        });
+        expect(result).toBe(false);
+        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+        expect(logs.join("\n")).not.toContain("Applied preset:");
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("still applies applyPresetContent when policy get returns an empty policy (fresh sandbox)", () => {
+      fs.writeFileSync(fakeOpenshell, EMPTY_OK, { mode: 0o755 });
+      const logs: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+        logs.push(a.map((x) => String(x)).join(" "));
+      });
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
+          custom: { sourcePath: "/tmp/x.yaml" },
+        });
+        expect(result).toBe(true);
+        expect(logs.join("\n")).toContain("Applied preset:");
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
+      fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
+      const errs: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errs.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresets("alpha", ["npm"]);
+        expect(result).toBe(false);
+        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("issue 4510: policy-add --from-file false success when the sandbox is absent from the registry", () => {
+    const registryModule = requireForTest(
+      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+    ) as Record<string, any>;
+    const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
+
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let resolveSpy: ReturnType<typeof vi.spyOn>;
+    let savedGetSandbox: any;
+    let savedAddCustomPolicy: any;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      origHome = process.env.HOME;
+      process.env.HOME = tmpHome;
+      resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      savedGetSandbox = registryModule.getSandbox;
+      savedAddCustomPolicy = registryModule.addCustomPolicy;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      resolveSpy.mockRestore();
+      registryModule.getSandbox = savedGetSandbox;
+      registryModule.addCustomPolicy = savedAddCustomPolicy;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("returns false and warns when a custom preset cannot be recorded locally", () => {
+      // Sandbox is Ready on the gateway but missing from the local registry
+      // (e.g. after stale-registry pruning), so addCustomPolicy cannot persist.
+      registryModule.getSandbox = () => null;
+      const addSpy = vi.fn(() => false);
+      registryModule.addCustomPolicy = addSpy;
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        // Pre-fix this returned true (silent exit 0) while policy-list/status
+        // never showed the preset. The command must not claim success.
+        expect(result).toBe(false);
+        expect(addSpy).not.toHaveBeenCalled();
+        const combined = errors.join("\n");
+        expect(combined).toContain("my-assistant");
+        expect(combined).toMatch(/could not be\s+recorded locally/);
+        expect(combined).toMatch(/policy-list or status/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("records the custom preset and returns true when the sandbox is registered", () => {
+      registryModule.getSandbox = (name: string) => ({ name });
+      const addSpy = vi.fn(() => true);
+      registryModule.addCustomPolicy = addSpy;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        expect(result).toBe(true);
+        expect(addSpy).toHaveBeenCalledWith(
+          "my-assistant",
+          expect.objectContaining({
+            name: "slack-files-upload",
+            content: CUSTOM_CONTENT,
+            sourcePath: SOURCE_PATH,
+          }),
+        );
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
       }
     });
   });
@@ -1538,6 +1812,56 @@ exit 1
       expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
     });
 
+    it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string; path?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      expect(pypiPolicy).toBeTruthy();
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining([
+          "/usr/bin/curl",
+          "/usr/local/bin/curl",
+          "/usr/local/bin/pip3",
+          "/usr/bin/python3*",
+          "/opt/hermes/.venv/bin/python",
+        ]),
+      );
+
+      const endpoints = pypiPolicy?.endpoints ?? [];
+      expect(endpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+        "files.pythonhosted.org",
+        "pypi.org",
+      ]);
+
+      for (const endpoint of endpoints) {
+        expect(endpoint).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+        });
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET"]);
+        expect(methods).not.toContain("POST");
+        expect(methods).not.toContain("PUT");
+        expect(methods).not.toContain("DELETE");
+      }
+    });
+
     it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
       const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const githubPolicy = parsed.network_policies?.github as
@@ -1601,7 +1925,65 @@ exit 1
       }
     });
 
-    it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {
+    it("Claude Code hosts require the explicit claude-code preset", () => {
+      const claudeHosts = new Set(["api.anthropic.com", "statsig.anthropic.com", "sentry.io"]);
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+        "agents/hermes/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = parseRepoYaml(relativePath) as {
+          network_policies?: Record<string, { endpoints?: Array<{ host?: string }> }>;
+        };
+        expect(parsed.network_policies, relativePath).not.toHaveProperty("claude_code");
+        const hosts = Object.values(parsed.network_policies ?? {})
+          .flatMap((policy) => policy.endpoints ?? [])
+          .map((endpoint) => endpoint.host)
+          .filter((host): host is string => typeof host === "string");
+        expect(hosts.filter((host) => claudeHosts.has(host)), relativePath).toEqual([]);
+      }
+
+      const preset = parseRepoYaml("nemoclaw-blueprint/policies/presets/claude-code.yaml") as {
+        preset?: { name?: string };
+        network_policies?: Record<
+          string,
+          {
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: unknown[];
+            }>;
+            binaries?: Array<{ path?: string }>;
+          }
+        >;
+      };
+      const claudePolicy = preset.network_policies?.claude_code;
+      expect(preset.preset?.name).toBe("claude-code");
+      expect(claudePolicy).toBeDefined();
+      expect((claudePolicy?.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual(
+        [...claudeHosts].sort(),
+      );
+      for (const endpoint of claudePolicy?.endpoints ?? []) {
+        expect(endpoint.port).toBe(443);
+        expect(endpoint.protocol).toBe("rest");
+        expect(endpoint.enforcement).toBe("enforce");
+        expect(endpoint).not.toHaveProperty("access");
+        expect(endpoint.rules).toEqual(
+          expect.arrayContaining([
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/**" } },
+          ]),
+        );
+      }
+      expect((claudePolicy?.binaries ?? []).map((binary) => binary.path)).not.toContain("/**");
+    });
+
+    it("brew preset whitelists the PATH wrapper and Homebrew-managed entrypoints (#3913)", () => {
       const content = requirePresetContent(policies.loadPreset("brew"));
       const parsed = YAML.parse(content);
       const brewPolicy = parsed.network_policies?.brew as
@@ -1655,6 +2037,32 @@ exit 1
       // range-request support. GET-only would break pip install.
       const content = requirePresetContent(policies.loadPreset("pypi"));
       expect(content.includes("method: HEAD")).toBe(true);
+    });
+
+    it("pypi preset lets curl verify read-only package index access (#4014)", () => {
+      const content = requirePresetContent(policies.loadPreset("pypi"));
+      const parsed = YAML.parse(content);
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining(["/usr/bin/curl", "/usr/local/bin/curl"]),
+      );
+
+      for (const endpoint of pypiPolicy?.endpoints ?? []) {
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET", "HEAD"]);
+      }
     });
 
     it("package-manager presets include binaries section", () => {

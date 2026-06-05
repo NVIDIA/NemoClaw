@@ -21,6 +21,7 @@ export interface SandboxRegistryMetadataHelpers {
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   >;
@@ -46,20 +47,24 @@ export function createSandboxRegistryMetadataHelpers(
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   > {
+    // OpenShell's Docker-driver gateway always starts with OPENSHELL_DRIVERS=docker,
+    // including on macOS arm64 (#3454). Recording "vm" for darwin here makes later
+    // setup misclassify the sandbox and run VM-only DNS monkeypatch / warning paths
+    // (#3728).
     return {
       gpuEnabled: config.sandboxGpuEnabled,
       hostGpuDetected: config.hostGpuDetected,
       sandboxGpuEnabled: config.sandboxGpuEnabled,
       sandboxGpuMode: config.mode,
       sandboxGpuDevice: config.sandboxGpuDevice,
-      openshellDriver: deps.isLinuxDockerDriverGatewayEnabled()
-        ? process.platform === "darwin"
-          ? "vm"
-          : "docker"
-        : "kubernetes",
+      // Only persist a proof when this run produced one; omit on reuse/update
+      // paths so a prior proof result is preserved rather than nulled out.
+      ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
+      openshellDriver: deps.isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),
@@ -86,12 +91,13 @@ export function createSandboxRegistryMetadataHelpers(
     sandboxGpuConfig: SandboxGpuConfig | null = null,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
-    const agentVersionKnown = existingEntry?.agentVersion !== null;
+    const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
-      ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
+      agent: agentFields.agent,
+      agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });
     registry.setDefault(sandboxName);

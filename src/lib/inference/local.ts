@@ -11,7 +11,6 @@ import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -23,6 +22,9 @@ import {
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
 import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import {
+  applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels,
+} from "./vllm-runtime-context";
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
@@ -39,11 +41,10 @@ import {
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
 
-const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
-const { dockerInfo } = require("../adapters/docker/info");
+const { containerCanReachHostLoopback, isWsl } = require("../platform");
+const { detectContainerRuntimeFromDockerInfo } =
+  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
 const { detectNvidiaPlatform } = require("./nim");
-
-const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -54,9 +55,7 @@ const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(
-    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
-  ) as ContainerRuntime;
+  const runtime = detectContainerRuntimeFromDockerInfo();
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
@@ -179,6 +178,26 @@ export interface ValidationResult {
   ok: boolean;
   message?: string;
   diagnostic?: string;
+  /**
+   * Set when the failure points at the Ollama daemon / model runner itself,
+   * not the chosen model. Callers escape the Ollama-model loop instead of
+   * asking for another tag that would hit the same failure. (#4365)
+   */
+  daemonFailure?: boolean;
+}
+
+/**
+ * Recognises Ollama probe errors that mean the daemon's model runner crashed,
+ * stopped, or otherwise died (rather than the chosen model being unsuitable).
+ * Picking a different model would loop on the same failure, so the wizard
+ * escapes back to provider selection. (#4365)
+ */
+export function isOllamaRunnerCrash(errText: string | null | undefined): boolean {
+  const text = String(errText || "");
+  if (!text) return false;
+  return /\brunner\b[\s\S]{0,80}\b(?:stopped|terminated|crashed|exited|died|killed)\b/i.test(
+    text,
+  );
 }
 
 export interface LocalProviderHealthStatus {
@@ -755,6 +774,13 @@ export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
   applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
 }
 
+export function applyVllmRuntimeContextWindow(
+  modelsResponse: unknown,
+  modelId: string | null | undefined,
+): void {
+  applyVllmRuntimeContextWindowFromModels(modelsResponse, modelId);
+}
+
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
   const observed: string[] = [];
   if (status.processor) observed.push(`processor=${status.processor}`);
@@ -930,6 +956,7 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
@@ -959,37 +986,47 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
-        return {
-          ok: false,
-          message:
-            `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
-            `model's capabilities and pick one whose list includes 'tools'.`,
-        };
-      }
-      // Ollama checks available RAM instead of total; false positive on DGX Spark
-      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
-      const memMatch = errText.match(
-        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
-      );
-      if (memMatch && sparkHost) {
-        const requiresGiB = parseFloat(memMatch[1]);
-        const freeOut = capture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
-            const totalGiB = totalMB / 1024;
-            if (totalGiB >= requiresGiB) {
-              return { ok: true };
+        if (options.allowToolsIncompatible !== true) {
+          return {
+            ok: false,
+            message:
+              `Selected Ollama model '${model}' does not support tool calling, which ` +
+              `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+              `model's capabilities and pick one whose list includes 'tools'.`,
+          };
+        }
+        // Override accepted — log and fall through to the Spark CPU-only
+        // runtime check below so it still enforces. (#4241)
+        console.warn(
+          `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+            `continuing because the no-tools override was accepted.`,
+        );
+      } else {
+        // Ollama checks available RAM instead of total; false positive on DGX Spark
+        // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+        const memMatch = errText.match(
+          /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+        );
+        if (memMatch && sparkHost) {
+          const requiresGiB = parseFloat(memMatch[1]);
+          const freeOut = capture(["free", "-m"], { ignoreError: true });
+          if (freeOut) {
+            const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+            if (memLine) {
+              const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+              const totalGiB = totalMB / 1024;
+              if (totalGiB >= requiresGiB) {
+                return { ok: true };
+              }
             }
           }
         }
+        return {
+          ok: false,
+          message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+          ...(isOllamaRunnerCrash(errText) ? { daemonFailure: true } : {}),
+        };
       }
-      return {
-        ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
-      };
     }
   } catch {
     /* ignored */
@@ -1006,6 +1043,29 @@ export function validateOllamaModel(
   }
 
   return { ok: true };
+}
+
+// Helpers for threading the user's "use this no-tools Ollama model anyway"
+// override (see #4241) through onboard validators so they don't loop the
+// wizard back to model selection after the user already accepted.
+
+export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
+  skipResponsesProbe: true;
+  requireChatCompletionsToolCalling: boolean;
+  allowHostDockerInternal: boolean;
+} {
+  return {
+    skipResponsesProbe: true,
+    requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+  };
+}
+
+export function validateOllamaModelWithToolsOverride(
+  model: string,
+  allowToolsIncompatible: boolean,
+): ValidationResult {
+  return validateOllamaModel(model, undefined, undefined, undefined, { allowToolsIncompatible });
 }
 
 // ─── Tools-capability probe (issue #2667) ─────────────────────────

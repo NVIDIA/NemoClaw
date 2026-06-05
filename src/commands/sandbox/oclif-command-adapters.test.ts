@@ -186,4 +186,50 @@ describe("sandbox oclif command adapters", () => {
     expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha");
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
+
+  it("keeps doctor --json stdout clean while diagnostics recovery prints progress", async () => {
+    const report = {
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "ok",
+      failed: 0,
+      warnings: 0,
+      checks: [],
+    };
+    mocks.runSandboxDoctor.mockImplementationOnce(async () => {
+      process.stdout.write("  Starting OpenShell gateway\n");
+      return report;
+    });
+
+    const out: string[] = [];
+    const err: string[] = [];
+    const origOut = process.stdout.write;
+    const origErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      out.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      err.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stderr.write;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+
+    const stdout = out.join("");
+    expect(stdout).not.toContain("Starting OpenShell gateway");
+    expect(stdout).toBe("");
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(report);
+    expect(err.join("")).toContain("Starting OpenShell gateway");
+  });
 });

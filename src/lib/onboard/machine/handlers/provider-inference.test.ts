@@ -42,6 +42,12 @@ function createDeps(overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent,
     repair: vi.fn(),
     routeReady: vi.fn(() => false),
     reconcileRouter: vi.fn(async () => undefined),
+    reupsertRoutedProvider: vi.fn(
+      (_provider: string, endpointUrl: string | null, _credentialEnv: string | null) => ({
+        ok: true as const,
+        endpointUrl: "http://host.openshell.internal:4000/v1",
+      }),
+    ),
     updateSandbox: vi.fn(),
     promptName: vi.fn(async () => "my-assistant"),
     promptYesNo: vi.fn(async () => true),
@@ -73,6 +79,7 @@ function createDeps(overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent,
       isInferenceRouteReady: calls.routeReady,
       isRoutedInferenceProvider: (provider: string) => provider === "nvidia-router",
       reconcileModelRouter: calls.reconcileRouter,
+      reupsertRoutedProvider: calls.reupsertRoutedProvider,
       registryUpdateSandbox: calls.updateSandbox,
       promptValidatedSandboxName: calls.promptName,
       assessHost: () => ({ cpus: 8 }),
@@ -148,6 +155,7 @@ describe("handleProviderInferenceState", () => {
       "NVIDIA_API_KEY",
       null,
       [],
+      { allowToolsIncompatible: false },
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_API_KEY");
     expect(result).toMatchObject({
@@ -156,6 +164,14 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-prod",
       preferredInferenceApi: "openai-responses",
     });
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "sandbox",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "inference", provider: "nvidia-prod", model: "nvidia/test" },
+    });
+    expect(result.retryStateResults).toEqual([]);
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
@@ -311,6 +327,7 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
+      { allowToolsIncompatible: false },
     );
   });
 
@@ -326,6 +343,64 @@ describe("handleProviderInferenceState", () => {
     });
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+  });
+
+  // Regression: #4564. On resume the routed provider was only reconciled, never
+  // re-upserted, so a stale localhost base URL recorded by an earlier run could
+  // survive in the gateway and break inference.local from the sandbox.
+  it("re-upserts the routed provider with the host alias on resume (#4564)", async () => {
+    const session = createSession({
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://localhost:4000/v1",
+      credentialEnv: "NVIDIA_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "router-sandbox",
+    });
+
+    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.reupsertRoutedProvider).toHaveBeenCalledWith(
+      "nvidia-router",
+      "http://localhost:4000/v1",
+      "NVIDIA_API_KEY",
+    );
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
+  });
+
+  it("aborts resume when re-upserting the routed provider fails (#4564)", async () => {
+    const session = createSession({
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://localhost:4000/v1",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      reupsertRoutedProvider: vi.fn(() => ({
+        ok: false,
+        endpointUrl: "http://host.openshell.internal:4000/v1",
+        message: "provider update failed",
+        status: 7,
+      })),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "router-sandbox",
+      }),
+    ).rejects.toThrow("exit 7");
+
+    expect(calls.error).toHaveBeenCalledWith("  provider update failed");
+    expect(calls.exit).toHaveBeenCalledWith(7);
   });
 
   it("returns to provider selection when inference setup requests a retry", async () => {
@@ -345,6 +420,21 @@ describe("handleProviderInferenceState", () => {
     expect(setupInference).toHaveBeenCalledTimes(2);
     expect(result.model).toBe("good");
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection");
+    expect(result.retryStateResults).toEqual([
+      {
+        type: "transition",
+        next: "provider_selection",
+        transitionKind: "retry",
+        updates: undefined,
+        metadata: {
+          state: "inference",
+          provider: "nvidia-prod",
+          model: "bad",
+          reason: "selection_retry",
+        },
+      },
+    ]);
+    expect(result.stateResult).toMatchObject({ next: "sandbox", transitionKind: "advance" });
   });
 
   it("aborts before inference setup when the configuration summary is rejected", async () => {
@@ -357,5 +447,35 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.exit).toHaveBeenCalledWith(0);
     expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  // Regression: #4241. When the provider selection step accepted a no-tools
+  // Ollama model (the user answered "yes" to the override prompt or
+  // NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 was set), the same flag must reach
+  // setupInference so the second validateOllamaModel pass does not reject the
+  // model on the same condition and bounce the user back to model selection.
+  it("forwards allowToolsIncompatible from provider selection into setupInference (#4241)", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "tinyllama:1.1b",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      credentialEnv: null,
+      allowToolsIncompatible: true,
+    }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    await handleProviderInferenceState(baseOptions(deps));
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "tinyllama:1.1b",
+      "ollama-local",
+      "http://127.0.0.1:11434/v1",
+      null,
+      null,
+      [],
+      { allowToolsIncompatible: true },
+    );
   });
 });

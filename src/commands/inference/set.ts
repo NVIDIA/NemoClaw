@@ -3,7 +3,7 @@
 
 import { Flags } from "@oclif/core";
 
-function requiredNonEmptyFlag(description: string) {
+function nonEmptyFlag(description: string) {
   return Flags.string({
     description,
     parse: async (input: string) => {
@@ -11,7 +11,6 @@ function requiredNonEmptyFlag(description: string) {
       if (!trimmed) throw new Error(`${description} cannot be empty`);
       return trimmed;
     },
-    required: true,
   });
 }
 
@@ -19,6 +18,7 @@ import {
   InferenceSetError,
   runInferenceSet,
 } from "../../lib/actions/inference-set";
+import { CLI_NAME } from "../../lib/cli/branding";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class InferenceSetCommand extends NemoClawCommand {
@@ -35,8 +35,8 @@ export default class InferenceSetCommand extends NemoClawCommand {
     "<%= config.bin %> inference set --provider openai-api --model gpt-5.4 --sandbox my-assistant",
   ];
   static flags = {
-    provider: requiredNonEmptyFlag("OpenShell inference provider name"),
-    model: requiredNonEmptyFlag("Model id to route through the selected provider"),
+    provider: nonEmptyFlag("OpenShell inference provider name"),
+    model: nonEmptyFlag("Model id to route through the selected provider"),
     sandbox: Flags.string({
       description:
         "Registered sandbox to sync; defaults to the NemoClaw default sandbox or the unambiguous Hermes sandbox under nemohermes",
@@ -48,6 +48,10 @@ export default class InferenceSetCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(InferenceSetCommand);
+    if (!flags.provider || !flags.model) {
+      this.printOpenShellRedirect();
+      return;
+    }
     try {
       await runInferenceSet({
         provider: flags.provider,
@@ -62,5 +66,20 @@ export default class InferenceSetCommand extends NemoClawCommand {
       }
       throw error;
     }
+  }
+
+  private printOpenShellRedirect(): void {
+    this.failWithLines(
+      [
+        `  Unknown ${CLI_NAME} command: inference set`,
+        "",
+        "  This operation belongs to OpenShell.",
+        "  Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+        `  To also sync the running sandbox config, pass --provider and --model to ${CLI_NAME} inference set.`,
+        "",
+        `  Run '${CLI_NAME} help' for NemoClaw commands.`,
+      ],
+      1,
+    );
   }
 }

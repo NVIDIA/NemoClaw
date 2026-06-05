@@ -20,10 +20,10 @@ describe("verifyGatewayContainerRunning", () => {
     );
   });
 
-  it("returns missing for existing but stopped containers", () => {
+  it("returns stopped for existing but stopped containers (#4187)", () => {
     const dockerInspect = vi.fn(() => dockerInspectResult(0, "false\n"));
 
-    expect(verifyGatewayContainerRunning("nemoclaw", { dockerInspect })).toBe("missing");
+    expect(verifyGatewayContainerRunning("nemoclaw", { dockerInspect })).toBe("stopped");
   });
 
   it("returns missing when Docker reports the gateway container is absent", () => {

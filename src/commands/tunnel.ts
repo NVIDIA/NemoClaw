@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
+import { printTunnelUsage } from "../lib/tunnel/command-support";
 
 export default class TunnelCommand extends NemoClawCommand {
   static id = "tunnel";
@@ -18,6 +19,6 @@ export default class TunnelCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(TunnelCommand);
-    this.error("Missing tunnel subcommand. Run `nemoclaw tunnel --help` for usage.", { exit: 2 });
+    printTunnelUsage(this.log.bind(this));
   }
 }

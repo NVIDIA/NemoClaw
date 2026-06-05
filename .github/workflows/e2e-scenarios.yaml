@@ -1,75 +1,99 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Scenario-based E2E. Runs a single setup scenario by id against the
-# matching runner and uploads runtime artifacts for debugging.
-#
-# Manual-only (workflow_dispatch) while scenario-based coverage migrates.
-# Existing nightly-e2e / macos-e2e / wsl-e2e workflows remain unchanged.
 
 name: E2E / Scenario Runner
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      scenario:
-        description: "Scenario id (e.g. ubuntu-repo-cloud-openclaw)"
+      scenarios:
+        description: "Comma-separated canonical typed scenario ids (for example: ubuntu-repo-cloud-openclaw,ubuntu-repo-cloud-hermes)"
         required: true
         type: string
-      suite_filter:
-        description: "Comma-separated suite ids to run (optional; defaults to the scenario's full suite list)"
-        required: false
-        default: ""
+  workflow_call:
+    inputs:
+      scenarios:
+        description: "Comma-separated canonical typed scenario ids"
+        required: true
         type: string
     secrets:
       NVIDIA_API_KEY:
         required: false
-  workflow_dispatch:
-    inputs:
-      scenario:
-        description: "Scenario id (e.g. ubuntu-repo-cloud-openclaw)"
-        required: true
-        type: string
-      suite_filter:
-        description: "Comma-separated suite ids to run (optional; defaults to the scenario's full suite list)"
-        required: false
-        default: ""
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: e2e-scenarios-${{ inputs.scenario }}
+  group: e2e-scenarios-${{ inputs.scenarios || github.event.inputs.scenarios }}
   cancel-in-progress: false
 
 jobs:
-  # Route the scenario to the correct runner.
-  #
-  # Scenario ids encode their target platform as the first segment
-  # (e.g. `macos-repo-cloud-openclaw`, `wsl-repo-cloud-openclaw`,
-  # `gpu-repo-local-ollama-openclaw`). The workflow previously pinned
-  # `runs-on: ubuntu-latest` for every scenario, which caused non-Ubuntu
-  # scenarios to fail on the wrong runner (CodeRabbit review item #1).
   resolve-runner:
     runs-on: ubuntu-latest
     outputs:
       runner: ${{ steps.pick.outputs.runner }}
     steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
       - id: pick
+        name: Resolve typed scenario runners
         env:
-          SCENARIO: ${{ inputs.scenario }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
-          case "${SCENARIO}" in
-            macos-*)  echo "runner=macos-26"      >> "$GITHUB_OUTPUT" ;;
-            wsl-*)    echo "runner=windows-latest" >> "$GITHUB_OUTPUT" ;;
-            gpu-*)    echo "runner=linux-amd64-gpu-rtxpro6000-latest-1" >> "$GITHUB_OUTPUT" ;;
-            ubuntu-*|brev-*) echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT" ;;
-            *)
-              echo "::error::Unknown scenario prefix for runner selection: ${SCENARIO}" >&2
+          set -euo pipefail
+          # Keep routing visible here while typed registry metadata is the source
+          # of the canonical scenario ids. Multi-runner mixed batches are rejected
+          # so each workflow job still runs on one correct runner.
+          declare -A ROUTES=(
+            [macos-repo-cloud-openclaw]=macos-26
+            [wsl-repo-cloud-openclaw]=windows-latest
+            [gpu-repo-local-ollama-openclaw]=linux-amd64-gpu-rtxpro6000-latest-1
+            [brev-launchable-cloud-openclaw]=ubuntu-latest
+            [ubuntu-no-docker-preflight-negative]=ubuntu-latest
+            [ubuntu-repo-cloud-hermes]=ubuntu-latest
+            [ubuntu-repo-cloud-hermes-discord]=ubuntu-latest
+            [ubuntu-repo-cloud-hermes-slack]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-brave]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-discord]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-double-provider-switch]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-double-same-provider]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-repair]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-resume]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-slack]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-telegram]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-token-rotation]=ubuntu-latest
+            [ubuntu-repo-openai-compatible-openclaw]=ubuntu-latest
+          )
+          selected=""
+          IFS=',' read -ra IDS <<< "${SCENARIOS}"
+          for raw in "${IDS[@]}"; do
+            id="${raw//[[:space:]]/}"
+            [ -n "${id}" ] || continue
+            npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${id}" --plan-only >/dev/null
+            runner="${ROUTES[$id]:-}"
+            if [ -z "${runner}" ]; then
+              echo "::error::No runner route for scenario: ${id}" >&2
               exit 1
-              ;;
-          esac
+            fi
+            if [ -n "${selected}" ] && [ "${selected}" != "${runner}" ]; then
+              echo "::error::Scenario batch spans multiple runner types (${selected}, ${runner}); split dispatch." >&2
+              exit 1
+            fi
+            selected="${runner}"
+          done
+          echo "runner=${selected:-ubuntu-latest}" >> "$GITHUB_OUTPUT"
 
   run-scenario:
     needs: resolve-runner
@@ -78,75 +102,43 @@ jobs:
     env:
       WSL_DISTRO: Ubuntu
       NEMOCLAW_RECREATE_SANDBOX: "1"
+      E2E_CONTEXT_DIR: ${{ github.workspace }}
     steps:
       - name: Force LF line endings for WSL checkout
-        if: startsWith(inputs.scenario, 'wsl-')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: git config --global core.autocrlf false
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: 22
           cache: npm
 
       - name: Install root dependencies
-        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
         run: npm ci --ignore-scripts
 
-      - name: Render coverage report
-        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
-        env:
-          SCENARIO: ${{ inputs.scenario }}
-        run: |
-          mkdir -p .e2e
-          bash test/e2e/runtime/coverage-report.sh > .e2e/coverage.md
-          {
-            echo '# E2E Scenario Report'
-            echo ''
-            # Keep workflow_dispatch input in an env var so untrusted scenario text
-            # is data, not YAML-interpolated shell source.
-            printf '**Scenario:** `%s`\n' "$SCENARIO"
-            echo ''
-            cat .e2e/coverage.md
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
-      - name: Run scenario
-        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
+      - name: Run typed scenarios
+        if: ${{ !contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw') }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          E2E_SUITE_FILTER: ${{ inputs.suite_filter }}
-          SCENARIO: ${{ inputs.scenario }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
-          # Keep workflow inputs in env vars so untrusted scenario text
-          # is data, not YAML-interpolated shell source.
-          set +e
-          bash test/e2e/runtime/run-scenario.sh "$SCENARIO"
-          rc=$?
-          set -e
-          {
-            echo ''
-            echo '## Scenario execution result'
-            echo ''
-            if [ "$rc" -eq 0 ]; then
-              printf -- '- Scenario `%s` completed successfully.\n' "$SCENARIO"
-            else
-              printf -- '- Scenario `%s` failed with exit code `%s`.\n' "$SCENARIO" "$rc"
-            fi
-            if grep -R '^SKIP:' .e2e test/e2e/logs >/tmp/e2e-skips.txt 2>/dev/null; then
-              echo ''
-              echo '### Runtime skips observed'
-              echo ''
-              sed 's/^/- `/' /tmp/e2e-skips.txt | sed 's/$/`/'
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-          exit "$rc"
+          set -euo pipefail
+          if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
+            echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+            exit 1
+          fi
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
 
       - name: Resolve workspace paths for WSL
-        if: startsWith(inputs.scenario, 'wsl-')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: |
           $winPath = "${{ github.workspace }}"
@@ -158,38 +150,93 @@ jobs:
           "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Ensure Ubuntu WSL exists
-        if: startsWith(inputs.scenario, 'wsl-')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: |
           wsl --list --verbose 2>&1 | Out-Default
           $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
           if ($LASTEXITCODE -ne 0) {
-            wsl --install -d $env:WSL_DISTRO --no-launch --web-download
-            wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+            $maxAttempts = 3
+            $installed = $false
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
+              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
+              $installExitCode = $LASTEXITCODE
+              if ($installExitCode -eq 0) {
+                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+                $launchExitCode = $LASTEXITCODE
+                if ($launchExitCode -eq 0) {
+                  $installed = $true
+                  break
+                }
+                Write-Warning "distro first-launch failed with exit code $launchExitCode"
+              } else {
+                Write-Warning "wsl --install failed with exit code $installExitCode"
+              }
+
+              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host 'Ubuntu became available after the install command returned non-zero'
+                $installed = $true
+                break
+              }
+
+              if ($attempt -lt $maxAttempts) {
+                Write-Host 'Cleaning up any partial WSL registration before retrying'
+                $null = wsl --unregister $env:WSL_DISTRO 2>&1
+                $delaySeconds = [Math]::Min(60, 20 * $attempt)
+                Write-Host "Retrying WSL install in $delaySeconds seconds..."
+                Start-Sleep -Seconds $delaySeconds
+              }
+            }
+
+            if (-not $installed) {
+              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
+            }
+          } else {
+            Write-Host 'Ubuntu already available'
           }
           wsl --set-default $env:WSL_DISTRO
+          if ($LASTEXITCODE -ne 0) {
+            throw ('wsl --set-default failed with exit code ' + $LASTEXITCODE)
+          }
 
-      - name: Install WSL dependencies
-        if: startsWith(inputs.scenario, 'wsl-')
+      - name: Verify WSL
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
+        shell: powershell
+        run: |
+          wsl -d $env:WSL_DISTRO -- bash -lc "uname -a"
+          wsl -d $env:WSL_DISTRO -- bash -lc "cat /etc/os-release"
+
+      - name: Install Ubuntu dependencies
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: |
           $script = @'
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          printf '%s\n' 'Acquire::ForceIPv4 "true";' 'Acquire::Retries "5";' >/etc/apt/apt.conf.d/99github-actions-network
+          printf '%s\n' \
+            'Acquire::ForceIPv4 "true";' \
+            'Acquire::Retries "5";' \
+            >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
           apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
-          if ! docker info >/dev/null 2>&1; then
-            apt-get install -y docker.io
-            service docker start || /etc/init.d/docker start || true
-            timeout 30 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
-          fi
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Install Node.js 22 in WSL
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
+        shell: powershell
+        run: |
+          $script = @'
+          set -euo pipefail
           curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
           apt-get install -y nodejs
           node --version
           npm --version
-          docker --version
-          docker info >/dev/null
           '@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
@@ -197,82 +244,103 @@ jobs:
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Copy checkout into WSL ext4 workspace
-        if: startsWith(inputs.scenario, 'wsl-')
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         run: |
+          $checkout = $env:WSL_CHECKOUT_DIR
+          $workdir = $env:WSL_WORKDIR
+          $workdirParent = $workdir.Substring(0, $workdir.LastIndexOf('/'))
           $script = @"
           set -euo pipefail
-          rm -rf '$env:WSL_WORKDIR'
-          mkdir -p /tmp/nemoclaw-scenario-wsl
-          rsync -a --no-owner --no-group --delete --exclude '/node_modules/' --exclude '/nemoclaw/node_modules/' --exclude '/nemoclaw-blueprint/.venv/' '$env:WSL_CHECKOUT_DIR'/ '$env:WSL_WORKDIR'/
-          git config --global --add safe.directory '$env:WSL_WORKDIR'
-          git -C '$env:WSL_WORKDIR' reset --hard HEAD
-          git -C '$env:WSL_WORKDIR' clean -ffdx
+          echo 'Syncing checkout from $checkout to $workdir'
+          if [ ! -d '$checkout/.git' ]; then
+            echo 'Expected a Git checkout at $checkout' >&2
+            exit 1
+          fi
+          rm -rf '$workdir'
+          mkdir -p '$workdirParent'
+          rsync -a --no-owner --no-group --delete \
+            --exclude '/node_modules/' \
+            --exclude '/nemoclaw/node_modules/' \
+            --exclude '/nemoclaw-blueprint/.venv/' \
+            '$checkout'/ '$workdir'/
+          git config --global --add safe.directory '$workdir'
+          git -C '$workdir' reset --hard HEAD
+          git -C '$workdir' clean -ffdx
+          git -C '$workdir' status --short
+          echo 'WSL ext4 workspace ready at $workdir'
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
-      - name: Install root dependencies in WSL
-        if: startsWith(inputs.scenario, 'wsl-')
-        shell: powershell
-        run: |
-          $script = @"
-          set -euo pipefail
-          cd '$env:WSL_WORKDIR'
-          npm ci --ignore-scripts
-          mkdir -p .e2e
-          bash test/e2e/runtime/coverage-report.sh > .e2e/coverage.md
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
-
-      - name: Run scenario in WSL
-        if: startsWith(inputs.scenario, 'wsl-')
+      - name: Run typed scenarios in WSL
+        if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
         shell: powershell
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          E2E_SUITE_FILTER: ${{ inputs.suite_filter }}
-          SCENARIO: ${{ inputs.scenario }}
+          SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
-          $env:WSLENV = "NVIDIA_API_KEY:E2E_SUITE_FILTER:NEMOCLAW_RECREATE_SANDBOX:SCENARIO:WSL_WORKDIR"
-          $script = @'
-          set -euo pipefail
-          cd "$WSL_WORKDIR"
-          export NVIDIA_API_KEY
-          export E2E_SUITE_FILTER
-          export NEMOCLAW_RECREATE_SANDBOX
-          bash test/e2e/runtime/run-scenario.sh "$SCENARIO"
-          '@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
-
-      - name: Copy WSL artifacts back to checkout
-        if: always() && startsWith(inputs.scenario, 'wsl-')
-        shell: powershell
-        run: |
+          if ($env:SCENARIOS -notmatch '^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$') {
+            Write-Error "Invalid scenario input: $env:SCENARIOS"
+            exit 1
+          }
+          $workdir = $env:WSL_WORKDIR
+          $checkout = $env:WSL_CHECKOUT_DIR
+          $scenarios = $env:SCENARIOS
           $script = @"
           set -euo pipefail
-          mkdir -p '$env:WSL_CHECKOUT_DIR/.e2e' '$env:WSL_CHECKOUT_DIR/test/e2e/logs'
-          if [ -d '$env:WSL_WORKDIR/.e2e' ]; then rsync -a '$env:WSL_WORKDIR/.e2e'/ '$env:WSL_CHECKOUT_DIR/.e2e'/; fi
-          if [ -d '$env:WSL_WORKDIR/test/e2e/logs' ]; then rsync -a '$env:WSL_WORKDIR/test/e2e/logs'/ '$env:WSL_CHECKOUT_DIR/test/e2e/logs'/; fi
+          workdir='$workdir'
+          checkout_dir='$checkout'
+          scenarios='$scenarios'
+          mkdir -p "`$workdir"
+          cd "`$workdir"
+          export E2E_CONTEXT_DIR="`$workdir"
+          npm ci --ignore-scripts
+          set +e
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios" --dry-run
+          status=`$?
+          if [ -d "`$workdir/.e2e" ]; then
+            rm -rf "`$checkout_dir/.e2e"
+            cp -a "`$workdir/.e2e" "`$checkout_dir/.e2e"
+          fi
+          if [ -d "`$workdir/test/e2e/logs" ]; then
+            mkdir -p "`$checkout_dir/test/e2e"
+            rm -rf "`$checkout_dir/test/e2e/logs"
+            cp -a "`$workdir/test/e2e/logs" "`$checkout_dir/test/e2e/logs"
+          fi
+          exit "`$status"
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          $apiKeyArg = "NVIDIA_API_KEY=$env:NVIDIA_API_KEY"
+          wsl -d $env:WSL_DISTRO -- env $apiKeyArg bash -l $wslTmp
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Append plan summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f .e2e/plan.txt ]; then
+            echo '## E2E scenario plan' >> "$GITHUB_STEP_SUMMARY"
+            cat .e2e/plan.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload scenario artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-scenario-${{ inputs.scenario }}
+          name: e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}
           path: |
+            .e2e/run-plan.json
+            .e2e/plan.txt
+            .e2e/environment.result.json
+            .e2e/onboarding.result.json
+            .e2e/runtime.result.json
             .e2e/
             test/e2e/logs/
           if-no-files-found: warn

@@ -16,16 +16,35 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
+import {
+  assessNvidiaCdiHost,
+  buildNvidiaCdiRefreshCommands,
+  buildNvidiaCdiRepairCommands,
+  buildStaleCdiManualWarnCommands,
+  buildStaleCdiWarnCommands,
+  explainNvidiaCdiRepairReason,
+  explainStaleCdiReason,
+  extractCdiMismatchFilePath,
+  getNvidiaCdiSpecPath,
+} from "./docker-cdi";
+import {
+  isWslDockerDesktopRuntime,
+  wslDockerDesktopGpuCompatibilityAction,
+} from "./wsl-docker-desktop-gpu";
+export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
+export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
 // runner.ts still uses CommonJS-style exports — use require here.
-const { runCapture } = require("../runner");
+const { run, runCapture } = require("../runner");
 
 type RunCaptureFn = typeof import("../runner").runCapture;
+type RunFn = typeof import("../runner").run;
 type RunCaptureOpts = Parameters<RunCaptureFn>[1];
 type NullableRunCaptureFn = (
   command: Parameters<RunCaptureFn>[0],
   options?: RunCaptureOpts,
 ) => string | null;
+type ProbeRunOpts = { timeout?: number };
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -117,6 +136,14 @@ export interface HostAssessment {
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecStale?: boolean;
+  cdiNvidiaGpuSpecMismatch?: string;
+  cdiNvidiaGpuRefreshUnhealthy?: boolean;
+  cdiNvidiaGpuSpecNeedsRepair?: boolean;
+  nvidiaCdiRefreshPathActive?: boolean | null;
+  nvidiaCdiRefreshPathEnabled?: boolean | null;
+  nvidiaCdiRefreshServiceEnabled?: boolean | null;
+  nvidiaCdiRefreshServiceFailed?: boolean | null;
   nvidiaContainerToolkitInstalled: boolean;
   notes: string[];
 }
@@ -129,6 +156,9 @@ export interface RemediationAction {
   commands: string[];
   blocking: boolean;
 }
+
+export const DOCKER_DESKTOP_WSL_INTEGRATION_HINT =
+  "If you use Docker Desktop from WSL, open Docker Desktop > Settings > Resources > WSL integration and enable integration for this distro.";
 
 export interface AssessHostOpts {
   platform?: NodeJS.Platform;
@@ -273,74 +303,6 @@ export function parseDockerUsesContainerdSnapshotter(info = ""): boolean {
   // v1 plugin. Match either JSON or text form so we handle `--format '{{json
   // .}}'` output and plain `docker info` alike.
   return /io\.containerd\.snapshotter\.v1/.test(info);
-}
-
-// Parses the Docker daemon's configured CDI spec directories from `docker
-// info --format '{{json .}}'` output. Docker 25+ surfaces these as
-// `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` whenever the daemon is built
-// with CDI support and `features.cdi=true` (the default on recent installs).
-// An empty list means CDI device injection is not enabled, so OpenShell will
-// fall back to the legacy `nvidia` runtime path and there is no spec gap to
-// worry about.
-export function parseDockerCdiSpecDirs(info = ""): string[] {
-  const match = info.match(/"CDISpecDirs"\s*:\s*\[([^\]]*)\]/);
-  if (!match) return [];
-  return Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1]).filter(Boolean);
-}
-
-function normalizeCdiSpecDir(specDir: string | undefined): string {
-  const trimmed = String(specDir || "/etc/cdi")
-    .trim()
-    .replace(/\/+$/, "");
-  return trimmed || "/etc/cdi";
-}
-
-export function getNvidiaCdiSpecPath(
-  assessment: Pick<HostAssessment, "dockerCdiSpecDirs">,
-): string {
-  return path.join(normalizeCdiSpecDir(assessment.dockerCdiSpecDirs[0]), "nvidia.yaml");
-}
-
-// True when at least one CDI spec under the configured directories declares
-// `kind: nvidia.com/gpu` (the device class OpenShell injects with `--gpu`).
-// Specs are typically YAML, but the JSON shape is also accepted because
-// `nvidia-ctk cdi generate --format=json` is supported. Errors reading any
-// individual file or directory are tolerated — a missing dir is the same
-// shape as "no spec found there".
-function hasNvidiaCdiSpec(
-  specDirs: readonly string[],
-  readdirImpl: (dir: string) => string[],
-  readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
-): boolean {
-  // YAML keys are unquoted; JSON quotes the kind value. Anchor both patterns
-  // to the *exact* device-class string `nvidia.com/gpu` and require a value
-  // terminator (end of line, whitespace + comment, or whitespace + EOL) so a
-  // sibling spec like `nvidia.com/gpu-extra` does not silently satisfy the
-  // check and suppress the preflight warning. A comment that merely mentions
-  // `nvidia.com/gpu` is also rejected because `kindRe` only matches when the
-  // *whole* scalar value is the device class.
-  const kindRe =
-    /^[ \t]*kind[ \t]*:[ \t]*(?:"nvidia\.com\/gpu"|'nvidia\.com\/gpu'|nvidia\.com\/gpu)[ \t]*(?:#.*)?$/im;
-  const jsonRe = /"kind"\s*:\s*"nvidia\.com\/gpu"/;
-  for (const dir of specDirs) {
-    let entries: string[];
-    try {
-      entries = readdirImpl(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!/\.(ya?ml|json)$/i.test(entry)) continue;
-      let raw: string;
-      try {
-        raw = readFileImpl(path.join(dir, entry), "utf-8");
-      } catch {
-        continue;
-      }
-      if (kindRe.test(raw) || jsonRe.test(raw)) return true;
-    }
-  }
-  return false;
 }
 
 export function parseDockerInfoCpus(info = ""): number | undefined {
@@ -504,7 +466,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const nvidiaContainerToolkitInstalled =
     opts.commandExistsImpl?.("nvidia-ctk") ?? commandExists("nvidia-ctk", runCaptureImpl);
   const packageManager = detectPackageManager(runCaptureImpl);
-  const systemctlAvailable = commandExists("systemctl", runCaptureImpl);
+  const systemctlAvailable =
+    opts.commandExistsImpl?.("systemctl") ?? commandExists("systemctl", runCaptureImpl);
 
   let dockerInfoOutput = opts.dockerInfoOutput;
   let dockerReachable = false;
@@ -533,6 +496,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
+  const isWslHost = detectWsl({ platform, env, release, procVersion });
   const dockerCgroupVersion = dockerReachable
     ? parseDockerCgroupVersion(dockerInfoOutput)
     : "unknown";
@@ -546,20 +510,19 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const dockerMemTotalBytes = dockerReachable
     ? parseDockerInfoMemTotalBytes(dockerInfoOutput)
     : undefined;
-  // CDI spec gap: Docker 25+ on hosts with `nvidia-container-toolkit` installed
-  // typically advertises `"CDISpecDirs": ["/etc/cdi", "/var/run/cdi"]` in its
-  // info output. OpenShell's `gateway start --gpu` then opportunistically
-  // selects CDI mode and tries to inject `nvidia.com/gpu=all`. If no spec has
-  // been generated yet (`/etc/cdi/nvidia.yaml` is missing), the gateway start
-  // fails with `unresolvable CDI devices nvidia.com/gpu=all`. Detect this up
-  // front so preflight can point the user at `nvidia-ctk cdi generate` before
-  // we waste minutes downloading the gateway image. See issue #3152.
-  const dockerCdiSpecDirs = dockerReachable ? parseDockerCdiSpecDirs(dockerInfoOutput) : [];
-  const cdiNvidiaGpuSpecMissing =
-    platform === "linux" &&
-    hasNvidiaGpu &&
-    dockerCdiSpecDirs.length > 0 &&
-    !hasNvidiaCdiSpec(dockerCdiSpecDirs, readdirImpl, readFileImpl);
+  const cdiAssessment = assessNvidiaCdiHost({
+    dockerInfoOutput,
+    dockerReachable,
+    hasNvidiaGpu,
+    isWsl: isWslHost,
+    nvidiaContainerToolkitInstalled,
+    platform,
+    readFileImpl,
+    readdirImpl,
+    runCaptureImpl,
+    runtime,
+    systemctlAvailable,
+  });
   const isContainerRuntimeUnderProvisioned = isDockerUnderProvisioned(
     dockerCpus,
     dockerMemTotalBytes,
@@ -578,7 +541,6 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   // the user-confirmed reproducer. Engaging the auto-fix there could
   // build an unnecessary patched image; preferring to leave WSL alone
   // until we have a confirmed repro is the conservative call.
-  const isWslHost = detectWsl({ platform, env, release, procVersion });
   const hasNestedOverlayConflict =
     platform === "linux" &&
     !isWslHost &&
@@ -625,8 +587,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     isUnsupportedRuntime: runtime === "podman",
     isHeadlessLikely: isHeadlessLikely(env),
     hasNvidiaGpu,
-    dockerCdiSpecDirs,
-    cdiNvidiaGpuSpecMissing,
+    ...cdiAssessment,
     nvidiaContainerToolkitInstalled,
     notes: [],
   };
@@ -648,6 +609,23 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
   const actions: RemediationAction[] = [];
 
   if (!assessment.dockerInstalled) {
+    if (assessment.isWsl) {
+      actions.push({
+        id: "enable_docker_desktop_wsl_integration",
+        title: "Enable Docker Desktop WSL integration",
+        kind: "manual",
+        reason:
+          "Docker is not available inside this WSL distro. When using Docker Desktop on Windows, WSL integration must be enabled for the Ubuntu distro before NemoClaw can create a gateway or sandbox.",
+        commands: [
+          "Open Docker Desktop → Settings → Resources → WSL integration.",
+          "Enable integration for this Ubuntu distro, apply the change, then run `wsl --shutdown` from Windows PowerShell.",
+          "Reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
+        ],
+        blocking: true,
+      });
+      return actions;
+    }
+
     const installCommands: Record<PackageManager, string> = {
       apt: "Install Docker Engine, then rerun `nemoclaw onboard`.",
       dnf: "Install Docker Engine with your package manager, then rerun `nemoclaw onboard`.",
@@ -674,7 +652,27 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     const likelyGroupIssue =
       assessment.platform === "linux" && assessment.dockerServiceActive === true;
 
-    if (likelyGroupIssue) {
+    if (assessment.isWsl) {
+      actions.push({
+        id: "enable_docker_desktop_wsl_integration",
+        title: "Enable Docker Desktop WSL integration",
+        kind: "manual",
+        reason:
+          "Docker is installed but this WSL distro cannot reach the Docker daemon. Docker Desktop may not be running, or WSL integration may be disabled for this distro.",
+        commands: [
+          "Start Docker Desktop on Windows.",
+          "Open Docker Desktop → Settings → Resources → WSL integration and enable integration for this Ubuntu distro.",
+          "Apply the change, run `wsl --shutdown` from Windows PowerShell, reopen Ubuntu, verify `docker info`, then rerun `nemoclaw onboard`.",
+        ],
+        blocking: true,
+      });
+      return actions;
+    } else if (likelyGroupIssue) {
+      const commands = [
+        "sudo usermod -aG docker $USER",
+        "newgrp docker   # or log out and back in",
+        "nemoclaw onboard",
+      ];
       actions.push({
         id: "docker_group_permission",
         title: "Add user to docker group",
@@ -686,25 +684,25 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
           "On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo. " +
           "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path. " +
           "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface.",
-        commands: [
-          "sudo usermod -aG docker $USER",
-          "newgrp docker   # or log out and back in",
-          "nemoclaw onboard",
-        ],
+        commands,
         blocking: true,
       });
     } else {
+      const commands =
+        assessment.platform === "darwin"
+          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+          : assessment.systemctlAvailable
+            ? ["sudo systemctl start docker", "nemoclaw onboard"]
+            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."];
+      if (assessment.isWsl) {
+        commands.unshift(DOCKER_DESKTOP_WSL_INTEGRATION_HINT);
+      }
       actions.push({
         id: "start_docker",
         title: "Start Docker",
         kind: "manual",
         reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-        commands:
-          assessment.platform === "darwin"
-            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-            : assessment.systemctlAvailable
-              ? ["sudo systemctl start docker", "nemoclaw onboard"]
-              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        commands,
         blocking: true,
       });
     }
@@ -800,41 +798,65 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
     });
   }
 
-  if (assessment.cdiNvidiaGpuSpecMissing) {
+  if (
+    assessment.cdiNvidiaGpuRefreshUnhealthy &&
+    !assessment.cdiNvidiaGpuSpecNeedsRepair &&
+    !assessment.cdiNvidiaGpuSpecMissing &&
+    !isWslDockerDesktopRuntime(assessment)
+  ) {
+    actions.push({
+      id: "warn_nvidia_cdi_refresh_unhealthy",
+      title: "Enable NVIDIA CDI refresh service",
+      kind: "sudo",
+      reason: explainNvidiaCdiRepairReason({
+        ...assessment,
+        cdiNvidiaGpuSpecMissing: false,
+        cdiNvidiaGpuSpecStale: false,
+        cdiNvidiaGpuSpecMismatch: undefined,
+      }),
+      commands: buildNvidiaCdiRefreshCommands(),
+      blocking: false,
+    });
+  }
+
+  if (assessment.cdiNvidiaGpuSpecNeedsRepair || assessment.cdiNvidiaGpuSpecMissing) {
+    const missingSpec = assessment.cdiNvidiaGpuSpecMissing;
+    const flaggedFilePath = extractCdiMismatchFilePath(assessment.cdiNvidiaGpuSpecMismatch);
     const specPath = getNvidiaCdiSpecPath(assessment);
-    const specDir = path.dirname(specPath);
-    const generateCommands = [
-      `sudo mkdir -p ${specDir}`,
-      `sudo nvidia-ctk cdi generate --output=${specPath}`,
-      "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-      "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
-    ];
-    if (assessment.nvidiaContainerToolkitInstalled) {
+    const repairCommands = missingSpec
+      ? buildNvidiaCdiRepairCommands(assessment, specPath)
+      : assessment.systemctlAvailable
+        ? buildStaleCdiWarnCommands(flaggedFilePath)
+        : buildStaleCdiManualWarnCommands(flaggedFilePath);
+    const reason = missingSpec
+      ? explainNvidiaCdiRepairReason(assessment)
+      : explainStaleCdiReason(assessment.cdiNvidiaGpuSpecMismatch);
+    if (isWslDockerDesktopRuntime(assessment)) {
+      actions.push(wslDockerDesktopGpuCompatibilityAction());
+    } else if (assessment.nvidiaContainerToolkitInstalled) {
+      const title = missingSpec
+        ? "Generate NVIDIA CDI device specs"
+        : "Refresh NVIDIA CDI device specs";
       actions.push({
-        id: "generate_nvidia_cdi_spec",
-        title: "Generate NVIDIA CDI device specs",
-        kind: "sudo",
-        reason:
-          "Docker is configured for CDI device injection (CDISpecDirs is set) but no " +
-          "nvidia.com/gpu CDI spec is present on the host. OpenShell's `gateway start --gpu` " +
-          "will fail with `unresolvable CDI devices nvidia.com/gpu=all` until a spec is generated.",
-        commands: generateCommands,
+        id: missingSpec ? "generate_nvidia_cdi_spec" : "refresh_nvidia_cdi_spec",
+        title,
+        kind: missingSpec || assessment.systemctlAvailable ? "sudo" : "manual",
+        reason,
+        commands: repairCommands,
         blocking: true,
       });
     } else {
+      const title = missingSpec
+        ? "Install NVIDIA Container Toolkit and generate CDI device specs"
+        : "Install NVIDIA Container Toolkit and refresh CDI device specs";
       actions.push({
         id: "install_nvidia_container_toolkit",
-        title: "Install NVIDIA Container Toolkit and generate CDI device specs",
+        title,
         kind: "sudo",
-        reason:
-          "Docker is configured for CDI device injection (CDISpecDirs is set) but the " +
-          "`nvidia-container-toolkit` package (which provides `nvidia-ctk`) is not installed " +
-          "on the host. OpenShell's `gateway start --gpu` will fail with " +
-          "`unresolvable CDI devices nvidia.com/gpu=all` until the toolkit is installed and a " +
-          "CDI spec is generated.",
+        reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
         commands: buildContainerToolkitBootstrapCommands(
           assessment.packageManager,
-          generateCommands,
+          repairCommands,
         ),
         blocking: true,
       });
@@ -1209,15 +1231,37 @@ export function ensureSwap(minTotalMB?: number, opts: EnsureSwapOpts = {}): Swap
 // prints the cryptic `Exit handler never called`. This probe catches that
 // state in a few seconds so the user gets a targeted error up front.
 
+type ProbeFailureReason =
+  | "no_output"
+  | "timeout"
+  | "killed"
+  | "resolution_failed"
+  | "servers_unreachable"
+  | "image_pull_failed"
+  | "veth_unsupported"
+  | "docker_daemon_unreachable"
+  | "error";
+
+export interface ProbeExecutionResult {
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+  exitCode?: number | null;
+  status?: number | null;
+  signal?: NodeJS.Signals | string | null;
+  timedOut?: boolean;
+  error?: string | Error | null;
+  errorCode?: string | null;
+}
+
+type RunProbeFn = (command: readonly string[], options?: ProbeRunOpts) => ProbeExecutionResult;
+
 export interface DnsProbeResult {
   ok: boolean;
-  reason?:
-    | "no_output"
-    | "resolution_failed"
-    | "servers_unreachable"
-    | "image_pull_failed"
-    | "error";
+  reason?: ProbeFailureReason;
   details?: string;
+  timedOut?: boolean;
+  exitCode?: number | null;
+  signal?: string | null;
 }
 
 export interface ProbeContainerDnsOpts {
@@ -1225,10 +1269,45 @@ export interface ProbeContainerDnsOpts {
   command?: readonly string[];
   /** Inject captured output (bypasses execution). */
   outputOverride?: string | null;
+  /** Inject structured execution metadata (bypasses execution). */
+  executionOverride?: ProbeExecutionResult;
   /** Override runCapture. */
   runCaptureImpl?: NullableRunCaptureFn;
+  /** Override structured probe execution. */
+  runProbeImpl?: RunProbeFn;
   /** Override the probe name (test seam; pinned name for stable assertions). */
   probeName?: string;
+  /** Inject a precomputed image-cache result; skips the pre-pull. */
+  ensureImageCachedOverride?: EnsureProbeImageCachedResult;
+}
+
+export interface DockerBridgeContainerStartProbeResult {
+  ok: boolean;
+  reason?: Extract<
+    ProbeFailureReason,
+    | "no_output"
+    | "timeout"
+    | "killed"
+    | "image_pull_failed"
+    | "veth_unsupported"
+    | "docker_daemon_unreachable"
+    | "error"
+  >;
+  details?: string;
+  timedOut?: boolean;
+  exitCode?: number | null;
+  signal?: string | null;
+}
+
+export interface ProbeDockerBridgeContainerStartOpts {
+  /** Override the docker run command. */
+  command?: readonly string[];
+  /** Inject structured execution metadata (bypasses execution). */
+  executionOverride?: ProbeExecutionResult;
+  /** Override structured probe execution. */
+  runProbeImpl?: RunProbeFn;
+  /** Inject a precomputed image-cache result; skips the pre-pull. */
+  ensureImageCachedOverride?: EnsureProbeImageCachedResult;
 }
 
 /**
@@ -1238,6 +1317,300 @@ export interface ProbeContainerDnsOpts {
  * letting a wedged docker daemon stall preflight forever.
  */
 const PROBE_TIMEOUT_MS = 20_000;
+// Pinned to an immutable digest so the BusyBox `nslookup` output shape
+// the parser below depends on cannot drift over time. Mirrors the same
+// digest used by the sandbox-bridge gateway probe so both probes pull
+// the exact same blob and share its Docker image cache.
+export const BUSYBOX_PROBE_IMAGE =
+  "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
+
+/**
+ * Longer ceiling for image pulls. Decoupled from PROBE_TIMEOUT_MS so a
+ * cold-cache pull on a slow registry does not get charged against the
+ * shorter probe budget and falsely classified as a fatal probe timeout.
+ */
+const PROBE_IMAGE_PULL_TIMEOUT_MS = 60_000;
+
+export interface EnsureProbeImageCachedResult {
+  ok: boolean;
+  alreadyCached?: boolean;
+  reason?: "pull_failed" | "pull_timeout" | "inspect_unavailable";
+  details?: string;
+}
+
+export interface EnsureProbeImageCachedOpts {
+  /** Override the docker image-inspect probe (test seam). */
+  inspectProbeImpl?: RunProbeFn;
+  /** Override the docker pull probe (test seam). */
+  pullProbeImpl?: RunProbeFn;
+  /** Pull-time budget (ms). Defaults to PROBE_IMAGE_PULL_TIMEOUT_MS. */
+  pullTimeoutMs?: number;
+}
+
+/**
+ * Make sure `image` is in the local docker image cache before a timed
+ * probe runs. Returns `{ ok: true, alreadyCached }` when the image was
+ * already present or was pulled successfully; otherwise returns a
+ * structured reason describing why the pull could not be completed.
+ *
+ * Decoupling pull from probe lets callers report a slow/blocked registry
+ * pull as an inconclusive image_pull_failed (not as a fatal probe
+ * timeout / Docker-restart hint).
+ */
+export function ensureProbeImageCached(
+  image: string,
+  opts: EnsureProbeImageCachedOpts = {},
+): EnsureProbeImageCachedResult {
+  const inspectImpl = opts.inspectProbeImpl ?? defaultRunProbe;
+  const pullImpl = opts.pullProbeImpl ?? defaultRunProbe;
+  const pullTimeoutMs = opts.pullTimeoutMs ?? PROBE_IMAGE_PULL_TIMEOUT_MS;
+
+  const inspect = normalizeProbeExecution(
+    inspectImpl(["docker", "image", "inspect", image], { timeout: 10_000 }),
+  );
+  if (inspect.exitCode === 0) {
+    return { ok: true, alreadyCached: true };
+  }
+  // Inspect couldn't run (docker missing/down). Don't mask the underlying
+  // docker outage as an image-pull issue. The CLI can also exit 1 with a
+  // "Cannot connect to the Docker daemon" stderr when dockerd is down,
+  // so we sniff that signature in addition to spawn-level errors.
+  const inspectOutput = probeCombinedOutput(inspect);
+  if (
+    (inspect.exitCode === null && (inspect.error || inspect.timedOut)) ||
+    isDockerDaemonUnreachable(inspectOutput)
+  ) {
+    return {
+      ok: false,
+      reason: "inspect_unavailable",
+      details:
+        (inspectOutput.trim() && outputTail(inspectOutput)) ||
+        inspect.error ||
+        "docker image inspect did not complete",
+    };
+  }
+
+  const pull = normalizeProbeExecution(
+    pullImpl(["docker", "pull", image], { timeout: pullTimeoutMs }),
+  );
+  const combined = probeCombinedOutput(pull);
+  if (pull.exitCode === 0) {
+    return { ok: true, alreadyCached: false };
+  }
+  if (pull.timedOut || (pull.signal && pull.exitCode === null)) {
+    return {
+      ok: false,
+      reason: "pull_timeout",
+      details: probeExecutionDetails("docker pull", pull, pullTimeoutMs, combined),
+    };
+  }
+  // A pull that fails with the daemon-unreachable signature is a docker
+  // outage, not a registry/cache problem. Promote it so callers can treat
+  // it as a fatal probe error instead of an inconclusive image_pull.
+  if (isDockerDaemonUnreachable(combined)) {
+    return {
+      ok: false,
+      reason: "inspect_unavailable",
+      details: outputTail(combined),
+    };
+  }
+  return {
+    ok: false,
+    reason: "pull_failed",
+    details: combined.trim() ? outputTail(combined) : (pull.error ?? "docker pull failed"),
+  };
+}
+
+export function isDockerDaemonUnreachable(output: string): boolean {
+  return /Cannot connect to the Docker daemon|Is the docker daemon running\??|docker daemon is not running|error during connect.*Get .*docker.*open .*dial unix/i.test(
+    output,
+  );
+}
+
+function probeText(value: unknown): string {
+  if (value == null) return "";
+  if (Buffer.isBuffer(value)) return value.toString("utf-8");
+  return String(value);
+}
+
+function normalizeError(value: unknown): string | null {
+  if (!value) return null;
+  if (value instanceof Error) return value.message;
+  return String(value);
+}
+
+function normalizeProbeExecution(result: ProbeExecutionResult): Required<
+  Pick<ProbeExecutionResult, "stdout" | "stderr" | "exitCode" | "signal" | "timedOut">
+> & {
+  error: string | null;
+  errorCode: string | null;
+} {
+  const error = normalizeError(result.error);
+  const errorCode =
+    result.errorCode ??
+    (typeof result.error === "object" && result.error && "code" in result.error
+      ? String((result.error as NodeJS.ErrnoException).code)
+      : null);
+  return {
+    stdout: probeText(result.stdout),
+    stderr: probeText(result.stderr),
+    exitCode:
+      typeof result.exitCode === "number" || result.exitCode === null
+        ? result.exitCode
+        : typeof result.status === "number" || result.status === null
+          ? result.status
+          : null,
+    signal: result.signal ? String(result.signal) : null,
+    timedOut:
+      result.timedOut === true ||
+      errorCode === "ETIMEDOUT" ||
+      (error ? /ETIMEDOUT|timed out/i.test(error) : false),
+    error,
+    errorCode,
+  };
+}
+
+function defaultRunProbe(command: readonly string[], options?: ProbeRunOpts): ProbeExecutionResult {
+  const result = (run as RunFn)(command, {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: options?.timeout,
+    encoding: "utf-8",
+  });
+  const error = result.error as NodeJS.ErrnoException | undefined;
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.status ?? null,
+    signal: result.signal ?? null,
+    timedOut: error?.code === "ETIMEDOUT",
+    error: error?.message ?? null,
+    errorCode: error?.code ?? null,
+  };
+}
+
+function outputOverrideExecution(output: string | null): ProbeExecutionResult {
+  return {
+    stdout: output ?? "",
+    stderr: "",
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+  };
+}
+
+function captureProbeExecution(
+  command: readonly string[],
+  timeoutMs: number,
+  opts: {
+    outputOverride?: string | null;
+    executionOverride?: ProbeExecutionResult;
+    runCaptureImpl?: NullableRunCaptureFn;
+    runProbeImpl?: RunProbeFn;
+  },
+): ReturnType<typeof normalizeProbeExecution> {
+  if (opts.executionOverride) {
+    return normalizeProbeExecution(opts.executionOverride);
+  }
+  if (opts.outputOverride !== undefined) {
+    return normalizeProbeExecution(outputOverrideExecution(opts.outputOverride));
+  }
+  if (opts.runProbeImpl) {
+    return normalizeProbeExecution(opts.runProbeImpl(command, { timeout: timeoutMs }));
+  }
+  if (opts.runCaptureImpl) {
+    return normalizeProbeExecution(
+      outputOverrideExecution(
+        opts.runCaptureImpl(command, {
+          ignoreError: true,
+          timeout: timeoutMs,
+        }),
+      ),
+    );
+  }
+  return normalizeProbeExecution(defaultRunProbe(command, { timeout: timeoutMs }));
+}
+
+function probeCombinedOutput(execution: ReturnType<typeof normalizeProbeExecution>): string {
+  return [execution.stdout, execution.stderr].filter((part) => String(part || "").trim()).join("\n");
+}
+
+function outputTail(output: string, maxLength = 400): string {
+  return output.trim().slice(-maxLength);
+}
+
+function probeExecutionDetails(
+  label: string,
+  execution: ReturnType<typeof normalizeProbeExecution>,
+  timeoutMs: number,
+  output: string,
+): string {
+  const details = [
+    execution.timedOut ? `${label} timed out after ${Math.ceil(timeoutMs / 1000)}s` : null,
+    execution.signal ? `${label} was killed by signal ${execution.signal}` : null,
+    execution.exitCode !== null && execution.exitCode !== 0
+      ? `${label} exited with status ${execution.exitCode}`
+      : null,
+    execution.error,
+    output.trim() ? outputTail(output) : null,
+  ].filter((line): line is string => Boolean(line));
+  return details.length > 0 ? details.join("\n") : `${label} produced no output`;
+}
+
+function executionFailureReason(
+  label: string,
+  execution: ReturnType<typeof normalizeProbeExecution>,
+  timeoutMs: number,
+  output: string,
+): Pick<DnsProbeResult, "reason" | "details" | "timedOut" | "exitCode" | "signal"> | null {
+  if (execution.timedOut) {
+    return {
+      reason: "timeout",
+      details: probeExecutionDetails(label, execution, timeoutMs, output),
+      timedOut: true,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+  if (execution.signal) {
+    return {
+      reason: "killed",
+      details: probeExecutionDetails(label, execution, timeoutMs, output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+  return null;
+}
+
+function isImagePullFailure(output: string): boolean {
+  // Note: "Unable to find image" is the normal cold-pull banner Docker
+  // prints before a successful pull, so it is not a failure signature.
+  return /Error response from daemon:.*(pull|manifest|not found)|pull access denied|manifest.*unknown|unauthorized: authentication required|Head.*https?:\/\/.*: dial/i.test(
+    output,
+  );
+}
+
+function isRegistryResolutionFailure(output: string): boolean {
+  // DNS-resolution signatures only. A "dial tcp ip:port: i/o timeout" is
+  // a TCP-connectivity failure, not a DNS failure, and must not be
+  // routed to the UDP:53/systemd-resolved remediation path.
+  return /lookup .*: no such host|temporary failure in name resolution|could not resolve|getaddrinfo|server misbehaving|dial tcp: lookup|no such host/i.test(
+    output,
+  );
+}
+
+function isVethUnsupported(output: string): boolean {
+  // The Jetson signature is specifically "failed to add the host <…>
+  // sandbox veth pair interfaces: operation not supported". Generic
+  // "veth" mentions or unrelated "operation not supported" errors must
+  // NOT be classified as veth_unsupported (which is fatal), so require
+  // the veth-pair-create wording together with the OS error.
+  return /failed to add the host .* sandbox veth pair interfaces: operation not supported|veth pair[^.]*?operation not supported/i.test(
+    output,
+  );
+}
 
 /**
  * Random subdomain of the RFC 6761 reserved .invalid TLD. Every compliant
@@ -1311,57 +1684,126 @@ export function getDockerBridgeGatewayIp(
  *   The typical #2101 signature on corp-firewalled hosts.
  * - `resolution_failed` — resolver answered but lookup failed (NXDOMAIN
  *   or similar). Unusual.
- * - `no_output` / `error` — probe couldn't run at all.
+ * - `timeout` / `killed` / `error` — probe couldn't complete.
+ * - `no_output` — probe exited cleanly but produced no parseable output.
  */
 export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeResult {
-  // Cap the whole probe via Node's spawn-level timeout (works on every
-  // platform Node supports — no dependency on a host-side `timeout`
-  // binary). Child process is killed, runCapture returns "" under
-  // ignoreError, and we fall through to the `no_output` branch.
-  //
   // We funnel through `sh -c` so we can `2>&1` the docker pull progress
   // and busybox nslookup diagnostics into stdout — both write the
   // signatures the parser below depends on (`Error response from daemon`,
-  // `no servers could be reached`) to stderr. Every token in the script
-  // is a fixed constant, so no shell injection surface.
+  // `no servers could be reached`) to stderr. probeName is the only
+  // non-constant token interpolated into the shell script: validate it
+  // as a plain DNS name (RFC 1035 label chars) so a crafted override
+  // cannot inject arbitrary shell tokens.
   const probeName = opts.probeName ?? dnsProbeName();
+  if (!/^[a-z0-9]([a-z0-9.-]{0,253})$/i.test(probeName)) {
+    throw new Error(
+      `probeName must be a plain DNS name (RFC 1035 label characters), got: ${JSON.stringify(probeName)}`,
+    );
+  }
   const command = opts.command ?? [
     "sh",
     "-c",
-    `docker run --rm --pull=missing busybox:latest nslookup ${probeName} 2>&1`,
+    `docker run --rm --pull=missing ${BUSYBOX_PROBE_IMAGE} nslookup ${probeName} 2>&1`,
   ];
 
-  let output: string | null | undefined = opts.outputOverride;
-  if (output === undefined) {
-    try {
-      const runCaptureImpl =
-        opts.runCaptureImpl ??
-        ((cmd: readonly string[], o?: RunCaptureOpts) =>
-          runCapture(cmd, {
-            ignoreError: o?.ignoreError ?? false,
-            timeout: o?.timeout,
-          }));
-      output = runCaptureImpl(command, {
-        ignoreError: true,
-        timeout: PROBE_TIMEOUT_MS,
-      });
-    } catch (e) {
+  // Pre-pull the busybox image so the timed probe below measures only
+  // probe time, not registry pull time. A cold-cache pull that times out
+  // here surfaces as an inconclusive image_pull_failed (registry-DNS
+  // signature still routes through isRegistryResolutionFailure), not as
+  // a fatal probe timeout with a misleading "restart Docker" hint.
+  //
+  // Any test seam that injects probe execution (output/execution/command
+  // overrides or runCapture/runProbe replacements) implies the caller is
+  // staying off the real Docker CLI — skip pre-pull so hermetic tests on
+  // hosts without Docker/busybox keep working.
+  const bypassRealDocker =
+    opts.executionOverride !== undefined ||
+    opts.outputOverride !== undefined ||
+    opts.command !== undefined ||
+    opts.runCaptureImpl !== undefined ||
+    opts.runProbeImpl !== undefined;
+  if (!bypassRealDocker || opts.ensureImageCachedOverride !== undefined) {
+    const cached = opts.ensureImageCachedOverride ?? ensureProbeImageCached(BUSYBOX_PROBE_IMAGE);
+    if (!cached.ok) {
+      // inspect_unavailable means the docker daemon itself is wedged
+      // (assessHost said it was reachable, but image-inspect now hangs
+      // or returns "Cannot connect to the Docker daemon"). Treat that as
+      // a fatal docker_daemon_unreachable — distinct from generic
+      // probe `error` reasons that callers may want to keep inconclusive.
+      if (cached.reason === "inspect_unavailable") {
+        return {
+          ok: false,
+          reason: "docker_daemon_unreachable",
+          details: cached.details ?? "docker image inspect did not complete",
+        };
+      }
       return {
         ok: false,
-        reason: "error",
-        details: String((e as Error)?.message ?? e),
+        reason: "image_pull_failed",
+        details: cached.details ?? `docker pull ${BUSYBOX_PROBE_IMAGE} did not complete`,
+        timedOut: cached.reason === "pull_timeout",
       };
     }
+  }
+
+  let execution: ReturnType<typeof normalizeProbeExecution>;
+  try {
+    execution = captureProbeExecution(command, PROBE_TIMEOUT_MS, opts);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      details: String((e as Error)?.message ?? e),
+    };
+  }
+
+  const output = probeCombinedOutput(execution);
+  const executionFailure = executionFailureReason(
+    "docker DNS probe",
+    execution,
+    PROBE_TIMEOUT_MS,
+    output,
+  );
+  if (executionFailure) {
+    return {
+      ok: false,
+      ...executionFailure,
+    };
   }
 
   // Treat whitespace-only output (e.g., bare newlines left by a killed
   // child) the same as empty — otherwise the subsequent regex checks all
   // miss and we'd mis-report it as `resolution_failed`.
-  if (!output || !output.trim()) {
+  if (!output.trim()) {
+    if (execution.exitCode !== null && execution.exitCode !== 0) {
+      return {
+        ok: false,
+        reason: "error",
+        details: probeExecutionDetails("docker DNS probe", execution, PROBE_TIMEOUT_MS, output),
+        timedOut: false,
+        exitCode: execution.exitCode,
+        signal: execution.signal,
+      };
+    }
     return {
       ok: false,
       reason: "no_output",
-      details: "docker run produced no output (timed out or failed to start)",
+      details: "docker DNS probe produced no output",
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+
+  if (isVethUnsupported(output)) {
+    return {
+      ok: false,
+      reason: "veth_unsupported",
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
     };
   }
 
@@ -1407,15 +1849,14 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   // Docker image-pull failure — the probe never got to run nslookup, so
   // framing this as a DNS problem would mislead. Signatures from
   // `docker run --pull=missing` when the daemon can't fetch the image.
-  if (
-    /Error response from daemon:.*(pull|manifest|not found)|pull access denied|manifest.*unknown|unauthorized: authentication required|Head.*https?:\/\/.*: dial/i.test(
-      output,
-    )
-  ) {
+  if (isImagePullFailure(output)) {
     return {
       ok: false,
       reason: "image_pull_failed",
-      details: output.slice(-400),
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
     };
   }
 
@@ -1425,14 +1866,182 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
     return {
       ok: false,
       reason: "servers_unreachable",
-      details: output.slice(-400),
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
     };
   }
 
-  // Something else — resolver responded but couldn't answer.
+  // Resolver responded but couldn't answer. Only report resolution_failed
+  // (fatal) when we actually saw the resolver-identification block from
+  // nslookup — otherwise the probe never proved DNS is broken (e.g.
+  // unrelated docker daemon output where nslookup never ran), so fall
+  // through to inconclusive `error` so onboarding does not falsely abort.
+  if (hasResolverHeader) {
+    return {
+      ok: false,
+      reason: "resolution_failed",
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
   return {
     ok: false,
-    reason: "resolution_failed",
-    details: output.slice(-400),
+    reason: "error",
+    details: outputTail(output),
+    timedOut: false,
+    exitCode: execution.exitCode,
+    signal: execution.signal,
+  };
+}
+
+export function isFatalContainerDnsProbeFailure(result: DnsProbeResult): boolean {
+  if (result.ok) return false;
+  if (
+    result.reason === "servers_unreachable" ||
+    result.reason === "resolution_failed" ||
+    result.reason === "timeout" ||
+    result.reason === "killed" ||
+    result.reason === "veth_unsupported" ||
+    result.reason === "docker_daemon_unreachable"
+  ) {
+    return true;
+  }
+  // Generic `error` (runner/transport failures, unexpected output) stays
+  // inconclusive — the probe never established that container DNS is
+  // broken, so aborting onboarding would be wrong. Daemon outages route
+  // through `docker_daemon_unreachable` above; pull failures through the
+  // image_pull_failed branch below.
+  return result.reason === "image_pull_failed" && isRegistryResolutionFailure(result.details ?? "");
+}
+
+export function probeDockerBridgeContainerStart(
+  opts: ProbeDockerBridgeContainerStartOpts = {},
+): DockerBridgeContainerStartProbeResult {
+  const command = opts.command ?? [
+    "docker",
+    "run",
+    "--rm",
+    "--pull=missing",
+    "--network",
+    "bridge",
+    BUSYBOX_PROBE_IMAGE,
+    "true",
+  ];
+
+  // Pre-pull so a slow-registry cold-cache pull does not get charged
+  // against the bridge probe budget and falsely reported as a Jetson/
+  // bridge timeout (see issue #3630 codex review). Test seams that
+  // bypass real Docker (executionOverride/command/runProbeImpl) skip the
+  // pre-pull so hermetic tests on hosts without Docker keep working.
+  const bypassRealDocker =
+    opts.executionOverride !== undefined ||
+    opts.command !== undefined ||
+    opts.runProbeImpl !== undefined;
+  if (!bypassRealDocker || opts.ensureImageCachedOverride !== undefined) {
+    const cached = opts.ensureImageCachedOverride ?? ensureProbeImageCached(BUSYBOX_PROBE_IMAGE);
+    if (!cached.ok) {
+      // inspect_unavailable means docker daemon is wedged — emit the
+      // distinct docker_daemon_unreachable reason so onboard preflight
+      // can fail fast while still leaving generic bridge probe `error`
+      // reasons (e.g. a daemon with no default bridge network) on the
+      // inconclusive path.
+      if (cached.reason === "inspect_unavailable") {
+        return {
+          ok: false,
+          reason: "docker_daemon_unreachable",
+          details: cached.details ?? "docker image inspect did not complete",
+        };
+      }
+      return {
+        ok: false,
+        reason: "image_pull_failed",
+        details: cached.details ?? `docker pull ${BUSYBOX_PROBE_IMAGE} did not complete`,
+        timedOut: cached.reason === "pull_timeout",
+      };
+    }
+  }
+
+  let execution: ReturnType<typeof normalizeProbeExecution>;
+  try {
+    execution = captureProbeExecution(command, PROBE_TIMEOUT_MS, opts);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "error",
+      details: String((e as Error)?.message ?? e),
+    };
+  }
+
+  const output = probeCombinedOutput(execution);
+  const executionFailure = executionFailureReason(
+    "docker bridge container start probe",
+    execution,
+    PROBE_TIMEOUT_MS,
+    output,
+  );
+  if (executionFailure) {
+    return {
+      ok: false,
+      reason: executionFailure.reason as DockerBridgeContainerStartProbeResult["reason"],
+      details: executionFailure.details,
+      timedOut: executionFailure.timedOut,
+      exitCode: executionFailure.exitCode,
+      signal: executionFailure.signal,
+    };
+  }
+
+  if (execution.exitCode === 0) {
+    return { ok: true, exitCode: 0, signal: null, timedOut: false };
+  }
+
+  if (isVethUnsupported(output)) {
+    return {
+      ok: false,
+      reason: "veth_unsupported",
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+
+  if (isImagePullFailure(output)) {
+    return {
+      ok: false,
+      reason: "image_pull_failed",
+      details: outputTail(output),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+
+  if (!output.trim()) {
+    return {
+      ok: false,
+      reason: execution.exitCode === null ? "no_output" : "error",
+      details: probeExecutionDetails(
+        "docker bridge container start probe",
+        execution,
+        PROBE_TIMEOUT_MS,
+        output,
+      ),
+      timedOut: false,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+    };
+  }
+
+  return {
+    ok: false,
+    reason: "error",
+    details: outputTail(output),
+    timedOut: false,
+    exitCode: execution.exitCode,
+    signal: execution.signal,
   };
 }

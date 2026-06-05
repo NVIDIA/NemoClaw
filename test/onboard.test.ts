@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -94,6 +95,79 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard helpers", () => {
+  it("adds host proxy variables to sandbox startup env args", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    const noProxy = envArgs.find((entry) => entry.startsWith("NO_PROXY="));
+    expect(noProxy).toContain("corp.internal");
+    expect(noProxy).toContain("localhost");
+    expect(noProxy).toContain("127.0.0.1");
+    expect(noProxy).toContain("host.docker.internal");
+  });
+
+  it("does not add NO_PROXY-only values when no host proxy is configured", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
+  });
+
+  it("trims surrounding whitespace from proxy env values before forwarding", () => {
+    // A `HTTP_PROXY="  http://x:8888  "` from a sloppy shell rc must not
+    // flow through with surrounding whitespace — downstream consumers
+    // that don't re-trim would treat the value as malformed.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "  http://127.0.0.1:8888  ",
+      HTTPS_PROXY: "\thttp://127.0.0.1:8888\n",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    for (const entry of envArgs) {
+      expect(entry, "no forwarded entry should contain leading/trailing whitespace").toBe(
+        entry.trim(),
+      );
+    }
+  });
+
+  it("synthesizes both NO_PROXY and no_proxy in the sandbox so case-sensitive consumers stay covered", () => {
+    // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
+    // which one the user originally set. A user who only sets HTTP_PROXY
+    // (with no NO_PROXY at all) still gets both cases synthesized in the
+    // sandbox so case-sensitive consumers (e.g. some Python libs read
+    // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
+    // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
+    // future refactor of `withLocalNoProxy` doesn't silently drop one case.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy (lowercase) should also be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      expect(v).toContain("localhost");
+      expect(v).toContain("127.0.0.1");
+      expect(v).toContain("host.docker.internal");
+    }
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
@@ -215,6 +289,93 @@ startGateway(null).catch(() => {});
     assert.ok(
       gatewayLines.length >= 2,
       `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
+    );
+  });
+
+  it("fast-fails gateway start before health polling when Docker is unreachable (#2347)", testTimeoutOptions(20_000), () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-docker-down-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-docker-down.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == "gateway --help" ]]; then
+  printf "Commands: start destroy\\n"
+  exit 0
+fi
+if [[ "$*" == *"gateway"*"start"* ]]; then
+  printf "Error: Failed to create Docker client.\\n"
+  printf "Socket not found: /var/run/docker.sock\\n"
+  exit 1
+fi
+if [[ "$*" == *"status"* || "$*" == *"gateway"*"info"* ]]; then
+  printf "HEALTH POLL REACHED\\n"
+  exit 0
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    const script = `
+const mod = require("module");
+const origLoad = mod._load;
+mod._load = function(req, parent, isMain) {
+  if (req === "p-retry") {
+    const pRetry = async (fn, opts) => {
+      try {
+        return await fn({ attemptNumber: 1, retriesLeft: 0 });
+      } catch (e) {
+        if (!(e instanceof pRetry.AbortError) && opts && opts.onFailedAttempt) {
+          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
+        }
+        throw e;
+      }
+    };
+    pRetry.AbortError = class AbortError extends Error {};
+    return pRetry;
+  }
+  return origLoad.call(this, req, parent, isMain);
+};
+Object.defineProperty(process, "platform", { value: "darwin" });
+Object.defineProperty(process, "arch", { value: "x64" });
+const { startGateway } = require(${onboardPath});
+startGateway(null).catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "5",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
+    assert.ok(
+      result.stderr.includes("Docker daemon is not running"),
+      `expected Docker recovery guidance in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("colima start"),
+      `expected macOS Docker start hint in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      !result.stdout.includes("Waiting for gateway health"),
+      `health polling should not start after Docker-unreachable output:\n${result.stdout}`,
+    );
+    assert.ok(
+      !result.stdout.includes("HEALTH POLL REACHED"),
+      `gateway status/info probes should not run after Docker-unreachable output:\n${result.stdout}`,
     );
   });
 
@@ -1289,7 +1450,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1306,6 +1467,7 @@ localInference.validateLocalProvider = () => ({
 localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
 localInference.getOllamaWarmupCommand = () => ["true"];
 localInference.validateOllamaModel = () => ({ ok: true });
+localInference.validateOllamaModelWithToolsOverride = () => ({ ok: true });
 proxy.ensureOllamaAuthProxy = () => {
   proxyCalls.push("ensure");
 };
@@ -1321,7 +1483,7 @@ proxy.persistAndProbeOllamaProxy = async (token) => {
 const { setupInference } = require(${onboardPath});
 
 (async () => {
-  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   console.log(JSON.stringify({ commands, proxyCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1427,7 +1589,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1453,7 +1615,7 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   try {
-    await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+    await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   } catch (err) {
     if (!err || !err.__exit) {
       origErr("[TEST] outer error:", err && err.message);
@@ -2356,7 +2518,10 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
       assert.equal(payload.sandboxName, "my-assistant");
-      assert.deepEqual(payload.defaultCalls, ["my-assistant"]);
+      // createSandbox no longer marks the sandbox default — that is deferred to the
+      // finalization step so a cancel at policy presets can't leave an unconfigured
+      // sandbox as default (#4614).
+      assert.deepEqual(payload.defaultCalls, []);
       assert.ok(
         payload.registerCalls.some(
           (entry: Record<string, unknown>) =>
@@ -2924,7 +3089,16 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const {
+      CHAT_UI_URL: _stripped,
+      HTTP_PROXY: _httpProxy,
+      HTTPS_PROXY: _httpsProxy,
+      NO_PROXY: _noProxy,
+      http_proxy: _lowerHttpProxy,
+      https_proxy: _lowerHttpsProxy,
+      no_proxy: _lowerNoProxy,
+      ...inheritedEnv
+    } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -2934,6 +3108,9 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_DASHBOARD_PORT: "19000",
+        HTTP_PROXY: "http://127.0.0.1:8888",
+        HTTPS_PROXY: "http://127.0.0.1:8888",
+        NO_PROXY: "corp.internal",
       },
     });
 
@@ -2954,6 +3131,26 @@ const { createSandbox } = require(${onboardPath});
     // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
     // overriding whatever value the Docker image had baked in.
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
+    // `openclaw skills install` and `openclaw skills list` resolve the same
+    // paths. Without this, the upstream skill loader can fall back to a
+    // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
+    // and hides workspace-installed skills from `skills list`.
+    assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
+    assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
+    assert.match(
+      createCommand.command,
+      /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
+    );
+    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+    assert.ok(noProxyMatch, `expected NO_PROXY in sandbox create command:\n${createCommand.command}`);
+    const noProxyEntries = noProxyMatch[1].split(",");
+    assert.ok(noProxyEntries.includes("corp.internal"));
+    assert.ok(noProxyEntries.includes("localhost"));
+    assert.ok(noProxyEntries.includes("127.0.0.1"));
+    assert.ok(noProxyEntries.includes("host.docker.internal"));
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(
@@ -3123,6 +3320,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -3161,6 +3359,420 @@ const { createSandbox } = require(${onboardPath});
         payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
         "should create a new sandbox when --recreate-sandbox is set",
       );
+    },
+  );
+
+  it(
+    "recreate-sandbox flag backs up and restores workspace state",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-backup.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+runner.run = (command) => {
+  events.push({ kind: "run", cmd: _n(command) });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = (name) => {
+  events.push({ kind: "backup", name });
+  return {
+    success: true,
+    backedUpDirs: ["workspace", "skills"],
+    failedDirs: [],
+    backedUpFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
+  };
+};
+sandboxState.restoreSandboxState = (name, backupPath) => {
+  events.push({ kind: "restore", name, backupPath });
+  return {
+    success: true,
+    restoredDirs: ["workspace", "skills"],
+    failedDirs: [],
+    restoredFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+  };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4243;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const events = payload.events as Array<{ kind: string; cmd?: string; name?: string; backupPath?: string }>;
+      const backupIndex = events.findIndex((e) => e.kind === "backup");
+      const deleteIndex = events.findIndex((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete"));
+      const restoreIndex = events.findIndex((e) => e.kind === "restore");
+
+      assert.ok(backupIndex >= 0, "should call backupSandboxState before delete");
+      assert.ok(deleteIndex > backupIndex, "backup must happen before sandbox delete");
+      assert.ok(restoreIndex > deleteIndex, "restore must happen after sandbox recreate");
+      const backupEvent = events[backupIndex];
+      assert.equal(backupEvent?.name, "my-assistant", "backup target must match sandbox name");
+      const restoreEvent = events[restoreIndex];
+      assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
+    },
+  );
+
+  it(
+    "recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-skip-backup-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-skip-backup.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+runner.run = (command) => {
+  events.push({ kind: "run", cmd: _n(command) });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = () => {
+  events.push({ kind: "backup" });
+  return { success: true, backedUpDirs: [], failedDirs: [], backedUpFiles: [], failedFiles: [] };
+};
+sandboxState.restoreSandboxState = () => {
+  events.push({ kind: "restore" });
+  return { success: true, restoredDirs: [], failedDirs: [], restoredFiles: [], failedFiles: [] };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4244;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      const events = payload.events as Array<{ kind: string }>;
+      assert.ok(
+        !events.some((e) => e.kind === "backup"),
+        "should not call backupSandboxState when NEMOCLAW_RECREATE_WITHOUT_BACKUP=1",
+      );
+      assert.ok(
+        !events.some((e) => e.kind === "restore"),
+        "should not call restoreSandboxState when no backup occurred",
+      );
+    },
+  );
+
+  it(
+    "recreate-sandbox flag backs up and restores when existing sandbox is not ready",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-notready-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-notready.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+let sandboxDeleted = false;
+runner.run = (command) => {
+  const cmd = _n(command);
+  events.push({ kind: "run", cmd });
+  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) {
+    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+  }
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = (name) => {
+  events.push({ kind: "backup", name });
+  return {
+    success: true,
+    backedUpDirs: ["workspace"],
+    failedDirs: [],
+    backedUpFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
+  };
+};
+sandboxState.restoreSandboxState = (name, backupPath) => {
+  events.push({ kind: "restore", name, backupPath });
+  return {
+    success: true,
+    restoredDirs: ["workspace"],
+    failedDirs: [],
+    restoredFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+  };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4245;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const events = payload.events as Array<{ kind: string; cmd?: string; name?: string; backupPath?: string }>;
+      const backupIndex = events.findIndex((e) => e.kind === "backup");
+      const deleteIndex = events.findIndex(
+        (e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete"),
+      );
+      const restoreIndex = events.findIndex((e) => e.kind === "restore");
+
+      assert.ok(backupIndex >= 0, "should call backupSandboxState for not-ready sandbox");
+      assert.ok(deleteIndex > backupIndex, "backup must happen before sandbox delete");
+      assert.ok(restoreIndex > deleteIndex, "restore must happen after sandbox recreate");
     },
   );
 
@@ -3246,6 +3858,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   const session = onboardSession.loadSession();
   console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
@@ -3527,6 +4140,7 @@ const { createSandbox } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -3671,6 +4285,7 @@ const { createSandbox } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -4078,6 +4693,100 @@ const { setupInference } = require(${onboardPath});
       !SANDBOX_BASE_IMAGE.includes("openshell-community"),
       `SANDBOX_BASE_IMAGE must NOT reference openshell-community, got: ${SANDBOX_BASE_IMAGE}`,
     );
+  });
+
+  it("aborts createSandbox for missing BRAVE_API_KEY before any sandbox delete (#3626)", () => {
+    // Regression: the Brave credential guard previously sat *after* the
+    // recreate/sandbox-delete branch ran. A user with Brave enabled and no
+    // BRAVE_API_KEY would lose their existing sandbox before seeing the abort.
+    // Move it next to the credential lookup and assert no `sandbox delete`
+    // command escapes before exit.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-abort-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "brave-abort-check.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const outputPathLiteral = JSON.stringify(outputPath);
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const runner = require(${runnerPath});
+
+const openshellCalls = [];
+runner.runOpenshell = (command) => {
+  openshellCalls.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCaptureOpenshell = () => "";
+runner.run = (command) => {
+  openshellCalls.push("run: " + (Array.isArray(command) ? command.join(" ") : String(command)));
+  return { status: 0 };
+};
+
+const errors = [];
+const originalError = console.error;
+console.error = (...args) => errors.push(args.join(" "));
+const originalExit = process.exit;
+process.exit = (code) => {
+  fs.writeFileSync(${outputPathLiteral}, JSON.stringify({ exitCode: code, errors, openshellCalls }));
+  originalExit(code);
+};
+
+// Reproduce the bug scenario: Brave enabled, no key anywhere.
+delete process.env.BRAVE_API_KEY;
+
+const { createSandbox } = require(${onboardPath});
+(async () => {
+  await createSandbox(
+    null,           // gpu
+    "gpt-5.4",      // model
+    "nvidia-prod",  // provider
+    null,           // preferredInferenceApi
+    "my-assistant", // sandboxNameOverride
+    { fetchEnabled: true }, // webSearchConfig
+  );
+})().catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        BRAVE_API_KEY: "",
+      },
+    });
+
+    assert.ok(
+      fs.existsSync(outputPath),
+      `outcome file missing; exit=${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8")) as {
+      exitCode: number;
+      errors: string[];
+      openshellCalls: string[];
+    };
+    expect(payload.exitCode).toBe(1);
+    expect(payload.errors.join("\n")).toMatch(/BRAVE_API_KEY is not available/);
+    // The abort must run before *any* destructive openshell command —
+    // most importantly `sandbox delete`. `forward list` is read-only and
+    // happens earlier; only flag mutating commands here.
+    const destructive = payload.openshellCalls.filter((c) =>
+      /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(c),
+    );
+    expect(destructive).toEqual([]);
   });
 
 });

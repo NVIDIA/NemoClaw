@@ -55,9 +55,11 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 34 entries", () => {
-      // 28 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(34);
+    it("should return exactly 42 entries", () => {
+      // 36 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 36 visible includes the sessions group (root + list + reset + delete)
+      // and the agents pair (add + delete).
+      expect(sandboxCommands()).toHaveLength(42);
     });
 
     it("every entry has scope sandbox", () => {
@@ -169,6 +171,12 @@ describe("command-registry", () => {
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
     });
+
+    it("uses distinct placeholders for sandbox and skill names", () => {
+      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      expect(command?.usage).toBe("nemoclaw <name> skill remove");
+      expect(command?.flags).toBe("<skill>");
+    });
   });
 
   describe("globalCommandTokens()", () => {
@@ -205,11 +213,12 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 23 unique action tokens including empty string", () => {
+    it("returns exactly 25 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(23);
+      expect(tokens).toHaveLength(25);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
+        "agents",
         "connect",
         "dashboard-url",
         "exec",
@@ -223,6 +232,7 @@ describe("command-registry", () => {
         "hosts-list",
         "hosts-remove",
         "destroy",
+        "sessions",
         "skill",
         "rebuild",
         "recover",

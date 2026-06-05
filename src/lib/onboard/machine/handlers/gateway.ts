@@ -6,6 +6,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import { withGatewayTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -22,6 +23,7 @@ export interface GatewayStateOptions<Gpu> {
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): Promise<boolean>;
+    recoverGatewayRuntime(): Promise<boolean>;
     getGatewayLocalEndpoint(): string;
     stopDashboardForward(): void;
     destroyGateway(
@@ -67,6 +69,7 @@ export interface GatewayStateOptions<Gpu> {
 export interface GatewayStateResult {
   gatewayReuseState: GatewayReuseState;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleGatewayState<Gpu>({
@@ -86,6 +89,7 @@ export async function handleGatewayState<Gpu>({
 
   if (gatewayReuseState === "healthy" && supportsLifecycleCommands) {
     const containerState = deps.verifyGatewayContainerRunning(gatewayName);
+    let checkImageDrift = false;
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       deps.stopDashboardForward();
@@ -94,6 +98,30 @@ export async function handleGatewayState<Gpu>({
         "  ✓ Stale gateway metadata cleaned up",
         "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
       );
+    } else if (containerState === "stopped") {
+      // #4187: a stopped legacy `openshell-cluster-*` container after a host
+      // VM stop/start still holds the PVC volume. Attempt non-destructive
+      // recovery (openshell gateway start) before any destructive path so we
+      // never delete the k3s local-path PVC backing data.
+      console.log(
+        "  Gateway container is stopped (likely host or Docker restart). Attempting non-destructive recovery...",
+      );
+      const recovered = await deps.recoverGatewayRuntime();
+      if (recovered) {
+        console.log("  ✓ Gateway recovered without removing volumes; existing sandbox PVC preserved.");
+        checkImageDrift = true;
+      } else {
+        console.log(
+          `  Could not start the stopped NemoClaw gateway and ${deps.getGatewayLocalEndpoint()}/ is not responding.`,
+        );
+        console.log(
+          "  Refusing to delete openshell-cluster-* volumes — they may hold the existing PVC/workspace data.",
+        );
+        console.log(
+          "  Restart Docker, free the gateway port if held by another process, and re-run `nemoclaw onboard`. See #4187.",
+        );
+        deps.exitProcess(1);
+      }
     } else if (containerState === "unknown") {
       if (await deps.waitForGatewayHttpReady()) {
         console.log(
@@ -119,6 +147,10 @@ export async function handleGatewayState<Gpu>({
         "  ! Stale gateway cleanup failed; leaving registry state intact.",
       );
     } else {
+      checkImageDrift = true;
+    }
+
+    if (checkImageDrift) {
       const imageDrift = deps.getGatewayClusterImageDrift();
       if (imageDrift) {
         console.log(
@@ -183,5 +215,11 @@ export async function handleGatewayState<Gpu>({
     session = await deps.recordStepComplete("gateway");
   }
 
-  return { gatewayReuseState, session };
+  return {
+    gatewayReuseState,
+    session,
+    stateResult: advanceTo("provider_selection", {
+      metadata: { state: "gateway", gatewayReuseState },
+    }),
+  };
 }

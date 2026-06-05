@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+id: brave
+display_name: Brave Search
+description: Brave Search API access
+category: agent
+credentials:
+  - name: api_key
+    description: Brave Search API key
+    env_vars:
+      - BRAVE_API_KEY
+    required: true
+    auth_style: header
+    header_name: x-subscription-token
+    query_param: ''
+endpoints:
+  - host: api.search.brave.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

@@ -17,6 +17,9 @@ const { randomBytes } = require("crypto");
 const { run, runCapture, validateName } = require("../runner");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
 const {
+  privilegedSandboxExecArgv,
+}: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
+const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   parseCurrentPolicy,
@@ -39,12 +42,21 @@ const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
 const { resolveAgentConfig } = require("../sandbox/config");
 const {
-  privilegedSandboxExecArgv,
-}: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
-const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
+const {
+  verifyShieldsLockState,
+}: typeof import("./verify-lock") = require("./verify-lock");
+const {
+  parseSha256Output,
+  isHashVerificationIssue,
+  isSha256Hex,
+}: typeof import("./seal") = require("./seal");
+const {
+  applyStateDirLockMode,
+  preflightStateDirLock,
+}: typeof import("./state-dir-lock") = require("./state-dir-lock");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -52,10 +64,10 @@ const STATE_DIR = resolveNemoclawStateDir();
 // privileged sandbox exec — bypasses the sandbox's Landlock context
 //
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
-// can't modify read_only paths or change chattr flags. Privileged Docker exec
-// starts a new root process that does NOT inherit the Landlock ruleset.
-// OpenShell gateways expose sandboxes as Docker containers, so we exec into
-// the sandbox container directly as root.
+// can't modify read_only paths or change chattr flags. We delegate the
+// argv shape to the central registry-scoped helper in
+// src/lib/sandbox/privileged-exec.ts, which fails closed when no matching
+// sandbox container is running.
 // ---------------------------------------------------------------------------
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[]): void {
@@ -101,6 +113,18 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
+  chattrApplied?: boolean;
+  // SHA-256 seal of each locked file, captured by `shields up` after the
+  // lock verification passes. `shields status` re-hashes the same files
+  // inside the sandbox and flags drift on any mismatch. This catches the
+  // host-root tamper pattern that defeats perm-only checks: chmod to
+  // mutable -> write -> chmod back to 444 leaves mode/owner identical to
+  // the locked baseline but produces a new content hash. Absent on state
+  // files captured before the seal landed; on those legacy lockdowns
+  // `shields up` refuses to seal an unverified baseline by default and
+  // asks the operator to rebuild the sandbox, or to opt in via
+  // `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`.
+  fileHashes?: { [path: string]: string };
   updatedAt?: string;
 }
 
@@ -278,6 +302,23 @@ function isOptionalNullableNumber(
   );
 }
 
+// SHA-256 hex strings are 64 lowercase or uppercase hex chars. The seal
+// helper normalises to lowercase before persisting; accept either case
+// here so manually edited state files and legacy uppercase entries still
+// load, and reject anything that cannot be a real digest. Uses the same
+// `isSha256Hex` predicate as the verifier so the persisted-state and
+// runtime contracts stay aligned.
+function isOptionalHashMap(
+  value: unknown,
+): value is { [path: string]: string } | undefined {
+  if (value === undefined) return true;
+  if (!isObjectRecord(value)) return false;
+  for (const v of Object.values(value)) {
+    if (typeof v !== "string" || !isSha256Hex(v)) return false;
+  }
+  return true;
+}
+
 function isShieldsState(value: unknown): value is ShieldsState {
   return (
     isObjectRecord(value) &&
@@ -287,119 +328,25 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsDownReason) &&
     isOptionalNullableString(value.shieldsDownPolicy) &&
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalBoolean(value.chattrApplied) &&
+    isOptionalHashMap(value.fileHashes) &&
     isOptionalString(value.updatedAt)
   );
 }
 
 // ---------------------------------------------------------------------------
-// NC-2227-05: State directories locked by shields-up.
-//
-// During shields-up, these must be locked (root:root 755) so the sandbox
-// user cannot create new entries or modify existing ones. This covers both
-// executable state (skills, hooks, cron jobs, extensions, plugins, agent
-// definitions) and writable agent state entry points such as workspace and
-// memory, so a stale symlink bridge cannot bypass the lockdown.
-//
-// The list is a superset: directories that don't exist in a given agent's
-// config dir are silently skipped.
+// State-dir lock — adapter between this module's privileged-exec helpers and
+// the lock pipeline in ./state-dir-lock. The inventory of locked dirs, the
+// preflight/mutation/verification logic, and the `agents/*/sessions`
+// carve-out live in that sibling module so this file stays focused on
+// shields state transitions.
 // ---------------------------------------------------------------------------
 
-const HIGH_RISK_STATE_DIRS = [
-  "skills",
-  "hooks",
-  "cron",
-  "agents",
-  "extensions",
-  "plugins", // Hermes equivalent of extensions
-  "workspace",
-  "memory",
-  "credentials",
-  "identity",
-  "devices",
-  "canvas",
-  "telegram",
-];
-
-function applyStateDirLockMode(
-  sandboxName: string,
-  configDir: string,
-  owner: string,
-): void {
-  // Locking (shields-up) strips group + world write. Unlocking (shields-down)
-  // restores the same group-readable/writable + o-rwx mutable-default contract
-  // as startup, plus setgid so the gateway UID — now in the sandbox group via
-  // Dockerfile.base — can write to OpenClaw's mutable config tree (#2681).
-  //
-  // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
-  // access from descendants. Without re-adding group read/write explicitly,
-  // shields-down would leave nested files readable/writable only by owner.
-  const isLocking = owner === "root:root";
-  const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
-  const dirMode = isLocking ? "755" : "2770";
-
-  for (const dirName of HIGH_RISK_STATE_DIRS) {
-    const dirPath = `${configDir}/${dirName}`;
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "-R", owner, dirPath]);
-    } catch {
-      // Directory may not exist for this agent — silently skip
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", dirMode, dirPath]);
-    } catch {
-      // Silently skip
-    }
-    if (isLocking) {
-      try {
-        privilegedSandboxExec(sandboxName, ["chmod", "g-s", dirPath]);
-      } catch {
-        // Best effort; do not skip recursive write stripping.
-      }
-    }
-    try {
-      privilegedSandboxExec(sandboxName, [
-        "chmod",
-        "-R",
-        recursiveMode,
-        dirPath,
-      ]);
-    } catch {
-      // Silently skip
-    }
-  }
-
-  // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
-  // discovered dynamically because they are configured by openclaw.json.
-  const clearSetgid = isLocking ? "1" : "0";
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-owner="$2"
-recursive_mode="$3"
-dir_mode="$4"
-clear_setgid="$5"
-for dir in "$config_dir"/workspace-*; do
-  [ -d "$dir" ] || continue
-  chown -R "$owner" "$dir" 2>/dev/null || true
-  chmod "$dir_mode" "$dir" 2>/dev/null || true
-  [ "$clear_setgid" = "1" ] && chmod g-s "$dir" 2>/dev/null || true
-  chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
-done
-`,
-      "sh",
-      configDir,
-      owner,
-      recursiveMode,
-      dirMode,
-      clearSetgid,
-    ]);
-  } catch {
-    // Best effort; verification below catches the primary config lock.
-  }
+function stateDirLockExec(sandboxName: string) {
+  return {
+    exec: (cmd: string[]) => privilegedSandboxExec(sandboxName, cmd),
+    capture: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+  };
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -445,7 +392,7 @@ function assertNoLegacyStateLayout(
 // user and the gateway UID can write the mutable config tree. Hermes keeps its
 // tighter single-user layout.
 //
-// Note on chattr: best-effort — it may silently fail if privileged exec
+// Note on chattr: best-effort — it may silently fail if kubectl exec
 // lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
 // the file becomes writable through the permissive policy (disables Landlock
 // read_only) + chown/chmod below.
@@ -503,8 +450,18 @@ function unlockAgentConfig(
 
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
-  // locked to root:root by a prior shields-up).
-  applyStateDirLockMode(sandboxName, target.configDir, "sandbox:sandbox");
+  // locked to root:root by a prior shields-up). Surface fan-out issues
+  // so `shields down` cannot report success while a state dir is still
+  // root-owned or read-only.
+  const stateDirUnlockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "sandbox:sandbox",
+    false,
+  );
+  for (const issue of stateDirUnlockIssues) {
+    errors.push(`state dir unlock: ${issue}`);
+  }
 
   if (errors.length > 0) {
     console.error(
@@ -579,17 +536,51 @@ function unlockAgentConfig(
 //   2. UNIX permissions — 444 root:root (mandatory, verified here)
 //   3. chattr +i immutable bit — defense-in-depth (best-effort)
 //
-// Layer 3 is best-effort because privileged exec may lack
+// Layer 3 is best-effort because kubectl exec may lack
 // CAP_LINUX_IMMUTABLE. Layers 1+2 are sufficient. We still attempt it
 // in case the runtime environment supports it.
 // ---------------------------------------------------------------------------
 
+function captureSealHashes(
+  sandboxName: string,
+  filesToHash: string[],
+): { [path: string]: string } {
+  const hashes: { [path: string]: string } = {};
+  for (const f of filesToHash) {
+    let raw: string;
+    try {
+      raw = privilegedSandboxExecCapture(sandboxName, ["sha256sum", f]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`sha256sum ${f} failed: ${msg}`);
+    }
+    const hex = parseSha256Output(raw);
+    if (!hex) {
+      throw new Error(`sha256sum ${f} returned unparsable output: ${raw}`);
+    }
+    hashes[f] = hex;
+  }
+  return hashes;
+}
+
 function lockAgentConfig(
   sandboxName: string,
   target: AgentConfigTarget,
-): void {
+): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
+
+  // Symlink preflight runs before any file or directory mutation: if a
+  // pre-lockdown agent swapped e.g. `extensions/` for a symlink to /etc,
+  // we abort before the privileged chmod/chown touches anything, so the
+  // tree is never half-mutated against an attacker-controlled host path.
+  const preflightIssues = preflightStateDirLock(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+  );
+  if (preflightIssues.length > 0) {
+    throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
+  }
 
   for (const f of filesToLock) {
     try {
@@ -620,7 +611,7 @@ function lockAgentConfig(
     errors.push("chown root:root config dir");
   }
 
-  // Best-effort: privileged exec may lack CAP_LINUX_IMMUTABLE. Track the
+  // Best-effort: kubectl exec may lack CAP_LINUX_IMMUTABLE. Track the
   // result so verification doesn't require something that was never there.
   let chattrSucceeded = true;
   for (const f of filesToLock) {
@@ -631,10 +622,24 @@ function lockAgentConfig(
     }
   }
 
-  // NC-2227-05: Lock state directories. Root-own the directory and set 755 so
-  // the sandbox user can read/execute but cannot create new entries or modify
-  // existing ones.
-  applyStateDirLockMode(sandboxName, target.configDir, "root:root");
+  // Lock state directories. High-risk dirs use `root:sandbox` ownership so
+  // the gateway (in the sandbox group) can still read plugin/agent code while
+  // the sandbox user is denied write through `chmod -R go-w`. Secret-bearing
+  // dirs (CONFIDENTIALITY_STATE_DIRS in ./state-dir-lock) go to `root:root`
+  // 700/go-rwX so neither the sandbox user nor the gateway can read them
+  // while shields are up. Top-level configDir stays root:root.
+  const stateDirLockIssues = applyStateDirLockMode(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+    "root:sandbox",
+    true,
+  );
+  if (stateDirLockIssues.length > 0) {
+    // Symlinked state-dir roots are a security-relevant violation:
+    // continuing would let shields-up report "locked" while a state
+    // dir still points at a writable host path. Refuse the lock.
+    throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
+  }
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid
   // after descendant locking so shields-up verifies the root config dir as
@@ -657,70 +662,22 @@ function lockAgentConfig(
   // Verify the lock actually took effect.
   // Mode + ownership are mandatory (layers 1+2 depend on them).
   // Immutable bit is only verified if chattr succeeded above.
-  const issues: string[] = [];
-  for (const f of filesToLock) {
-    try {
-      const perms = privilegedSandboxExecCapture(sandboxName, [
-        "stat",
-        "-c",
-        "%a %U:%G",
-        f,
-      ]);
-      const [mode, owner] = perms.split(" ");
-      if (!/^4[0-4][0-4]$/.test(mode))
-        issues.push(`${f} mode=${mode} (expected 444)`);
-      if (owner !== "root:root")
-        issues.push(`${f} owner=${owner} (expected root:root)`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      issues.push(`${f} stat failed: ${msg}`);
-    }
-  }
-
-  try {
-    const dirPerms = privilegedSandboxExecCapture(sandboxName, [
-      "stat",
-      "-c",
-      "%a %U:%G",
-      target.configDir,
-    ]);
-    const [dirMode, dirOwner] = dirPerms.split(" ");
-    if (dirMode !== "755") issues.push(`dir mode=${dirMode} (expected 755)`);
-    if (dirOwner !== "root:root")
-      issues.push(`dir owner=${dirOwner} (expected root:root)`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    issues.push(`dir stat failed: ${msg}`);
-  }
-
-  if (chattrSucceeded) {
-    for (const f of filesToLock) {
-      try {
-        const attrs = privilegedSandboxExecCapture(sandboxName, [
-          "lsattr",
-          "-d",
-          f,
-        ]);
-        // lsattr format: "----i---------e----- /path/to/file"
-        // First whitespace-delimited token is the flags field.
-        const [flags] = attrs.trim().split(/\s+/, 1);
-        if (!flags.includes("i")) issues.push(`${f} immutable bit not set`);
-      } catch {
-        // lsattr may not be available on all images — skip
-      }
-    }
-  }
-
-  try {
-    assertNoLegacyStateLayout(sandboxName, target.configDir);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    issues.push(msg);
-  }
+  const { issues } = verifyShieldsLockState(sandboxName, target, {
+    verifyChattr: chattrSucceeded,
+    exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+    assertLegacyLayout: assertNoLegacyStateLayout,
+  });
 
   if (issues.length > 0) {
     throw new Error(`Config not locked: ${issues.join(", ")}`);
   }
+
+  // Mode + ownership are clean; capture the SHA-256 seal of each locked
+  // file so `shields status` can detect content drift even when an
+  // attacker restores the mode/owner after writing.
+  const fileHashes = captureSealHashes(sandboxName, filesToLock);
+
+  return { chattrApplied: chattrSucceeded, fileHashes };
 }
 
 function rollbackShieldsDown(
@@ -732,11 +689,13 @@ function rollbackShieldsDown(
   const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
     ignoreError: true,
   });
-  let rollbackLocked = false;
+  let rollbackChattrApplied: boolean | null = null;
+  let rollbackFileHashes: { [path: string]: string } | null = null;
   if (rollbackResult.status === 0) {
     try {
-      lockAgentConfig(sandboxName, target);
-      rollbackLocked = true;
+      const lockResult = lockAgentConfig(sandboxName, target);
+      rollbackChattrApplied = lockResult.chattrApplied;
+      rollbackFileHashes = lockResult.fileHashes;
     } catch {
       console.error(
         "  Warning: Rollback re-lock could not be verified. Check config manually.",
@@ -745,19 +704,21 @@ function rollbackShieldsDown(
   } else {
     console.error("  Warning: Policy restore failed during rollback.");
   }
-  if (rollbackLocked) {
+  if (rollbackChattrApplied !== null && rollbackFileHashes !== null) {
     saveShieldsState(sandboxName, {
       shieldsDown: false,
       shieldsDownAt: null,
       shieldsDownTimeout: null,
       shieldsDownReason: null,
       shieldsDownPolicy: null,
+      chattrApplied: rollbackChattrApplied,
+      fileHashes: rollbackFileHashes,
     });
     console.error("  Lockdown restored. Config was never left unguarded.");
   } else {
     console.error("  Config remains unlocked — manual intervention required.");
     console.error(
-      `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
+      `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
     );
   }
 }
@@ -765,6 +726,8 @@ function rollbackShieldsDown(
 interface LockdownActivationResult {
   ok: boolean;
   error?: string;
+  chattrApplied?: boolean;
+  fileHashes?: { [path: string]: string };
 }
 
 function activateLockdownFromSnapshot(
@@ -789,13 +752,16 @@ function activateLockdownFromSnapshot(
 
   const target = resolveAgentConfig(sandboxName);
   try {
-    lockAgentConfig(sandboxName, target);
+    const lockResult = lockAgentConfig(sandboxName, target);
+    return {
+      ok: true,
+      chattrApplied: lockResult.chattrApplied,
+      fileHashes: lockResult.fileHashes,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { ok: false, error: message };
   }
-
-  return { ok: true };
 }
 
 function recoverExpiredAutoRestoreInline(
@@ -857,6 +823,12 @@ function recoverExpiredAutoRestoreInline(
     shieldsDownTimeout: null,
     shieldsDownReason: null,
     shieldsDownPolicy: null,
+    ...(activation.fileHashes && typeof activation.chattrApplied === "boolean"
+      ? {
+          chattrApplied: activation.chattrApplied,
+          fileHashes: activation.fileHashes,
+        }
+      : {}),
   });
   clearTimerMarker(sandboxName);
   appendAuditEntry({
@@ -1020,7 +992,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
 
   // 4. Start auto-restore timer (detached child process), unless skipped.
   //    Pass the absolute restore time, not a relative timeout. Steps 1-2b
-  //    can take minutes (policy apply + privileged chmod), so a relative timeout
+  //    can take minutes (policy apply + kubectl chmod), so a relative timeout
   //    passed at fork time would fire too early.
   if (!opts.skipTimer) {
     const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
@@ -1118,8 +1090,135 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
   // shieldsDown === false means explicitly locked by a previous shields-up.
   // undefined (no state file) means fresh sandbox — mutable default, allow shields-up.
   if (state.shieldsDown === false) {
+    // Verify the sandbox filesystem still matches the locked posture. If a
+    // host-root tamper has reverted protected perms or rewritten file
+    // content (even when the mode/owner is restored), re-apply the lock
+    // so the recovery hint surfaced by `shields status` actually works.
+    const target = resolveAgentConfig(sandboxName);
+    const { issues } = verifyShieldsLockState(sandboxName, target, {
+      verifyChattr: state.chattrApplied === true,
+      exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+      assertLegacyLayout: assertNoLegacyStateLayout,
+      expectedHashes: state.fileHashes,
+    });
+    // Classify the verifier output. "no seal recorded" entries mean the
+    // verifier wanted a hash for a file that has no recorded baseline —
+    // this happens both for legacy lockdowns (no fileHashes at all) and
+    // for partial lockdowns whose seal predates a newly added sensitive
+    // file. Everything else under `isHashVerificationIssue` is a real
+    // content-trust failure (drift, sha256sum failure, unparsable
+    // output) and never launderable.
+    const hashIssues = issues.filter(isHashVerificationIssue);
+    const realHashDrift = hashIssues.filter(
+      (entry) => !entry.includes("no seal recorded"),
+    );
+    if (realHashDrift.length > 0) {
+      console.error("  ERROR: locked file seal cannot be trusted:");
+      for (const entry of realHashDrift) {
+        console.error(`    - ${entry}`);
+      }
+      console.error(
+        "  Refusing to re-seal a tampered baseline. Restore the file or rebuild the sandbox, then re-run shields up.",
+      );
+      return failShieldsCommand(
+        `Locked file seal cannot be trusted: ${realHashDrift.join("; ")}`,
+        opts.throwOnError,
+      );
+    }
+
+    // Legacy lockdown (no fileHashes at all) or partial lockdown (some
+    // sealed, some missing because the locked-file set grew between
+    // releases). Both cases would seal the *current* bytes as the new
+    // trusted baseline, which perm-only verification cannot prove are
+    // untampered. Require explicit operator opt-in via the env var.
+    const hasMissingSeals = hashIssues.length > realHashDrift.length;
+    const requiresLegacyOptIn = !state.fileHashes || hasMissingSeals;
+    if (
+      requiresLegacyOptIn &&
+      process.env.NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE !== "1"
+    ) {
+      console.error(
+        state.fileHashes
+          ? "  ERROR: locked sandbox seal is missing entries (locked file set grew after the existing seal was captured)."
+          : "  ERROR: locked sandbox has no content seal (state predates the seal).",
+      );
+      console.error(
+        "  Perm-only verification cannot prove the unsealed files have not already been tampered with.",
+      );
+      console.error(
+        `  Recovery: rebuild the sandbox for a known-good baseline, then run \`nemoclaw ${sandboxName} shields up\`.`,
+      );
+      console.error(
+        `  Or accept the current bytes as the trusted baseline by setting NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and rerunning.`,
+      );
+      return failShieldsCommand(
+        state.fileHashes
+          ? "Locked sandbox seal is incomplete; refusing to seal the missing entries without explicit operator acknowledgement"
+          : "Locked sandbox has no content seal; refusing to seal a legacy baseline without explicit operator acknowledgement",
+        opts.throwOnError,
+      );
+    }
+
+    if (issues.length === 0) {
+      // Verifier saw a clean lock. If the legacy-baseline opt-in was
+      // required (no fileHashes), capture the seal now so future
+      // `shields status` runs can detect content drift.
+      if (!state.fileHashes) {
+        try {
+          const filesToHash = [
+            target.configPath,
+            ...(target.sensitiveFiles || []),
+          ];
+          const newHashes = captureSealHashes(sandboxName, filesToHash);
+          saveShieldsState(sandboxName, { fileHashes: newHashes });
+          console.log(
+            "  Captured SHA-256 content seal for existing lockdown (current bytes accepted as baseline).",
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  ERROR: ${message}`);
+          console.error(
+            "  Could not capture content seal — sandbox filesystem may be unreachable.",
+          );
+          return failShieldsCommand(message, opts.throwOnError);
+        }
+      }
+      clearTimerMarker(sandboxName);
+      console.log("  Lockdown is already active.");
+      return;
+    }
+    // At this point the verifier still flagged something: perm drift, or
+    // missing-seal entries that the operator has just opted in to. In
+    // both cases re-applying the lock rewrites perms and captures a
+    // fresh, complete seal.
+    console.log(
+      `  Lockdown drifted — re-applying lock for ${sandboxName}...`,
+    );
+    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
+    try {
+      lockResult = lockAgentConfig(sandboxName, target);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  ERROR: ${message}`);
+      console.error(
+        "  Config remains drifted — manual intervention required.",
+      );
+      return failShieldsCommand(message, opts.throwOnError);
+    }
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      chattrApplied: lockResult.chattrApplied,
+      fileHashes: lockResult.fileHashes,
+    });
     clearTimerMarker(sandboxName);
-    console.log("  Lockdown is already active.");
+    appendAuditEntry({
+      action: "shields_up",
+      sandbox: sandboxName,
+      timestamp: new Date().toISOString(),
+      restored_by: "operator",
+      reason: "drift remediation",
+    });
+    console.log(`  Lockdown re-applied for ${sandboxName}`);
     return;
   }
 
@@ -1141,6 +1240,9 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
     );
     return failShieldsCommand("Saved policy snapshot is missing", opts.throwOnError);
   }
+  let snapshotLockResult:
+    | { chattrApplied: boolean; fileHashes: { [path: string]: string } }
+    | null = null;
   if (snapshotPath) {
     console.log("  Restoring restrictive policy from snapshot...");
     const activation = activateLockdownFromSnapshot(sandboxName, snapshotPath);
@@ -1150,21 +1252,28 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
         "  Config remains unlocked — manual intervention required.",
       );
       console.error(
-        `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
+        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
       );
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
+    if (activation.fileHashes && typeof activation.chattrApplied === "boolean") {
+      snapshotLockResult = {
+        chattrApplied: activation.chattrApplied,
+        fileHashes: activation.fileHashes,
+      };
+    }
   } else {
     // 2b. Lock config file to read-only.
-    //     Uses direct privileged exec to bypass Landlock (same as shields down).
+    //     Uses kubectl exec to bypass Landlock (same as shields down).
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     const target = resolveAgentConfig(sandboxName);
     console.log(
       `  Locking ${target.agentName} config (${target.configPath})...`,
     );
+    let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
     try {
-      lockAgentConfig(sandboxName, target);
+      lockResult = lockAgentConfig(sandboxName, target);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  ERROR: ${message}`);
@@ -1172,10 +1281,14 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
         "  Config remains unlocked — manual intervention required.",
       );
       console.error(
-        `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
+        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
       );
       return failShieldsCommand(message, opts.throwOnError);
     }
+    saveShieldsState(sandboxName, {
+      chattrApplied: lockResult.chattrApplied,
+      fileHashes: lockResult.fileHashes,
+    });
   }
 
   // 3. Calculate duration
@@ -1185,14 +1298,22 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
   const now = new Date();
   const durationSeconds = Math.floor((now.getTime() - downAt.getTime()) / 1000);
 
-  // 4. Update state
+  // 4. Update state. When the snapshot-restore branch ran, fold its
+  //    captured chattrApplied + fileHashes into the persisted state so
+  //    drift detection on the next `shields status` has a seal to compare
+  //    against. The non-snapshot branch already persisted those above.
   saveShieldsState(sandboxName, {
     shieldsDown: false,
     shieldsDownAt: null,
     shieldsDownTimeout: null,
     shieldsDownReason: null,
     shieldsDownPolicy: null,
-    // Keep snapshotPath for forensics — don't clear it
+    ...(snapshotLockResult
+      ? {
+          chattrApplied: snapshotLockResult.chattrApplied,
+          fileHashes: snapshotLockResult.fileHashes,
+        }
+      : {}),
   });
   clearTimerMarker(sandboxName);
 
@@ -1220,8 +1341,20 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
 // shields status
 // ---------------------------------------------------------------------------
 
-function shieldsStatus(sandboxName: string, allowInlineRecovery = true): void {
+type ShieldsStatusDeps = {
+  verifyLockState?: typeof verifyShieldsLockState;
+  resolveConfig?: typeof resolveAgentConfig;
+};
+
+function shieldsStatus(
+  sandboxName: string,
+  allowInlineRecovery = true,
+  deps: ShieldsStatusDeps = {},
+): void {
   validateName(sandboxName, "sandbox name");
+
+  const verify = deps.verifyLockState ?? verifyShieldsLockState;
+  const resolveConfig = deps.resolveConfig ?? resolveAgentConfig;
 
   const posture = getShieldsPosture(sandboxName, allowInlineRecovery);
   const { state } = posture;
@@ -1245,15 +1378,81 @@ function shieldsStatus(sandboxName: string, allowInlineRecovery = true): void {
       );
       return;
 
-    case "locked":
+    case "locked": {
+      // Cross-check the sandbox filesystem so a host-root tamper that reverts
+      // protected perms back to a sandbox-writable state is surfaced as drift
+      // instead of reported as a clean lockdown.
+      let driftIssues: string[] = [];
+      try {
+        const target = resolveConfig(sandboxName);
+        driftIssues = verify(sandboxName, target, {
+          verifyChattr: state.chattrApplied === true,
+          exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+          assertLegacyLayout: assertNoLegacyStateLayout,
+          expectedHashes: state.fileHashes,
+        }).issues;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        driftIssues = [`unable to resolve agent config target: ${msg}`];
+      }
+      const policyLine = `  Policy:  restrictive${state.shieldsPolicySnapshotPath ? " (snapshot preserved)" : ""}`;
+      if (driftIssues.length > 0) {
+        console.error(
+          "  Shields: UP (DRIFTED — declared locked but sandbox filesystem differs)",
+        );
+        console.error(policyLine);
+        if (state.shieldsDownAt) {
+          console.error(`  Last unlocked: ${state.shieldsDownAt}`);
+        }
+        console.error("  Drift:");
+        for (const issue of driftIssues) {
+          console.error(`    - ${issue}`);
+        }
+        // Hash-trust failures cannot be repaired by re-locking — re-up
+        // would just seal the tampered or unverifiable content. Perm
+        // drift (mode/owner/chattr/legacy-layout) is launderable by
+        // re-up. Surface the right recovery for the failure mode.
+        const hasHashTrouble = driftIssues.some(isHashVerificationIssue);
+        if (hasHashTrouble) {
+          console.error(
+            `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
+          );
+        } else {
+          console.error(
+            `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
+          );
+        }
+        process.exit(2);
+      }
+      if (!state.fileHashes) {
+        // Legacy state file pre-dates the content seal. Perm-only
+        // verification cannot prove the locked bytes were not already
+        // tampered before the upgrade, so we cannot honestly call this
+        // a clean lockdown. Surface integrity-unknown and exit with
+        // status 2 (same code as drifted) so scripts treat it as a
+        // failure until the operator seals an explicit baseline.
+        console.error(
+          "  Shields: UP (UNSEALED — content integrity unknown for legacy lockdown)",
+        );
+        console.error(policyLine);
+        if (state.shieldsDownAt) {
+          console.error(`  Last unlocked: ${state.shieldsDownAt}`);
+        }
+        console.error(
+          "  Recovery: rebuild the sandbox for a known-good baseline,",
+        );
+        console.error(
+          `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+        );
+        process.exit(2);
+      }
       console.log(`  Shields: ${posture.statusText}`);
-      console.log(
-        `  Policy:  restrictive${state.shieldsPolicySnapshotPath ? " (snapshot preserved)" : ""}`,
-      );
+      console.log(policyLine);
       if (state.shieldsDownAt) {
         console.log(`  Last unlocked: ${state.shieldsDownAt}`);
       }
       return;
+    }
 
     case "temporarily_unlocked": {
       const downSince = state.shieldsDownAt
