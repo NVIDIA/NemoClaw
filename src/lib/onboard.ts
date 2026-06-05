@@ -16,9 +16,8 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { createSelectOnboardAgent }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
-const {
-  createInferenceSelectionValidationHelpers,
-}: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const { createInferenceSelectionValidationHelpers }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
@@ -434,6 +433,7 @@ const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = 
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
+const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
@@ -5154,6 +5154,7 @@ async function setupNim(
   }
 
   const selectedModel = isBackToSelection(model) ? null : model;
+  await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, { isNonInteractive, prompt });
   return {
     model: selectedModel,
     provider,
@@ -5528,13 +5529,7 @@ async function selectPolicyTier(): Promise<string> {
   const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
 
   if (isNonInteractive()) {
-    const name = (process.env.NEMOCLAW_POLICY_TIER || "balanced").trim().toLowerCase();
-    if (!tiers.getTier(name)) {
-      console.error(
-        `  Unknown policy tier: ${name}. Valid: ${allTiers.map((t) => t.name).join(", ")}`,
-      );
-      process.exit(1);
-    }
+    const name = policyTierEnv.resolvePolicyTierFromEnv();
     note(`  [non-interactive] Policy tier: ${name}`);
     return name;
   }
@@ -6152,6 +6147,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  A sandbox name cannot be prompted for in this context.");
     process.exit(1);
   }
+  // Same fail-fast contract for NEMOCLAW_POLICY_TIER (#3741):
+  // validate before usage-notice state, preflight, gateway, or inference work.
+  policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,

@@ -10,6 +10,7 @@ import {
   type Session,
   type SessionUpdates,
 } from "../state/onboard-session";
+import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
 import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
@@ -68,6 +69,7 @@ function transitionMachine(session: Session, state: OnboardMachineState): void {
 function createRuntimeHarness(overrides: Partial<Session> = {}) {
   let session: Session | null = createSession(overrides);
   const events: OnboardMachineEvent[] = [];
+  const stepOptionCalls: Array<{ method: string; options: StepMutationOptions | undefined }> = [];
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     const current = session ? cloneSession(session) : createSession();
     session = cloneSession(mutator(current) ?? current);
@@ -81,8 +83,9 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
       return cloneSession(session);
     },
     updateSession,
-    markStepStarted: (stepName) =>
-      updateSession((current) => {
+    markStepStarted: (stepName, options) => {
+      stepOptionCalls.push({ method: "markStepStarted", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "in_progress";
@@ -95,9 +98,11 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         const state = STEP_TO_STATE[stepName];
         if (state) transitionMachine(current, state);
         return current;
-      }),
-    markStepComplete: (stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
+      });
+    },
+    markStepComplete: (stepName, updates: SessionUpdates = {}, options) => {
+      stepOptionCalls.push({ method: "markStepComplete", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "complete";
@@ -109,19 +114,22 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         const nextState = nextStateAfterCompletedStep(stepName, current);
         if (nextState) transitionMachine(current, nextState);
         return current;
-      }),
+      });
+    },
     markStepCompleteRecordOnly: () => cloneSession(session ?? createSession()),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message) =>
-      updateSession((current) => {
+    markStepFailed: (stepName, message, options) => {
+      stepOptionCalls.push({ method: "markStepFailed", options });
+      return updateSession((current) => {
         current.steps[stepName].status = "failed";
         current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
         return current;
-      }),
+      });
+    },
     markStepFailedRecordOnly: () => cloneSession(session ?? createSession()),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
@@ -136,6 +144,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
   return {
     createRuntime: () => new OnboardRuntime(deps),
     events,
+    stepOptionCalls,
   };
 }
 
@@ -157,6 +166,27 @@ describe("OnboardRuntimeBoundary", () => {
     ]);
     expect(harness.events[0]).toMatchObject({ state: "init" });
     expect(harness.events[1]).toMatchObject({ state: "init" });
+  });
+
+  it("forwards configured step mutation options through boundary recorders", async () => {
+    const harness = createRuntimeHarness();
+    const recordOnlyOptions = { updateMachine: false };
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+      stepMutationOptions: recordOnlyOptions,
+    });
+
+    await boundary.startRecordedStep("preflight");
+    await boundary.recordStepComplete("preflight");
+    await boundary.recordStepFailed("gateway", "boom");
+
+    expect(harness.stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: recordOnlyOptions },
+      { method: "markStepComplete", options: recordOnlyOptions },
+      { method: "markStepFailed", options: recordOnlyOptions },
+    ]);
   });
 
   it("applies state results unless legacy step helpers already advanced the machine", async () => {

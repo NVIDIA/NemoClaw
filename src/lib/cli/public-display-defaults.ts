@@ -445,6 +445,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "order": 33
     }
   ],
+  "tunnel:status": [
+    {
+      "group": "Services",
+      "order": 33.5,
+      "description": "Show cloudflared public-URL tunnel status"
+    }
+  ],
   "uninstall": [
     {
       "group": "Cleanup",

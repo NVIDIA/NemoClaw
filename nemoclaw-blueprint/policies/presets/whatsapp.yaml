@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 preset:
   name: whatsapp
-  description: WhatsApp Web WebSocket and media access
+  description: "WhatsApp Web WebSocket and media access"
 network_policies:
   whatsapp:
     name: whatsapp

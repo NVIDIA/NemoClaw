@@ -119,23 +119,28 @@ describe("tiers", () => {
   });
 
   describe("tier: balanced", () => {
-    it("includes npm, pypi, huggingface, brew, and brave", () => {
+    it("includes npm, pypi, huggingface, brew, brave, and weather", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
       expect(names).toContain("npm");
       expect(names).toContain("pypi");
       expect(names).toContain("huggingface");
       expect(names).toContain("brew");
       expect(names).toContain("brave");
+      expect(names).toContain("weather");
     });
 
-    it("has at least 5 presets", () => {
-      expect(mustGetTier("balanced").presets.length).toBeGreaterThanOrEqual(5);
+    it("has at least 6 presets", () => {
+      expect(mustGetTier("balanced").presets.length).toBeGreaterThanOrEqual(6);
     });
 
-    it("all balanced presets are read-write", () => {
-      for (const preset of mustGetTier("balanced").presets) {
-        expect(preset.access).toBe("read-write");
+    it("keeps dev presets read-write and weather read-only", () => {
+      const accessByName = new Map(
+        mustGetTier("balanced").presets.map((preset: TierPreset) => [preset.name, preset.access]),
+      );
+      for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
+        expect(accessByName.get(name)).toBe("read-write");
       }
+      expect(accessByName.get("weather")).toBe("read");
     });
 
     it("does not include messaging presets (slack, discord, telegram, wechat, whatsapp)", () => {
@@ -155,10 +160,28 @@ describe("tiers", () => {
       expect(openCount).toBeGreaterThan(balancedCount);
     });
 
-    it("all open presets are read-write", () => {
-      for (const preset of mustGetTier("open").presets) {
-        expect(preset.access).toBe("read-write");
+    it("keeps public data presets read-only and service presets read-write", () => {
+      const accessByName = new Map(
+        mustGetTier("open").presets.map((preset: TierPreset) => [preset.name, preset.access]),
+      );
+      for (const name of [
+        "npm",
+        "pypi",
+        "huggingface",
+        "brew",
+        "brave",
+        "slack",
+        "discord",
+        "telegram",
+        "wechat",
+        "whatsapp",
+        "jira",
+        "outlook",
+      ]) {
+        expect(accessByName.get(name)).toBe("read-write");
       }
+      expect(accessByName.get("weather")).toBe("read");
+      expect(accessByName.get("public-reference")).toBe("read");
     });
 
     it("includes messaging presets (slack, discord, telegram, wechat, whatsapp)", () => {
@@ -174,6 +197,12 @@ describe("tiers", () => {
       const names = mustGetTier("open").presets.map((preset: TierPreset) => preset.name);
       expect(names).toContain("jira");
       expect(names).toContain("outlook");
+    });
+
+    it("includes curated read-only public data presets", () => {
+      const names = mustGetTier("open").presets.map((preset: TierPreset) => preset.name);
+      expect(names).toContain("weather");
+      expect(names).toContain("public-reference");
     });
 
     it("open tier contains all balanced presets by name", () => {
@@ -192,10 +221,12 @@ describe("tiers", () => {
   describe("resolveTierPresets", () => {
     it("returns default presets for balanced with no overrides", () => {
       const resolved: TierPreset[] = tiers.resolveTierPresets("balanced");
-      expect(resolved.length).toBeGreaterThanOrEqual(5);
-      for (const preset of resolved) {
-        expect(preset.access).toBe("read-write");
+      expect(resolved.length).toBeGreaterThanOrEqual(6);
+      const accessByName = new Map(resolved.map((preset) => [preset.name, preset.access]));
+      for (const name of ["npm", "pypi", "huggingface", "brew", "brave"]) {
+        expect(accessByName.get(name)).toBe("read-write");
       }
+      expect(accessByName.get("weather")).toBe("read");
     });
 
     it("applies access override for a specific preset", () => {
