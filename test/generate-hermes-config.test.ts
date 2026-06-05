@@ -182,7 +182,7 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("flags bare API-named .env secrets while allowing API server config", () => {
-    const rawSecret = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
 
     expect(
       findRawSecretEnvEntries(
