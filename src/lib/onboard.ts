@@ -2400,24 +2400,9 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const { verifySandboxBridgeGatewayReachableOrExit } = require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
-
-  if (
-    await dockerDriverGatewayEnv.startPackageManagedDockerDriverGateway({
-      clearDockerDriverGatewayRuntimeFiles,
-      exitOnFailure,
-      gatewayName: GATEWAY_NAME,
-      prepareOpenShellGatewayUserServiceEnv: () => {
-        if (!dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => gatewayEnv)) {
-          throw new Error("OpenShell gateway user service env file is not available");
-        }
-      },
-      registerDockerDriverGatewayEndpoint,
-      runCaptureOpenshell,
-      skipSandboxBridgeReachability,
-      verifySandboxBridgeGatewayReachableOrExit,
-    })
-  ) return;
+  const { verifySandboxBridgeGatewayReachableOrExit } =
+    require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  if (await dockerDriverGatewayEnv.startPackageManagedDockerDriverGateway({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayName: GATEWAY_NAME, prepareOpenShellGatewayUserServiceEnv: () => dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverrideOrThrow(() => gatewayEnv), registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) return;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {

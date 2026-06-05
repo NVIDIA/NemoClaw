@@ -151,3 +151,12 @@ export function writeDockerGatewayDebEnvOverride(
   fs.chmodSync(envFile, 0o600);
   return true;
 }
+
+export function writeDockerGatewayDebEnvOverrideOrThrow(
+  getOverride: () => Record<string, string>,
+  opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
+): void {
+  if (!writeDockerGatewayDebEnvOverride(getOverride, opts)) {
+    throw new Error("OpenShell gateway user service env file is not available");
+  }
+}
