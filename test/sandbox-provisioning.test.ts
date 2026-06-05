@@ -778,6 +778,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "generate-openclaw-config.mts"),
       path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
@@ -812,12 +813,16 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const messagingPluginMode = (
         fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
       ).toString(8);
+      const approvalPolicyMode = (
+        fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
+      ).toString(8);
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
       expect(messagingPluginMode).toBe("755");
+      expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");
@@ -916,6 +921,48 @@ describe("Hermes sandbox provisioning", () => {
     const result = runHermesPathValidation();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("hermes manifest version");
+  });
+
+  function runHermesUvExtrasExpansion() {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
+    if (!extras) {
+      throw new Error("Expected HERMES_UV_EXTRAS ARG in Hermes base Dockerfile");
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-uv-extras-"));
+    const command = [
+      "set -euo pipefail",
+      `HERMES_UV_EXTRAS=${JSON.stringify(extras)}`,
+      "set --",
+      'for extra in ${HERMES_UV_EXTRAS}; do set -- "$@" --extra "$extra"; done',
+      'printf "%s\\n" "$@"',
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", command], {
+      encoding: "utf-8",
+      cwd: tmp,
+      timeout: 5000,
+    });
+    return { result, tmp };
+  }
+
+  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+    const { result, tmp } = runHermesUvExtrasExpansion();
+    try {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split(/\n/)).toEqual([
+        "--extra",
+        "anthropic",
+        "--extra",
+        "messaging",
+        "--extra",
+        "web",
+        "--extra",
+        "pty",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("final image rejects a hermes binary from a different PATH location", () => {

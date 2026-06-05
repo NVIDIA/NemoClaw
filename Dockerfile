@@ -28,8 +28,13 @@ RUN npm ci && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG OPENCLAW_VERSION=2026.5.22
-ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
+ARG OPENCLAW_VERSION=2026.5.27
+ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
+# filesystem transform cache so source fragments that mention provider marker
+# names do not persist under /tmp/jiti inside the sandbox.
+ENV JITI_FS_CACHE=false
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -110,7 +115,7 @@ RUN set -eu; \
         echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
     EXPECTED_INTEGRITY=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
     if [ -n "$EXPECTED_INTEGRITY" ]; then \
         REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
         if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
@@ -287,7 +292,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
-    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # Reviewed against openclaw@2026.5.27 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
@@ -379,7 +384,7 @@ RUN set -eu; \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Patch OpenClaw's pinned 2026.5.22 compiled selection runtime to expose a
+# Patch OpenClaw's pinned 2026.5.27 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
@@ -396,6 +401,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
@@ -411,6 +417,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
         /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py \
         /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
+    && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \

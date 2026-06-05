@@ -49,10 +49,10 @@ export interface VllmProfile {
   loadTimeoutSec: number;
 }
 
-// vllm 0.21.1rc1.dev323+g1fc2cee50
-const UPSTREAM_VLLM_IMAGE =
-  "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712";
-const NGC_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.03.post1-py3";
+const VLLM_IMAGES = {
+  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+} as const;
 
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
@@ -114,7 +114,7 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: UPSTREAM_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
@@ -133,7 +133,7 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: NGC_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: DEFAULT_VLLM_MODEL,
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -163,7 +163,7 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: NGC_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
