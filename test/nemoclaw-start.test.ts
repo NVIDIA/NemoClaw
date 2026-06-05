@@ -9,6 +9,7 @@ import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
 
@@ -57,6 +58,28 @@ function startScriptHeredoc(src: string, marker: string): string {
   const preload = preloadByMarker[marker];
   expect(preload).toBeTruthy();
   return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
+}
+
+function trustedApprovalPolicyFile(): string {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
+  const helperPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
+  fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), helperPath);
+  fs.chmodSync(helperPath, 0o444);
+  return helperPath;
+}
+
+function localApprovalPolicyPythonScript(src: string): string {
+  return startScriptHeredoc(src, "PYAUTOPAIR").replace(
+    "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+    `APPROVAL_POLICY_FILE = ${JSON.stringify(trustedApprovalPolicyFile())}`,
+  );
+}
+
+function autoPairPythonScript(src: string): string {
+  return localApprovalPolicyPythonScript(src).replace(
+    "import time",
+    "import time\ntime.sleep = lambda _seconds: None",
+  );
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
@@ -317,12 +340,13 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
-  // #4503: the Docker HEALTHCHECK reports healthy on curl-exit-7 only when the
-  // /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered out of this
-  // container's namespace). To avoid masking a slow in-container startup, the
-  // entrypoint must drop that marker early on the gateway-serving path — and
-  // must NOT drop it when only running a one-shot command.
-  it("drops the in-container gateway healthcheck marker only on the gateway-serving path (#4503)", () => {
+  // #4503/#4710: the Docker HEALTHCHECK reports healthy on curl-exit-7 only
+  // when the /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered
+  // out of this container's namespace). To avoid masking a slow in-container
+  // startup, the entrypoint must drop that marker early on the gateway-serving
+  // path — and must NOT drop it when only running a one-shot command or when
+  // OpenShell's Docker driver serves the gateway from the host.
+  it("drops the in-container gateway healthcheck marker only on the local gateway path (#4503, #4710)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const start = src.indexOf('NEMOCLAW_CMD=("$@")');
     const end = src.indexOf("_chat_ui_url_port()", start);
@@ -335,9 +359,13 @@ describe("nemoclaw-start non-root fallback", () => {
       .slice(start, end)
       .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
 
-    function runScenario(setArgs: string) {
+    function runScenario(setArgs: string, env: NodeJS.ProcessEnv = {}) {
       const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
-      return spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      return spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        env: { ...process.env, ...env },
+        timeout: 5000,
+      });
     }
 
     try {
@@ -353,6 +381,20 @@ describe("nemoclaw-start non-root fallback", () => {
       fs.rmSync(markerPath, { force: true });
       const oneShot = runScenario("set -- openclaw agent --agent main");
       expect(oneShot.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+
+      // Docker-driver path: the sandbox container has no trailing command, but
+      // OpenShell serves the gateway on the host. The marker must stay absent
+      // so Dockerfile HEALTHCHECK can short-circuit curl exit 7 instead of
+      // looking for an in-container gateway process.
+      fs.rmSync(markerPath, { force: true });
+      const dockerDriver = runScenario("set --", { OPENSHELL_DRIVERS: "docker" });
+      expect(dockerDriver.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+
+      fs.rmSync(markerPath, { force: true });
+      const mixedDrivers = runScenario("set --", { OPENSHELL_DRIVERS: "vm,docker" });
+      expect(mixedDrivers.status).toBe(0);
       expect(fs.existsSync(markerPath)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1487,6 +1529,45 @@ setImmediate(function () {
 describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  it("refuses an approval policy helper writable by the current user", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-policy-mode-"));
+    const writablePolicy = path.join(tmpDir, "openclaw_device_approval_policy.py");
+    fs.writeFileSync(
+      writablePolicy,
+      [
+        "def approval_request_decision(_device):",
+        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+        "",
+        "def gateway_approval_env(source_env=None):",
+        "    return dict(source_env or {})",
+        "",
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    const autoPairScript = startScriptHeredoc(src, "PYAUTOPAIR").replace(
+      "APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'",
+      `APPROVAL_POLICY_FILE = ${JSON.stringify(writablePolicy)}`,
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairScript], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: "/bin/false",
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status).toBe(1);
+      expect(run.stderr).toContain(
+        "approval policy helper is writable by the current user",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("approves only whitelisted clients and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
@@ -1535,10 +1616,7 @@ exit 2
       { mode: 0o755 },
     );
 
-    const autoPairScript = startScriptHeredoc(src, "PYAUTOPAIR").replace(
-      "import time",
-      "import time\ntime.sleep = lambda _seconds: None",
-    );
+    const autoPairScript = autoPairPythonScript(src);
 
     try {
       const run = spawnSync("python3", ["-c", autoPairScript], {
@@ -1583,10 +1661,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   function buildAutoPairScript(): string {
-    return startScriptHeredoc(src, "PYAUTOPAIR").replace(
-      "import time",
-      "import time\ntime.sleep = lambda _seconds: None",
-    );
+    return autoPairPythonScript(src);
   }
 
   it("approves late CLI scope upgrades after browser pairing converges", () => {
@@ -1773,6 +1848,136 @@ exit 2
     }
   }, 40_000);
 
+  it("rejects malformed CLI scope request payloads", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-malformed-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const malformedPending = JSON.stringify({
+      pending: [
+        {
+          requestId: "malformed-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: "operator.write",
+        },
+      ],
+      paired: [],
+    });
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf '%s\n' ${JSON.stringify(malformedPending)}
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] rejected malformed scopes client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      expect(fs.existsSync(approveLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("rejects disallowed CLI admin scope requests", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-admin-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const maliciousPolicyDir = path.join(tmpDir, "malicious-policy");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const adminPending = JSON.stringify({
+      pending: [
+        {
+          requestId: "admin-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: ["operator.admin"],
+        },
+      ],
+      paired: [],
+    });
+
+    fs.mkdirSync(maliciousPolicyDir);
+    fs.writeFileSync(
+      path.join(maliciousPolicyDir, "openclaw_device_approval_policy.py"),
+      [
+        "def approval_request_decision(_device):",
+        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+        "",
+        "def gateway_approval_env(source_env=None):",
+        "    return dict(source_env or {})",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf '%s\n' ${JSON.stringify(adminPending)}
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_APPROVAL_POLICY_DIR: maliciousPolicyDir,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] rejected disallowed scopes=['operator.admin'] client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      expect(fs.existsSync(approveLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("falls back to fast-deadline transition when no convergence signal arrives", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-slow-fastdl-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
@@ -1917,9 +2122,8 @@ exit 0
     try {
       // Do NOT monkey-patch time.sleep here: we want real wall-clock
       // semantics so subprocess.run(..., timeout=...) actually fires.
-      const watcherSrc = startScriptHeredoc(
+      const watcherSrc = localApprovalPolicyPythonScript(
         fs.readFileSync(START_SCRIPT, "utf-8"),
-        "PYAUTOPAIR",
       );
       const start = Date.now();
       const run = spawnSync("python3", ["-c", watcherSrc], {
@@ -2012,9 +2216,8 @@ exit 2
     );
 
     try {
-      const watcherSrc = startScriptHeredoc(
+      const watcherSrc = localApprovalPolicyPythonScript(
         fs.readFileSync(START_SCRIPT, "utf-8"),
-        "PYAUTOPAIR",
       );
       const run = spawnSync("python3", ["-c", watcherSrc], {
         encoding: "utf-8",
@@ -2174,6 +2377,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
+        "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the launch block uses STEP_DOWN_PREFIX_GATEWAY
@@ -2701,7 +2905,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
-    const runStepDown = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+    const runStepDown = [
+      extractShellFunctionFromSource(src, "_step_down_extract_function"),
+      extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+    ].join("\n");
     const seedAsSandbox = extractShellFunctionFromSource(
       src,
       "seed_default_workspace_templates_as_sandbox",
@@ -3204,6 +3411,7 @@ describe("Telegram diagnostics (#2766)", () => {
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const autoPairLog = path.join(tmpDir, "auto-pair.log");
+    const pluginRefreshLog = path.join(tmpDir, "nemoclaw-plugin-refresh.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(configPath, '{"channels":{"telegram":{}}}\n');
     fs.writeFileSync(
@@ -3242,6 +3450,8 @@ describe("Telegram diagnostics (#2766)", () => {
         'harden_auth_profiles() { :; }',
         'run_step_down_as_sandbox() { :; }',
         'setup_auth_profile_as_sandbox() { :; }',
+        `PLUGIN_REFRESH_LOG=${JSON.stringify(pluginRefreshLog)}`,
+        extractShellFunctionFromSource(src, "prepare_plugin_refresh_log"),
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',
@@ -3271,8 +3481,19 @@ describe("Telegram diagnostics (#2766)", () => {
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
     const preloadExists = fs.existsSync(preloadPath);
     const preloadMode = preloadExists ? (fs.statSync(preloadPath).mode & 0o777).toString(8) : "";
+    const pluginRefreshLogExists = fs.existsSync(pluginRefreshLog);
+    const pluginRefreshLogMode = pluginRefreshLogExists
+      ? (fs.statSync(pluginRefreshLog).mode & 0o777).toString(8)
+      : "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, preloadExists, preloadMode, preloadPath };
+    return {
+      result,
+      preloadExists,
+      preloadMode,
+      preloadPath,
+      pluginRefreshLogExists,
+      pluginRefreshLogMode,
+    };
   }
 
   it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
@@ -3491,6 +3712,8 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("ORDER:configure");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
+      expect(setup.pluginRefreshLogExists).toBe(true);
+      expect(setup.pluginRefreshLogMode).toBe("600");
     }
   });
 
@@ -4111,7 +4334,10 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
 
 describe("run_step_down_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+  const helper = [
+    extractShellFunctionFromSource(src, "_step_down_extract_function"),
+    extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+  ].join("\n");
 
   it("dispatches via a temp script and cleans up after success", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-helper-"));
@@ -4163,6 +4389,70 @@ describe("run_step_down_as_sandbox", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("EXIT=7");
+      const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
+      expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
+      expect(fs.existsSync(tempScriptPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives a heredoc used as an if-condition's command without bash declare -f reordering the then-body into the heredoc", () => {
+    // Regression: bash `declare -f` serialises a function whose `if`
+    // condition is a heredoc-bearing command by placing the indented
+    // `then`-body command BEFORE the heredoc closer. When the
+    // step-down shell re-parses that output, it consumes the displaced
+    // command as part of the heredoc body, leaves the `then` block
+    // empty, and aborts on the closing `fi` with
+    //   syntax error near unexpected token `fi'
+    // (the exact text NV QA reported on v0.0.58 after the earlier fix
+    // that handled only the heredoc-as-last-statement shape). The new
+    // helper bypasses `declare -f` and reads the function source
+    // verbatim from disk via `shopt -s extdebug` + `declare -F`, so
+    // every here-doc placement survives intact.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-heredoc-if-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const sentinel = path.join(tmpDir, "ran.txt");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        `SENTINEL=${JSON.stringify(sentinel)}`,
+        // Mirror seed_default_workspace_templates' broken shape exactly:
+        // a heredoc-bearing `node` invocation as the `if` condition,
+        // with a `then`-body command, followed by `fi`. This is the
+        // shape `declare -f` mangles in bash 5.x.
+        "heredoc_in_if_condition() {",
+        "  local marker=\"$1\"",
+        "  if ! node - \"$marker\" <<'NODE' >/dev/null 2>&1; then",
+        "const fs = require(\"fs\");",
+        "const target = process.argv[2];",
+        "fs.writeFileSync(target, \"ran-via-heredoc-if\\n\");",
+        "process.exit(0);",
+        "NODE",
+        "    return 0",
+        "  fi",
+        "}",
+        helper,
+        "run_step_down_as_sandbox 'heredoc_in_if_condition \"$SENTINEL\"' heredoc_in_if_condition",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, SENTINEL: sentinel },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stderr).not.toContain("syntax error near unexpected token `fi'");
+      expect(result.stderr).not.toContain("bash -n syntax check");
+      // The heredoc body ran in the step-down shell: it wrote the sentinel.
+      expect(fs.existsSync(sentinel)).toBe(true);
+      expect(fs.readFileSync(sentinel, "utf-8")).toBe("ran-via-heredoc-if\n");
       const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
       expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
       expect(fs.existsSync(tempScriptPath)).toBe(false);
@@ -4239,7 +4529,10 @@ describe("run_step_down_as_sandbox", () => {
 
 describe("setup_auth_profile_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+  const helper = [
+    extractShellFunctionFromSource(src, "_step_down_extract_function"),
+    extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+  ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
 
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
@@ -4506,7 +4799,10 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
     const writeRuntimeEnv = src
       .slice(writeRuntimeStart, writeRuntimeEnd)
       .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvFile);
-    const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+    const helper = [
+      extractShellFunctionFromSource(src, "_step_down_extract_function"),
+      extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
+    ].join("\n");
     const setupAuth = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
     fs.writeFileSync(
       scriptPath,

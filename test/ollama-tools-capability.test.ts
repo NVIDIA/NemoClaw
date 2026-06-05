@@ -82,7 +82,7 @@ describe("probeOllamaModelCapabilities", () => {
         output: JSON.stringify({ capabilities: ["completion", "tools"] }),
       },
     ]);
-    const result = localInference.probeOllamaModelCapabilities("qwen2.5:7b", capture);
+    const result = localInference.probeOllamaModelCapabilities("qwen3.5:9b", capture);
     expect(result.source).toBe("api");
     expect(result.supportsTools).toBe(true);
     expect(result.capabilities).toEqual(["completion", "tools"]);
@@ -137,7 +137,7 @@ describe("probeOllamaModelCapabilities", () => {
     const { capture, calls } = makeCapture([
       { match: /\/api\/show/, output: JSON.stringify({ capabilities: ["tools"] }) },
     ]);
-    localInference.probeOllamaModelCapabilities("qwen2.5:7b", capture);
+    localInference.probeOllamaModelCapabilities("qwen3.5:9b", capture);
     expect(calls).toHaveLength(1);
     const argv = calls[0].argv;
     expect(argv[0]).toBe("curl");
@@ -157,7 +157,7 @@ describe("probeOllamaModelCapabilities", () => {
     // JSON body has model name
     const dIdx = argv.indexOf("-d");
     expect(dIdx).toBeGreaterThanOrEqual(0);
-    expect(argv[dIdx + 1]).toBe(JSON.stringify({ model: "qwen2.5:7b" }));
+    expect(argv[dIdx + 1]).toBe(JSON.stringify({ model: "qwen3.5:9b" }));
     // URL uses resolved host + OLLAMA_PORT (default 11434)
     expect(argv[argv.length - 1]).toBe("http://127.0.0.1:11434/api/show");
   });

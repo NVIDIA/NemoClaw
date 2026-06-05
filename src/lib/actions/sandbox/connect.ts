@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -30,7 +32,7 @@ import {
 } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT } from "../../runner";
+import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -681,22 +683,54 @@ function ensureSandboxInferenceRouteOrExit(
 // mid-loop kill cannot strand allowlisted requests within a normal batch.
 const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
 const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
+  ROOT,
+  "scripts",
+  "lib",
+  "openclaw_device_approval_policy.py",
+);
+
+function readConnectAutoPairPolicyModule(): string | null {
+  try {
+    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
+  } catch {
+    // The approval pass is best-effort, so a packaging/layout regression must
+    // not block connect. Build-context and package `files` coverage keep this
+    // helper present in supported installs.
+    return null;
+  }
+}
 
 function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  const approvalPolicyModule = readConnectAutoPairPolicyModule();
+  if (!approvalPolicyModule) {
+    return;
+  }
+  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
   const script = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-OPENCLAW_BIN="$(command -v openclaw)" python3 - <<'PYAPPROVE'
+OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
+import base64
 import json
 import os
 import subprocess
 import sys
 
+try:
+    policy_source = base64.b64decode(
+        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
+    ).decode('utf-8')
+    policy_globals = {}
+    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
+    approval_request_decision = policy_globals['approval_request_decision']
+    gateway_approval_env = policy_globals['gateway_approval_env']
+except Exception:
+    sys.exit(0)
+
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat', 'cli'}
 MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
 
 try:
@@ -728,13 +762,11 @@ for device in pending:
     request_id = device.get('requestId')
     if not request_id or request_id in seen_request_ids:
         continue
-    client_id = device.get('clientId', '')
-    client_mode = device.get('clientMode', '')
-    if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+    decision = approval_request_decision(device)
+    if not decision['allowed']:
         continue
     seen_request_ids.add(request_id)
-    approve_env = os.environ.copy()
-    approve_env.pop('OPENCLAW_GATEWAY_URL', None)
+    approve_env = gateway_approval_env(os.environ)
     attempted_count += 1
     try:
         approve_proc = subprocess.run(

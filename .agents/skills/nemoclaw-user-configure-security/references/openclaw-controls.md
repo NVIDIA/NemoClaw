@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # OpenClaw Security Controls Beyond NemoClaw's Scope
 
 NemoClaw provides infrastructure-layer security through sandbox isolation, network policy, filesystem restrictions, SSRF validation, and credential handling.

@@ -24,6 +24,7 @@ type ReviewAdvisorResult = {
   };
   findings?: Array<{
     severity?: string;
+    category?: string;
     title?: string;
     file?: string | null;
     line?: number | null;
@@ -31,6 +32,22 @@ type ReviewAdvisorResult = {
     recommendation?: string;
     evidence?: string;
   }>;
+  acceptanceCoverage?: Array<{
+    clause?: string;
+    status?: string;
+    evidence?: string;
+  }>;
+  sourceOfTruthReview?: Array<{
+    surface?: string;
+    status?: string;
+    regressionTest?: string;
+    evidence?: string;
+  }>;
+  testDepth?: {
+    verdict?: string;
+    rationale?: string;
+    suggestedTests?: string[];
+  };
   reviewCompleteness?: {
     limitations?: string[];
   };
@@ -87,6 +104,7 @@ export function buildComment({
   const suggestionCount = result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
   const secondary = buildSecondarySummary(result);
   const findingsDetails = renderFindingsDetails(result);
+  const testingFollowupsDetails = renderTestingFollowupsDetails(result);
   const previousReviewDetails = renderPreviousReviewDetails(result);
   const details = runUrl
     ? `\n[Workflow run details](${runUrl})`
@@ -95,7 +113,7 @@ export function buildComment({
 ## PR Review Advisor
 
 **Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
-${secondary}${findingsDetails}${previousReviewDetails}${details}
+${secondary}${findingsDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
 
 This is an automated advisory review. A human maintainer must make the final merge decision.
 
@@ -138,6 +156,43 @@ function renderFindingsDetails(result?: ReviewAdvisorResult): string {
   }
   lines.push("</details>", "");
   return `${lines.join("\n")}\n`;
+}
+
+function renderTestingFollowupsDetails(result?: ReviewAdvisorResult): string {
+  const followups = collectTestingFollowups(result);
+  if (followups.length === 0) return "";
+  const lines: string[] = ["", "<details>", "<summary>Consider writing more tests for</summary>", ""];
+  for (const followup of followups) lines.push(`- ${escapeCommentText(followup)}`);
+  lines.push("", "</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function collectTestingFollowups(result?: ReviewAdvisorResult): string[] {
+  const followups: string[] = [];
+  if (!result) return followups;
+  if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
+    const label = testDepthLabel(result.testDepth.verdict);
+    const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
+    for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
+      followups.push(`**${label}** — ${suggestion}.${rationale}`);
+    }
+  }
+  for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) || []) {
+    followups.push(`**${finding.title || "Test coverage"}** — ${finding.recommendation || finding.description || "Add targeted coverage for the changed behavior."}`);
+  }
+  for (const clause of result.acceptanceCoverage?.filter((item) => item.status && item.status !== "met").slice(0, 5) || []) {
+    followups.push(`**Acceptance clause:** ${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim());
+  }
+  for (const review of result.sourceOfTruthReview?.filter((item) => item.status === "missing" || item.status === "needs_followup").slice(0, 5) || []) {
+    followups.push(`**${review.surface || "Localized behavior"}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim());
+  }
+  return [...new Set(followups)].slice(0, 8);
+}
+
+function testDepthLabel(verdict: string): string {
+  if (verdict === "runtime_validation_recommended") return "Runtime validation";
+  if (verdict === "mocks_recommended") return "Mocked behavioral coverage";
+  return "Test coverage";
 }
 
 function renderPreviousReviewDetails(result?: ReviewAdvisorResult): string {
