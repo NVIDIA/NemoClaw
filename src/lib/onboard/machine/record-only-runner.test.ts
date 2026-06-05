@@ -14,16 +14,33 @@ import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
 import {
   createRecordOnlyOnboardRuntimeBoundary,
+  type RecordOnlyOnboardRuntimeBoundaryOptions,
   runOnboardMachineWithRecordOnlySteps,
 } from "./record-only-runner";
-import { advanceTo, branchTo, completeOnboardMachine } from "./result";
+import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
 }
 
-function createHarness() {
+function completionHandlers() {
+  return {
+    preflight: () => advanceTo("gateway"),
+    gateway: () => advanceTo("provider_selection"),
+    provider_selection: () => advanceTo("inference"),
+    inference: () => advanceTo("sandbox"),
+    sandbox: () => branchTo("openclaw"),
+    openclaw: () => advanceTo("policies"),
+    policies: () => advanceTo("finalizing"),
+    finalizing: () => advanceTo("post_verify"),
+    post_verify: () => completeOnboardMachine(),
+  };
+}
+
+function createHarness(
+  options: Pick<RecordOnlyOnboardRuntimeBoundaryOptions, "stepMutationOptions"> = {},
+) {
   let session = createSession();
   const events: OnboardMachineEvent[] = [];
 
@@ -110,6 +127,7 @@ function createHarness() {
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: () => new OnboardRuntime(deps),
+      ...options,
     }),
   };
 }
@@ -164,17 +182,106 @@ describe("record-only onboard runner", () => {
     expect(harness.events.map((event) => event.type)).toContain("onboard.started");
   });
 
-  it("records failed step status without marking the session or machine failed", async () => {
+  it("forces record-only step mutations even if caller options ask to update the machine", async () => {
+    const harness = createHarness({
+      stepMutationOptions: { updateMachine: true } as RecordOnlyOnboardRuntimeBoundaryOptions["stepMutationOptions"],
+    });
+    const recorders = harness.boundary.recorders();
+
+    await recorders.startRecordedStep("preflight");
+    await recorders.recordStepComplete("preflight");
+
+    expect(harness.getSession()).toMatchObject({
+      machine: { state: "init", revision: 0 },
+      steps: { preflight: { status: "complete" } },
+    });
+  });
+
+  it("emits resumed lifecycle events and can skip lifecycle emission", async () => {
+    const resumedHarness = createHarness();
+    await runOnboardMachineWithRecordOnlySteps({
+      boundary: resumedHarness.boundary,
+      resumed: true,
+      context: {},
+      handlers: { init: () => advanceTo("preflight"), ...completionHandlers() },
+    });
+    expect(resumedHarness.events[0]).toMatchObject({ type: "onboard.resumed" });
+
+    const quietHarness = createHarness();
+    await runOnboardMachineWithRecordOnlySteps({
+      boundary: quietHarness.boundary,
+      emitLifecycleEvent: false,
+      context: {},
+      handlers: { init: () => advanceTo("preflight"), ...completionHandlers() },
+    });
+    expect(quietHarness.events.map((event) => event.type)).not.toContain("onboard.started");
+    expect(quietHarness.events.map((event) => event.type)).not.toContain("onboard.resumed");
+    expect(quietHarness.getSession()).toMatchObject({ status: "complete" });
+  });
+
+  it("records safe context updates without moving the machine until the runner applies the result", async () => {
     const harness = createHarness();
     const recorders = harness.boundary.recorders();
 
-    await recorders.recordStepFailed("gateway", "Gateway failed");
+    const result = await runOnboardMachineWithRecordOnlySteps({
+      boundary: harness.boundary,
+      emitLifecycleEvent: false,
+      context: {},
+      handlers: {
+        init: async () => {
+          await recorders.recordStepComplete("preflight", {
+            sandboxName: "record-only-sb",
+            endpointUrl: "https://alice:secret@example.com/v1?token=secret&keep=yes",
+            apiKey: "secret",
+          } as SessionUpdates & { apiKey: string });
+          const recorded = harness.getSession();
+          expect(recorded).toMatchObject({
+            sandboxName: "record-only-sb",
+            endpointUrl: "https://example.com/v1?token=%3CREDACTED%3E&keep=yes",
+            machine: { state: "init", revision: 0 },
+            steps: { preflight: { status: "complete" } },
+          });
+          expect("apiKey" in recorded).toBe(false);
+          return advanceTo("preflight");
+        },
+        ...completionHandlers(),
+      },
+    });
 
-    expect(harness.getSession()).toMatchObject({
-      status: "in_progress",
-      failure: null,
-      machine: { state: "init", revision: 0 },
-      steps: { gateway: { status: "failed" } },
+    expect(result.session).toMatchObject({
+      sandboxName: "record-only-sb",
+      machine: { state: "complete" },
+    });
+  });
+
+  it("records failed step status before explicit failed results mark the session and machine failed", async () => {
+    const harness = createHarness();
+    const recorders = harness.boundary.recorders();
+
+    const result = await runOnboardMachineWithRecordOnlySteps({
+      boundary: harness.boundary,
+      emitLifecycleEvent: false,
+      context: {},
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: async () => {
+          await recorders.recordStepFailed("preflight", "Preflight failed");
+          expect(harness.getSession()).toMatchObject({
+            status: "in_progress",
+            failure: null,
+            machine: { state: "preflight", revision: 1 },
+            steps: { preflight: { status: "failed", error: "Preflight failed" } },
+          });
+          return failOnboardMachine("Preflight failed", { step: "preflight" });
+        },
+      },
+    });
+
+    expect(result.session).toMatchObject({
+      status: "failed",
+      failure: { step: "preflight", message: "Preflight failed" },
+      machine: { state: "failed", revision: 2 },
+      steps: { preflight: { status: "failed", error: "Preflight failed" } },
     });
   });
 });
