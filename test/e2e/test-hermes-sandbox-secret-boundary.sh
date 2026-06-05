@@ -391,22 +391,23 @@ docker image inspect "$MANAGED_IMAGE" >/dev/null 2>&1 || fail "image not found: 
 
 inspect_image_boundary "$IMAGE"
 inspect_managed_tool_boundary "$MANAGED_IMAGE"
+RAW_SECRET_SENTINEL="SENTINEL_RAW_SECRET_VALUE"
 assert_startup_rejects_env_entry \
-  "DEVTEST_API_TOKEN=01234567-89ab-cdef-0123-456789abcdef" \
+  "DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}" \
   "DEVTEST_API_TOKEN" \
-  "01234567-89ab-cdef-0123-456789abcdef"
+  "$RAW_SECRET_SENTINEL"
 assert_startup_rejects_env_entry \
-  "INTERNAL_API=01234567-89ab-cdef-0123-456789abcdef" \
+  "INTERNAL_API=${RAW_SECRET_SENTINEL}" \
   "INTERNAL_API" \
-  "01234567-89ab-cdef-0123-456789abcdef"
+  "$RAW_SECRET_SENTINEL"
 assert_startup_rejects_env_entry \
   "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE" \
   "OPENAI_API_KEY" \
   "sk-OPENSHELL-PROXY-REWRITE"
 assert_startup_rejects_runtime_env_entry \
-  "DEVTEST_API_TOKEN=01234567-89ab-cdef-0123-456789abcdef" \
+  "DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}" \
   "DEVTEST_API_TOKEN" \
-  "01234567-89ab-cdef-0123-456789abcdef"
+  "$RAW_SECRET_SENTINEL"
 assert_startup_rejects_runtime_env_entry \
   "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=raw-refresh-token" \
   "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN" \
