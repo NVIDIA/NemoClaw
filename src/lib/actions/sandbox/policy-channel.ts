@@ -9,6 +9,25 @@ import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import {
+  type ChannelManifest,
+  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingHookRegistry,
+  getMessagingManifestAvailabilityContext,
+  MessagingHostStateApplier,
+  MessagingSetupApplier,
+  MessagingWorkflowPlanner,
+  type SandboxMessagingChannelPlan,
+  type SandboxMessagingPlan,
+  toMessagingAgentId,
+} from "../../messaging";
+import {
+  type MessagingChannelConfig,
+  mergeMessagingChannelConfigs,
+  normalizeMessagingChannelConfigValue,
+  resolveMessagingChannelConfigEnvValue,
+  sanitizeMessagingChannelConfig,
+} from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
@@ -17,9 +36,6 @@ const onboardProviders = require("../../onboard/providers");
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import * as policies from "../../policy";
 
-// Lazy-required: keeps qrcode-terminal + the iLink HTTP client out of the
-// import graph for non-host-qr channels-add calls.
-const { HOST_QR_LOGIN_HANDLERS } = require("../../host-qr-handlers") as typeof import("../../host-qr-handlers");
 const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
@@ -28,7 +44,7 @@ import {
   type PolicyRemoveOptions,
   parsePolicyAddOptions,
 } from "../../domain/policy-channel";
-import type { HostQrLoginResult } from "../../host-qr-handlers";
+import { getMessagingToken } from "../../onboard/messaging-token";
 import { shellQuote } from "../../runner";
 import {
   type ChannelDef,
@@ -36,7 +52,6 @@ import {
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
-  KNOWN_CHANNELS,
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
@@ -47,7 +62,6 @@ import {
 } from "./gateway-failure-classifier";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
-import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 
 type ChannelMutationOptions = {
@@ -55,6 +69,8 @@ type ChannelMutationOptions = {
   dryRun?: boolean;
   force?: boolean;
 };
+
+const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -302,18 +318,28 @@ function resolveAgentForSandbox(sandboxName: string): AgentDefinition {
   return loadAgent(agentName);
 }
 
+function knownManifestChannelNames(): string[] {
+  return messagingManifestRegistry.list().map((manifest) => manifest.id);
+}
+
+function resolveChannelManifest(name: string): ChannelManifest | undefined {
+  return messagingManifestRegistry.get(name.trim().toLowerCase());
+}
+
+function availableManifestChannelsForAgent(agent: AgentDefinition): ChannelManifest[] {
+  return messagingManifestRegistry.listAvailable(getMessagingManifestAvailabilityContext(agent));
+}
+
 function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
-  const supported = agent.messagingPlatforms;
-  return !Array.isArray(supported) || supported.length === 0 || supported.includes(channelName);
+  return availableManifestChannelsForAgent(agent).some((manifest) => manifest.id === channelName);
 }
 
 export function listSandboxChannels(sandboxName: string) {
   const agent = resolveAgentForSandbox(sandboxName);
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
-  for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
-    if (!channelSupportedByAgent(name, agent)) continue;
-    console.log(`    ${name} — ${channel.description}`);
+  for (const manifest of availableManifestChannelsForAgent(agent)) {
+    console.log(`    ${manifest.id} — ${manifest.description ?? manifest.displayName}`);
   }
   console.log("");
 }
@@ -323,8 +349,11 @@ export function listSandboxChannels(sandboxName: string) {
 // channels-add upsert collides with (i.e. updates) the same provider that
 // a later rebuild would have created from scratch.
 function bridgeProviderName(sandboxName: string, channelName: string, envKey: string): string {
-  if (channelName === "slack" && envKey === "SLACK_APP_TOKEN") {
-    return `${sandboxName}-slack-app`;
+  const credential = messagingManifestRegistry
+    .get(channelName)
+    ?.credentials.find((entry) => entry.providerEnvKey === envKey);
+  if (credential) {
+    return credential.providerName.replaceAll("{sandboxName}", sandboxName);
   }
   return `${sandboxName}-${channelName}-bridge`;
 }
@@ -732,152 +761,213 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
   );
 }
 
-// Paste-prompt token acquisition for Telegram / Discord / Slack — extracted
-// from the original inline loop so `addSandboxChannel` can fork cleanly on
-// `loginMethod`.
-async function acquirePasteTokens(
-  channelArg: string,
-  channel: ChannelDef,
-  acquired: Record<string, string>,
-): Promise<void> {
-  const tokenKeys = getChannelTokenKeys(channel);
-  for (const envKey of tokenKeys) {
-    const isPrimary = envKey === channel.envKey;
-    const help = isPrimary ? channel.help : channel.appTokenHelp;
-    const label = isPrimary ? channel.label : channel.appTokenLabel;
-    const existing = getCredential(envKey);
-    if (existing) {
-      acquired[envKey] = existing;
-      continue;
-    }
-    if (isNonInteractive()) {
-      console.error(`  Missing ${envKey} for channel '${channelArg}'.`);
-      console.error(
-        `  Set ${envKey} in the environment or via '${CLI_NAME} credentials' before running in non-interactive mode.`,
-      );
-      process.exit(1);
-    }
-    console.log("");
-    console.log(`  ${help}`);
-    const token = (await askPrompt(`  ${label}: `, { secret: true })).trim();
-    if (!token) {
-      console.error(`  Aborted — no value entered for ${envKey}.`);
-      process.exit(1);
-    }
-    acquired[envKey] = token;
+async function planSandboxChannelAdd(
+  sandboxName: string,
+  channelId: string,
+  agent: AgentDefinition,
+): Promise<SandboxMessagingPlan> {
+  const planner = new MessagingWorkflowPlanner(
+    messagingManifestRegistry,
+    createBuiltInMessagingHookRegistry(),
+  );
+  const availableChannels = availableManifestChannelsForAgent(agent);
+  const supportedChannelIds = availableChannels.map((manifest) => manifest.id);
+
+  hydrateAddChannelEnvFromSession(sandboxName, channelId);
+
+  try {
+    const plan = await planner.buildChannelAddPlanFromSandboxEntry({
+      sandboxName,
+      agent: toMessagingAgentId(agent),
+      isInteractive: !isNonInteractive(),
+      channelId,
+      sandboxEntry: registry.getSandbox(sandboxName),
+      supportedChannelIds,
+      credentialAvailability: buildCredentialAvailability([channelId]),
+    });
+    MessagingSetupApplier.writePlanToEnv(plan);
+    return plan;
+  } catch (error) {
+    console.error(`  Failed to plan messaging channel '${channelId}'.`);
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
   }
 }
 
-// Host-QR token acquisition for WeChat (the only channel with
-// `loginMethod: "host-qr"` today). Drives the iLink QR handshake on the
-// host, captures the bot token and the non-secret per-account metadata
-// (accountId, baseUrl, userId), and stashes the metadata where the
-// upcoming rebuild can find it:
-//   - `process.env`         — for the in-process rebuild that fires next
-//                             (`promptAndRebuild` → `rebuildSandbox` →
-//                             `onboard --resume` reads WECHAT_ACCOUNT_ID
-//                             etc. via the wechatConfig builder).
-//   - `session.wechatConfig` — for a deferred rebuild started from a fresh
-//                             process. `rebuildSandbox`'s env-stash reads
-//                             back from here.
-async function acquireHostQrChannel(
+async function persistManifestChannelDisabledPlan(
   sandboxName: string,
-  channelArg: string,
-  channel: ChannelDef,
-  acquired: Record<string, string>,
+  channelId: string,
+  disabled: boolean,
 ): Promise<void> {
-  const envKey = channel.envKey;
-  if (!envKey) {
-    console.error(`  Channel '${channelArg}' does not declare a credential environment key.`);
-    process.exit(1);
-  }
-  // Cached-token short-circuit. A sandbox originally onboarded with this
-  // channel already has the bot token in OpenShell + the per-account
-  // metadata in session.wechatConfig. Re-running QR would invalidate the
-  // upstream plugin's existing iLink session; prefer the cache and let
-  // the rebuild's env-stash re-bake from session.
-  const cached = getCredential(envKey);
-  if (cached) {
-    if (channelArg === "wechat") {
-      // The rebuild needs accountId/baseUrl/userId to reconstruct the
-      // upstream plugin's account state file via seed-wechat-accounts.py.
-      // Restore them from session here so a deferred rebuild (started in a
-      // fresh process where rebuild.ts hasn't stashed yet) still finds
-      // them — and bail loudly if the session was cleared. Only honor the
-      // session entry when it belongs to THIS sandbox, otherwise we'd bake
-      // another sandbox's WECHAT_* into this image.
-      const savedSession = onboardSession.loadSession();
-      const savedWechat =
-        savedSession?.sandboxName === sandboxName ? savedSession.wechatConfig ?? null : null;
-      if (savedWechat?.accountId && !process.env.WECHAT_ACCOUNT_ID) {
-        process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
-        if (savedWechat.baseUrl) process.env.WECHAT_BASE_URL = savedWechat.baseUrl;
-        if (savedWechat.userId) process.env.WECHAT_USER_ID = savedWechat.userId;
-      }
-      if (!process.env.WECHAT_ACCOUNT_ID) {
-        console.error("  Cached WeChat token found, but per-account metadata is missing.");
-        console.error(
-          `  Run '${CLI_NAME} ${sandboxName} channels remove ${channelArg}' then '${CLI_NAME} ${sandboxName} channels add ${channelArg}' to capture a fresh account via QR.`,
-        );
-        process.exit(1);
-      }
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const context = {
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    channelId,
+    sandboxEntry: entry,
+    supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
+  };
+  const plan = disabled
+    ? await planner.buildChannelStopPlanFromSandboxEntry(context)
+    : await planner.buildChannelStartPlanFromSandboxEntry(context);
+  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+}
+
+async function persistManifestChannelRemovePlan(
+  sandboxName: string,
+  channelId: string,
+): Promise<void> {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    channelId,
+    sandboxEntry: entry,
+    supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
+  });
+  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+}
+
+function buildCredentialAvailability(channelIds: readonly string[]): Record<string, boolean> {
+  const availability: Record<string, boolean> = {};
+  for (const channelId of channelIds) {
+    const manifest = messagingManifestRegistry.get(channelId);
+    if (!manifest) continue;
+    for (const input of manifest.inputs) {
+      if (input.kind !== "secret" || !input.envKey) continue;
+      if (!getMessagingToken(input.envKey)) continue;
+      availability[input.id] = true;
+      availability[`${manifest.id}.${input.id}`] = true;
+      availability[input.envKey] = true;
     }
-    acquired[envKey] = cached;
-    return;
   }
-  if (isNonInteractive()) {
+  return availability;
+}
+
+function collectManifestCredentials(manifest: ChannelManifest): Record<string, string> {
+  const acquired: Record<string, string> = {};
+  for (const credential of manifest.credentials) {
+    const value = getMessagingToken(credential.providerEnvKey);
+    if (value) acquired[credential.providerEnvKey] = value;
+  }
+  return acquired;
+}
+
+function assertAddChannelPlanActive(
+  sandboxName: string,
+  manifest: ChannelManifest,
+  plan: SandboxMessagingPlan,
+): SandboxMessagingChannelPlan {
+  const channelPlan = plan.channels.find((channel) => channel.channelId === manifest.id);
+  if (channelPlan?.active) return channelPlan;
+
+  const missing = channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
+  if (missing.length > 0) {
     console.error(
-      `  '${channelArg}' requires an interactive QR login; cannot run in non-interactive mode.`,
+      `  Missing required input(s) for channel '${manifest.id}': ${missing
+        .map(formatMissingInput)
+        .join(", ")}.`,
     );
-    console.error(
-      `  Run '${CLI_NAME} ${sandboxName} channels add ${channelArg}' interactively instead.`,
-    );
-    process.exit(1);
+    if (manifest.auth.mode === "host-qr" && getMessagingToken(manifest.credentials[0]?.providerEnvKey)) {
+      console.error(
+        `  Run '${CLI_NAME} ${sandboxName} channels remove ${manifest.id}' then '${CLI_NAME} ${sandboxName} channels add ${manifest.id}' to capture fresh account metadata.`,
+      );
+    } else if (isNonInteractive()) {
+      console.error(
+        `  Set the required environment values or run '${CLI_NAME} ${sandboxName} channels add ${manifest.id}' interactively.`,
+      );
+    }
+  } else {
+    console.error(`  Channel '${manifest.id}' was skipped during manifest enrollment.`);
   }
-  const handler = HOST_QR_LOGIN_HANDLERS[channelArg];
-  if (!handler) {
-    console.error(`  No host-qr handler registered for '${channelArg}'.`);
-    process.exit(1);
+  process.exit(1);
+}
+
+function inputAvailable(input: SandboxMessagingChannelPlan["inputs"][number]): boolean {
+  if (input.kind === "secret") return input.credentialAvailable === true;
+  if (input.value === undefined) return false;
+  return typeof input.value === "string" ? input.value.trim().length > 0 : true;
+}
+
+function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]): string {
+  return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
+}
+
+function hydrateAddChannelEnvFromSession(sandboxName: string, channelId: string): void {
+  if (channelId !== "wechat") return;
+  const savedSession = safeLoadOnboardSession();
+  const savedWechat =
+    savedSession?.sandboxName === sandboxName ? savedSession.wechatConfig ?? null : null;
+  if (!savedWechat) return;
+  if (savedWechat.accountId && !process.env.WECHAT_ACCOUNT_ID) {
+    process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
   }
-  console.log("");
-  console.log(`  ${channel.help}`);
-  let result: HostQrLoginResult;
+  if (savedWechat.baseUrl && !process.env.WECHAT_BASE_URL) {
+    process.env.WECHAT_BASE_URL = savedWechat.baseUrl;
+  }
+  if (savedWechat.userId && !process.env.WECHAT_USER_ID) {
+    process.env.WECHAT_USER_ID = savedWechat.userId;
+  }
+}
+
+function persistManifestAddState(sandboxName: string, manifest: ChannelManifest): void {
+  persistManifestMessagingConfig(sandboxName, manifest);
+  if (manifest.id === "wechat") persistWechatConfigFromEnv(sandboxName);
+}
+
+function persistManifestMessagingConfig(sandboxName: string, manifest: ChannelManifest): void {
+  const config = readManifestMessagingConfigFromEnv(manifest);
+  if (!config) return;
+
+  const entry = registry.getSandbox(sandboxName);
+  const mergedRegistryConfig = mergeMessagingChannelConfigs(entry?.messagingChannelConfig, config);
+  if (entry && mergedRegistryConfig) {
+    registry.updateSandbox(sandboxName, { messagingChannelConfig: mergedRegistryConfig });
+  }
+
+  const session = safeLoadOnboardSession();
+  if (session?.sandboxName !== sandboxName) return;
+  const mergedSessionConfig = mergeMessagingChannelConfigs(session.messagingChannelConfig, config);
+  if (!mergedSessionConfig) return;
   try {
-    result = await handler();
-  } catch (err: unknown) {
-    result = { kind: "error", message: err instanceof Error ? err.message : String(err) };
+    onboardSession.updateSession((current) => {
+      current.messagingChannelConfig = mergedSessionConfig;
+      return current;
+    });
+  } catch {
+    // Best-effort: registry state still carries the config when available.
   }
-  if (result.kind !== "ok") {
-    const reason =
-      result.kind === "timeout"
-        ? "QR login timed out"
-        : result.kind === "expired"
-          ? "QR expired too many times"
-          : result.kind === "aborted"
-            ? "login aborted"
-            : `login failed: ${result.message ?? "unknown error"}`;
-    console.error(`  Aborted — ${reason}.`);
-    process.exit(1);
+}
+
+function readManifestMessagingConfigFromEnv(manifest: ChannelManifest): MessagingChannelConfig | null {
+  const result: MessagingChannelConfig = {};
+  for (const input of manifest.inputs) {
+    if (input.kind !== "config" || !input.envKey) continue;
+    const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
+    const normalized =
+      resolved.value ??
+      normalizeMessagingChannelConfigValue(input.envKey, process.env[input.envKey]);
+    if (normalized) result[input.envKey] = normalized;
   }
-  if (!result.token) {
-    console.error("  Aborted — host-qr handler returned no token.");
-    process.exit(1);
-  }
-  acquired[envKey] = result.token;
-  if (result.extraEnv) {
-    for (const [key, value] of Object.entries(result.extraEnv)) {
-      process.env[key] = value;
-    }
-  }
-  if (channel.userIdEnvKey && result.defaultUserId && !process.env[channel.userIdEnvKey]) {
-    process.env[channel.userIdEnvKey] = result.defaultUserId;
-  }
-  if (channelArg === "wechat" && result.extraEnv) {
-    const captured = {
-      accountId: result.extraEnv.WECHAT_ACCOUNT_ID,
-      baseUrl: result.extraEnv.WECHAT_BASE_URL,
-      userId: result.extraEnv.WECHAT_USER_ID,
-    };
+  return sanitizeMessagingChannelConfig(result);
+}
+
+function persistWechatConfigFromEnv(sandboxName: string): void {
+  const captured = {
+    accountId: normalizeEnvValue(process.env.WECHAT_ACCOUNT_ID),
+    baseUrl: normalizeEnvValue(process.env.WECHAT_BASE_URL),
+    userId: normalizeEnvValue(process.env.WECHAT_USER_ID),
+  };
+  if (!captured.accountId && !captured.baseUrl && !captured.userId) return;
+  const session = safeLoadOnboardSession();
+  if (session?.sandboxName !== sandboxName) return;
+  try {
     onboardSession.updateSession((current) => {
       const prior = current.wechatConfig;
       current.wechatConfig = {
@@ -887,9 +977,23 @@ async function acquireHostQrChannel(
       };
       return current;
     });
+  } catch {
+    // The channel remains usable for an immediate rebuild; deferred rebuilds
+    // can be recovered by re-running channels add for the same sandbox.
   }
-  const suffix = result.summary ? ` (${result.summary})` : "";
-  console.log(`  ${G}✓${R} ${channelArg} token saved${suffix}.`);
+}
+
+function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
+  try {
+    return onboardSession.loadSession();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEnvValue(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\r/g, "").trim();
+  return normalized || undefined;
 }
 
 export async function addSandboxChannel(
@@ -901,17 +1005,17 @@ export async function addSandboxChannel(
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
-    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
     process.exit(1);
   }
 
-  const channel = getChannelDef(rawChannelArg);
-  if (!channel) {
+  const manifest = resolveChannelManifest(rawChannelArg);
+  if (!manifest) {
     console.error(`  Unknown channel '${rawChannelArg}'.`);
-    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
     process.exit(1);
   }
-  const canonical = rawChannelArg.trim().toLowerCase();
+  const canonical = manifest.id;
 
   const agent = resolveAgentForSandbox(sandboxName);
   if (!channelSupportedByAgent(canonical, agent)) {
@@ -942,23 +1046,33 @@ export async function addSandboxChannel(
     return;
   }
 
+  const plan = await planSandboxChannelAdd(sandboxName, canonical, agent);
+  const acquired = collectManifestCredentials(manifest);
+  if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
+    return; // user aborted; nothing registered or widened
+  }
+  assertAddChannelPlanActive(sandboxName, manifest, plan);
+
   // QR-paired channels that own their session inside the sandbox have no
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
-  if (channelUsesInSandboxQrPairing(channel)) {
+  if (manifest.auth.mode === "in-sandbox-qr") {
     if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
       process.exit(1);
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
+    persistManifestAddState(sandboxName, manifest);
+    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
     console.log("");
-    console.log(`  ${channel.help}`);
+    const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
+    if (help) console.log(`  ${help}`);
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
     // Show post-pair guidance (e.g. the channels status hint for WhatsApp)
     // here because the in-sandbox QR branch returns before the shared note
     // loop the non-QR branches use.
-    for (const line of channel.setupNotes ?? []) {
+    for (const line of manifest.enrollmentNotes ?? []) {
       console.log(`  ${line}`);
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
@@ -966,6 +1080,11 @@ export async function addSandboxChannel(
     return;
   }
 
+  const channelDef = getChannelDef(canonical);
+  if (!channelDef) {
+    console.error(`  Unknown channel '${canonical}'.`);
+    process.exit(1);
+  }
   const priorEntry = registry.getSandbox(sandboxName);
   const priorMessagingChannels: string[] = priorEntry?.messagingChannels
     ? [...priorEntry.messagingChannels]
@@ -974,35 +1093,13 @@ export async function addSandboxChannel(
   const priorHashes: Record<string, string> = {
     ...((priorEntry?.providerCredentialHashes as Record<string, string>) || {}),
   };
-  const channelTokenKeys = getChannelTokenKeys(channel);
+  const channelTokenKeys = getChannelTokenKeys(channelDef);
   const priorCreds: Record<string, string> = {};
   for (const key of channelTokenKeys) {
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
   }
-
-  const acquired: Record<string, string> = {};
-  if (channel.loginMethod === "host-qr") {
-    await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
-  } else {
-    await acquirePasteTokens(canonical, channel, acquired);
-  }
-
-  if (canonical === "slack") {
-    const validation = validateSlackChannelCredentials(channel, acquired);
-    if (!validation.ok) {
-      console.error(`  ${validation.message}`);
-      process.exit(1);
-    }
-    if (validation.message) {
-      console.log(`  ${YW}⚠${R} ${validation.message}`);
-    }
-  }
-
   persistChannelTokens(acquired);
-  if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
-    return; // user aborted; nothing registered or widened
-  }
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
   // discard the change. Pre-fix this was safe because saveCredential()
@@ -1012,7 +1109,7 @@ export async function addSandboxChannel(
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
-    await rollbackChannelAdd(sandboxName, channel, canonical, {
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorMessagingChannels,
       priorHashes,
@@ -1020,6 +1117,9 @@ export async function addSandboxChannel(
     });
     process.exit(1);
   }
+
+  persistManifestAddState(sandboxName, manifest);
+  MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
@@ -1327,6 +1427,7 @@ export async function removeSandboxChannel(
   }
 
   removeChannelPresetIfPresent(sandboxName, canonical);
+  await persistManifestChannelRemovePlan(sandboxName, canonical);
 
   // Token-based channels: best-effort tidy of any leftover dir. Token
   // revocation already prevents the bot from authenticating, so a
@@ -1382,6 +1483,7 @@ async function sandboxChannelsSetEnabled(
     console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
     process.exit(1);
   }
+  await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
   await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);

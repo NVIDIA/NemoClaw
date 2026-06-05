@@ -33,6 +33,8 @@ export interface ChannelManifest {
   readonly id: MessagingChannelId;
   readonly displayName: string;
   readonly description?: string;
+  readonly enrollmentHelp?: string;
+  readonly enrollmentNotes?: readonly string[];
   readonly supportedAgents: readonly MessagingAgentId[];
   readonly auth: ChannelAuthSpec;
   readonly inputs: readonly ChannelInputSpec[];
@@ -67,6 +69,7 @@ export interface ChannelInputPromptSpec {
   readonly label: string;
   readonly help?: string;
   readonly placeholder?: string;
+  readonly emptyValueMessage?: string;
 }
 
 /** Shared fields for secret and non-secret manifest inputs. */
@@ -76,6 +79,8 @@ interface ChannelInputBaseSpec {
   readonly envKey?: string;
   readonly prompt?: ChannelInputPromptSpec;
   readonly validValues?: readonly string[];
+  readonly formatPattern?: string;
+  readonly formatHint?: string;
 }
 
 /** Secret input metadata; values must be referenced, not stored in manifests or plans. */
@@ -88,6 +93,7 @@ export interface ChannelSecretInputSpec extends ChannelInputBaseSpec {
 export interface ChannelConfigInputSpec extends ChannelInputBaseSpec {
   readonly kind: "config";
   readonly statePath?: MessagingStatePath;
+  readonly promptWhenInput?: string;
 }
 
 /** Manifest input declaration, split so secrets cannot declare defaults or state paths. */
@@ -232,6 +238,7 @@ export interface SandboxMessagingCredentialBindingPlan {
   readonly providerEnvKey: string;
   readonly placeholder: MessagingTemplateString;
   readonly credentialAvailable: boolean;
+  readonly credentialHash?: string;
 }
 
 /** Network policy presets and concrete policy keys required by active channels. */

@@ -26,6 +26,9 @@ export async function runMessagingHook(
     channelId: context.channelId,
     hookId: hook.id,
     phase: hook.phase,
+    ...(typeof context.isInteractive === "boolean"
+      ? { isInteractive: context.isInteractive }
+      : {}),
     inputs: context.inputs,
     outputDeclarations: hook.outputs,
   });

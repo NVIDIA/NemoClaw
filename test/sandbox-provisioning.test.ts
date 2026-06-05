@@ -982,6 +982,38 @@ describe("Hermes sandbox provisioning", () => {
     }
   });
 
+  it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const hermesWebDir = path.join(hermesRoot, "web");
+    const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
+    fs.mkdirSync(hermesWebDir, { recursive: true });
+    fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Published base images can lag Dockerfile.base",
+      "# Harden: remove unnecessary build tools",
+    ).replaceAll("/opt/hermes", hermesRoot);
+
+    try {
+      const { result, calls } = runLoggedDockerShell(command, tmp, [
+        'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
+      expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
+      expect(fs.existsSync(hermesWebDist)).toBe(true);
+      expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {

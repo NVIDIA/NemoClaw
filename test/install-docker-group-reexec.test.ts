@@ -103,6 +103,7 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
     warn() { :; }
     error() { return 1; }
     is_wsl_host() { return 1; }
+    uname() { printf 'Linux\n'; }
     verify_downloaded_script() { :; }
 
     _NEMOCLAW_INSTALLER_ARGS=(${argsArrayLiteral})

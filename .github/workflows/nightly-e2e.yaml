@@ -973,7 +973,7 @@ jobs:
       timeout_minutes: 60
       artifact_name: "hermes-dashboard-e2e-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets

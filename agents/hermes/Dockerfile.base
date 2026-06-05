@@ -192,11 +192,12 @@ RUN set -eu; \
             echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
         fi; \
     done \
-    && rm -rf /tmp/camoufox-* \
+    && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
-    HERMES_TUI_DIR="/opt/hermes/ui-tui"
+    HERMES_TUI_DIR="/opt/hermes/ui-tui" \
+    HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version

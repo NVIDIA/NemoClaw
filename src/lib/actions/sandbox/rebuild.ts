@@ -43,6 +43,12 @@ import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import {
+  createBuiltInChannelManifestRegistry,
+  MessagingSetupApplier,
+  MessagingWorkflowPlanner,
+  toMessagingAgentId,
+} from "../../messaging";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -163,6 +169,33 @@ function preflightHermesProviderCredentials(
   console.error("");
   console.error("  Sandbox is untouched — no data was lost.");
   return false;
+}
+
+async function stageMessagingManifestPlanForRebuild(
+  sandboxName: string,
+  sandboxEntry: registry.SandboxEntry,
+  rebuildAgent: string | null,
+  log: (msg: string) => void,
+): Promise<void> {
+  const agent = loadAgent(rebuildAgent || "openclaw");
+  const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
+  const plan = await planner.buildRebuildPlanFromSandboxEntry({
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    sandboxEntry,
+    supportedChannelIds: agent.messagingPlatforms,
+  });
+  if (!plan || plan.channels.length === 0) {
+    MessagingSetupApplier.clearPlanEnv();
+    log("Messaging manifest rebuild plan: no configured channels");
+    return;
+  }
+  MessagingSetupApplier.writePlanToEnv(plan);
+  log(
+    `Messaging manifest rebuild plan staged: ${plan.channels
+      .map((channel) => channel.channelId)
+      .join(",")}`,
+  );
 }
 
 /**
@@ -404,6 +437,21 @@ export async function rebuildSandbox(
     log(
       "Preflight credential check: no credentialEnv in session (local inference or missing session)",
     );
+  }
+
+  try {
+    await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
+    );
+    console.error(`  ${message}`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(message);
+    return;
   }
 
   // Step 1: Ensure sandbox is live for backup

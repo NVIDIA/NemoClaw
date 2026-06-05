@@ -20,8 +20,8 @@
 #   NEMOCLAW_AGENT=hermes                  — auto-set if not already set
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-hermes)
 #   NEMOCLAW_RECREATE_SANDBOX=1            — recreate sandbox if it exists from a previous run
-#   NEMOCLAW_E2E_HERMES_DASHBOARD=1        — validate optional Hermes web dashboard end-to-end
-#   NEMOCLAW_HERMES_DASHBOARD=1            — enable optional Hermes web dashboard during onboard
+#   NEMOCLAW_E2E_HERMES_DASHBOARD=1        — validate the built-in Hermes web dashboard end-to-end
+#   NEMOCLAW_HERMES_DASHBOARD_TUI=1        — enable Hermes' optional in-browser TUI tab during onboard
 #   NVIDIA_API_KEY                         — required for NVIDIA Endpoints inference
 #
 # Usage:
@@ -166,7 +166,7 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # Hermes health probe endpoint (from agents/hermes/manifest.yaml)
 HERMES_HEALTH_URL="http://localhost:8642/health"
-HERMES_DASHBOARD_PORT="${NEMOCLAW_HERMES_DASHBOARD_PORT:-9119}"
+HERMES_DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
 HERMES_DASHBOARD_INTERNAL_PORT="${NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT:-19119}"
 TIMEOUT_CMD=""
 
@@ -304,14 +304,13 @@ else
 fi
 
 if hermes_dashboard_e2e_enabled; then
-  if grep -Fq "Hermes Agent OpenAI-compatible API" "$INSTALL_LOG" \
-    && grep -Fq "http://127.0.0.1:8642/v1" "$INSTALL_LOG"; then
-    pass "Install output advertises Hermes API on 8642/v1"
+  if grep -Fq "Deployment verified — gateway and dashboard are healthy." "$INSTALL_LOG"; then
+    pass "Install output confirms Hermes gateway and dashboard health"
   else
-    fail "Install output did not advertise Hermes API on 8642/v1"
+    fail "Install output did not confirm Hermes gateway and dashboard health"
   fi
 
-  if grep -Fq "Hermes Agent Web dashboard" "$INSTALL_LOG" \
+  if grep -Fq "Hermes Agent Dashboard" "$INSTALL_LOG" \
     && grep -Fq "http://127.0.0.1:${HERMES_DASHBOARD_PORT}/" "$INSTALL_LOG"; then
     pass "Install output advertises Hermes web dashboard on ${HERMES_DASHBOARD_PORT}"
   else
@@ -512,16 +511,12 @@ if sandbox is None:
 elif sandbox.get("agent") != "hermes":
     errors.append(f"agent={sandbox.get('agent')!r}")
 else:
-    checks = {
-        "hermesDashboardEnabled": True,
-        "hermesDashboardPort": public_port,
-        "hermesDashboardInternalPort": internal_port,
-        "dashboardPort": 8642,
-    }
-    for key, expected in checks.items():
-        actual = sandbox.get(key)
-        if actual != expected:
-            errors.append(f"{key}={actual!r} expected {expected!r}")
+    if sandbox.get("dashboardPort") != public_port:
+        errors.append(f"dashboardPort={sandbox.get('dashboardPort')!r} expected {public_port!r}")
+    # The trusted main workflow may still set the legacy optional-dashboard flag
+    # while testing this PR head. That can add hermesDashboard* metadata for the
+    # compatibility forward, but the built-in dashboard contract is still proved
+    # by dashboardPort plus the host/internal probes below.
 if errors:
     print("; ".join(errors))
     sys.exit(1)

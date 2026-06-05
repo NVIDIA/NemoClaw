@@ -40,7 +40,6 @@ const defs = D("agent/defs.js");
 const rebuild = D("actions/sandbox/rebuild.js");
 const processRecovery = D("actions/sandbox/process-recovery.js");
 const onboardSession = D("state/onboard-session.js");
-const slackValidation = D("actions/sandbox/slack-channel-validation.js");
 const policy = D("policy/index.js");
 const { hashCredential } = D("security/credential-hash.js") as {
   hashCredential: (v: string) => string | null;
@@ -93,6 +92,19 @@ function conflictPromptShown(): boolean {
 beforeEach(() => {
   spies = [];
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.TELEGRAM_ALLOWED_IDS;
+  delete process.env.TELEGRAM_REQUIRE_MENTION;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+  delete process.env.SLACK_ALLOWED_USERS;
+  delete process.env.SLACK_ALLOWED_CHANNELS;
+  delete process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY;
+  delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;
+  delete process.env.WECHAT_BOT_TOKEN;
+  delete process.env.WECHAT_ACCOUNT_ID;
+  delete process.env.WECHAT_BASE_URL;
+  delete process.env.WECHAT_USER_ID;
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -151,10 +163,8 @@ beforeEach(() => {
   vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
   vi.spyOn(processRecovery, "executeSandboxCommand").mockReturnValue(null);
 
-  // Slack add runs a credential validation (auth.test-style) before the
-  // conflict check; that is its own concern and would otherwise probe Slack.
-  // Stub it to pass so scenario 11 can reach the conflict logic.
-  vi.spyOn(slackValidation, "validateSlackChannelCredentials").mockReturnValue({ ok: true });
+  process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
+  process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
 
   // onboard-session for the wechat host-qr branch.
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
@@ -165,7 +175,19 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const s of spies) s.mockRestore();
   delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  delete process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY;
+  delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.TELEGRAM_ALLOWED_IDS;
+  delete process.env.TELEGRAM_REQUIRE_MENTION;
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
+  delete process.env.SLACK_ALLOWED_USERS;
+  delete process.env.SLACK_ALLOWED_CHANNELS;
+  delete process.env.WECHAT_BOT_TOKEN;
   delete process.env.WECHAT_ACCOUNT_ID;
+  delete process.env.WECHAT_BASE_URL;
+  delete process.env.WECHAT_USER_ID;
 });
 
 describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
@@ -397,8 +419,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
         },
       ],
     });
-    // acquireHostQrChannel short-circuits on a cached token; supply account
-    // metadata so the wechat cached-token branch does not bail.
+    // The hook planner skips non-interactive host-QR enrollment, but the
+    // conflict guard should still see a cached WeChat credential.
     getCredentialMock.mockImplementation((key: string) =>
       key === "WECHAT_BOT_TOKEN" ? wechatToken : null,
     );
@@ -535,8 +557,8 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
 
   // Scenario 11
   it("slack two-token channel: matching SLACK_BOT_TOKEN hash is detected", async () => {
-    const slackBot = "test-slack-bot-token";
-    const slackApp = "test-slack-app-token";
+    const slackBot = "xoxb-test-slack-bot-token";
+    const slackApp = "xapp-test-slack-app-token";
     const slackBotHash = hashCredential(slackBot) as string;
     arrangeRegistry({
       current: { name: "alpha", messagingChannels: [] },

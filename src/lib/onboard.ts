@@ -22,10 +22,6 @@ const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onb
 const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
-  TELEGRAM_NETWORK_CURL_CODES,
-  checkTelegramReachability,
-}: typeof import("./onboard/telegram-reachability") = require("./onboard/telegram-reachability");
-const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
@@ -94,8 +90,9 @@ const {
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
-  setupSelectedMessagingChannels,
+  setupMessagingChannels: setupMessagingChannelsImpl,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const { MessagingHostStateApplier }: typeof import("./messaging") = require("./messaging");
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
@@ -530,8 +527,6 @@ import {
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import {
   filterEnabledChannelsByAgent,
-  getAvailableMessagingChannelsForAgent,
-  resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
 import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
@@ -561,7 +556,6 @@ import {
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
 import type { SelectionDrift } from "./onboard/selection-drift";
-import { filterSlackSelectionByValidation } from "./onboard/slack-validation";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
@@ -704,7 +698,6 @@ const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
 const {
   summarizeCurlFailure,
   summarizeProbeFailure,
-  runCurlProbe,
 } = httpProbe;
 
 const selectOnboardAgent = createSelectOnboardAgent({
@@ -1125,19 +1118,38 @@ function removeDockerDriverGatewayRegistration(): boolean {
   return destroyResult.status === 0;
 }
 
+function terminateDockerDriverGatewayProcess(pid: number): boolean {
+  if (!isPidAlive(pid)) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+    for (let i = 0; i < 10; i += 1) {
+      if (!isPidAlive(pid)) break;
+      sleepSeconds(1);
+    }
+    if (isPidAlive(pid)) process.kill(pid, "SIGKILL");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function stopDockerDriverGatewayProcess(): boolean {
-  const result = hostGatewayProcess.stopHostGatewayProcesses(
-    {
-      log: console.log,
-      warn: console.warn,
-    },
-    {
-      gatewayBin: resolveOpenShellGatewayBinary(),
-      pidFile: getDockerDriverGatewayPidFile(),
-      stateDir: getDockerDriverGatewayStateDir(),
-    },
-  );
-  return result.stopped.length > 0;
+  const pid = getDockerDriverGatewayPid();
+  if (pid === null || !isPidAlive(pid)) {
+    clearDockerDriverGatewayRuntimeFiles();
+    return false;
+  }
+  if (!isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary())) {
+    clearDockerDriverGatewayRuntimeFiles();
+    return false;
+  }
+
+  const stopped = terminateDockerDriverGatewayProcess(pid);
+  clearDockerDriverGatewayRuntimeFiles();
+  return stopped;
 }
 
 function stopLegacyGatewayClusterContainer(): boolean {
@@ -1176,18 +1188,8 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
 
 function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-  hostGatewayProcess.stopHostGatewayProcesses(
-    {
-      log: console.log,
-      warn: console.warn,
-    },
-    {
-      gatewayBin: resolveOpenShellGatewayBinary(),
-      pidFile: getDockerDriverGatewayPidFile(),
-      pids: [pid],
-      stateDir: getDockerDriverGatewayStateDir(),
-    },
-  );
+  terminateDockerDriverGatewayProcess(pid);
+  clearDockerDriverGatewayRuntimeFiles();
 }
 
 async function refreshDockerDriverGatewayReuseState(
@@ -1320,9 +1322,7 @@ function handleFinalGatewayStartFailure({
   printError(`    # For OpenShell releases that still expose lifecycle commands:`);
   printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
   if (process.platform === "linux") {
-    printError(
-      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-    );
+    printError("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
   }
   printError(
     `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
@@ -2389,7 +2389,6 @@ async function startGatewayWithOptions(
 }
 
 async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
-  dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
@@ -2403,6 +2402,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  if (await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayEnv, gatewayName: GATEWAY_NAME, registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) return;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -3757,6 +3757,9 @@ async function createSandbox(
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const plannedMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
+  const messagingState =
+    plannedMessagingState?.plan.sandboxName === sandboxName ? plannedMessagingState : undefined;
   registry.registerSandbox({
     name: sandboxName,
     model: model || null,
@@ -3775,6 +3778,7 @@ async function createSandbox(
     messagingChannels:
       enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
+    messaging: messagingState,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
     ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
@@ -4786,6 +4790,7 @@ async function setupNim(
               console.error("  Local NVIDIA NIM base URL could not be determined.");
               process.exit(1);
             }
+            model = nim.adoptServedModelId(model);
             const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
@@ -4799,10 +4804,8 @@ async function setupNim(
             if (!validation.ok) {
               continue selectionLoop;
             }
-            preferredInferenceApi = validation.api;
-            // NIM uses vLLM internally — same tool-call-parser limitation
-            // applies to /v1/responses. Force chat completions.
-            if (preferredInferenceApi !== "openai-completions") {
+            // NIM (vLLM) mishandles the /v1/responses developer role; force chat completions.
+            if (validation.api !== "openai-completions") {
               console.log(
                 "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
               );
@@ -5303,168 +5306,17 @@ function getRecordedMessagingChannelsForResume(
   });
 }
 
-const telegramReachabilityDeps = { isNonInteractive, note, promptYesNoOrDefault };
-
 async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
+  sandboxName: string | null = null,
 ): Promise<string[]> {
-  step(5, 8, "Messaging channels");
-
-  const availableChannels = getAvailableMessagingChannelsForAgent(MESSAGING_CHANNELS, agent);
-  const seedFromState = (includeAllExisting = false): string[] =>
-    resolveMessagingChannelSeed(
-      availableChannels,
-      existingChannels,
-      (channel) => Boolean(getValidatedMessagingToken(channel, channel.envKey)),
-      { includeAllExisting },
-    );
-
-  // Non-interactive: skip prompt, tokens come from env/credentials
-  if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
-    let found = Array.from(new Set(seedFromState(false)));
-    if (found.length > 0) {
-      note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
-      if (found.includes("telegram")) {
-        const telegramToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN");
-        if (telegramToken) {
-          const reachability = await checkTelegramReachability(telegramToken, telegramReachabilityDeps);
-          if (reachability.skipped) found = found.filter((c) => c !== "telegram");
-        }
-      }
-      found = filterSlackSelectionByValidation(found, MESSAGING_CHANNELS);
-    } else {
-      note("  [non-interactive] No messaging tokens configured. Skipping.");
-    }
-    return found;
-  }
-
-  // Single-keypress toggle selector — pre-select channels that already have tokens
-  // or were recorded for this sandbox (so a rebuild does not silently drop QR-only
-  // channels that have no host token).
-  const enabled = new Set(seedFromState(true));
-
-  const output = process.stderr;
-  // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
-  const linesAbovePrompt = availableChannels.length + 3;
-  let firstDraw = true;
-  const showList = () => {
-    if (!firstDraw) {
-      // Cursor is at end of prompt line. Move to column 0, go up, clear to end of screen.
-      output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
-    }
-    firstDraw = false;
-    output.write("\n");
-    output.write("  Available messaging channels:\n");
-    availableChannels.forEach((ch, i) => {
-      const marker = enabled.has(ch.name) ? "●" : "○";
-      const status = getValidatedMessagingToken(ch, ch.envKey) ? " (configured)" : "";
-      output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
-    });
-    output.write("\n");
-    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `);
-  };
-
-  showList();
-
-  await new Promise<void>((resolve, reject) => {
-    const input = process.stdin;
-    let rawModeEnabled = false;
-    let finished = false;
-
-    function cleanup() {
-      input.removeListener("data", onData);
-      if (rawModeEnabled && typeof input.setRawMode === "function") {
-        input.setRawMode(false);
-      }
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof input.pause === "function") {
-        input.pause();
-      }
-      if (typeof input.unref === "function") {
-        input.unref();
-      }
-    }
-
-    function finish(): void {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      output.write("\n");
-      resolve();
-    }
-
-    function onData(chunk: Buffer | string): void {
-      const text = chunk.toString("utf8");
-      for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (ch === "\u0003") {
-          cleanup();
-          reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-          process.kill(process.pid, "SIGINT");
-          return;
-        }
-        if (ch === "\r" || ch === "\n") {
-          finish();
-          return;
-        }
-        const num = parseInt(ch, 10);
-        if (num >= 1 && num <= availableChannels.length) {
-          const channel = availableChannels[num - 1];
-          if (enabled.has(channel.name)) {
-            enabled.delete(channel.name);
-          } else {
-            enabled.add(channel.name);
-          }
-          showList();
-        }
-      }
-    }
-
-    // Re-attach stdin to the event loop. A prior prompt cleanup may have
-    // unref'd it (sticky), and resume() alone would leave the raw-mode read
-    // detached from the loop.
-    if (typeof input.ref === "function") {
-      input.ref();
-    }
-    input.setEncoding("utf8");
-    if (typeof input.resume === "function") {
-      input.resume();
-    }
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(true);
-      rawModeEnabled = true;
-    }
-    input.on("data", onData);
+  return setupMessagingChannelsImpl(agent, existingChannels, {
+    step,
+    note,
+    isNonInteractive,
+    sandboxName,
   });
-
-  const selected = Array.from(enabled);
-  if (selected.length === 0) {
-    console.log("  Skipping messaging channels.");
-    return [];
-  }
-
-  await setupSelectedMessagingChannels(selected, enabled, availableChannels);
-  console.log("");
-
-  // Channels where the user declined to enter a token were dropped from
-  // `enabled` inside the per-channel loop, so only channels with credentials
-  // configured remain in the Set.
-
-  // Preflight: verify Telegram API is reachable from the host before sandbox creation.
-  // The non-interactive branch above already ran this probe and returned early,
-  // so this second call only fires on the interactive path — guard explicitly
-  // to make the no-double-probe invariant visible at the call site.
-  if (!isNonInteractive() && enabled.has("telegram")) {
-    const telegramToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN");
-    if (telegramToken) {
-      const reachability = await checkTelegramReachability(telegramToken, telegramReachabilityDeps);
-      if (reachability.skipped) enabled.delete("telegram");
-    }
-  }
-
-  return Array.from(enabled);
 }
 
 
@@ -5991,8 +5843,6 @@ async function setupPoliciesWithSelection(
   );
   return selectedTier;
 }
-
-// ── Dashboard ────────────────────────────────────────────────────
 
 const {
   buildChain,
@@ -6773,11 +6623,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
           return verifyDeploymentModule.verifyDeployment(name, chain, {
-            executeSandboxCommand: executeSandboxCommandForVerification,
+            executeSandboxCommand: (sandbox: string, script: string) =>
+              executeSandboxCommandForVerification(sandbox, script),
             probeHostPort: (port: number, probePath: string) => {
               const result = runCapture(
                 ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3", `http://127.0.0.1:${port}${probePath}`],
@@ -6788,7 +6640,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
-            probeChannelRuntimeStatus: require("./onboard/verify-channel-runtime").buildOnboardChannelRuntimeProbe(agent, name),
           });
         },
         formatVerificationDiagnostics: (result) => {
@@ -6940,8 +6791,6 @@ module.exports = {
   fetchGatewayAuthTokenFromSandbox,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
-  checkTelegramReachability,
-  TELEGRAM_NETWORK_CURL_CODES,
   verifyCompatibleEndpointSandboxSmoke,
   resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
 };
