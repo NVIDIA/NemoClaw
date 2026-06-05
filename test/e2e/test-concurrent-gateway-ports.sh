@@ -325,8 +325,8 @@ else
 fi
 
 LIST_OUTPUT="$("${NEMOCLAW_CMD[@]}" list 2>&1 || true)"
-if echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]*${SANDBOX_A}[[:space:]]" \
-  && echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]*${SANDBOX_B}[[:space:]]"; then
+if echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]+${SANDBOX_A}( \*)?[[:space:]]*$" \
+  && echo "${LIST_OUTPUT}" | grep -qE "^[[:space:]]+${SANDBOX_B}( \*)?[[:space:]]*$"; then
   pass "nemoclaw list shows both sandbox A and B"
 else
   fail "nemoclaw list missing one of A/B"
