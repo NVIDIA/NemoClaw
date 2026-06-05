@@ -5,6 +5,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -45,6 +46,7 @@ export interface InferenceSetResult {
 }
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
+
 
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
@@ -272,6 +274,7 @@ export function patchHermesInferenceConfig(
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
   modelConfig.provider = "custom";
+  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
   const apiMode = hermesApiMode(route.inferenceApi);
   if (apiMode) {
     modelConfig.api_mode = apiMode;

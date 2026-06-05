@@ -53,6 +53,8 @@ _TOOL_GATEWAY_URL_ENV = {
     "browser-use": "BROWSER_USE_GATEWAY_URL",
     "modal": "MODAL_GATEWAY_URL",
 }
+_TOOL_GATEWAY_REFRESH_TOKEN_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"
+_LEGACY_TOOL_GATEWAY_USER_TOKEN_ENV = "TOOL_GATEWAY_USER_TOKEN"
 
 _NEMOCLAW_CONTEXT_KEYWORDS = (
     "browser",
@@ -209,8 +211,18 @@ def _broker_gateway_url(vendor):
 
 
 def _broker_user_token():
-    token = _get_env_value("TOOL_GATEWAY_USER_TOKEN", "")
-    return token.strip() if isinstance(token, str) and token.strip() else None
+    refresh_placeholder = _get_env_value(_TOOL_GATEWAY_REFRESH_TOKEN_ENV, "")
+    if isinstance(refresh_placeholder, str) and refresh_placeholder.strip():
+        return refresh_placeholder.strip()
+
+    legacy_placeholder = _get_env_value(_LEGACY_TOOL_GATEWAY_USER_TOKEN_ENV, "")
+    if (
+        isinstance(legacy_placeholder, str)
+        and legacy_placeholder.strip().startswith("openshell:resolve:env:")
+    ):
+        return legacy_placeholder.strip()
+
+    return f"openshell:resolve:env:{_TOOL_GATEWAY_REFRESH_TOKEN_ENV}"
 
 
 def _broker_resolve_managed_tool_gateway(vendor, gateway_builder=None, token_reader=None):
@@ -930,7 +942,7 @@ def _install_nous_tool_broker_patch():
     auth happen on the host instead:
 
       sandbox tool call -> host.openshell.internal:11436/<service>
-      broker token placeholder -> host broker -> Nous access token upstream
+      OpenShell resolver placeholder -> host broker -> Nous access token upstream
 
     This shim only tells Hermes that externally managed gateway auth is
     available when NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1. It does not mint,
