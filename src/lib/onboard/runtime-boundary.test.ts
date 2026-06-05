@@ -11,7 +11,7 @@ import {
   type SessionUpdates,
 } from "../state/onboard-session";
 import type { OnboardMachineEvent } from "./machine/events";
-import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./machine/result";
+import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
@@ -96,7 +96,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         if (state) transitionMachine(current, state);
         return current;
       }),
-    markStepComplete: (stepName, updates: SessionUpdates = {}, options = {}) =>
+    markStepComplete: (stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
@@ -107,25 +107,22 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         current.failure = null;
         Object.assign(current, filterSafeUpdates(updates));
         const nextState = nextStateAfterCompletedStep(stepName, current);
-        if (nextState && options.updateMachine !== false) transitionMachine(current, nextState);
+        if (nextState) transitionMachine(current, nextState);
         return current;
       }),
+    markStepCompleteRecordOnly: () => cloneSession(session ?? createSession()),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message, options = {}) =>
+    markStepFailed: (stepName, message) =>
       updateSession((current) => {
         current.steps[stepName].status = "failed";
-        current.steps[stepName].error = message ?? null;
-        if (options.updateMachine !== false) {
-          current.status = "failed";
-          current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
-          transitionMachine(current, "failed");
-        }
+        current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
         return current;
       }),
+    markStepFailedRecordOnly: () => cloneSession(session ?? createSession()),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -257,63 +254,6 @@ describe("OnboardRuntimeBoundary", () => {
         sourceState: "missing",
       },
     });
-  });
-
-  it("pairs record-only step completion with an explicit state result", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordStateResult(advanceTo("preflight"));
-    const completed = await boundary.recordStepCompleteWithStateResult(
-      "preflight",
-      { sandboxName: "record-only-sb" },
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
-
-    expect(completed).toMatchObject({
-      sandboxName: "record-only-sb",
-      machine: { state: "gateway", revision: 2 },
-      steps: { preflight: { status: "complete" } },
-    });
-    expect(harness.events.map((event) => event.type)).toEqual([
-      "state.exited",
-      "state.entered",
-      "state.exited",
-      "state.entered",
-    ]);
-  });
-
-  it("pairs record-only step failure with an explicit failure result", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordStateResult(advanceTo("preflight"));
-    const failed = await boundary.recordStepFailedWithStateResult(
-      "preflight",
-      "Preflight failed",
-      failOnboardMachine("Preflight failed", { step: "preflight" }),
-    );
-
-    expect(failed).toMatchObject({
-      status: "failed",
-      failure: { step: "preflight", message: "Preflight failed" },
-      machine: { state: "failed", revision: 2 },
-      steps: { preflight: { status: "failed", error: "Preflight failed" } },
-    });
-    expect(harness.events.map((event) => event.type)).toEqual([
-      "state.exited",
-      "state.entered",
-      "state.failed",
-      "onboard.failed",
-    ]);
   });
 
   it("records live legacy step/result compatibility through provider retry and finalization", async () => {

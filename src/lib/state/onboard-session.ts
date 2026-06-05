@@ -27,6 +27,7 @@ import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -375,31 +376,6 @@ function createMachineSnapshot(
     stateEnteredAt,
     revision: Math.max(0, Math.trunc(revision)),
   };
-}
-
-function nextMachineStateAfterCompletedStep(
-  stepName: string | null | undefined,
-  session: Pick<Session, "agent">,
-): OnboardMachineState | null {
-  switch (stepName) {
-    case "preflight":
-      return "gateway";
-    case "gateway":
-      return "provider_selection";
-    case "provider_selection":
-      return "inference";
-    case "inference":
-      return "sandbox";
-    case "sandbox":
-      return session.agent ? "agent_setup" : "openclaw";
-    case "openclaw":
-    case "agent_setup":
-      return "policies";
-    case "policies":
-      return "finalizing";
-    default:
-      return null;
-  }
 }
 
 function inferMachineState(session: Session): OnboardMachineState {
@@ -1006,7 +982,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1032,7 +1008,7 @@ export function markStepStarted(stepName: string, options: StepMutationOptions =
   return updatedSession;
 }
 
-export function markStepComplete(stepName: string, updates: SessionUpdates = {}, options: StepMutationOptions = {}): Session {
+function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates = {}, options: StepMutationOptions = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
   let shouldEmit = false;
@@ -1069,6 +1045,22 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {},
   return updatedSession;
 }
 
+export function markStepStarted(stepName: string): Session {
+  return markStepStartedWithOptions(stepName);
+}
+
+export function markStepStartedRecordOnly(stepName: string): Session {
+  return markStepStartedWithOptions(stepName, { updateMachine: false });
+}
+
+export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
+  return markStepCompleteWithOptions(stepName, updates);
+}
+
+export function markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Session {
+  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
+}
+
 export function markStepSkipped(stepName: string): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1090,7 +1082,7 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepFailed(stepName: string, message: string | null = null, options: StepMutationOptions = {}): Session {
+function markStepFailedWithOptions(stepName: string, message: string | null = null, options: StepMutationOptions = {}): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1127,6 +1119,14 @@ export function markStepFailed(stepName: string, message: string | null = null, 
     );
   }
   return updatedSession;
+}
+
+export function markStepFailed(stepName: string, message: string | null = null): Session {
+  return markStepFailedWithOptions(stepName, message);
+}
+
+export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
+  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {

@@ -47,21 +47,19 @@ describe("record-only onboard step mutation", () => {
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
     session.saveSession(session.createSession());
 
-    session.markStepStarted("preflight", { updateMachine: false });
+    session.markStepStartedRecordOnly("preflight");
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("in_progress");
     expect(loaded.status).toBe("in_progress");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
+    session.markStepCompleteRecordOnly("preflight", { sandboxName: "my-assistant" });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("complete");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepFailed("gateway", "Gateway failed: NVIDIA_API_KEY=nvapi-secret", {
-      updateMachine: false,
-    });
+    session.markStepFailedRecordOnly("gateway", "Gateway failed: NVIDIA_API_KEY=nvapi-secret");
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("failed");
     expect(loaded.steps.gateway.error).toBe("Gateway failed: NVIDIA_API_KEY=<REDACTED>");

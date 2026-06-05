@@ -4,6 +4,7 @@
 import type { Session, SessionUpdates } from "../state/onboard-session";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
+import { assertValidOnboardMachineTransition } from "./machine/transitions";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 import type { ResumeConfigConflict } from "./resume-config";
 
@@ -104,12 +105,42 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().applyResult(result);
   }
 
+  private async assertStateResultWillApply(result: OnboardStateResult): Promise<void> {
+    const current = await this.getRuntime().session();
+    if (result.type === "failed") {
+      assertValidOnboardMachineTransition(current.machine.state, "failed");
+      return;
+    }
+    if (result.type === "complete") {
+      assertValidOnboardMachineTransition(current.machine.state, "complete");
+      return;
+    }
+
+    const sourceState =
+      result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
+    if (current.machine.state === result.next) {
+      throw new Error(`Record-only step result already reached target state: ${result.next}`);
+    }
+    if (sourceState && current.machine.state !== sourceState) {
+      throw new Error(
+        `Record-only step result source mismatch: ${sourceState} != ${current.machine.state}`,
+      );
+    }
+    const transition = assertValidOnboardMachineTransition(current.machine.state, result.next);
+    if (result.transitionKind && transition.kind !== result.transitionKind) {
+      throw new Error(
+        `Invalid onboarding machine transition kind: ${current.machine.state} -> ${result.next} expected ${result.transitionKind}, got ${transition.kind}`,
+      );
+    }
+  }
+
   async recordStepCompleteWithStateResult(
     stepName: string,
     updates: SessionUpdates,
     result: OnboardStateResult,
   ): Promise<Session> {
-    await this.getRuntime().markStepComplete(stepName, updates, { updateMachine: false });
+    await this.assertStateResultWillApply(result);
+    await this.getRuntime().markStepCompleteRecordOnly(stepName, updates);
     return this.recordStateResultWithStepCompatibility(result);
   }
 
@@ -118,7 +149,8 @@ export class OnboardRuntimeBoundary {
     message: string | null,
     result: OnboardStateFailedResult,
   ): Promise<Session> {
-    await this.getRuntime().markStepFailed(stepName, message, { updateMachine: false });
+    await this.assertStateResultWillApply(result);
+    await this.getRuntime().markStepFailedRecordOnly(stepName, message);
     return this.recordStateResult(result);
   }
 
