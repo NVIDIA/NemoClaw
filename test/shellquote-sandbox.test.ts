@@ -82,7 +82,7 @@ runner.runCapture = (command) => {
   const text = asText(command);
   if (text.includes("sandbox get my-assistant")) return "";
   if (text.includes("sandbox list")) return "my-assistant Ready";
-  if (text.includes("forward list")) return "";
+  if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   return "";

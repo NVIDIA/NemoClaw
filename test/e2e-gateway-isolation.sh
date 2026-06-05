@@ -376,36 +376,34 @@ else
   fail "sandbox cannot create new files in .openclaw — should be writable: $OUT"
 fi
 
-# ── Test 23: .bashrc sources proxy-env from /tmp ──────────────────
-# Requires base image with pre-built .bashrc (#804). Skip gracefully
-# if the file doesn't exist yet (base image not rebuilt).
+# ── Test 23: .bashrc has no proxy entries ────────────────────────
 
-info "23. .bashrc sources proxy config from /tmp"
-OUT=$(run_as_sandbox "cat /sandbox/.bashrc 2>/dev/null || echo MISSING")
-if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
-  pass ".bashrc sources /tmp/nemoclaw-proxy-env.sh"
+info "23. .bashrc has no proxy entries"
+OUT=$(run_as_sandbox "if [ ! -f /sandbox/.bashrc ]; then echo MISSING; elif grep -i proxy /sandbox/.bashrc; then echo FOUND; else echo OK; fi")
+if echo "$OUT" | grep -qx "OK"; then
+  pass ".bashrc has no proxy entries"
 elif echo "$OUT" | grep -q "MISSING\|No such file"; then
-  info "SKIP: .bashrc not present (base image needs rebuild for #804)"
+  fail ".bashrc is missing"
 else
-  fail ".bashrc does not source from expected path: $OUT"
+  fail ".bashrc contains proxy entries: $OUT"
 fi
 
-# ── Test 24: .profile sources proxy-env from /tmp ─────────────────
+# ── Test 24: .profile has no proxy entries ───────────────────────
 
-info "24. .profile sources proxy config from /tmp"
-OUT=$(run_as_sandbox "cat /sandbox/.profile 2>/dev/null || echo MISSING")
-if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
-  pass ".profile sources /tmp/nemoclaw-proxy-env.sh"
+info "24. .profile has no proxy entries"
+OUT=$(run_as_sandbox "if [ ! -f /sandbox/.profile ]; then echo MISSING; elif grep -i proxy /sandbox/.profile; then echo FOUND; else echo OK; fi")
+if echo "$OUT" | grep -qx "OK"; then
+  pass ".profile has no proxy entries"
 elif echo "$OUT" | grep -q "MISSING\|No such file"; then
-  info "SKIP: .profile not present (base image needs rebuild for #804)"
+  fail ".profile is missing"
 else
-  fail ".profile does not source from expected path: $OUT"
+  fail ".profile contains proxy entries: $OUT"
 fi
 
 # ── Test 25: proxy-env.sh is NOT writable by sandbox user (#2181) ──
 # The entrypoint writes /tmp/nemoclaw-proxy-env.sh via emit_sandbox_sourced_file()
 # which sets mode 444 and root ownership. The sandbox user must not be able to
-# modify this file, as .bashrc/.profile source it on every connect.
+# modify this file, as the system-wide shell hooks source it on every connect.
 # Since the E2E bypasses the entrypoint (--entrypoint ""), we simulate what the
 # entrypoint does: create the file as root with mode 444, then verify sandbox
 # cannot modify it.
@@ -515,8 +513,15 @@ fi
 info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
-  # Source the entrypoint functions without running the full startup
-  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  # Source the entrypoint function without running the full startup. Keep the
+  # extraction whitespace-tolerant and fail closed if the function cannot be
+  # found, instead of sourcing an empty snippet.
+  APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
+  if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
+    echo "EXTRACT_FAIL apply_model_override"
+    exit 1
+  fi
+  source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
   export NEMOCLAW_MODEL_OVERRIDE="test/override-model"
   apply_model_override
   python3 -c "
@@ -546,7 +551,12 @@ fi
 
 info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
+  if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
+    echo "EXTRACT_FAIL apply_model_override"
+    exit 1
+  fi
+  source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
   ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")
   apply_model_override
   AFTER=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")

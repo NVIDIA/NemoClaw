@@ -17,10 +17,12 @@ import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 61 commands", () => {
-      // 27 global (21 visible + 6 hidden help/version aliases)
-      // 34 sandbox (28 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(61);
+    it("should contain exactly 70 commands", () => {
+      // 28 global (22 visible + 6 hidden help/version aliases)
+      // 42 sandbox (36 visible + 6 hidden shields/config), including the
+      // sandbox:sessions group (root + list + reset + delete) and the
+      // sandbox:agents passthrough pair (add + delete).
+      expect(COMMANDS).toHaveLength(70);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -39,9 +41,9 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 27 entries", () => {
-      // 21 visible + 6 hidden (help, --help, -h, version, --version, -v)
-      expect(globalCommands()).toHaveLength(27);
+    it("should return exactly 28 entries", () => {
+      // 22 visible + 6 hidden (help, --help, -h, version, --version, -v)
+      expect(globalCommands()).toHaveLength(28);
     });
 
     it("every entry has scope global", () => {
@@ -52,9 +54,11 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 34 entries", () => {
-      // 28 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(34);
+    it("should return exactly 42 entries", () => {
+      // 36 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 36 visible includes the sessions group (root + list + reset + delete)
+      // and the agents pair (add + delete).
+      expect(sandboxCommands()).toHaveLength(42);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +69,11 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 12 hidden commands (49 visible)", () => {
+    it("should exclude 12 hidden commands (58 visible)", () => {
       // 6 hidden global (help, --help, -h, version, --version, -v) +
-      // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(49);
+      // 6 hidden sandbox (shields×3, config get/set/rotate-token); visible
+      // totals include the sessions group (4) and the agents pair (2).
+      expect(visibleCommands()).toHaveLength(58);
     });
 
     it("no visible command has hidden=true", () => {
@@ -168,10 +173,16 @@ describe("command-registry", () => {
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
     });
+
+    it("uses distinct placeholders for sandbox and skill names", () => {
+      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      expect(command?.usage).toBe("nemoclaw <name> skill remove");
+      expect(command?.flags).toBe("<skill>");
+    });
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 23 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 24 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "onboard",
@@ -191,6 +202,7 @@ describe("command-registry", () => {
         "upgrade-sandboxes",
         "gc",
         "inference",
+        "resources",
         "help",
         "version",
         "--help",
@@ -203,11 +215,12 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 23 unique action tokens including empty string", () => {
+    it("returns exactly 25 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(23);
+      expect(tokens).toHaveLength(25);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
+        "agents",
         "connect",
         "dashboard-url",
         "exec",
@@ -221,6 +234,7 @@ describe("command-registry", () => {
         "hosts-list",
         "hosts-remove",
         "destroy",
+        "sessions",
         "skill",
         "rebuild",
         "recover",
@@ -280,6 +294,7 @@ describe("command-registry", () => {
         "Credentials",
         "Backup",
         "Upgrade",
+        "Resources",
         "Cleanup",
       ]);
     });

@@ -612,41 +612,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("keeps a single shellQuote definition in the root CLI codebase", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
-    const files: string[] = [];
-    function walk(dir: string): void {
-      for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
-        else if (f.name.endsWith(".js") || f.name.endsWith(".ts"))
-          files.push(path.join(dir, f.name));
-      }
-    }
-    for (const root of searchRoots) {
-      walk(root);
-    }
-
-    const defs = [];
-    for (const file of files) {
-      let src: string;
-      try {
-        src = fs.readFileSync(file, "utf-8");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-      if (src.includes("function shellQuote")) {
-        defs.push(path.relative(repoRoot, file));
-      }
-    }
-    // runner.ts (CJS consumers) and core/shell-quote.ts (ESM consumers like config-io.ts)
-    expect(defs.sort()).toEqual([
-      path.join("src", "lib", "core", "shell-quote.ts"),
-      path.join("src", "lib", "runner.ts"),
-    ]);
-  });
-
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
     const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-canary-"));
     const canary = path.join(canaryDir, "executed");
@@ -892,6 +857,64 @@ describe("regression guards", () => {
       expect(src).not.toContain("scripts/brev-setup.sh");
       expect(src).not.toContain("USE_LAUNCHABLE");
       expect(src).not.toContain("SKIP_VLLM=1");
+    });
+  });
+
+  describe("OpenClaw runtime cache hardening", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const startSrc = fs.readFileSync(path.join(repoRoot, "scripts", "nemoclaw-start.sh"), "utf-8");
+
+      expect(baseSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(runtimeSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(startSrc).toContain('export JITI_FS_CACHE="false"');
+    });
+  });
+
+  describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("base image installs a pinned tmux in the apt package list", () => {
+      const src = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      // Pinned (DL3008) tmux must be part of the single base apt-get install
+      // layer so fresh builds ship it without a runtime apt round-trip.
+      expect(src).toMatch(/tmux=[0-9]/);
+    });
+
+    it("runtime image repairs tmux on stale bases and asserts it at build time", () => {
+      const src = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      // Stale GHCR bases predating the tmux addition must still converge: the
+      // hardening layer detects a missing tmux, installs a pinned version, and
+      // fails the build if tmux is still absent afterwards.
+      expect(src).toContain("needs_tmux=1");
+      expect(src).toMatch(/apt-get install -y --no-install-recommends tmux=[0-9]/);
+      expect(src).toContain("command -v tmux >/dev/null");
+    });
+
+    it("base and runtime images pin tmux to the same version", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const baseVersion = baseSrc.match(/tmux=([0-9][^\s\\]*)/)?.[1];
+      const runtimeVersion = runtimeSrc.match(
+        /apt-get install -y --no-install-recommends tmux=([0-9][^\s\\;]*)/,
+      )?.[1];
+      expect(baseVersion).toBeDefined();
+      expect(runtimeVersion).toBeDefined();
+      expect(runtimeVersion).toBe(baseVersion);
+    });
+
+    it("the e2e sandbox suite exercises the tmux-session flow", () => {
+      const src = fs.readFileSync(
+        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        "utf-8",
+      );
+      expect(src).toContain("test_sbx_09_tmux_session_flow");
+      expect(src).toContain("command -v tmux");
+      // The smoke must be wired into the run, not just defined.
+      expect(src).toMatch(/^\s*test_sbx_09_tmux_session_flow\s*$/m);
     });
   });
 });

@@ -5,6 +5,8 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
+import type { GpuInfo } from "../local";
+
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
@@ -21,6 +23,7 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
+const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -373,21 +376,40 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
-async function promptOllamaModel(gpu = null) {
+async function promptOllamaModel(gpu: GpuInfo | null = null) {
   const installed = getOllamaModelOptions();
-  const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
+  // Filter installed entries by registry-known memory fit so a host that
+  // currently cannot load the only installed model still gets a usable
+  // default — without the filter, pressing Enter would re-select the
+  // oversized model the runner is about to crash on. Unknown tags (user-
+  // pulled models the registry has never seen) pass the filter so the
+  // user's prior selection is respected.
+  const installedFitting = installed.filter((tag: string) => modelFitsAvailableMemory(tag, gpu));
+  const usingInstalled = installedFitting.length > 0;
+  const options = usingInstalled ? installedFitting : getBootstrapOllamaModelOptions(gpu);
   const defaultModel = getDefaultOllamaModel(gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
-  console.log(installed.length > 0 ? "  Ollama models:" : "  Ollama starter models:");
+  console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
   options.forEach((option, index) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
-  if (installed.length === 0) {
+  if (!usingInstalled) {
     console.log("");
-    console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    if (installed.length === 0) {
+      console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    } else {
+      console.log(
+        "  No installed Ollama model fits the host's currently available memory; showing starter models instead.",
+      );
+    }
+  }
+  if (!usingInstalled && !anyRegistryModelFits(gpu)) {
+    console.log(
+      "  ! Even the smallest known bootstrap model may not fit currently available GPU memory; free memory or expect the runner to reject the load.",
+    );
   }
   console.log("");
 
@@ -666,7 +688,7 @@ function printToolsIncompatibleWarning(model: string): void {
 
 async function checkOllamaModelToolSupport(
   model: string,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const caps = probeOllamaModelCapabilities(model);
 
   if (caps.supportsTools === true) {
@@ -683,11 +705,15 @@ async function checkOllamaModelToolSupport(
   }
 
   // supportsTools === false — model is on disk but advertises no tools support.
+  // Every code path below that returns ok:true must also set
+  // allowToolsIncompatible:true so downstream validators (validateOllamaModel,
+  // probeChatCompletionsToolCalling via setupOllama / setupInference) don't
+  // reject the same model on the same condition — see issue #4241.
   printToolsIncompatibleWarning(model);
 
   if (isProxyAutoYes()) {
     console.log("  Continuing because --yes was passed.");
-    return { ok: true };
+    return { ok: true, allowToolsIncompatible: true };
   }
 
   if (isProxyNonInteractive()) {
@@ -695,7 +721,7 @@ async function checkOllamaModelToolSupport(
       console.error(
         `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
       );
-      return { ok: true };
+      return { ok: true, allowToolsIncompatible: true };
     }
     console.error(
       "  Re-run with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 to override, or pick a tools-capable model.",
@@ -707,10 +733,18 @@ async function checkOllamaModelToolSupport(
   if (!proceed) {
     return { ok: false, message: "Choose a tools-capable model." };
   }
-  return { ok: true };
+  return { ok: true, allowToolsIncompatible: true };
 }
 
-async function prepareOllamaModel(model, installedModels = []) {
+async function prepareOllamaModel(
+  model,
+  installedModels: string[] = [],
+): Promise<{
+  ok: boolean;
+  message?: string;
+  allowToolsIncompatible?: boolean;
+  daemonFailure?: boolean;
+}> {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
@@ -731,7 +765,11 @@ async function prepareOllamaModel(model, installedModels = []) {
 
   console.log(`  Loading Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
-  return validateOllamaModel(model);
+  const allowToolsIncompatible = capCheck.allowToolsIncompatible === true;
+  const result = validateOllamaModel(model, undefined, undefined, undefined, {
+    allowToolsIncompatible,
+  });
+  return { ...result, allowToolsIncompatible };
 }
 
 /**

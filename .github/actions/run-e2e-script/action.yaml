@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Run E2E script
+
+description: >-
+  Runs a repository E2E script from an already-checked-out workspace and uploads
+  the configured artifacts when the script fails.
+
+inputs:
+  script:
+    description: Repository-relative E2E script path.
+    required: true
+  working-directory:
+    description: Directory to run the script from.
+    required: false
+    default: .
+  artifact-name:
+    description: Failure artifact name.
+    required: true
+  artifact-path:
+    description: Newline-capable artifact path glob list.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run E2E script
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        E2E_SCRIPT: ${{ inputs.script }}
+      run: |
+        set -euo pipefail
+
+        case "$E2E_SCRIPT" in
+          test/e2e/*.sh) ;;
+          *)
+            echo "::error::E2E script must match test/e2e/*.sh: $E2E_SCRIPT" >&2
+            exit 1
+            ;;
+        esac
+
+        case "$E2E_SCRIPT" in
+          *..*|/*|*\"*|*\'*)
+            echo "::error::E2E script path contains unsafe characters: $E2E_SCRIPT" >&2
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f "$E2E_SCRIPT" ]; then
+          echo "::error::E2E script does not exist: $E2E_SCRIPT" >&2
+          exit 1
+        fi
+
+        bash "$E2E_SCRIPT"
+
+    - name: Upload E2E artifacts on failure
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.artifact-path }}
+        if-no-files-found: ignore

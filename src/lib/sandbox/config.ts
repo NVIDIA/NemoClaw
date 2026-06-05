@@ -21,14 +21,13 @@ const { isIP } = require("node:net");
 const { validateName } = require("../runner");
 const { shellQuote } = require("../core/shell-quote");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
-const { dockerCapture } = require("../adapters/docker/run");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("../shields/audit");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
-const registry = require("../state/registry") as {
-  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
-};
+const {
+  privilegedSandboxExecArgv,
+}: typeof import("./privileged-exec") = require("./privileged-exec");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -37,8 +36,6 @@ const { runOpenshellCommand, captureOpenshellCommand } = require("../adapters/op
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
 }
-
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
 // ---------------------------------------------------------------------------
 // Agent-aware config resolution
@@ -115,64 +112,6 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
 };
 
 const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
-
-// Privileged sandbox exec bypasses the sandbox process's Landlock domain for
-// host-initiated config writes. Legacy OpenShell gateways expose the pod via
-// K3s/kubectl; Docker-driver gateways expose a sandbox container directly.
-function selectDockerDriverSandboxContainer(
-  sandboxName: string,
-  openshellDriver: string | null | undefined,
-  containerNames: string,
-): string | null {
-  if (openshellDriver !== "docker") return null;
-  const prefix = `openshell-${sandboxName}-`;
-  const exact = `openshell-${sandboxName}`;
-  return (
-    containerNames
-      .split("\n")
-      .map((line: string) => line.trim())
-      .find((name: string) => name === exact || name.startsWith(prefix)) || null
-  );
-}
-
-function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
-  let openshellDriver: string | null | undefined;
-  try {
-    openshellDriver = registry.getSandbox?.(sandboxName)?.openshellDriver;
-  } catch {
-    return null;
-  }
-
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
-  return selectDockerDriverSandboxContainer(sandboxName, openshellDriver, output);
-}
-
-function kubectlExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
-  const args = [
-    "exec",
-    ...(stdin ? ["-i"] : []),
-    K3S_CONTAINER,
-    "kubectl",
-    "exec",
-    "-n",
-    "openshell",
-    sandboxName,
-    "-c",
-    "agent",
-    ...(stdin ? ["-i"] : []),
-    "--",
-    ...cmd,
-  ];
-  return args;
-}
-
-function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
-  const dockerDriverContainer = resolveDockerDriverSandboxContainer(sandboxName);
-  if (dockerDriverContainer) {
-    return ["exec", ...(stdin ? ["-i"] : []), "--user", "root", dockerDriverContainer, ...cmd];
-  }
-  return kubectlExecArgv(sandboxName, cmd, stdin);
-}
 
 function privilegedSandboxExec(
   sandboxName: string,
@@ -888,7 +827,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "config_set",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `config set ${target.agentName}:${opts.key}`,
@@ -1031,7 +970,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 6. Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "rotate_token",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `rotate-token ${target.agentName}:${credentialEnv}`,
@@ -1093,7 +1032,6 @@ export {
   writeSandboxConfig,
   recomputeSandboxConfigHash,
   buildRecomputeSandboxConfigHashScript,
-  selectDockerDriverSandboxContainer,
   privilegedSandboxExecArgv,
   extractDotpath,
   setDotpath,

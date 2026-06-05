@@ -6,5 +6,7 @@ import crypto from "node:crypto";
 export function hashCredential(value: string | null | undefined): string | null {
   const normalized = String(value ?? "").trim();
   if (!normalized) return null;
-  return crypto.createHash("sha256").update(normalized).digest("hex");
+  // This is a non-secret change detector for credential rotation, not a
+  // password verifier or credential storage primitive.
+  return crypto.createHash("sha256").update(normalized).digest("hex"); // codeql[js/insufficient-password-hash]
 }

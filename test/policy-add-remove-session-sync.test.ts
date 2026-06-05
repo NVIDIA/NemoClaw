@@ -79,7 +79,7 @@ policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) =>
 policies.getAppliedPresets = () => ${JSON.stringify(appliedPresets)};
 policies.loadPreset = (name) => ({ name, network_policies: {} });
 policies.getPresetEndpoints = () => [];
-policies.getMessagingPresetWarning = () => null;
+policies.getPresetValidationWarning = () => null;
 policies.selectFromList = async (items) => items[0]?.name || null;
 policies.applyPreset = (sandboxName, presetName) => {
   calls.apply.push({ sandboxName, presetName });

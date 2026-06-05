@@ -77,6 +77,9 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(slack?.userIdHelp).toContain("comma-separated member IDs");
     expect(slack?.userIdHelp).toContain("not the app or bot user ID");
     expect(slack?.allowIdsMode).toBe("dm");
+    expect(slack?.channelIdEnvKey).toBe("SLACK_ALLOWED_CHANNELS");
+    expect(slack?.channelIdLabel).toBe("Slack Channel IDs (comma-separated allowlist)");
+    expect(slack?.channelIdHelp).toContain("Slack channel IDs");
   });
 
   it("normalises case and whitespace when resolving a channel name", () => {

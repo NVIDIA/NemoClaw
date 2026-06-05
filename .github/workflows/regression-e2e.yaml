@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,docker-unreachable-gateway-start-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,strict-tool-call-probe-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e
         required: false
         type: string
         default: ""
@@ -46,9 +46,11 @@ jobs:
     outputs:
       dashboard: ${{ steps.select.outputs.dashboard }}
       gateway: ${{ steps.select.outputs.gateway }}
+      docker_unreachable_gateway_start: ${{ steps.select.outputs.docker_unreachable_gateway_start }}
       gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
       openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
       onboard_inference_smoke: ${{ steps.select.outputs.onboard_inference_smoke }}
+      strict_tool_call_probe: ${{ steps.select.outputs.strict_tool_call_probe }}
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
     steps:
@@ -78,6 +80,12 @@ jobs:
             echo "gateway=false" >> "$GITHUB_OUTPUT"
           fi
 
+          if [ -z "$normalized" ] || includes_job "docker-unreachable-gateway-start-e2e"; then
+            echo "docker_unreachable_gateway_start=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker_unreachable_gateway_start=false" >> "$GITHUB_OUTPUT"
+          fi
+
           if [ -z "$normalized" ] || includes_job "gateway-drift-preflight-e2e"; then
             echo "gateway_drift_preflight=true" >> "$GITHUB_OUTPUT"
           else
@@ -94,6 +102,12 @@ jobs:
             echo "onboard_inference_smoke=true" >> "$GITHUB_OUTPUT"
           else
             echo "onboard_inference_smoke=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "strict-tool-call-probe-e2e"; then
+            echo "strict_tool_call_probe=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "strict_tool_call_probe=false" >> "$GITHUB_OUTPUT"
           fi
 
           if [ -z "$normalized" ] || includes_job "model-router-provider-routed-inference-e2e"; then
@@ -148,7 +162,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -173,6 +187,43 @@ jobs:
             /tmp/nemoclaw-e2e-gateway-health-honest-process.log
           if-no-files-found: ignore
 
+  # ── Docker-unreachable gateway-start E2E ───────────────────
+  # Coverage guard for #2347's fallback path. Preflight catches Docker
+  # daemon outages before step [2/8] on the normal path; this focused
+  # regression simulates Docker dying during `openshell gateway start` and
+  # verifies onboard exits before health polling with Docker recovery advice.
+  docker-unreachable-gateway-start-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.docker_unreachable_gateway_start == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Run Docker-unreachable gateway-start E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-docker-unreachable-gateway-start.sh
+
+      - name: Upload Docker-unreachable gateway-start logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-unreachable-gateway-start-logs
+          path: |
+            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start.log
+            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start-node.log
+            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start-openshell.log
+          if-no-files-found: ignore
 
   # ── OpenShell version-pin E2E ──────────────────────────────
   # Coverage guard for #3474. If a host has sticky OpenShell 0.0.45 on PATH
@@ -187,7 +238,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run OpenShell version-pin E2E test
         run: bash test/e2e/test-openshell-version-pin.sh
@@ -216,7 +267,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -227,6 +278,7 @@ jobs:
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
         run: bash test/e2e/test-onboard-inference-smoke.sh
 
       - name: Upload onboard inference smoke logs on failure
@@ -237,6 +289,53 @@ jobs:
           path: |
             /tmp/nemoclaw-e2e-onboard-inference-smoke.log
             /tmp/nemoclaw-e2e-onboard-inference-smoke-node.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard profiling traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onboard-inference-smoke-traces
+          path: /tmp/nemoclaw-traces/
+          if-no-files-found: ignore
+
+  # ── Strict Chat Completions tool-call probe E2E ──────────────
+  # Coverage guard for #4537. Local Ollama onboarding requires structured
+  # Chat Completions tool calls; this hermetic mock asserts the bounded
+  # validation payload and retry behavior without GPU/Ollama infrastructure.
+  strict-tool-call-probe-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.strict_tool_call_probe == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run strict tool-call probe E2E test
+        env:
+          NEMOCLAW_TEST_NO_SLEEP: "1"
+        run: bash test/e2e/test-strict-tool-call-probe.sh
+
+      - name: Upload strict tool-call probe logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: strict-tool-call-probe-logs
+          path: |
+            /tmp/nemoclaw-e2e-strict-tool-call-probe.log
+            /tmp/nemoclaw-e2e-strict-tool-call-probe-node.log
           if-no-files-found: ignore
 
   # ── Gateway drift preflight E2E ─────────────────────────────
@@ -252,7 +351,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -278,7 +377,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run Model Router provider-routed inference E2E test
         env:
@@ -312,7 +411,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run OpenClaw plugin runtime-deps EXDEV E2E test
         env:

@@ -25,10 +25,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "child_process";
 
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
+import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
+import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
@@ -122,12 +124,6 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
-}
-
-type UnknownRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -469,8 +465,9 @@ function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const result = captureOpenshellCommand(openshellBinary, ["sandbox", "ssh-config", sandboxName], {
+  const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -1103,12 +1100,20 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // empty for non-symlinks but always present, so the field count is
         // stable. Tab separator assumes state-dir paths don't contain tabs,
         // matching the wider convention in this file.
+        // Per-dir `find` invocations are joined with `;` (not `&&`) and each
+        // is tolerant of its own exit code via `|| true`. The base image bakes
+        // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
+        // `agents/<id>`) and `find` walking those from the sandbox-user SSH
+        // session exits 1 on permission denied. The audit's real signal is
+        // stdout (the printf-emitted symlink/hardlink/special-file rows);
+        // letting one perm-denied subdir abort the whole chain blocks legitimate
+        // rebuilds.
         const auditCmd = existingDirs
           .map(
             (d) =>
-              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null`,
+              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null || true; }`,
           )
-          .join(" && ");
+          .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
           encoding: "utf-8",

@@ -120,17 +120,207 @@ describe("verifyDeployment", () => {
     expect(msgDiag?.detail).toContain("discord");
   });
 
+  it("warns when an expected channel is absent from the runtime config entirely (stale rebuild)", async () => {
+    // Registry says telegram is enabled, but a stale or bad rebuild
+    // produced an openclaw.json with no `channels.telegram` block. The
+    // probe extracts no channels from the file, so neither visibleChannels
+    // nor configuredButNotRunning mention telegram — yet the registry
+    // expects it. verifyDeployment must catch this by comparing the
+    // expected set against `visibleChannels` directly.
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: [],
+        configuredButNotRunning: [],
+        logProbeOk: true,
+        detail: "config + log corroborated (empty channels block)",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    expect(result.verification.messagingRuntimeChannelsMissing).toEqual(["telegram"]);
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.detail).toContain("configured but not in OpenClaw runtime: telegram");
+  });
+
+  it("warns when a configured channel is configured but the runtime never started it (#4156)", async () => {
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: ["telegram"],
+        configuredButNotRunning: ["telegram"],
+        logProbeOk: true,
+        detail: "config /sandbox/.openclaw/openclaw.json parsed and gateway log /tmp/gateway.log corroborated",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    expect(result.verification.messagingRuntimeChannelsMissing).toEqual(["telegram"]);
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.status).toBe("warn");
+    expect(msgDiag?.detail).toContain("configured but not in OpenClaw runtime: telegram");
+    expect(msgDiag?.hint).toContain("No channels found");
+    // Hint should mention both layers neutrally (config file + log) since
+    // the cause could be either a stale rebuild or a runtime failure
+    // (CodeRabbit catch on PR #4182). It must not point at only the log.
+    expect(msgDiag?.hint).toContain("openclaw.json");
+    expect(msgDiag?.hint).toContain("logs");
+    expect(msgDiag?.hint).not.toContain("no startup entries");
+  });
+
+  it("does not falsely warn when runtime probe corroborates every configured channel", async () => {
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: ["telegram"],
+        configuredChannels: ["telegram"],
+        configuredButNotRunning: [],
+        logProbeOk: true,
+        detail: "config + log corroborated",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(true);
+    expect(result.verification.messagingRuntimeChannelsMissing).toEqual([]);
+    expect(result.diagnostics.find((d) => d.link === "messaging")).toBeUndefined();
+  });
+
+  it("warns when the gateway log is unavailable so the runtime layer cannot corroborate", async () => {
+    // Provider attached, config has the channel, but the gateway log is
+    // unreadable (sandbox just rebuilt, log not yet created). The probe
+    // can only confirm config — we must surface that as a warn rather
+    // than claim runtime verification. The probe now returns
+    // `visibleChannels: []` when `logProbeOk` is false so callers cannot
+    // accidentally treat config-only as healthy, and verifyDeployment
+    // must NOT then flag every configured channel as missing.
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: ["telegram"],
+        configuredButNotRunning: [],
+        logProbeOk: false,
+        detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    // No false-positive "configured but not in OpenClaw runtime" — we
+    // simply do not have enough evidence to make that claim.
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    expect(result.verification.messagingConfigChannelsMissing).toEqual([]);
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.status).toBe("warn");
+    expect(msgDiag?.detail).toContain("runtime gateway log not yet available");
+    expect(msgDiag?.detail).not.toContain("configured but not in OpenClaw runtime");
+  });
+
+  it("flags a stale rebuild even when the gateway log is unavailable (config-only diff)", async () => {
+    // Registry expects telegram but openclaw.json never had the channel
+    // block — and the gateway log is unreadable, so the runtime layer
+    // cannot corroborate. Earlier revisions of this fix masked the
+    // mismatch behind the log warning; this test pins the new
+    // configMissing surface that exposes config-only mismatches even
+    // without log corroboration (CodeRabbit on PR #4182).
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: [],
+        configuredButNotRunning: [],
+        logProbeOk: false,
+        detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    expect(result.verification.messagingConfigChannelsMissing).toEqual(["telegram"]);
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.status).toBe("warn");
+    expect(msgDiag?.detail).toContain("missing from sandbox config: telegram");
+    expect(msgDiag?.hint).toContain("openclaw.json");
+    expect(msgDiag?.hint).toContain("rebuild");
+  });
+
+  it("surfaces an inconclusive runtime probe as a messaging warn (catches malformed openclaw.json #4156)", async () => {
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: false,
+        visibleChannels: [],
+        configuredChannels: [],
+        configuredButNotRunning: [],
+        logProbeOk: false,
+        detail: "runtime channel config /sandbox/.openclaw/openclaw.json is missing or empty",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    // The provider is attached but the runtime config could not be read —
+    // that is exactly the gap the probe was added to catch (#4156), so it
+    // must surface as a warn diagnostic, not silently pass.
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.status).toBe("warn");
+    expect(msgDiag?.detail).toContain("runtime channel probe inconclusive");
+    expect(msgDiag?.hint).toContain("openclaw.json");
+  });
+
+  it("skips runtime probe entirely when no channels are configured", async () => {
+    let probeCalls = 0;
+    const deps = makeDeps({
+      getMessagingChannels: () => [],
+      probeChannelRuntimeStatus: () => {
+        probeCalls += 1;
+        return {
+          ok: true,
+          visibleChannels: [],
+          configuredChannels: [],
+          configuredButNotRunning: [],
+          logProbeOk: true,
+          detail: "x",
+        };
+      },
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(probeCalls).toBe(0);
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+  });
+
+  it("leaves messagingRuntimeChannelsMissing null when no probe dep is wired (e.g. Hermes)", async () => {
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      // no probeChannelRuntimeStatus
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    expect(result.verification.messagingBridgesHealthy).toBe(true);
+  });
+
   it("detects gateway version from openclaw --version", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.18", stderr: "" };
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
         return { status: 0, stdout: "200", stderr: "" };
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.verification.gatewayVersion).toBe("2026.5.18");
+    expect(result.verification.gatewayVersion).toBe("2026.5.27");
   });
 
   it("reports null version when gateway is down (skips version probe)", async () => {
@@ -179,7 +369,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.18", stderr: "" };
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
         if (script.includes("inference.local")) {
           return { status: 0, stdout: "200", stderr: "" };
@@ -240,14 +430,14 @@ describe("formatVerificationDiagnostics", () => {
     const result = await verifyDeployment("my-sandbox", chain, makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.5.18", stderr: "" };
+          return { status: 0, stdout: "2026.5.27", stderr: "" };
         }
         return { status: 0, stdout: "200", stderr: "" };
       },
     }), NO_RETRY);
     const lines = formatVerificationDiagnostics(result);
     expect(lines.some((l) => l.includes("verified"))).toBe(true);
-    expect(lines.some((l) => l.includes("2026.5.18"))).toBe(true);
+    expect(lines.some((l) => l.includes("2026.5.27"))).toBe(true);
   });
 
   it("prints failure diagnostics with hints when unhealthy", async () => {
@@ -259,5 +449,36 @@ describe("formatVerificationDiagnostics", () => {
     const lines = formatVerificationDiagnostics(result);
     expect(lines.some((l) => l.includes("issues"))).toBe(true);
     expect(lines.some((l) => l.includes("gateway"))).toBe(true);
+  });
+
+  it("still surfaces messaging warnings alongside the healthy success line (#4156)", async () => {
+    // The overall result is healthy (gateway + dashboard pass) but the
+    // runtime never started telegram. Pre-fix the warning was silently
+    // dropped on the healthy path; the user only learned of the failure
+    // from the dashboard's "No channels found" panel later.
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        if (script.includes("openclaw --version")) {
+          return { status: 0, stdout: "2026.5.18", stderr: "" };
+        }
+        return { status: 0, stdout: "200", stderr: "" };
+      },
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: ["telegram"],
+        configuredButNotRunning: ["telegram"],
+        logProbeOk: true,
+        detail: "config + log corroborated",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.healthy).toBe(true);
+    const lines = formatVerificationDiagnostics(result);
+    expect(lines.some((l) => l.includes("verified"))).toBe(true);
+    expect(lines.some((l) => l.includes("messaging:"))).toBe(true);
+    expect(lines.some((l) => l.includes("configured but not in OpenClaw runtime: telegram"))).toBe(true);
   });
 });

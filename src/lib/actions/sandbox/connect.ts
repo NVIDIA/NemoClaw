@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -14,10 +16,15 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import * as agentRuntime from "../../agent/runtime";
-import { parseGatewayInference } from "../../inference/config";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import {
+  parseGatewayInference,
+  planInferenceRouteReconcile,
+  sanitizeRouteValueForDisplay,
+} from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import {
   ensureOllamaAuthProxy,
@@ -25,16 +32,25 @@ import {
 } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT } from "../../runner";
+import { ROOT, shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
+import {
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
@@ -207,6 +223,15 @@ function outputShowsGatewayUnavailable(output = ""): boolean {
   return GATEWAY_UNAVAILABLE_RE.test(output);
 }
 
+// Fail fast with Docker-outage guidance instead of polling to the readiness
+// timeout. Only fires for Docker-driver sandboxes whose `docker info` is
+// failing (#4428).
+function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
+  console.error("");
+  printDockerRuntimeDownGuidance(sandboxName, { writer: console.error, retryCommand: "connect" });
+  process.exit(1);
+}
+
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
   const lifecycle = getNamedGatewayLifecycleState();
   if (isBlockingGatewayLifecycle(lifecycle)) {
@@ -263,7 +288,15 @@ function probeSandboxInferenceRoute(
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
-  return sb?.openshellDriver !== "vm";
+  // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
+  // container, which only the k3s/kubernetes gateway runs. The docker driver
+  // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
+  // the vm driver has no cluster container either, so both recover the route via
+  // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
+  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
+  // snapshot DNS-proxy step. (#3403)
+  const driver = sb?.openshellDriver;
+  return driver !== "vm" && driver !== "docker";
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {
@@ -555,17 +588,36 @@ function ensureSandboxInferenceRoute(
           timeout: OPENSHELL_PROBE_TIMEOUT_MS,
         }).output,
       );
-      if (!live || live.provider !== sb.provider || live.model !== sb.model) {
-        if (!quiet) {
+      const plan = planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model });
+      if (plan.kind !== "aligned") {
+        if (plan.kind === "diverged") {
+          // Shared gateway: re-point loudly (even when quiet) — silent revert was
+          // #3726. Values sanitized: registry/gateway strings are untrusted.
+          const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
+          const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
+          const recordedRoute = `${sanitizeRouteValueForDisplay(sb.provider)}/${sanitizeRouteValueForDisplay(sb.model)}`;
+          console.error(
+            `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
+              `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
+          );
+          console.error(
+            `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
+              `${liveProvider}/${liveModel}, set it the supported way:${R}`,
+          );
+          console.error(
+            `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+          );
+        } else if (!quiet) {
+          // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
           console.log(
-            `  Switching inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
+            `  Setting inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
           );
         }
         const swapResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
           ignoreError: true,
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         });
-        if (swapResult.status !== 0 && !quiet) {
+        if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
           console.error(
             `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
           );
@@ -605,6 +657,148 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
+// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
+// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
+// approving allowlisted requests in slow-mode for hours after startup; this
+// pass covers the case where the watcher has exited or is otherwise stuck
+// when the user runs `nemoclaw <sandbox> connect`. The script sources
+// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
+// in-sandbox `openclaw devices list` invocation targets the running gateway
+// with its token. Approvals then use OpenClaw's local fallback by removing
+// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
+// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
+// modes. Unknown clients are ignored, not approved.
+//
+// Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
+// semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
+// scope-upgrade can request the upgraded scopes for its own connection and
+// return the pending-scope failure it is trying to resolve. Remove this local
+// fallback path when OpenClaw approve can complete scope upgrades through the
+// gateway using only operator.pairing.
+//
+// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
+// unreachable) are swallowed: the connect flow must not be blocked by a
+// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
+// attempts) fit within the outer spawnSync cap, so a partial-completion
+// mid-loop kill cannot strand allowlisted requests within a normal batch.
+const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
+const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
+  ROOT,
+  "scripts",
+  "lib",
+  "openclaw_device_approval_policy.py",
+);
+
+function readConnectAutoPairPolicyModule(): string | null {
+  try {
+    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
+  } catch {
+    // The approval pass is best-effort, so a packaging/layout regression must
+    // not block connect. Build-context and package `files` coverage keep this
+    // helper present in supported installs.
+    return null;
+  }
+}
+
+function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  const approvalPolicyModule = readConnectAutoPairPolicyModule();
+  if (!approvalPolicyModule) {
+    return;
+  }
+  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
+  const script = `
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+command -v openclaw >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
+import base64
+import json
+import os
+import subprocess
+import sys
+
+try:
+    policy_source = base64.b64decode(
+        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
+    ).decode('utf-8')
+    policy_globals = {}
+    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
+    approval_request_decision = policy_globals['approval_request_decision']
+    gateway_approval_env = policy_globals['gateway_approval_env']
+except Exception:
+    sys.exit(0)
+
+OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
+
+try:
+    proc = subprocess.run(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        capture_output=True, text=True, timeout=2,
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    sys.exit(0)
+if proc.returncode != 0 or not proc.stdout.strip():
+    sys.exit(0)
+try:
+    data = json.loads(proc.stdout)
+except ValueError:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+pending = data.get('pending')
+if not isinstance(pending, list):
+    sys.exit(0)
+approved_count = 0
+attempted_count = 0
+seen_request_ids = set()
+for device in pending:
+    if attempted_count >= MAX_APPROVALS:
+        break
+    if not isinstance(device, dict):
+        continue
+    request_id = device.get('requestId')
+    if not request_id or request_id in seen_request_ids:
+        continue
+    decision = approval_request_decision(device)
+    if not decision['allowed']:
+        continue
+    seen_request_ids.add(request_id)
+    approve_env = gateway_approval_env(os.environ)
+    attempted_count += 1
+    try:
+        approve_proc = subprocess.run(
+            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
+            capture_output=True, text=True, timeout=1, env=approve_env,
+        )
+        if approve_proc.returncode == 0:
+            approved_count += 1
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        continue
+PYAPPROVE
+exit 0
+`;
+  try {
+    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
+    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
+    // startup slack) so a wedged sandbox can never block the connect flow.
+    spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    /* defense-in-depth — never throw from the connect path */
+  }
+}
+
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   if (
     !sb ||
@@ -639,8 +833,30 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
+  // probe-only / recover never install or serve a model, so skip the
+  // express-vLLM model preflight for them (it only steers the install path
+  // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
+  if (!probeOnly) preflightVllmModelEnvOrExit();
   const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+
+  // Fast-fail on a Docker daemon outage before the probe-only health check and
+  // the session/recovery probes below (each can spawn 15s `openshell sandbox
+  // exec`/`ssh-config` calls) and before the readiness wait loop. When Docker
+  // is down and the sandbox is not yet ready, connect cannot make progress;
+  // surface the outage immediately so the user is not left waiting tens of
+  // seconds (or killed by an external `timeout`). Terminal phases keep their
+  // normal handling below (#4428).
+  const livePhase = parseSandboxPhase(live.output || "");
+  if (
+    livePhase &&
+    livePhase !== "Ready" &&
+    livePhase !== "Running" &&
+    !isTerminalSandboxPhase(livePhase) &&
+    isDockerRuntimeDown(sandboxName)
+  ) {
+    failConnectReadinessDockerRuntimeDown(sandboxName);
+  }
 
   if (probeOnly) {
     return runSandboxConnectProbe(sandboxName);
@@ -718,20 +934,20 @@ export async function connectSandbox(
     if (!listCommandFailed && status && /^unknown$/i.test(status)) {
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
-    const TERMINAL = new Set([
-      "Failed",
-      "Error",
-      "CrashLoopBackOff",
-      "ImagePullBackOff",
-      "Unknown",
-      "Evicted",
-    ]);
-    if (status && TERMINAL.has(status)) {
+    if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
       console.error("");
       console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
       process.exit(1);
+    }
+
+    // Probe-disagreement safety net: `sandbox get` may have reported Ready/no
+    // phase (so the early guard was skipped) while `sandbox list` shows a
+    // non-terminal status. Status is non-terminal here, so re-check Docker and
+    // fail fast rather than entering the readiness loop (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      failConnectReadinessDockerRuntimeDown(sandboxName);
     }
 
     console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
@@ -760,12 +976,17 @@ export async function connectSandbox(
         failIfGatewayBlocksConnectReadiness(sandboxName);
       }
       if (cur !== "unknown") everSeen = true;
-      if (TERMINAL.has(cur)) {
+      if (TERMINAL_SANDBOX_PHASES.has(cur)) {
         console.error("");
         console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
         process.exit(1);
+      }
+      // Catch a Docker daemon that dies mid-wait so we stop polling instead of
+      // running out the full readiness timeout (#4428).
+      if (isDockerRuntimeDown(sandboxName)) {
+        failConnectReadinessDockerRuntimeDown(sandboxName);
       }
       if (!everSeen && elapsed >= 30) {
         console.error("");
@@ -795,6 +1016,14 @@ export async function connectSandbox(
   // After the sandbox is Ready, verify and recover the route before SSH.
   sb = ensureSandboxInferenceRouteOrExit(sandboxName);
   maybeEnsureHermesToolGatewayBroker(sb);
+
+  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
+  // Defense in depth: even with the in-sandbox watcher running in
+  // slow-mode keepalive, a brief approval pass before opening SSH
+  // catches any pending allowlisted CLI/webchat scope upgrades that
+  // piled up between startup and now (e.g., watcher crashed, watcher
+  // deadline exhausted, multi-sandbox gateway contention).
+  runConnectAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,

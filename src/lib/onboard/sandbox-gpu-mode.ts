@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GpuDetection } from "../inference/nim";
+import type { SandboxGpuProofResult } from "../state/registry";
 
 export type SandboxGpuMode = "auto" | "1" | "0";
 export type SandboxGpuFlag = "enable" | "disable" | null;
@@ -9,15 +10,15 @@ export type SandboxGpuFlag = "enable" | "disable" | null;
 export type SandboxGpuConfig = {
   mode: SandboxGpuMode;
   hostGpuDetected: boolean;
+  hostGpuPlatform: GpuDetection["platform"] | null;
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice: string | null;
   errors: string[];
+  // Outcome of the live direct sandbox GPU proof, populated after onboarding
+  // runs the verifier so it can be persisted to the registry (#4231). Absent
+  // until the proof runs; never overwrites a stored proof on reuse paths.
+  sandboxGpuProof?: SandboxGpuProofResult | null;
 };
-
-export const JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE =
-  "Jetson/Tegra sandbox GPU passthrough is not supported by NemoClaw/OpenShell.";
-export const JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE =
-  "Destroying/recreating the sandbox or gateway will not enable it; re-run with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.";
 
 export type ResumeSandboxGpuOverrides = {
   flag: SandboxGpuFlag;
@@ -45,11 +46,6 @@ export function resolveSandboxGpuMode(args: {
   flag?: SandboxGpuFlag;
 }): SandboxGpuMode {
   let mode: SandboxGpuMode = args.envMode ?? "auto";
-  // GPU sandbox passthrough is not supported on Jetson/Tegra; keep auto/default
-  // behavior on the CPU sandbox path unless the user explicitly forces GPU.
-  if (args.gpu?.platform === "jetson" && (args.envMode === null || args.envMode === "auto")) {
-    mode = "0";
-  }
   if (args.flag === "enable") mode = "1";
   if (args.flag === "disable") mode = "0";
   return mode;
@@ -86,14 +82,11 @@ export function resolveSandboxGpuConfig(
   if (mode === "1" && !hostGpuDetected) {
     errors.push("Sandbox GPU was requested, but no NVIDIA GPU was detected on the host.");
   }
-  if (mode === "1" && gpu?.platform === "jetson") {
-    errors.push(JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE);
-    errors.push(JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE);
-  }
 
   return {
     mode,
     hostGpuDetected,
+    hostGpuPlatform: gpu?.platform ?? null,
     sandboxGpuEnabled: mode === "1" || (mode === "auto" && hostGpuDetected),
     sandboxGpuDevice,
     errors,

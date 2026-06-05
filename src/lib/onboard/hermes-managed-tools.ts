@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import * as hermesProviderAuth from "../hermes-provider-auth";
 import type { HermesAuthMethod } from "../hermes-provider-auth";
+import * as hermesProviderAuth from "../hermes-provider-auth";
 
 type PromptFn = (message: string) => Promise<string>;
 type RawInput = NodeJS.ReadStream & {
@@ -236,6 +236,17 @@ async function selectHermesToolGatewaysInteractive(
   });
 
   return [...selected];
+}
+
+export function normalizeHermesToolGatewaySelections(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const selected = new Set<string>();
+  for (const preset of value) {
+    if (typeof preset === "string" && HERMES_TOOL_GATEWAY_PRESET_NAMES.has(preset)) {
+      selected.add(preset);
+    }
+  }
+  return [...selected].sort();
 }
 
 export function stringSetsEqual(

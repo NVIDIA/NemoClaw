@@ -189,3 +189,44 @@ export function findAvailableDashboardPort(
       `Free a sandbox or use --control-ui-port <N> with a port outside this range.`,
   );
 }
+
+/**
+ * Preflight scan of the dashboard port range. If every port in
+ * [DASHBOARD_PORT_RANGE_START, DASHBOARD_PORT_RANGE_END] is bound on
+ * the host, print the same "All dashboard ports in range … are
+ * occupied" error that `findAvailableDashboardPort` would eventually
+ * raise during sandbox creation and exit non-zero. Calling this from
+ * `preflight()` surfaces the failure before any side effects (gateway
+ * start, inference setup), matching the contract reporters expect
+ * (#3953).
+ *
+ * Intentionally narrower than `findAvailableDashboardPort`: it does not
+ * consult OpenShell forward state, never reserves a port, and treats
+ * every bound port as a non-OpenShell listener. That is sound here —
+ * if every port is bound, the host either has no free port for a new
+ * sandbox OR every port already serves an existing sandbox dashboard;
+ * both cases require operator intervention via `--control-ui-port`.
+ *
+ * The `exitFn` and `isPortBoundCheck` parameters are dependency
+ * injection seams for unit tests; production callers use the defaults.
+ */
+export function preflightDashboardPortRangeAvailability(
+  isPortBoundCheck: (port: number) => boolean = isPortBoundOnHost,
+  exitFn: (code?: number) => never = process.exit as (code?: number) => never,
+): void {
+  const ports = Array.from(
+    { length: DASHBOARD_PORT_RANGE_END - DASHBOARD_PORT_RANGE_START + 1 },
+    (_, i) => DASHBOARD_PORT_RANGE_START + i,
+  );
+  const bound: number[] = [];
+  for (const p of ports) {
+    if (!isPortBoundCheck(p)) return;
+    bound.push(p);
+  }
+  const lines = bound.map((p) => `  ${p} → non-OpenShell host listener`).join("\n");
+  console.error(
+    `  All dashboard ports in range ${DASHBOARD_PORT_RANGE_START}-${DASHBOARD_PORT_RANGE_END} are occupied:\n${lines}\n` +
+      `  Free a sandbox or use --control-ui-port <N> with a port outside this range.`,
+  );
+  exitFn(1);
+}

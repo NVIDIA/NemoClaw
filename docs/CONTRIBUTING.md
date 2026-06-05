@@ -25,7 +25,7 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, make doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run the skill first, regenerate user skills, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
@@ -47,10 +47,10 @@ The current generated skills and their source pages are:
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
 | `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/brev-web-ui.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
 | `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx`, `docs/inference/tool-calling-reliability.mdx` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/runtime-controls.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
 | `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
 | `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
@@ -59,50 +59,8 @@ The current generated skills and their source pages are:
 ### Regenerating NemoClaw User Skills after Doc Changes
 
 Most contributor pull requests that change docs should include only the source pages under `docs/`.
-Local hooks run the docs-to-skills conversion in dry-run mode so contributors can verify that generated user skills still build, without adding generated `.agents/skills/nemoclaw-user-*` output to every docs PR.
-
-NemoClaw maintainers refresh the generated user skills once per release during release prep.
-
-For daily release prep, the NemoClaw maintainers use this sequence:
-
-1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
-2. Make doc version bumps by updating `versions1.json` and `project.json` in the `docs/` directory.
-3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
-4. Create the PR with both docs and generated user skills.
-
-To regenerate skills manually during release prep, run from the repo root:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
-```
-
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
-
-Preview what would change before writing files:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
-```
-
-Other useful flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
-| `--doc-platform <name>` | Source format: `fern-mdx` for migrated Fern pages or `myst-md` for legacy Markdown. |
-| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
-| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.mdx"`). |
-
-### How the Script Works
-
-The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) with the lowest `skill.priority` becomes the main body of the skill.
-Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
-
-Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
-Fern MDX components and MyST/Sphinx directives are converted to standard markdown.
-
-For full usage details and all flags, see the docstring at the top of `scripts/docs-to-skills.py`.
+Do not regenerate or commit generated `nemoclaw-user-*` skill output in contributor doc PRs.
+NemoClaw maintainers refresh generated user skills during release prep.
 
 ## Building Docs Locally
 
@@ -114,40 +72,68 @@ Use the npm scripts so every docs command uses that pinned version.
 
 To print the pinned Fern CLI version, run:
 
-```console
-$ npm run docs:deps
+```bash
+npm run docs:deps
 ```
 
 To validate the Fern configuration and migrated MDX pages, run:
 
-```console
-$ npm run docs
+```bash
+npm run docs
 ```
 
 To serve the docs locally and automatically rebuild on changes, run:
 
-```console
-$ npm run docs:live
+```bash
+npm run docs:live
 ```
 
 To publish a branch-based Fern preview whenever docs files change, run:
 
-```console
-$ npm run docs:preview:watch
+```bash
+npm run docs:preview:watch
 ```
 
 The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
 
 Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
 
+## Agent Variant Generation
+
+Some Fern pages appear in both the OpenClaw and Hermes guide variants.
+The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in both guide variants before Fern validates or publishes the site.
+The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
+Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
+OpenClaw-only or Hermes-only pages stay as source pages in navigation.
+
+When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
+Do not duplicate fenced code blocks or inline command examples only to switch between `nemoclaw` and `nemohermes`.
+Use literal command names on those single-variant pages rather than `$$nemoclaw`, because no generated page will rewrite the placeholder.
+
+Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
+Run `npm run docs` before opening a PR to verify the generated pages, rewritten relative links, and Fern navigation.
+If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
+
+## Route-Style Links
+
+Fern links between docs pages should use route-style paths, not filesystem paths.
+Route-style paths omit the `.mdx` extension and follow the page slugs declared in `docs/index.yml`.
+For example, a source page under `docs/get-started/` should link to the OpenClaw quickstart as `../quickstart`, not `quickstart.mdx`.
+The published route comes from the navigation hierarchy and page `slug`, not directly from the file path.
+
+This matters for generated agent variants because shared source pages may not appear directly in `docs/index.yml`.
+The navigation can point Fern at generated pages under `docs/_build/agent-variants/`, while the source MDX remains in its normal folder.
+The link checker maps those generated nav entries back to their source paths when validating route-style links.
+Do not convert route-style links to `.mdx` file links just to satisfy a local filesystem check.
+
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.
 Before opening a doc-only PR, run:
 
-```console
-$ npx prek run --all-files
-$ npm run docs
+```bash
+npx prek run --all-files
+npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -252,11 +238,23 @@ These patterns are common in LLM-generated text and erode trust with technical r
 - End every sentence with a period.
 - One sentence per line in the source file (makes diffs readable).
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
-- Use code blocks with the `console` language for CLI examples. Prefix commands with `$`:
+- Use language-specific code blocks for commands that readers should copy.
+  Put only the command text in copyable blocks:
 
-  ```console
-  $ nemoclaw onboard
+  ```bash
+  $$nemoclaw onboard
   ```
+
+- Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
+  The docs build resolves it to `nemoclaw` for OpenClaw pages and `nemohermes` for Hermes pages before Fern renders code blocks.
+  This preserves Fern's native fenced-code UI while keeping one source sample.
+- Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
+  Use `<AgentOnly>` blocks only when the surrounding content differs between the OpenClaw and Hermes variants.
+
+- Use `powershell` for Windows PowerShell commands.
+  Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
+  Reserve `console` blocks for terminal transcripts that include prompts, output, or interactive sessions.
+  Do not use prompt markers such as `$` in copyable command blocks.
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.

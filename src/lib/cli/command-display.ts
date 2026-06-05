@@ -13,6 +13,7 @@ export type CommandGroup =
   | "Credentials"
   | "Backup"
   | "Upgrade"
+  | "Resources"
   | "Cleanup";
 
 /**
