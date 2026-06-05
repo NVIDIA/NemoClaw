@@ -182,6 +182,10 @@ RUN printf '%s\n' \
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
 
+# Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
+# names do not persist in runtime snapshots or leak-scan inputs.
+ENV JITI_FS_CACHE=false
+
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install OpenClaw CLI + PyYAML.
