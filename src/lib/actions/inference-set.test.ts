@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
@@ -284,6 +285,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "openai/gpt-5.4-mini",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       temperature: 0.2,
     });
     expect(config.models).toEqual({
@@ -294,6 +296,23 @@ describe("patchHermesInferenceConfig", () => {
       },
     });
     expect(config.terminal).toEqual({ backend: "local" });
+  });
+
+  it("replaces stale Hermes API keys with the OpenShell proxy placeholder", () => {
+    for (const api_key of ["no-key-required", "sk-real-looking-key-that-must-not-survive"]) {
+      const config: ConfigObject = {
+        model: {
+          default: "old-model",
+          provider: "custom",
+          base_url: "https://old.example/v1",
+          api_key,
+        },
+      };
+
+      patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
+
+      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+    }
   });
 
   it("sets Hermes Anthropic Messages mode for Anthropic routes", () => {
@@ -317,6 +336,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "claude-sonnet-4-6",
       provider: "custom",
       base_url: "https://inference.local",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
     });
   });
@@ -337,6 +357,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
   });
 
@@ -360,6 +381,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
   });
 });
@@ -485,6 +507,7 @@ describe("runInferenceSet", () => {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       },
       terminal: { backend: "local" },
     });
@@ -687,6 +710,7 @@ describe("runInferenceSet", () => {
       default: "claude-sonnet-proxy",
       provider: "custom",
       base_url: "https://inference.local",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
     });
     expect(deps.getSession()).toMatchObject({
@@ -741,6 +765,7 @@ describe("runInferenceSet", () => {
       default: "anthropic.claude-sonnet-4-6-20260101-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
     expect(result).toMatchObject({
       providerKey: "inference",
