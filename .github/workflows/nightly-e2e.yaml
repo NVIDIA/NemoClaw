@@ -2431,10 +2431,12 @@ jobs:
             });
 
   # ── Nightly Scorecard ──────────────────────────────────────────────────
-  # Aggregates overnight results into a scorecard published to
-  # $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes pass/fail/cancel
-  # breakdowns, and compares trends against the prior day.
-  # Only runs on schedule (not workflow_dispatch — that uses report-to-pr).
+  # Aggregates results into a scorecard published to $GITHUB_STEP_SUMMARY
+  # and optionally to Slack. Computes pass/fail/cancel breakdowns and
+  # compares trends vs prior day. Runs on:
+  #   - schedule (cron)            → Slack post (DAILY route)
+  #   - workflow_dispatch full run → Slack post (FULLRUN route)
+  #   - workflow_dispatch selective→ silent unless post_to_slack=true (preview)
   scorecard:
     runs-on: ubuntu-latest
     needs:
@@ -2547,8 +2549,19 @@ jobs:
                 : 'Scheduled full nightly';
 
             // ── Canonical job set (API truth) ──
-            // Strip " / <suffix>" (reusable-workflow inner names) to match
-            // caller-side IDs. Fall back to needs context on API failure.
+            // Contract:
+            //   - Source: listJobsForWorkflowRun (paginated). `needs` is
+            //     insufficient because reusable-workflow inner jobs surface
+            //     in the API as "<caller> / <inner>" but in `needs` as the
+            //     plain caller ID, and wrapper-vs-inner conclusions can
+            //     diverge on re-runs.
+            //   - Authoritative fields: name (suffix-stripped), conclusion,
+            //     status, html_url, run_attempt, completed_at.
+            //   - Fallback on API throw: counts + names from `needs`, no
+            //     URLs, may mis-classify wrapper-vs-inner mismatches.
+            //     Degraded but still renders the scorecard.
+            //   - Removable when `needs` exposes inner reusable-workflow
+            //     conclusions + html_url natively (no GitHub feature yet).
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
 
             let canonicalJobs = null;
