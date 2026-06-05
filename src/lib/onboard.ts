@@ -3875,13 +3875,24 @@ async function selectAndValidateOllamaModel(
   defaults: { requestedModel: string | null; recoveredModel: string | null },
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
+  // Track local-probe failures so a host that legitimately cannot load the
+  // wizard's default model (e.g. NVIDIA L4 vs 30B class, cold-load timeout)
+  // does not dead-loop re-offering the same model. After the same tag fails
+  // twice — or three total probe failures across distinct tags — surface a
+  // diagnostic and return to provider selection so the caller can offer a
+  // different provider instead of cycling the same broken pick.
+  const probeFailureCounts = new Map<string, number>();
+  const excludedAfterRepeatFail = new Set<string>();
+  const MAX_PROBE_FAILS_SAME_MODEL = 2;
+  const MAX_PROBE_FAILS_TOTAL = 3;
+  let totalProbeFailures = 0;
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      model = await promptOllamaModel(gpu);
+      model = await promptOllamaModel(gpu, { excludeModels: excludedAfterRepeatFail });
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
@@ -3919,8 +3930,26 @@ async function selectAndValidateOllamaModel(
     }
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
+      const sameModelCount = (probeFailureCounts.get(selectedModel) ?? 0) + 1;
+      probeFailureCounts.set(selectedModel, sameModelCount);
+      totalProbeFailures += 1;
+      if (sameModelCount >= MAX_PROBE_FAILS_SAME_MODEL) {
+        excludedAfterRepeatFail.add(selectedModel);
+      }
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
       if (action === "back-to-selection") return { outcome: "back-to-selection" };
+      if (
+        sameModelCount >= MAX_PROBE_FAILS_SAME_MODEL ||
+        totalProbeFailures >= MAX_PROBE_FAILS_TOTAL
+      ) {
+        console.error(
+          `  Ollama model selection has hit ${totalProbeFailures} probe failure(s) ` +
+            `(model '${selectedModel}' alone failed ${sameModelCount} time(s)). ` +
+            "Returning to provider selection — pick a different provider, free GPU memory, " +
+            "or set NEMOCLAW_MODEL to a model known to fit this host before retrying Ollama.",
+        );
+        return { outcome: "back-to-selection" };
+      }
       continue;
     }
     const allowToolsIncompatible = probe.allowToolsIncompatible === true;

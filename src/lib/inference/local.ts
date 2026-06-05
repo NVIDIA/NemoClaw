@@ -172,6 +172,14 @@ export interface GpuInfo {
   // Absent => the selector falls back to `totalMemoryMB`, preserving the
   // previous behaviour.
   availableMemoryMB?: number;
+  /**
+   * `true` for integrated/iGPU class devices whose token-generation throughput
+   * is too low to clear agent-loop timeouts on 30B-class models, even when
+   * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
+   * platforms. Drives the `computeIntensive` exclusion in the bootstrap-model
+   * selector so compute-constrained hosts are not steered onto 30B+ tags.
+   */
+  computeConstrained?: boolean;
 }
 
 export interface ValidationResult {
@@ -965,10 +973,13 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
-  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
-  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
-  // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (sparkHost && probeResult.timedOut) {
+  // Cold-loading a large model from disk can routinely exceed the default 120 s
+  // probe window — on DGX Spark unified-memory hosts (#3251) and also on
+  // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
+  // during warm-up. Retry once with a 300 s budget whenever the initial probe
+  // genuinely timed out. Fast failures (connection refused, Ollama not running)
+  // keep `timedOut === false` and surface immediately.
+  if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
   }

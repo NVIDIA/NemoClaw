@@ -6,6 +6,7 @@ import nodePath from "node:path";
 
 import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 const { runCapture, runShell, shellQuote }: typeof import("../runner") = require("../runner");
@@ -191,11 +192,12 @@ export function ensureManagedOllamaLoopbackSystemdOverride(
   return ensureOllamaLoopbackSystemdOverride({ ...options, enableService: true });
 }
 
-function mergeOllamaLoopbackSystemdOverride(
+export function mergeOllamaLoopbackSystemdOverride(
   existingDropIn: string,
   options: { libraryOverride?: string | null } = {},
 ): string {
   const desiredLine = `Environment="OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT}"`;
+  const desiredContextLine = `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`;
   const desiredLibraryLine = options.libraryOverride
     ? `Environment="OLLAMA_LLM_LIBRARY=${options.libraryOverride}"`
     : null;
@@ -207,6 +209,7 @@ function mergeOllamaLoopbackSystemdOverride(
       ...(lines.length > 0 ? [""] : []),
       "[Service]",
       desiredLine,
+      desiredContextLine,
       ...(desiredLibraryLine ? [desiredLibraryLine] : []),
     ].join("\n") + "\n";
   }
@@ -219,30 +222,40 @@ function mergeOllamaLoopbackSystemdOverride(
     }
   }
 
-  // Strip any existing non-comment OLLAMA_HOST assignments inside [Service]
-  // before re-appending the loopback override. systemd's "last wins" semantics
-  // for repeated Environment= would usually pick the appended line, but legacy
-  // 0.0.0.0 drop-ins from older NemoClaw versions occasionally outlived the
-  // restart — removing the stale line makes the policy unambiguous. (#3342)
+  // Strip any existing non-comment OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH
+  // assignments inside [Service] before re-appending. systemd's "last wins"
+  // semantics for repeated Environment= would usually pick the appended line,
+  // but legacy 0.0.0.0 drop-ins from older NemoClaw versions occasionally
+  // outlived the restart — removing the stale line makes the policy
+  // unambiguous. The OLLAMA_CONTEXT_LENGTH strip preserves user-supplied
+  // higher values only when they exceed the NemoClaw floor (parsed below).
   const ollamaHostLine = (line: string): boolean =>
     !/^\s*[#;]/.test(line) && /\bOLLAMA_HOST=/.test(line);
   const ollamaLibraryLine = (line: string): boolean =>
     Boolean(desiredLibraryLine) && !/^\s*[#;]/.test(line) && /\bOLLAMA_LLM_LIBRARY=/.test(line);
+  const ollamaContextLine = (line: string): boolean =>
+    !/^\s*[#;]/.test(line) && /\bOLLAMA_CONTEXT_LENGTH=/.test(line);
+  const parseContextValue = (line: string): number | null => {
+    const m = line.match(/\bOLLAMA_CONTEXT_LENGTH=("?)(\d+)\1/);
+    return m ? parseInt(m[2], 10) : null;
+  };
   const serviceBody = lines.slice(serviceStart + 1, serviceEnd);
+  const existingHigherContext = serviceBody
+    .filter((line) => ollamaContextLine(line))
+    .map(parseContextValue)
+    .filter((v): v is number => v !== null && v > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW)
+    .sort((a, b) => b - a)[0];
+  const contextLine = existingHigherContext
+    ? `Environment="OLLAMA_CONTEXT_LENGTH=${existingHigherContext}"`
+    : desiredContextLine;
   const filteredBody = serviceBody.filter(
-    (line) => !ollamaHostLine(line) && !ollamaLibraryLine(line),
+    (line) => !ollamaHostLine(line) && !ollamaLibraryLine(line) && !ollamaContextLine(line),
   );
-  if (
-    !desiredLibraryLine &&
-    filteredBody.length === serviceBody.length &&
-    serviceBody.some((line) => line.trim() === desiredLine)
-  ) {
-    return lines.join("\n") + "\n";
-  }
   const rebuilt = [
     ...lines.slice(0, serviceStart + 1),
     ...filteredBody,
     desiredLine,
+    contextLine,
     ...(desiredLibraryLine ? [desiredLibraryLine] : []),
     ...lines.slice(serviceEnd),
   ];

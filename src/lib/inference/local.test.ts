@@ -960,7 +960,8 @@ describe("local inference helpers", () => {
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
-  it("does not retry on non-Spark hosts when first probe returns empty", () => {
+  it("does not retry on any host when probe fails fast (connection refused, not a timeout)", () => {
+    // exit code 7 = curl connection refused → surfaces immediately, no 300 s retry.
     let callCount = 0;
     const captureEx = () => { callCount++; return { stdout: "", exitCode: 7, timedOut: false }; };
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
@@ -976,6 +977,25 @@ describe("local inference helpers", () => {
     expect(result.ok).toBe(false);
     expect(callCount).toBe(1);
     expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("retries with extended timeout on non-Spark hosts when first probe times out", () => {
+    // Cold-loading a 30B-class model on a tight-VRAM dGPU (e.g. NVIDIA L4) can
+    // exceed the default 120 s probe window even though the model itself is
+    // healthy. The retry was previously gated on `sparkHost`, leaving Brev L4
+    // and similar hosts in a probe-timeout dead-loop.
+    const commands: string[] = [];
+    let captureExCallCount = 0;
+    const captureEx = (cmd: string[]) => {
+      captureExCallCount++;
+      commands.push(cmd.join(" "));
+      if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
+      return { stdout: JSON.stringify({ response: "Hi" }), exitCode: 0, timedOut: false };
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
+    expect(result.ok).toBe(true);
+    expect(captureExCallCount).toBe(2);
+    expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
   it("fails when both probe attempts return empty (model truly unhealthy or too slow)", () => {
