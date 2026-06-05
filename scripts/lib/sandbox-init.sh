@@ -463,6 +463,13 @@ init_step_down_prefixes() {
     # and break mutateConfigFile / control-UI config edits with EACCES.
     # --init-groups matches gosu's setgroups+initgroups behavior and
     # restores exactly the groups defined in /etc/group for the target user.
+    #
+    # NOTE (#4538): to verify the group-write contract as the gateway UID, use
+    # the image's installed step-down mechanism — `setpriv --reuid=gateway
+    # --regid=gateway --init-groups` (or `gosu gateway`). Do NOT probe with
+    # `su -s /bin/sh gateway ...`: su does not run init_groups the same way and
+    # will not reflect the gateway's sandbox-group membership, so a group-write
+    # probe can spuriously EACCES even though the mutable contract is intact.
     local drop="-setuid,-setgid,-fowner,-chown,-kill"
     # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
     STEP_DOWN_PREFIX_SANDBOX=(

@@ -68,6 +68,14 @@
 #   openclaw-anthropic-inference-switch-e2e
 #                            Switches a running OpenClaw sandbox to a compatible
 #                            Anthropic Messages provider and verifies agent traffic.
+#   openclaw-skill-cli-e2e   Validates workspace-installed OpenClaw skills survive sandbox
+#                            lifecycle through OPENCLAW_HOME/STATE_DIR/WORKSPACE_DIR pinning
+#                            (#4766 / #4709). Seven-phase deterministic skill-CLI exercise
+#                            inside a real onboarded sandbox (install, list, info, check).
+#   channels-add-remove-e2e  Telegram/Discord/Slack channel add/remove lifecycle plus
+#                            gateway-credential reuse on rebuild (#4745 / #3895). Exercises
+#                            the path where the host env credential is empty but the
+#                            gateway already holds the provider credential.
 #   issue-4434-tui-unreachable-inference-e2e
 #                            Recreates #4434's NVIDIA endpoint firewall block and verifies
 #                            OpenClaw TUI shows a visible error and stops the active spinner.
@@ -77,6 +85,10 @@
 #   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
+#   concurrent-gateway-ports-e2e
+#                            Two sandboxes coexisting on the same host with distinct
+#                            NEMOCLAW_GATEWAY_PORT values; verifies per-instance
+#                            gateway and dashboard segregation.
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
 #
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
@@ -126,7 +138,8 @@ on:
           rebuild-hermes-stale-base-e2e, double-onboard-e2e, onboard-repair-e2e,
           onboard-resume-e2e, onboard-negative-paths-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e, overlayfs-autofix-e2e,
-          device-auth-health-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
+          device-auth-health-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
+          concurrent-gateway-ports-e2e
         required: false
         type: string
         default: ""
@@ -2063,6 +2076,58 @@ jobs:
           path: /tmp/nemoclaw-gpu-double-onboard-test.log
           if-no-files-found: ignore
 
+  concurrent-gateway-ports-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',concurrent-gateway-ports-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_E2E_PHASE_TIMEOUT: "1200"
+    steps:
+      - *target-ref-checkout
+      - *dockerhub-auth-step
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run concurrent gateway ports E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-concurrent-gateway-ports.sh
+      - name: Upload sandbox A onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-a-onboard-log
+          path: /tmp/e2e-cgp-a-onboard.log
+          if-no-files-found: ignore
+      - name: Upload sandbox B onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-b-onboard-log
+          path: /tmp/e2e-cgp-b-onboard.log
+          if-no-files-found: ignore
+      - name: Upload sandbox B destroy log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-b-destroy-log
+          path: /tmp/e2e-cgp-b-destroy.log
+          if-no-files-found: ignore
+
   notify-on-failure:
     runs-on: ubuntu-latest
     needs:
@@ -2131,6 +2196,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     permissions:
@@ -2245,6 +2311,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
@@ -2416,6 +2483,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:

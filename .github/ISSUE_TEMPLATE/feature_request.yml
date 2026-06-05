@@ -1,6 +1,7 @@
 name: Feature Request
 description: Propose a feature with a design. Not a "please build this" request.
-labels: ["enhancement", "status: triage"]
+type: Enhancement
+labels: ["needs: triage"]
 body:
   - type: textarea
     id: problem
@@ -33,10 +34,10 @@ body:
     attributes:
       label: Category
       options:
-        - "enhancement: feature"
-        - "enhancement: provider"
-        - "enhancement: platform"
-        - "enhancement: testing"
+        - "Feature"
+        - "Provider"
+        - "Platform"
+        - "Testing"
     validations:
       required: true
 
