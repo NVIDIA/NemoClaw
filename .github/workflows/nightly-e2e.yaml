@@ -2431,10 +2431,12 @@ jobs:
             });
 
   # ── Nightly Scorecard ──────────────────────────────────────────────────
-  # Aggregates overnight results into a scorecard published to
-  # $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes pass/fail/cancel
-  # breakdowns, and compares trends against the prior day.
-  # Only runs on schedule (not workflow_dispatch — that uses report-to-pr).
+  # Aggregates results into a scorecard published to $GITHUB_STEP_SUMMARY
+  # and optionally to Slack. Computes pass/fail/cancel breakdowns and
+  # compares trends vs prior day. Runs on:
+  #   - schedule (cron)            → Slack post (DAILY route)
+  #   - workflow_dispatch full run → Slack post (FULLRUN route)
+  #   - workflow_dispatch selective→ silent unless post_to_slack=true (preview)
   scorecard:
     runs-on: ubuntu-latest
     needs:
@@ -2535,7 +2537,7 @@ jobs:
             const needs = ${{ toJSON(needs) }};
             const today = formatDate(new Date());
             const isDispatch = context.eventName === 'workflow_dispatch';
-            const requestedJobsRaw = isDispatch ? '${{ inputs.jobs }}'.trim() : '';
+            const requestedJobsRaw = isDispatch ? (${{ toJSON(inputs.jobs) }} || '').trim() : '';
             const requestedJobs = requestedJobsRaw
               ? requestedJobsRaw.split(',').map((name) => name.trim()).filter(Boolean)
               : [];
@@ -2546,48 +2548,92 @@ jobs:
                 ? 'Manual full run'
                 : 'Scheduled full nightly';
 
+            // ── Canonical job set (API truth) ──
+            // Contract:
+            //   - Source: listJobsForWorkflowRun (paginated). `needs` is
+            //     insufficient because reusable-workflow inner jobs surface
+            //     in the API as "<caller> / <inner>" but in `needs` as the
+            //     plain caller ID, and wrapper-vs-inner conclusions can
+            //     diverge on re-runs.
+            //   - Authoritative fields: name (suffix-stripped), conclusion,
+            //     status, html_url, run_attempt, completed_at.
+            //   - Fallback on API throw: counts + names from `needs`, no
+            //     URLs, may mis-classify wrapper-vs-inner mismatches.
+            //     Degraded but still renders the scorecard.
+            //   - Removable when `needs` exposes inner reusable-workflow
+            //     conclusions + html_url natively (no GitHub feature yet).
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
+
+            let canonicalJobs = null;
+            try {
+              const apiJobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                },
+              );
+              const dedupedByName = new Map();
+              for (const j of apiJobs) {
+                const name = j.name.replace(/ \/ [^/]+$/, '');
+                if (EXCLUDED_JOBS.has(name)) continue;
+                // Deterministic: prefer higher run_attempt, then later
+                // completed_at as tiebreaker. Independent of API page order.
+                const existing = dedupedByName.get(name);
+                const isNewer = !existing
+                  || (j.run_attempt ?? 0) > (existing.run_attempt ?? 0)
+                  || ((j.run_attempt ?? 0) === (existing.run_attempt ?? 0)
+                      && (j.completed_at ?? '') > (existing.completed_at ?? ''));
+                if (isNewer) dedupedByName.set(name, { ...j, name });
+              }
+              canonicalJobs = [...dedupedByName.values()];
+            } catch (e) {
+              const safeMsg = String(e.message ?? 'unknown').slice(0, 200);
+              core.warning(`Could not fetch jobs from API (status ${e.status ?? 'unknown'}); falling back to needs context. Reason: ${safeMsg}`);
+            }
+
+            // ── Counts ──
             let success = 0;
             let failure = 0;
             let cancelled = 0;
             let skipped = 0;
 
-            for (const [, { result }] of entries) {
-              if (result === 'success') success++;
-              else if (result === 'failure') failure++;
-              else if (result === 'cancelled') cancelled++;
-              else if (result === 'skipped') skipped++;
-            }
-
-            const total = entries.length;
-            const ran = total - skipped;
-            const perfect = failure === 0 && cancelled === 0 && ran > 0;
-
-            // ── Identify failed jobs (with html_url for clickable links) ──
-            const failedNames = entries
-              .filter(([, { result }]) => result === 'failure')
-              .map(([name]) => name)
-              .sort();
-
-            let urlByName = new Map();
-            if (failedNames.length > 0) {
-              try {
-                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: context.runId,
-                  per_page: 100,
-                });
-                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
-              } catch (e) {
-                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+            if (canonicalJobs) {
+              for (const j of canonicalJobs) {
+                if (j.conclusion === 'success') success++;
+                else if (j.conclusion === 'failure') failure++;
+                else if (j.conclusion === 'cancelled') cancelled++;
+                else if (j.conclusion === 'skipped' || j.status !== 'completed') skipped++;
+                // Catch-all for any other terminal conclusion (timed_out,
+                // action_required, neutral, stale, future values) → count as
+                // failure so `perfect` stays false on anomalies.
+                else failure++;
+              }
+            } else {
+              for (const [, { result }] of entries) {
+                if (result === 'success') success++;
+                else if (result === 'failure') failure++;
+                else if (result === 'cancelled') cancelled++;
+                else if (result === 'skipped') skipped++;
               }
             }
 
-            const failedJobs = failedNames.map((name) => ({
-              name,
-              url: urlByName.get(name) || null,
-            }));
+            const total = canonicalJobs ? canonicalJobs.length : entries.length;
+            const ran = total - skipped;
+            const perfect = failure === 0 && cancelled === 0 && ran > 0;
+
+            // ── Failed jobs ──
+            const failedJobs = canonicalJobs
+              ? canonicalJobs
+                  .filter((j) => j.conclusion === 'failure')
+                  .map((j) => ({ name: j.name, url: j.html_url }))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+              : entries
+                  .filter(([, { result }]) => result === 'failure')
+                  .map(([name]) => ({ name, url: null }))
+                  .sort((a, b) => a.name.localeCompare(b.name));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
@@ -2688,9 +2734,11 @@ jobs:
 
             // Structured data for the Slack step.
             // Contract: scripts/scorecard/build-slack-blocks.ts
+            const actor = context.actor || '';
             core.setOutput('scorecardData', JSON.stringify({
               today,
               runMode,
+              actor,
               isSelectiveDispatch,
               requestedJobs,
               total,
@@ -2707,8 +2755,8 @@ jobs:
 
       # ── Slack notification ────────────────────────────
       # Production routes (always post; runMode is computed by the generate step):
-      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
-      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #   "Scheduled full nightly" → SLACK_WEBHOOK_URL_DAILY
+      #   "Manual full run"        → SLACK_WEBHOOK_URL_FULLRUN
       #
       # Selective dispatch is skipped by default. Devs may opt into the
       # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
@@ -2716,8 +2764,8 @@ jobs:
         if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
-          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_DAILY: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+          SLACK_WEBHOOK_URL_FULLRUN: ${{ secrets.SLACK_WEBHOOK_URL_FULLRUN }}
           SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
           POST_TO_SLACK: ${{ inputs.post_to_slack }}
@@ -2744,8 +2792,8 @@ jobs:
             }
 
             const envByChannel = {
-              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
-              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'daily': 'SLACK_WEBHOOK_URL_DAILY',
+              'fullrun': 'SLACK_WEBHOOK_URL_FULLRUN',
               'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const webhookUrl = process.env[envByChannel[channel]];
@@ -2773,7 +2821,8 @@ jobs:
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
+              const errBody = (await resp.text()).slice(0, 100).replace(/\s+/g, ' ');
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}. Reason (truncated): ${errBody}`);
             } else {
               core.info(`Scorecard posted to Slack (${channel})`);
             }

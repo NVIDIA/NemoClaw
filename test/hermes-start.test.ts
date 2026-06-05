@@ -526,6 +526,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
@@ -582,7 +584,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects raw secret-shaped values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
       envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
     });
@@ -594,7 +596,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects bare API-named raw values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesEnvSecretBoundary({
       envFile: `INTERNAL_API=${rawToken}\n`,
     });
@@ -643,7 +645,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects raw secret-shaped process env values without printing the value", () => {
-    const rawToken = "01234567-89ab-cdef-0123-456789abcdef";
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesRuntimeEnvSecretBoundary({
       DEVTEST_API_TOKEN: rawToken,
       NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "raw-refresh-token",
