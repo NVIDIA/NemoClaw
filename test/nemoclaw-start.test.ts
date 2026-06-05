@@ -30,14 +30,6 @@ function runtimeShellEnvBlock(src: string): string {
   return src.slice(start, end);
 }
 
-function runtimeShellEnvShimBlock(src: string): string {
-  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
-  const end = src.indexOf("# ── Legacy layout migration", start);
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return src.slice(start, end);
-}
-
 function nonRootFallbackBlock(src: string): string {
   const start = src.indexOf("# ── Non-root fallback");
   const end = src.indexOf("# ── Root path", start);
@@ -4915,80 +4907,3 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
   });
 });
 
-describe("ensure_runtime_shell_env_shim rc cleanup ownership guard", () => {
-  function extractRcCleanupPython(src: string): string {
-    const heredocStart = src.indexOf("<<'PY'");
-    expect(heredocStart).toBeGreaterThan(-1);
-    const bodyStart = src.indexOf("\n", heredocStart) + 1;
-    const bodyEnd = src.indexOf("\nPY\n", bodyStart);
-    expect(bodyEnd).toBeGreaterThan(bodyStart);
-    return src.slice(bodyStart, bodyEnd);
-  }
-
-  it("skips rewrite and exits 0 when the rc file is not owned by the current uid", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const py = extractRcCleanupPython(src);
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rc-cleanup-"));
-    try {
-      const rcPath = path.join(tmpDir, ".bashrc");
-      const shim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
-      const original = `# user content\nexport FOO=bar\n${shim}\n`;
-      fs.writeFileSync(rcPath, original);
-
-      const pyPath = path.join(tmpDir, "cleanup.py");
-      fs.writeFileSync(pyPath, py);
-
-      // Lie about the running uid so the script sees uid != file owner.
-      // The on-disk file is owned by the test runner; passing an arbitrary
-      // non-zero uid that differs from the file's uid drives the new
-      // ownership-guard branch.
-      const fakeUid = (process.getuid?.() ?? 1000) + 7777;
-      const result = spawnSync(
-        "python3",
-        [pyPath, rcPath, shim, String(fakeUid)],
-        { encoding: "utf-8" },
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain("skipping rc cleanup");
-      expect(result.stderr).toContain("not owned by uid=");
-      expect(fs.readFileSync(rcPath, "utf-8")).toBe(original);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("still rewrites the rc file when the current uid owns it", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const py = extractRcCleanupPython(src);
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rc-cleanup-"));
-    try {
-      const rcPath = path.join(tmpDir, ".bashrc");
-      const shim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
-      const original = `# user content\nexport FOO=bar\n${shim}\n`;
-      fs.writeFileSync(rcPath, original);
-
-      const pyPath = path.join(tmpDir, "cleanup.py");
-      fs.writeFileSync(pyPath, py);
-
-      const realUid = process.getuid?.() ?? 0;
-      const result = spawnSync(
-        "python3",
-        [pyPath, rcPath, shim, String(realUid)],
-        { encoding: "utf-8" },
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).not.toContain("could not safely clean runtime env shim");
-      expect(result.stderr).not.toContain("skipping rc cleanup");
-      const cleaned = fs.readFileSync(rcPath, "utf-8");
-      expect(cleaned).not.toContain(shim);
-      expect(cleaned).toContain("# user content");
-      expect(cleaned).toContain("export FOO=bar");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
