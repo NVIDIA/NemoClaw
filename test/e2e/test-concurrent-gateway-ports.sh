@@ -167,10 +167,18 @@ PY
 dashboard_port_from_list() {
   local sandbox="$1"
   "${NEMOCLAW_CMD[@]}" list 2>/dev/null \
-    | grep -E "^[[:space:]]*${sandbox}[[:space:]]" \
-    | grep -oE 'http://127\.0\.0\.1:[0-9]+' \
-    | head -1 \
-    | grep -oE '[0-9]+$' || true
+    | awk -v want="${sandbox}" '
+        /^[[:space:]]+[A-Za-z0-9_-]+( \*)?[[:space:]]*$/ {
+          name=$1
+          inblock=(name == want) ? 1 : 0
+          next
+        }
+        inblock && /dashboard:[[:space:]]*http:\/\/[0-9.]+:[0-9]+/ {
+          match($0, /:[0-9]+/)
+          print substr($0, RSTART+1, RLENGTH-1)
+          exit
+        }
+      '
 }
 
 dump_diagnostics() {
@@ -244,16 +252,23 @@ destroy_default_install_sandbox() {
   fi
 }
 
+sandbox_phase() {
+  local name="$1"
+  openshell sandbox list 2>/dev/null \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | awk -v want="${name}" '$1 == want { print $NF; exit }'
+}
+
 verify_sandbox_alive() {
   local name="$1"
   local label="${2:-${name} alive}"
-  local status
-  status="$("${NEMOCLAW_CMD[@]}" "${name}" status 2>&1 || true)"
-  if echo "${status}" | grep -qE 'Phase:[[:space:]]+(Ready|Running)'; then
-    pass "${label}"
+  local phase
+  phase="$(sandbox_phase "${name}")"
+  if [ "${phase}" = "Ready" ] || [ "${phase}" = "Running" ]; then
+    pass "${label} (phase=${phase})"
     return 0
   fi
-  fail "${label} (status: ${status})"
+  fail "${label} (phase='${phase:-missing}')"
   return 1
 }
 
