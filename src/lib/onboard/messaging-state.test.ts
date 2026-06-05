@@ -6,8 +6,6 @@ import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../agent/defs";
 import {
   filterEnabledChannelsByAgent,
-  getAvailableMessagingChannelsForAgent,
-  resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
 } from "./messaging-state";
 
@@ -42,20 +40,6 @@ describe("filterEnabledChannelsByAgent", () => {
   });
 });
 
-describe("getAvailableMessagingChannelsForAgent", () => {
-  const channels = [{ name: "telegram" }, { name: "whatsapp" }];
-
-  it("filters channels not in the agent's messagingPlatforms", () => {
-    expect(getAvailableMessagingChannelsForAgent(channels, agent(["telegram"]))).toEqual([
-      { name: "telegram" },
-    ]);
-  });
-
-  it("returns all channels when the agent has no platform list", () => {
-    expect(getAvailableMessagingChannelsForAgent(channels, agent([]))).toEqual(channels);
-  });
-});
-
 const messagingChannels = [
   { name: "telegram", envKey: "TELEGRAM_BOT_TOKEN", description: "", help: "", label: "" },
   {
@@ -75,41 +59,7 @@ const messagingChannels = [
   },
 ];
 
-describe("resolveMessagingChannelSeed", () => {
-  it("always seeds channels with host-side tokens", () => {
-    expect(
-      resolveMessagingChannelSeed(
-        messagingChannels,
-        null,
-        (channel) => channel.name === "telegram",
-      ),
-    ).toEqual(["telegram"]);
-  });
-
-  it("carries forward only in-sandbox QR channels by default", () => {
-    expect(
-      resolveMessagingChannelSeed(
-        messagingChannels,
-        ["telegram", "wechat", "whatsapp"],
-        () => false,
-      ),
-    ).toEqual(["whatsapp"]);
-  });
-
-  it("can carry forward all existing channels for interactive preselection", () => {
-    expect(
-      resolveMessagingChannelSeed(
-        messagingChannels,
-        ["telegram", "wechat", "whatsapp"],
-        () => false,
-        { includeAllExisting: true },
-      ),
-    ).toEqual(["telegram", "wechat", "whatsapp"]);
-  });
-});
-
 describe("resolveQrSelectedChannels", () => {
-
   it("returns only in-sandbox QR-paired channels from the enabled list", () => {
     expect(
       resolveQrSelectedChannels(messagingChannels, ["telegram", "wechat", "whatsapp"], new Set()),

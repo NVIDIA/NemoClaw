@@ -3,7 +3,7 @@
 
 import { createRequire } from "module";
 import type { Mock } from "vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
 import * as nim from "../../../dist/lib/inference/nim";
@@ -106,6 +106,271 @@ describe("nim", () => {
     });
   });
 
+  // NIM-style OCI index: per-arch linux images + buildkit attestation manifests
+  // (unknown/unknown) that trip the NGC pull. See #3885.
+  const NIM_INDEX_JSON = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 10203,
+        digest: "sha256:amd64image",
+        platform: { architecture: "amd64", os: "linux" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 566,
+        digest: "sha256:amd64attestation",
+        platform: { architecture: "unknown", os: "unknown" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 10201,
+        digest: "sha256:arm64image",
+        platform: { architecture: "arm64", os: "linux" },
+      },
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        size: 566,
+        digest: "sha256:arm64attestation",
+        platform: { architecture: "unknown", os: "unknown" },
+      },
+    ],
+  });
+  describe("nodeArchToOci", () => {
+    it("maps x64 to amd64 and passes other arches through", () => {
+      expect(nim.nodeArchToOci("x64")).toBe("amd64");
+      expect(nim.nodeArchToOci("arm64")).toBe("arm64");
+      expect(nim.nodeArchToOci("ppc64le")).toBe("ppc64le");
+    });
+  });
+
+  describe("imageRepository", () => {
+    it("drops :tag and @digest, preserving the registry path", () => {
+      expect(nim.imageRepository("nvcr.io/nim/nvidia/nemotron-3-nano:latest")).toBe(
+        "nvcr.io/nim/nvidia/nemotron-3-nano",
+      );
+      expect(nim.imageRepository("nvcr.io/nim/nvidia/nemotron-3-nano@sha256:abc")).toBe(
+        "nvcr.io/nim/nvidia/nemotron-3-nano",
+      );
+      expect(nim.imageRepository("repo/image")).toBe("repo/image");
+    });
+
+    it("treats a colon only in the final path segment as a tag (registry port)", () => {
+      expect(nim.imageRepository("localhost:5000/team/image:1.0")).toBe(
+        "localhost:5000/team/image",
+      );
+    });
+  });
+
+  describe("selectPlatformManifestDigest", () => {
+    it("returns the linux digest for the requested arch, excluding attestation manifests", () => {
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "arm64")).toBe("sha256:arm64image");
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "amd64")).toBe("sha256:amd64image");
+    });
+
+    it("returns null when no entry matches the arch", () => {
+      expect(nim.selectPlatformManifestDigest(NIM_INDEX_JSON, "ppc64le")).toBeNull();
+    });
+
+    it("returns null for a single-image manifest (no manifests array)", () => {
+      const single = JSON.stringify({
+        schemaVersion: 2,
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        config: {},
+        layers: [],
+      });
+      expect(nim.selectPlatformManifestDigest(single, "amd64")).toBeNull();
+    });
+
+    it("returns null for malformed or empty JSON", () => {
+      expect(nim.selectPlatformManifestDigest("not json", "amd64")).toBeNull();
+      expect(nim.selectPlatformManifestDigest("", "amd64")).toBeNull();
+    });
+  });
+
+  describe("pullNimImage", () => {
+    function findCall(run: Mock, verb: string): string[] | undefined {
+      const found = run.mock.calls.find((c) => {
+        const argv = c[0] as string[];
+        return Array.isArray(argv) && argv[0] === "docker" && argv[1] === verb;
+      });
+      return found ? (found[0] as string[]) : undefined;
+    }
+
+    it("resolves the host-arch manifest digest, pulls by digest, then tags back (#3885)", () => {
+      const origArch = Object.getOwnPropertyDescriptor(process, "arch");
+      const run = vi.fn();
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (Array.isArray(cmd) && cmd.includes("manifest") && cmd.includes("inspect")) {
+          return NIM_INDEX_JSON;
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        Object.defineProperty(process, "arch", { value: "x64", configurable: true });
+        const image = nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(image).toBe("nvcr.io/nim/nvidia/nemotron-3-nano:latest");
+
+        const expectedRef = "nvcr.io/nim/nvidia/nemotron-3-nano@sha256:amd64image";
+
+        // Pull the per-arch digest, never the bare :latest index (the index pull
+        // is what triggers the attestation-manifest fetch).
+        expect(findCall(run, "pull")).toEqual(["docker", "pull", expectedRef]);
+        expect(
+          run.mock.calls.some(
+            (c) =>
+              Array.isArray(c[0]) &&
+              (c[0] as string[])[2] === "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+          ),
+        ).toBe(false);
+        // Re-tag so the run path can start the container by its :latest ref.
+        expect(findCall(run, "tag")).toEqual([
+          "docker",
+          "tag",
+          expectedRef,
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+      } finally {
+        if (origArch) Object.defineProperty(process, "arch", origArch);
+        restore();
+      }
+    });
+
+    it("falls back to a plain tag pull when manifest inspect yields no index (#3885)", () => {
+      const run = vi.fn();
+      const runCapture = vi.fn(() => ""); // manifest inspect unavailable / not an index
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(findCall(run, "pull")).toEqual([
+          "docker",
+          "pull",
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+        expect(findCall(run, "tag")).toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
+
+    it("falls back to a plain tag pull when dockerManifestInspect throws (#3885)", () => {
+      const run = vi.fn();
+      const runCapture = vi.fn(() => {
+        throw new Error("docker manifest unavailable");
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture, run);
+      try {
+        nimModule.pullNimImage("nvidia/nemotron-3-nano-30b-a3b");
+        expect(findCall(run, "pull")).toEqual([
+          "docker",
+          "pull",
+          "nvcr.io/nim/nvidia/nemotron-3-nano:latest",
+        ]);
+        expect(findCall(run, "tag")).toBeUndefined();
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("parseServedModelId", () => {
+    it("returns the first data[].id from a /v1/models body", () => {
+      const body = JSON.stringify({
+        object: "list",
+        data: [{ id: "nvidia/nemotron-3-nano", object: "model", owned_by: "vllm" }],
+      });
+      expect(nim.parseServedModelId(body)).toBe("nvidia/nemotron-3-nano");
+    });
+
+    it("returns null for empty data, missing data, or malformed JSON", () => {
+      expect(nim.parseServedModelId(JSON.stringify({ object: "list", data: [] }))).toBeNull();
+      expect(nim.parseServedModelId(JSON.stringify({ object: "list" }))).toBeNull();
+      expect(nim.parseServedModelId("not json")).toBeNull();
+      expect(nim.parseServedModelId("")).toBeNull();
+    });
+  });
+
+  describe("getServedModelId", () => {
+    it("curls /v1/models and returns the served id", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (Array.isArray(cmd) && cmd.some((a) => a.includes("/v1/models"))) {
+          return JSON.stringify({ data: [{ id: "nvidia/nemotron-3-nano" }] });
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      try {
+        expect(nimModule.getServedModelId(8000)).toBe("nvidia/nemotron-3-nano");
+        const call = runCapture.mock.calls.find(
+          (c) => Array.isArray(c[0]) && (c[0] as string[]).some((a) => a.includes("/v1/models")),
+        );
+        expect(call?.[0]).toContain("http://127.0.0.1:8000/v1/models");
+      } finally {
+        restore();
+      }
+    });
+
+    it("returns null when the endpoint is unreachable", () => {
+      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""));
+      try {
+        expect(nimModule.getServedModelId(8000)).toBeNull();
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("adoptServedModelId", () => {
+    it("returns the served id when it differs from the catalog name (#3885)", () => {
+      const runCapture = vi.fn(() => JSON.stringify({ data: [{ id: "nvidia/nemotron-3-nano" }] }));
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      try {
+        expect(nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano",
+        );
+      } finally {
+        restore();
+      }
+    });
+
+    it("keeps the catalog value when the served id matches or is unavailable", () => {
+      const match = loadNimWithMockedRunner(
+        vi.fn(() => JSON.stringify({ data: [{ id: "meta/llama-3.1-8b-instruct" }] })),
+      );
+      try {
+        expect(match.nimModule.adoptServedModelId("meta/llama-3.1-8b-instruct", 8000)).toBe(
+          "meta/llama-3.1-8b-instruct",
+        );
+      } finally {
+        match.restore();
+      }
+      const down = loadNimWithMockedRunner(vi.fn(() => ""));
+      try {
+        expect(down.nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano-30b-a3b",
+        );
+      } finally {
+        down.restore();
+      }
+    });
+
+    it("ignores an unsafe served id and keeps the catalog value (#3885)", () => {
+      const m = loadNimWithMockedRunner(
+        vi.fn(() => JSON.stringify({ data: [{ id: "bad id; rm -rf /" }] })),
+      );
+      try {
+        expect(m.nimModule.adoptServedModelId("nvidia/nemotron-3-nano-30b-a3b", 8000)).toBe(
+          "nvidia/nemotron-3-nano-30b-a3b",
+        );
+      } finally {
+        m.restore();
+      }
+    });
+  });
+
   describe("containerName", () => {
     it("prefixes with nemoclaw-nim-", () => {
       expect(nim.containerName("my-sandbox")).toBe("nemoclaw-nim-my-sandbox");
@@ -169,6 +434,77 @@ describe("nim", () => {
         fs.readFileSync = origReadFileSync;
       }
     }
+
+    function withNvidiaKernelInterface(present: boolean, fn: () => void): void {
+      const fs = require("fs");
+      const origExistsSync = fs.existsSync;
+      fs.existsSync = (p: string) => {
+        if (p === "/proc/driver/nvidia") return present;
+        return origExistsSync(p);
+      };
+      try {
+        fn();
+      } finally {
+        fs.existsSync = origExistsSync;
+      }
+    }
+
+    // The trust-tier gate is ARM64-Linux-only. CI runners may be x64 or
+    // macOS, so tests that exercise the gate must pin BOTH `process.arch`
+    // and `process.platform`; otherwise on macOS the gate exits early on
+    // the platform check and the kernel-interface stub is never consulted.
+    function withProcessProperty<K extends "arch" | "platform">(
+      key: K,
+      value: K extends "arch" ? NodeJS.Architecture : NodeJS.Platform,
+      fn: () => void,
+    ): void {
+      const origDesc = Object.getOwnPropertyDescriptor(process, key);
+      Object.defineProperty(process, key, {
+        value,
+        configurable: true,
+        writable: true,
+      });
+      try {
+        fn();
+      } finally {
+        if (origDesc) {
+          Object.defineProperty(process, key, origDesc);
+        }
+      }
+    }
+
+    function withLinuxArm64(fn: () => void): void {
+      withProcessProperty("platform", "linux", () => {
+        withProcessProperty("arch", "arm64", fn);
+      });
+    }
+
+    function withLinuxX64(fn: () => void): void {
+      withProcessProperty("platform", "linux", () => {
+        withProcessProperty("arch", "x64", fn);
+      });
+    }
+
+    // Default `/proc/driver/nvidia/` to present so non-gate tests stay
+    // environment-agnostic — they would otherwise depend on whether the
+    // runtime CI host (ARM64 Linux runner, generic Linux without an NVIDIA
+    // driver, etc.) happens to populate the path. Gate-active tests opt out
+    // explicitly with `withNvidiaKernelInterface(false, …)` and the
+    // associated arch/platform pinning helpers.
+    let __origDetectGpuExistsSync: typeof fs.existsSync | undefined;
+    beforeEach(() => {
+      __origDetectGpuExistsSync = fs.existsSync;
+      fs.existsSync = (p: string) => {
+        if (p === "/proc/driver/nvidia") return true;
+        return (__origDetectGpuExistsSync as typeof fs.existsSync)(p);
+      };
+    });
+    afterEach(() => {
+      if (__origDetectGpuExistsSync) {
+        fs.existsSync = __origDetectGpuExistsSync;
+        __origDetectGpuExistsSync = undefined;
+      }
+    });
 
     it("returns object or null", () => {
       const gpu = nim.detectGpu();
@@ -321,11 +657,305 @@ describe("nim", () => {
       }
     });
 
-    // Regression #3988: WSL2 d3d12 shims (e.g. Snapdragon X "nvidia-smi.exe")
-    // return a generic name like "JMJWOA-Generic-GPU" for non-NVIDIA hardware.
-    // The primary path used to accept any name from nvidia-smi, which made the
-    // preflight report "NVIDIA GPU detected" on hosts with no NVIDIA hardware.
-    it("rejects WDDM placeholder names on hosts without NVIDIA firmware (#3988)", () => {
+    // The observed Windows-on-ARM WSL2 nvidia-smi shim returns a generic name
+    // like "JMJWOA-Generic-GPU" for non-NVIDIA hardware. The widened denylist
+    // must reject the full `JMJWOA-Generic-*` family, not just the GPU suffix
+    // observed in the wild today. NPU and any future suffix should also be
+    // rejected without a code change so the gate does not silently regress
+    // when the shim emits a new placeholder variant.
+    it.each([
+      "JMJWOA-Generic-GPU",
+      "JMJWOA-Generic-NPU",
+      "JMJWOA-Generic-Future",
+      "NVIDIA JMJWOA-Generic-GPU",
+      "NVIDIA JMJWOA-Generic-NPU",
+      "NVIDIA JMJWOA-Generic-Future",
+    ])("rejects denylisted placeholder name %s on generic firmware", (placeholder) => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return `${placeholder}, 65471, 65000\n`;
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // A mixed-row spoof — one denylisted row alongside one normal NVIDIA row —
+    // must reject the entire probe. Partial-trust filtering would surface the
+    // normal row as if it were a real GPU, which is exactly what the WoA shim
+    // could exploit if the kernel-interface gate were ever bypassed.
+    it("rejects the whole probe when any row is denylisted on generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // #4565: a real Windows-ARM N1X + WSL2 + Docker Desktop host reports the
+    // same `JMJWOA-Generic-*` placeholder as the Snapdragon shim, but it can
+    // pass a bounded Docker `--gpus` CUDA proof. When the injected prover
+    // confirms the proof, the denylisted name is accepted and the detection is
+    // tagged so the sandbox preflight reaches the Docker Desktop WSL branch.
+    it("accepts a denylisted ARM64 GPU when the bounded Docker GPU proof passes (#4565)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+        passed: true,
+        timedOut: false,
+        exitCode: 0,
+        diagnostic: "",
+      }));
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          const result = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
+          expect(result).toMatchObject({
+            type: "nvidia",
+            name: "JMJWOA-Generic-GPU",
+            count: 1,
+            totalMemoryMB: 65471,
+            wslDockerDesktopGpuProofPassed: true,
+          });
+          expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith(["JMJWOA-Generic-GPU"]);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Snapdragon WoA fail-closed: the same placeholder name, but the bounded
+    // CUDA proof fails because there is no usable NVIDIA device. The detection
+    // must stay null so #3988/#4424 is not reopened.
+    it("keeps rejecting a denylisted ARM64 GPU when the Docker GPU proof fails (#4565/#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const failingProver = vi.fn(() => ({
+        passed: false,
+        timedOut: false,
+        exitCode: 1,
+        diagnostic: "no CUDA-capable device is detected",
+      }));
+      const notCandidateProver = vi.fn(() => null);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: failingProver })).toBeNull();
+          // A host that is not an ARM64 WSL Docker Desktop candidate returns
+          // null from the prover and must also fail closed (no proof attempted).
+          expect(
+            nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: notCandidateProver }),
+          ).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // When no prover is wired (deps explicitly null), the denylist stays
+    // fail-closed exactly as before the #4565 accept-path existed.
+    it("rejects a denylisted ARM64 GPU when no Docker GPU prover is provided", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu({ proveArm64WslDockerDesktopGpu: null })).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Trust-tier gate: on ARM64 Linux with generic firmware, the absence of
+    // `/proc/driver/nvidia/` is the Windows-on-ARM WSL shim profile and must
+    // be rejected even when the nvidia-smi probe returns a plausible-looking
+    // NVIDIA name. The shim was QA-confirmed to emit format-valid
+    // `uuid`/`compute_cap`/`vbios_version` triples but never populates the
+    // kernel-driver path.
+    it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withLinuxArm64(() => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toBeNull();
+            });
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Fail-closed contract: the trust-tier helper wraps the `fs.existsSync`
+    // probe in a try/catch so a hardened sandbox or seccomp policy that
+    // refuses the syscall cannot mask the gate. When the probe throws on
+    // ARM64 generic firmware, the host must be rejected — never trusted.
+    it("rejects when /proc/driver/nvidia/ probe throws on ARM64 generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const origExistsSync = fs.existsSync;
+      fs.existsSync = (p: string) => {
+        if (p === "/proc/driver/nvidia") {
+          throw new Error("EPERM: operation not permitted");
+        }
+        return origExistsSync(p);
+      };
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withLinuxArm64(() => {
+            expect(nimModule.detectGpu()).toBeNull();
+          });
+        });
+      } finally {
+        fs.existsSync = origExistsSync;
+        restore();
+      }
+    });
+
+    // Counter-test: ARM64 Linux with `/proc/driver/nvidia/` present is a real
+    // kernel-driver-bound host (e.g. a real ARM64 board with an NVIDIA dGPU
+    // and the kernel driver loaded) — the gate must trust it.
+    it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withLinuxArm64(() => {
+            withNvidiaKernelInterface(true, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "NVIDIA GeForce RTX 4090 Laptop GPU",
+                count: 1,
+                totalMemoryMB: 16376,
+              });
+            });
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // The observed Windows-on-ARM WSL2 nvidia-smi shim is WoA/ARM64-only —
+    // Microsoft's WoA is ARM-only by spec, so an x86_64 Linux host that
+    // exposes `nvidia-smi` cannot be that shim. The trust-tier gate must
+    // therefore trust x86_64 hosts whose `/proc/driver/nvidia/` is missing
+    // rather than false-reject them, eliminating a potential regression on
+    // real x86_64 WSL2 NVIDIA hosts where the driver revision may not
+    // populate the kernel-driver path identically to native Linux.
+    it("trusts x86_64 generic firmware even when /proc/driver/nvidia/ is absent", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withLinuxX64(() => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "NVIDIA GeForce RTX 4090 Laptop GPU",
+                count: 1,
+                totalMemoryMB: 16376,
+              });
+            });
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // The denylist remains a universal first-line reject regardless of
+    // architecture: an x86_64 Linux/WSL2 host whose name field still matches
+    // the shim placeholder family must be rejected even though the trust-tier
+    // gate would otherwise pass on x86_64.
+    it("rejects denylisted names on x86_64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -339,38 +969,45 @@ describe("nim", () => {
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        // Snapdragon X WSL2 has no DMI / devicetree NVIDIA platform marker, so
-        // the firmware classification falls through to "linux" and the
-        // placeholder name is not vouched for.
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu()).toBeNull();
+          withLinuxX64(() => {
+            expect(nimModule.detectGpu()).toBeNull();
+          });
         });
       } finally {
         restore();
       }
     });
 
-    // Even when the WDDM shim returns the placeholder with an `NVIDIA ` prefix
-    // (e.g. "NVIDIA JMJWOA-Generic-GPU"), `\bNVIDIA\b` alone is not enough to
-    // vouch for the device on generic Linux firmware — the placeholder family
-    // must keep requiring a firmware platform vouch. Regression guard for the
-    // CodeRabbit review comment on #4062.
-    it("rejects vendor-prefixed WDDM placeholders on generic firmware (#3988)", () => {
+    // Spark/Station/Jetson firmware vouches for the device unconditionally —
+    // the trust-tier and denylist gates must NOT apply when the host
+    // identifies as one of those NVIDIA platforms. Otherwise pre-release
+    // Spark firmware would regress on ARM64 Spark hosts when
+    // /proc/driver/nvidia/ is missing.
+    it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA JMJWOA-Generic-GPU, 65471, 65000\n";
+          return "JMJWOA-Generic-GPU, 131072, 12000\n";
         }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          expect(nimModule.detectGpu()).toBeNull();
+        withFirmwareModel("NVIDIA DGX Spark", () => {
+          withLinuxArm64(() => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "JMJWOA-Generic-GPU",
+                platform: "spark",
+              });
+            });
+          });
         });
       } finally {
         restore();
@@ -536,6 +1173,64 @@ describe("nim", () => {
             nimCapable: true,
             unifiedMemory: true,
             spark: false,
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Unified-memory fallback must reject WDDM placeholder names on hosts
+    // where firmware does not vouch for an NVIDIA platform. Otherwise a
+    // d3d12/WDDM shim emitting `JMJWOA-Generic-*` on the names-only fallback
+    // would slip past the primary-path gate.
+    it("unified-memory fallback rejects denylisted names on generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "JMJWOA-Generic-GPU";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Unified-memory fallback must also enforce the trust-tier gate on
+    // generic firmware. A tagged name like "NVIDIA Jetson AGX Orin" on an
+    // ARM64 host with no `/proc/driver/nvidia/` cannot be trusted; only
+    // firmware-vouched platforms (Spark/Jetson) bypass the gate on this path.
+    it("unified-memory fallback rejects tagged names without kernel interface on ARM64 generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "NVIDIA Jetson AGX Orin";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          withLinuxArm64(() => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toBeNull();
+            });
           });
         });
       } finally {
@@ -895,6 +1590,29 @@ describe("nim", () => {
   });
 
   describe("waitForNimHealth", () => {
+    it("uses a longer default startup timeout for first-time checkpoint loads", () => {
+      const consoleLogs: string[] = [];
+      const origLog = console.log;
+      console.log = (...args: unknown[]) => {
+        consoleLogs.push(args.map(String).join(" "));
+      };
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        expect(nimModule.DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS).toBe(1200);
+        expect(nimModule.waitForNimHealth(9000)).toBe(true);
+        expect(consoleLogs.some((line) => line.includes("timeout: 1200s"))).toBe(true);
+      } finally {
+        console.log = origLog;
+        restore();
+      }
+    });
+
     it("bounds curl health probes with connect and total timeouts", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -915,7 +1633,7 @@ describe("nim", () => {
 
     // Regression #3333: if the container exits (typically NGC auth failure),
     // stop polling immediately and surface the last log lines so the user sees
-    // the cause instead of a generic 5-minute timeout. NIM's Python logger
+    // the cause instead of a generic startup timeout. NIM's Python logger
     // writes errors to stderr, so the dockerLogs adapter must capture both
     // streams or the tail will be empty in the real failure mode.
     it("short-circuits when the container has exited and surfaces stderr", () => {

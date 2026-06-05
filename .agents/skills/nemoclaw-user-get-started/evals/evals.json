@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-get-started-prerequisites-001",
+    "question": "I'm checking prerequisites before installation. Help me verify my host has the required hardware, software, and platform support so I can avoid a failed first setup.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user verify my host has the required hardware, software, and platform support and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid a failed first setup.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

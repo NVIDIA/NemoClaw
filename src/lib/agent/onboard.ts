@@ -11,8 +11,9 @@ import path from "path";
 
 import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
-import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
+import { sleepSeconds } from "../core/wait";
+import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -20,7 +21,7 @@ import {
   resolveSandboxBaseImage,
   SANDBOX_BASE_TAG,
 } from "../sandbox-base-image";
-import { sleepSeconds } from "../core/wait";
+import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, loadAgent, resolveAgentName } from "./defs";
 
 export interface OnboardContext {
@@ -536,7 +537,7 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
-  const { kind, label, path } = agent.dashboard;
+  const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
 
   if (kind === "api") {
@@ -548,6 +549,16 @@ export function printDashboardUi(
       const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
       if (seen.has(url)) continue;
       seen.add(url);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+    printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
+    return;
+  }
+
+  if (auth !== "url_token") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     return;
@@ -571,4 +582,5 @@ export function printDashboardUi(
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
+  printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
 }

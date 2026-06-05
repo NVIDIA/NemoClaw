@@ -1,6 +1,7 @@
 name: Documentation Issue
 description: Report incorrect, missing, or unclear documentation.
-labels: ["documentation", "status: triage"]
+type: Documentation
+labels: ["needs: triage"]
 body:
   - type: textarea
     id: description

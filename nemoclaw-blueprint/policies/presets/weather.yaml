@@ -1,0 +1,72 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: weather
+  description: "Read-only public weather, geocoding, and alert APIs"
+
+network_policies:
+  weather:
+    name: weather
+    endpoints:
+      - host: api.open-meteo.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/forecast" }
+          - allow: { method: HEAD, path: "/v1/forecast" }
+          - allow: { method: GET, path: "/v1/elevation" }
+          - allow: { method: HEAD, path: "/v1/elevation" }
+      - host: geocoding-api.open-meteo.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/search" }
+          - allow: { method: HEAD, path: "/v1/search" }
+          - allow: { method: GET, path: "/v1/get" }
+          - allow: { method: HEAD, path: "/v1/get" }
+      - host: api.weather.gov
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/points/**" }
+          - allow: { method: HEAD, path: "/points/**" }
+          - allow: { method: GET, path: "/gridpoints/**" }
+          - allow: { method: HEAD, path: "/gridpoints/**" }
+          - allow: { method: GET, path: "/alerts" }
+          - allow: { method: HEAD, path: "/alerts" }
+          - allow: { method: GET, path: "/alerts/**" }
+          - allow: { method: HEAD, path: "/alerts/**" }
+          - allow: { method: GET, path: "/stations" }
+          - allow: { method: HEAD, path: "/stations" }
+          - allow: { method: GET, path: "/stations/**" }
+          - allow: { method: HEAD, path: "/stations/**" }
+          - allow: { method: GET, path: "/zones" }
+          - allow: { method: HEAD, path: "/zones" }
+          - allow: { method: GET, path: "/zones/**" }
+          - allow: { method: HEAD, path: "/zones/**" }
+          - allow: { method: GET, path: "/offices" }
+          - allow: { method: HEAD, path: "/offices" }
+          - allow: { method: GET, path: "/offices/**" }
+          - allow: { method: HEAD, path: "/offices/**" }
+          - allow: { method: GET, path: "/products" }
+          - allow: { method: HEAD, path: "/products" }
+          - allow: { method: GET, path: "/products/**" }
+          - allow: { method: HEAD, path: "/products/**" }
+          - allow: { method: GET, path: "/openapi.json" }
+          - allow: { method: HEAD, path: "/openapi.json" }
+          - allow: { method: GET, path: "/openapi.yaml" }
+          - allow: { method: HEAD, path: "/openapi.yaml" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/hermes }
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/curl }

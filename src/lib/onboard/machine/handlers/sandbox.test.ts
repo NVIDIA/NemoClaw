@@ -35,7 +35,6 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
     stopStale: vi.fn(),
     createSandbox: vi.fn(async () => "my-assistant"),
     updateSandbox: vi.fn(),
-    setDefault: vi.fn(),
     complete: vi.fn(async () => createSession()),
     skipped: vi.fn(),
     recordSkip: vi.fn(async () => createSession()),
@@ -79,7 +78,6 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       createSandbox: calls.createSandbox,
       updateSandboxRegistry: calls.updateSandbox,
-      setDefaultSandbox: calls.setDefault,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
@@ -132,7 +130,7 @@ describe("handleSandboxState", () => {
     const result = await handleSandboxState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", { provider: "provider", model: "model" });
-    expect(calls.setupMessaging).toHaveBeenCalledWith(null, null);
+    expect(calls.setupMessaging).toHaveBeenCalledWith(null, ["telegram"], "my-assistant");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.createSandbox).toHaveBeenCalledWith(
       { type: "nvidia" },
@@ -150,7 +148,7 @@ describe("handleSandboxState", () => {
       [],
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", expect.objectContaining({ model: "model", provider: "provider" }));
-    expect(calls.setDefault).toHaveBeenCalledWith("my-assistant");
+    // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
     expect(calls.complete).toHaveBeenCalledWith("sandbox", expect.objectContaining({ sandboxName: "my-assistant" }));
     expect(result).toMatchObject({ sandboxName: "my-assistant", selectedMessagingChannels: ["telegram"], webSearchSupported: true });
     expect(result.stateResult).toEqual({
@@ -304,11 +302,17 @@ describe("handleSandboxState", () => {
   });
 
   it("uses recorded messaging channels on non-interactive resume", async () => {
-    const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume: vi.fn(() => ["discord"]) });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["discord"]);
+    const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume });
 
     const result = await handleSandboxState({ ...baseOptions(deps), resume: true });
 
     expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(getRecordedMessagingChannelsForResume).toHaveBeenCalledWith(
+      true,
+      expect.any(Object),
+      "my-assistant",
+    );
     expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");
     expect(result.selectedMessagingChannels).toEqual(["discord"]);
   });
