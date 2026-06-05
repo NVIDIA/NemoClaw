@@ -2746,6 +2746,7 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(createCommand, "expected sandbox create command");
     assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
     assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
       !payload.logs.some((line) => line.includes("Using sandbox base image")),
       "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",

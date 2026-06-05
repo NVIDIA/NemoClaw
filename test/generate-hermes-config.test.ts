@@ -287,6 +287,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
     expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
     expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
+    expect(envFile).not.toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=");
     expect(envFile).toContain(
       "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl\n",
     );
@@ -334,6 +335,7 @@ describe("agents/hermes/generate-config.ts", () => {
         "nous-audio",
         "nous-browser",
         "nous-image",
+        "nous-code",
       ]),
     });
 
