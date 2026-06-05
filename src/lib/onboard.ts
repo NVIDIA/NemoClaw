@@ -2389,7 +2389,6 @@ async function startGatewayWithOptions(
 }
 
 async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
-  dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
@@ -2403,6 +2402,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  if (await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayEnv, gatewayName: GATEWAY_NAME, registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) return;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
