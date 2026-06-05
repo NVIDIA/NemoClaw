@@ -4,8 +4,8 @@
 import type { Session, SessionUpdates } from "../state/onboard-session";
 import type { OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
-import type { ResumeConfigConflict } from "./resume-config";
 import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
+import type { ResumeConfigConflict } from "./resume-config";
 
 function assertSkippableTransitionResult(result: OnboardStateResult): void {
   if (result.type !== "transition" || !result.updates || Object.keys(result.updates).length === 0) {
@@ -99,6 +99,18 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().applyResult(result);
   }
 
+  /**
+   * Compatibility bridge for the live onboarding host glue while legacy step helpers remain a
+   * second machine snapshot writer. `markStepStarted()` and `markStepComplete()` still mutate
+   * `session.machine` in src/lib/state/onboard-session.ts, so handlers that also return FSM
+   * transition results can hand back a result whose target has already been reached or whose
+   * source state is stale after a later legacy step advanced the snapshot. This change is limited
+   * to consuming handler results at the runtime boundary; removing legacy step mutation is a
+   * broader persistence/resume migration. Skipped transition results must stay metadata-only:
+   * applying context updates after skipping a transition would
+   * make the stale result an implicit source of truth. Remove this bridge once legacy step helpers
+   * no longer advance `session.machine` and handler FSM results are the only transition source.
+   */
   async recordStateResultWithStepCompatibility(result: OnboardStateResult): Promise<Session> {
     const runtime = this.getRuntime();
     const current = await runtime.session();
