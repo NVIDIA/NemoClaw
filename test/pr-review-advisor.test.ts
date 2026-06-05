@@ -409,6 +409,8 @@ describe("PR review advisor", () => {
     expect(summary).toContain("Needs attention");
     expect(summary).toContain("Worth checking");
     expect(summary).toContain("Nice ideas");
+    expect(summary).toContain("## Consider writing more tests for");
+    expect(summary).toContain("comment builder test");
     expect(summary).not.toContain("🛠️");
     expect(summary).not.toContain("🔎");
     expect(summary).not.toContain("🌱");
@@ -420,6 +422,8 @@ describe("PR review advisor", () => {
     expect(detailed).toContain("trusted-code boundary");
     expect(comment).toContain("<details>");
     expect(comment).toContain("<summary>Review findings</summary>");
+    expect(comment).toContain("<summary>Consider writing more tests for</summary>");
+    expect(comment).toContain("comment builder test");
     expect(comment).toContain("### 🛠️ Needs attention");
     expect(comment).not.toContain("Full advisor summary");
     expect(comment).not.toContain("## Acceptance coverage");

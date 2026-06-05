@@ -160,10 +160,23 @@ describe("nightly E2E workflow validation", () => {
   it("public installer E2Es install the resolved checkout ref", () => {
     const jobs = workflow.jobs as Record<string, unknown>;
     const expectedCheckoutRef = "${{ inputs.target_ref || github.ref }}";
+    const expectedTrustedWorkflowRef = "${{ github.ref }}";
     const expectedInstallRef = "${{ steps.public_install_ref.outputs.ref }}";
-    const publicInstallerJobs: Array<[string, string]> = [
-      ["cloud-onboard-e2e", "Run cloud onboard E2E test"],
-      ["openclaw-tui-chat-correlation-e2e", "Run OpenClaw TUI chat correlation E2E test"],
+    const publicInstallerJobs: Array<{
+      jobName: string;
+      stepName: string;
+      privilegedTrustedScript?: boolean;
+    }> = [
+      { jobName: "cloud-onboard-e2e", stepName: "Run cloud onboard E2E test" },
+      {
+        jobName: "openclaw-tui-chat-correlation-e2e",
+        stepName: "Run OpenClaw TUI chat correlation E2E test",
+      },
+      {
+        jobName: "issue-4434-tui-unreachable-inference-e2e",
+        stepName: "Run issue #4434 TUI unreachable inference E2E test",
+        privilegedTrustedScript: true,
+      },
     ];
     const invalid: string[] = [];
 
@@ -179,7 +192,7 @@ describe("nightly E2E workflow validation", () => {
       invalid.push("reusable runner missing checked-out ref exporter");
     }
 
-    for (const [jobName, stepName] of publicInstallerJobs) {
+    for (const { jobName, stepName, privilegedTrustedScript = false } of publicInstallerJobs) {
       const job = jobs[jobName] as Record<string, unknown> | undefined;
       const jobWith = job?.with as Record<string, unknown> | undefined;
 
@@ -205,18 +218,36 @@ describe("nightly E2E workflow validation", () => {
       }
 
       const checkoutWith = getCheckoutStep(job)?.with as Record<string, unknown> | undefined;
-      if (checkoutWith?.ref !== expectedCheckoutRef) {
+      const expectedJobCheckoutRef = privilegedTrustedScript
+        ? expectedTrustedWorkflowRef
+        : expectedCheckoutRef;
+      if (checkoutWith?.ref !== expectedJobCheckoutRef) {
         invalid.push(`${jobName} checkout.ref=${String(checkoutWith?.ref)}`);
       }
 
-      const resolver = getJobStep(job, "Resolve public install ref");
+      const resolver = getJobStep(
+        job,
+        privilegedTrustedScript ? "Resolve trusted public install ref" : "Resolve public install ref",
+      );
       if (!resolver) {
         invalid.push(`${jobName} missing resolved-ref step`);
       } else {
         if (resolver.id !== "public_install_ref") {
           invalid.push(`${jobName} resolved-ref id=${String(resolver.id)}`);
         }
-        if (typeof resolver.run !== "string" || !resolver.run.includes("git rev-parse HEAD")) {
+        const run = typeof resolver.run === "string" ? resolver.run : "";
+        if (privilegedTrustedScript) {
+          const env = resolver.env as Record<string, unknown> | undefined;
+          if (env?.TARGET_REF !== "${{ inputs.target_ref }}") {
+            invalid.push(`${jobName} resolved-ref TARGET_REF=${String(env?.TARGET_REF)}`);
+          }
+          if (!run.includes("trusted_head=\"$(git rev-parse HEAD)\"")) {
+            invalid.push(`${jobName} resolved-ref step does not derive trusted HEAD`);
+          }
+          if (!run.includes("git merge-base --is-ancestor")) {
+            invalid.push(`${jobName} resolved-ref step does not validate ref reachability`);
+          }
+        } else if (!run.includes("git rev-parse HEAD")) {
           invalid.push(`${jobName} resolved-ref step does not use git rev-parse HEAD`);
         }
       }

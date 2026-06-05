@@ -1,22 +1,43 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# E2E migration tracking
+# E2E scenario migration notes
 
-Migration state for the scenario-based E2E framework is intentionally tracked
-outside the repository, in GitHub issues and pull requests. This file documents
-that policy so the repo does not retain stale per-script checklists, migrated
-counts, or ownership tables after the work moves on.
+This file records the current migration model for contributors. It is not the
+source of truth for per-domain status. Mutable migration state is tracked
+outside the repository in GitHub issues and pull requests so reviewers can
+discuss, update, and close work in one place.
 
-## Where to track current work
+## Current migration state
 
-- Use issue #3588 as the parent epic for the layered E2E scenario model.
-- Use the active audit-coverage phase issues #4347 through #4357 for current
-  domain-by-domain implementation, review, and reconciliation state.
-- Use issue #4378 for the setup-scenario alias cleanup that bridges layered
-  `test_plans` to friendly scenario IDs.
-- Use the pull request for each change as the evidence record for what landed,
-  what was deferred, and what follow-up issues remain.
+The scenario E2E migration is in a hybrid phase:
+
+- typed scenario builders drive scenario workflow fan-out and dry-run plans;
+- product-facing `NemoClawInstance` manifests describe desired setup and
+  onboarding state;
+- YAML metadata still drives the shell scenario runner and live suite
+  resolution;
+- legacy `test/e2e/test-*.sh` scripts still provide most live nightly and
+  platform coverage.
+
+Do not assume legacy scripts are deletion-ready just because a scenario or suite
+name exists. The final reconciliation phase must show either evidence-complete
+coverage or an explicit audit amendment before legacy executable tests are
+removed.
+
+## Active issue tracking
+
+Use these GitHub issues for status and follow-up work:
+
+| Issue | Purpose |
+| --- | --- |
+| #3588 | Parent architecture epic for layered / hybrid scenario E2E |
+| #4347–#4356 | Domain-specific audit-coverage phases |
+| #4357 | Final audit reconciliation, placeholder cleanup, and deletion-readiness review |
+| #4378 | Friendly `setup_scenarios` aliases for layered test plans |
+
+If a migration discovery needs durable tracking, add it to the relevant issue or
+open a focused child issue. Avoid adding long-lived checklists here.
 
 ## What belongs in the repo
 
@@ -31,8 +52,48 @@ Do not add migration status tables, per-legacy-script checklists, temporary
 coverage counts, or owner queues to this file. Put those in the issue or PR
 that owns the work instead.
 
-## Why
+## What to migrate next
 
-The E2E migration moves quickly and is coordinated across multiple issues and
-pull requests. Keeping mutable migration state in GitHub avoids leaving stale
-repo documentation that disagrees with the latest merged code or open review.
+When moving behavior from a legacy E2E script into the scenario framework:
+
+1. Identify the relevant audit issue (#4347–#4356).
+2. Add or update the product-facing manifest only when the desired setup or
+   onboarding state changes.
+3. Add typed scenario registry coverage when the workflow matrix needs a new
+   canonical scenario ID.
+4. Add YAML metadata when the shell runner needs to resolve or execute the plan.
+5. Add reusable suite or assertion helpers instead of copying entire legacy
+   scripts.
+6. Add framework tests that prevent the typed registry, YAML aliases, workflow
+   routes, manifests, and suites from drifting.
+7. Leave legacy executable scripts in place until #4357 records deletion
+   readiness.
+
+## Useful commands
+
+```bash
+# Typed registry inventory and dry-run path
+npx tsx test/e2e-scenario/scenarios/run.ts --list
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
+
+# YAML/shell resolver and live runner path
+bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
+bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
+bash test/e2e-scenario/runtime/run-scenario.sh <id>
+
+# Metadata and framework validation
+bash test/e2e-scenario/runtime/coverage-report.sh
+npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+```
+
+## Cleanup rules
+
+- Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.
+- Do not reintroduce the removed workflow-level parity report unless maintainers
+  explicitly reopen that direction.
+- Do not delete legacy executable E2Es as part of ordinary domain migration PRs;
+  queue deletion candidates for #4357.
+- Keep docs focused on how the framework works now. Put changing progress status
+  in issues and PRs.

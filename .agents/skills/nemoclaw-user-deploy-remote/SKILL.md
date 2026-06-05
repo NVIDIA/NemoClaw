@@ -4,9 +4,6 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Deploy NemoClaw to a Remote GPU Instance
 
 ## Gotchas

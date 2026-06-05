@@ -1222,10 +1222,14 @@ fi`,
     systemctlScript,
     isWsl = false,
     runtime = "docker",
+    stale = false,
+    toolkitInstalled = true,
   }: {
     systemctlScript: string;
     isWsl?: boolean;
     runtime?: string;
+    stale?: boolean;
+    toolkitInstalled?: boolean;
   }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
     const fakeBin = path.join(tmp, "bin");
@@ -1246,7 +1250,11 @@ exports.assessHost = () => ({
   isWsl: ${isWsl ? "true" : "false"},
   notes: [],
   dockerCdiSpecDirs: [process.env.CDI_DIR],
-  cdiNvidiaGpuSpecMissing: !fs.existsSync(process.env.CDI_STATE),
+  cdiNvidiaGpuSpecMissing: ${stale ? "false" : "!fs.existsSync(process.env.CDI_STATE)"},
+  cdiNvidiaGpuSpecStale: ${stale ? "!fs.existsSync(process.env.CDI_STATE)" : "false"},
+  cdiNvidiaGpuSpecNeedsRepair: !fs.existsSync(process.env.CDI_STATE),
+  cdiNvidiaGpuSpecMismatch: process.env.CDI_STALE_FILE + " /dev/nvidia-uvm=498:0, live=499:0",
+  nvidiaContainerToolkitInstalled: ${toolkitInstalled ? "true" : "false"},
 });
 exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
@@ -1265,6 +1273,13 @@ exports.planHostRemediation = (host) =>
           title: "Generate NVIDIA CDI device specs",
           reason: "missing nvidia.com/gpu",
           commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+          blocking: true,
+        }]
+    : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
+      ? [{
+          title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
+          reason: "nvidia-container-toolkit missing",
+          commands: ["sudo apt-get install -y nvidia-container-toolkit"],
           blocking: true,
         }]
     : [];
@@ -1334,6 +1349,7 @@ run_installer_host_preflight
           SOURCE_ROOT: sourceRoot,
           CDI_DIR: cdiDir,
           CDI_STATE: cdiState,
+          CDI_STALE_FILE: path.join(cdiDir, "nvidia.yaml"),
           SUDO_LOG: sudoLog,
           SYSTEMCTL_LOG: systemctlLog,
         },
@@ -1383,6 +1399,59 @@ exit 99
     expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
   });
 
+  it("repairs stale NVIDIA CDI specs with the refresh service only", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "start" ]; then
+  touch "$CDI_STATE"
+fi
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(cdiStateExists).toBe(true);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/effective nvidia\.com\/gpu spec may be stale/);
+    expect(output).toMatch(/refreshed the service-managed NVIDIA CDI device spec/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(systemctlLog).toMatch(/^start nvidia-cdi-refresh\.service$/m);
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+    expect(sudoLog).not.toMatch(/mkdir -p/);
+    expect(sudoLog).not.toMatch(/rm -f/);
+  });
+
+  it("does not auto-repair stale NVIDIA CDI specs before toolkit installation", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        toolkitInstalled: false,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(1);
+    expect(cdiStateExists).toBe(false);
+    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/Install NVIDIA Container Toolkit and refresh CDI device specs/);
+    expect(output).not.toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(systemctlLog).toBe("");
+    expect(sudoLog).toBe("");
+  });
+
   it("falls back to direct NVIDIA CDI generation when refresh service does not repair", () => {
     const { cdiDir, output, result, sudoLog, systemctlLog } =
       runNvidiaCdiInstallerRepairTest({
@@ -1394,7 +1463,7 @@ exit 1
       });
 
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec/);
     expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
     expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);

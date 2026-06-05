@@ -242,7 +242,7 @@ describe("dockerfile patch helpers", () => {
 
     patchStagedDockerfile(
       dockerfilePath,
-      "qwen2.5:7b",
+      "qwen3.5:9b",
       "https://chat.example",
       "build-1",
       "ollama-local",

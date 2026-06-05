@@ -59,52 +59,8 @@ The current generated skills and their source pages are:
 ### Regenerating NemoClaw User Skills after Doc Changes
 
 Most contributor pull requests that change docs should include only the source pages under `docs/`.
-Local hooks run the docs-to-skills conversion in dry-run mode so contributors can verify that generated user skills still build, without adding generated `.agents/skills/nemoclaw-user-*` output to every docs PR.
-
-NemoClaw maintainers refresh the generated user skills once per release during release prep.
-
-For daily release prep, the NemoClaw maintainers use this sequence:
-
-1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
-2. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
-3. Create the PR with both docs and generated user skills.
-
-To regenerate skills manually during release prep, run from the repo root:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
-```
-
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
-
-Preview what would change before writing files:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
-```
-
-Other useful flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--strategy <name>` | Grouping strategy: `grouped` (default) or `individual`. |
-| `--doc-platform <name>` | Source format: `fern-mdx` for migrated Fern pages or `myst-md` for legacy Markdown. |
-| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
-| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.mdx"`). |
-
-### How the Script Works
-
-The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `grouped` strategy by default.
-Within each directory group, the highest-priority procedure page (`how_to`, `get_started`, or `tutorial`) becomes the full body of `SKILL.md`.
-Sibling pages are written unchanged to `references/`.
-Groups with no procedure page keep every sibling in `references/` only.
-
-Use `--strategy individual` to emit one skill per `how_to`, `get_started`, or `tutorial` page, collect `concept` pages into `nemoclaw-user-concept`, and collect `reference` pages (and other non-procedure types) into `nemoclaw-user-reference`.
-
-Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
-Fern MDX components and MyST/Sphinx directives are converted to standard markdown.
-
-For full usage details and all flags, see the docstring at the top of `scripts/docs-to-skills.py`.
+Do not regenerate or commit generated `nemoclaw-user-*` skill output in contributor doc PRs.
+NemoClaw maintainers refresh generated user skills during release prep.
 
 ## Building Docs Locally
 
