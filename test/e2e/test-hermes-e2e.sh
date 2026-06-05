@@ -513,8 +513,10 @@ elif sandbox.get("agent") != "hermes":
 else:
     if sandbox.get("dashboardPort") != public_port:
         errors.append(f"dashboardPort={sandbox.get('dashboardPort')!r} expected {public_port!r}")
-    if sandbox.get("hermesDashboardEnabled") is True:
-        errors.append("legacy hermesDashboardEnabled should not be required for the built-in dashboard")
+    # The trusted main workflow may still set the legacy optional-dashboard flag
+    # while testing this PR head. That can add hermesDashboard* metadata for the
+    # compatibility forward, but the built-in dashboard contract is still proved
+    # by dashboardPort plus the host/internal probes below.
 if errors:
     print("; ".join(errors))
     sys.exit(1)
