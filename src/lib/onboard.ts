@@ -6441,7 +6441,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(providerInferenceResult.stateResults);
-    session = providerInferenceResult.session;
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
@@ -6459,7 +6458,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       fresh,
       resumeAgentChanged,
-      session,
+      session: providerInferenceResult.session,
       sandboxName,
       model,
       provider,
