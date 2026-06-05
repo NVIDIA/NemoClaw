@@ -11,6 +11,7 @@ import {
   type SessionUpdates,
   sanitizeFailure,
 } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
 import {
   advanceTo,
@@ -29,6 +30,7 @@ function cloneSession(session: Session): Session {
 function createHarness(initialSession: Session | null = createSession()) {
   let session = initialSession ? cloneSession(initialSession) : null;
   const events: OnboardMachineEvent[] = [];
+  const stepOptionCalls: Array<{ method: string; options: StepMutationOptions | undefined }> = [];
   let tick = 0;
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     const current = session ? cloneSession(session) : createSession();
@@ -44,24 +46,28 @@ function createHarness(initialSession: Session | null = createSession()) {
       return cloneSession(session);
     },
     updateSession,
-    markStepStarted: (stepName) =>
-      updateSession((current) => {
+    markStepStarted: (stepName, options) => {
+      stepOptionCalls.push({ method: "markStepStarted", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "in_progress";
         current.lastStepStarted = stepName;
         current.status = "in_progress";
         return current;
-      }),
-    markStepComplete: (stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
+      });
+    },
+    markStepComplete: (stepName, updates: SessionUpdates = {}, options) => {
+      stepOptionCalls.push({ method: "markStepComplete", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "complete";
         current.lastCompletedStep = stepName;
         Object.assign(current, filterSafeUpdates(updates));
         return current;
-      }),
+      });
+    },
     markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => {
         const step = current.steps[stepName];
@@ -78,15 +84,17 @@ function createHarness(initialSession: Session | null = createSession()) {
         step.status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message) =>
-      updateSession((current) => {
+    markStepFailed: (stepName, message, options) => {
+      stepOptionCalls.push({ method: "markStepFailed", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "failed";
         current.status = "failed";
         current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
         return current;
-      }),
+      });
+    },
     markStepFailedRecordOnly: (stepName, message) =>
       updateSession((current) => {
         const step = current.steps[stepName];
@@ -109,6 +117,7 @@ function createHarness(initialSession: Session | null = createSession()) {
   return {
     runtime: new OnboardRuntime(deps),
     events,
+    stepOptionCalls,
     getSession: () => {
       if (!session) throw new Error("Expected runtime session");
       return cloneSession(session);
@@ -138,6 +147,29 @@ describe("OnboardRuntime", () => {
 
     await runtime.start({ resumed: true });
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
+  });
+
+  it("forwards step mutation options to step recording dependencies", async () => {
+    const { runtime, getSession, stepOptionCalls } = createHarness();
+    const recordOnlyOptions = { updateMachine: false };
+
+    await runtime.markStepStarted("preflight", recordOnlyOptions);
+    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" }, recordOnlyOptions);
+    await runtime.markStepFailed("gateway", "boom", recordOnlyOptions);
+
+    expect(stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: recordOnlyOptions },
+      { method: "markStepComplete", options: recordOnlyOptions },
+      { method: "markStepFailed", options: recordOnlyOptions },
+    ]);
+    expect(getSession()).toMatchObject({
+      sandboxName: "my-assistant",
+      status: "failed",
+      steps: {
+        preflight: { status: "complete" },
+        gateway: { status: "failed" },
+      },
+    });
   });
 
   it("validates and persists explicit transitions", async () => {

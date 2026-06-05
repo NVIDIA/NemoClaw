@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getSandboxInventory, listSandboxesCommand, showStatusCommand } from "./index";
+import {
+  getSandboxInventory,
+  getStatusReport,
+  listSandboxesCommand,
+  showStatusCommand,
+} from "./index";
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {
@@ -536,6 +541,138 @@ describe("inventory commands", () => {
     // to whichever sandbox is currently connected.
     expect(lines).toContain("    beta (z-ai/glm-5.1)");
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
+  });
+
+  it("reuses the existing sandbox list when resolving status service sandbox", () => {
+    const savedSandboxName = process.env.SANDBOX_NAME;
+    const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
+    delete process.env.SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX;
+    try {
+      const listSandboxes = vi.fn(() => ({
+        sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
+        defaultSandbox: "alpha",
+      }));
+      const showServiceStatus = vi.fn();
+      showStatusCommand({
+        listSandboxes,
+        getLiveInference: () => null,
+        showServiceStatus,
+        log: vi.fn(),
+      });
+      expect(listSandboxes).toHaveBeenCalledOnce();
+      expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
+    } finally {
+      if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
+      else delete process.env.SANDBOX_NAME;
+      if (savedNemoclawSandboxName !== undefined) {
+        process.env.NEMOCLAW_SANDBOX_NAME = savedNemoclawSandboxName;
+      } else {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      }
+      if (savedNemoclawSandbox !== undefined) process.env.NEMOCLAW_SANDBOX = savedNemoclawSandbox;
+      else delete process.env.NEMOCLAW_SANDBOX;
+    }
+  });
+
+  it("reuses the existing sandbox list when resolving JSON status service sandbox", () => {
+    const savedSandboxName = process.env.SANDBOX_NAME;
+    const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
+    delete process.env.SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX;
+    try {
+      const listSandboxes = vi.fn(() => ({
+        sandboxes: [{ name: "alpha", model: "nvidia/nemotron-3-super-120b-a12b" }],
+        defaultSandbox: "alpha",
+      }));
+      const getServiceStatuses = vi.fn().mockReturnValue([]);
+      const report = getStatusReport({
+        listSandboxes,
+        getLiveInference: () => null,
+        getServiceStatuses,
+        showServiceStatus: vi.fn(),
+      });
+      expect(listSandboxes).toHaveBeenCalledOnce();
+      expect(getServiceStatuses).toHaveBeenCalledWith({ sandboxName: "alpha" });
+      expect(report.defaultSandbox).toBe("alpha");
+    } finally {
+      if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
+      else delete process.env.SANDBOX_NAME;
+      if (savedNemoclawSandboxName !== undefined) {
+        process.env.NEMOCLAW_SANDBOX_NAME = savedNemoclawSandboxName;
+      } else {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      }
+      if (savedNemoclawSandbox !== undefined) process.env.NEMOCLAW_SANDBOX = savedNemoclawSandbox;
+      else delete process.env.NEMOCLAW_SANDBOX;
+    }
+  });
+
+  it("resolves service status sandbox from SANDBOX_NAME env (#1077)", () => {
+    const savedSandboxName = process.env.SANDBOX_NAME;
+    const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
+    delete process.env.NEMOCLAW_SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX;
+    process.env.SANDBOX_NAME = "env-sandbox";
+    try {
+      const showServiceStatus = vi.fn();
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "env-sandbox" }, { name: "registry-default" }],
+          defaultSandbox: "registry-default",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus,
+        log: vi.fn(),
+      });
+      expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "env-sandbox" });
+    } finally {
+      if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
+      else delete process.env.SANDBOX_NAME;
+      if (savedNemoclawSandboxName !== undefined) {
+        process.env.NEMOCLAW_SANDBOX_NAME = savedNemoclawSandboxName;
+      } else {
+        delete process.env.NEMOCLAW_SANDBOX_NAME;
+      }
+      if (savedNemoclawSandbox !== undefined) process.env.NEMOCLAW_SANDBOX = savedNemoclawSandbox;
+      else delete process.env.NEMOCLAW_SANDBOX;
+    }
+  });
+
+  it("resolves JSON service status sandbox from NEMOCLAW_SANDBOX_NAME env (#1077)", () => {
+    const savedName = process.env.NEMOCLAW_SANDBOX_NAME;
+    const savedSandboxName = process.env.SANDBOX_NAME;
+    const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
+    delete process.env.SANDBOX_NAME;
+    delete process.env.NEMOCLAW_SANDBOX;
+    process.env.NEMOCLAW_SANDBOX_NAME = "json-sandbox";
+    try {
+      const getServiceStatuses = vi.fn().mockReturnValue([]);
+      const report = getStatusReport({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "json-sandbox" }],
+          defaultSandbox: "other",
+        }),
+        getLiveInference: () => null,
+        getServiceStatuses,
+        showServiceStatus: vi.fn(),
+      });
+      expect(getServiceStatuses).toHaveBeenCalledWith({ sandboxName: "json-sandbox" });
+      expect(report.defaultSandbox).toBe("json-sandbox");
+      expect(report.sandboxes[0]?.isDefault).toBe(true);
+    } finally {
+      if (savedName !== undefined) process.env.NEMOCLAW_SANDBOX_NAME = savedName;
+      else delete process.env.NEMOCLAW_SANDBOX_NAME;
+      if (savedSandboxName !== undefined) process.env.SANDBOX_NAME = savedSandboxName;
+      else delete process.env.SANDBOX_NAME;
+      if (savedNemoclawSandbox !== undefined) process.env.NEMOCLAW_SANDBOX = savedNemoclawSandbox;
+      else delete process.env.NEMOCLAW_SANDBOX;
+    }
   });
 
   it("does not annotate status when the live gateway matches the onboarded model", () => {

@@ -33,6 +33,7 @@ import { hashCredential } from "../../security/credential-hash";
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
 
+import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import * as policies from "../../policy";
 
 const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
@@ -134,7 +135,8 @@ export async function addSandboxPolicy(
     return;
   }
 
-  const allPresets = policies.listPresets();
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent);
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
