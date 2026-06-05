@@ -2585,6 +2585,10 @@ jobs:
                 else if (j.conclusion === 'failure') failure++;
                 else if (j.conclusion === 'cancelled') cancelled++;
                 else if (j.conclusion === 'skipped' || j.status !== 'completed') skipped++;
+                // Catch-all for any other terminal conclusion (timed_out,
+                // action_required, neutral, stale, future values) → count as
+                // failure so `perfect` stays false on anomalies.
+                else failure++;
               }
             } else {
               for (const [, { result }] of entries) {
