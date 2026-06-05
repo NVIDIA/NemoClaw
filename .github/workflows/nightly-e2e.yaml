@@ -2590,7 +2590,8 @@ jobs:
               }
               canonicalJobs = [...dedupedByName.values()];
             } catch (e) {
-              core.warning(`Could not fetch jobs from API; falling back to needs context: ${e.message}`);
+              const safeMsg = String(e.message ?? 'unknown').slice(0, 200);
+              core.warning(`Could not fetch jobs from API (status ${e.status ?? 'unknown'}); falling back to needs context. Reason: ${safeMsg}`);
             }
 
             // ── Counts ──
@@ -2820,7 +2821,8 @@ jobs:
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
+              const errBody = (await resp.text()).slice(0, 100).replace(/\s+/g, ' ');
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}. Reason (truncated): ${errBody}`);
             } else {
               core.info(`Scorecard posted to Slack (${channel})`);
             }
