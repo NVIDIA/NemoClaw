@@ -44,7 +44,7 @@ describe("verifyDeployment agent dashboard probes", () => {
     const result = await verifyDeployment("my-sandbox", agentChain, deps, NO_RETRY);
 
     expect(result.healthy).toBe(true);
-    expect(sandboxScripts[0]).toContain("http://127.0.0.1:8642/health");
-    expect(hostProbes[0]).toEqual({ port: 18789, path: "/api/status" });
+    expect(sandboxScripts.some((script) => script.includes("http://127.0.0.1:8642/health"))).toBe(true);
+    expect(hostProbes).toContainEqual({ port: 18789, path: "/api/status" });
   });
 });

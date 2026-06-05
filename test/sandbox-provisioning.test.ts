@@ -779,6 +779,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "openclaw_device_approval_policy.py"),
+      path.join(localLib, "clean_runtime_shell_env_shim.py"),
       path.join(localLib, "generate-openclaw-config.mts"),
       path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
@@ -999,7 +1000,7 @@ describe("Hermes sandbox provisioning", () => {
 
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
-        'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
+        'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
       ]);
 
       expect(result.status).toBe(0);

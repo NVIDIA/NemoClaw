@@ -8,7 +8,7 @@ import {
 } from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
-const API_SERVER_TOOLSETS = [
+const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
   "terminal",
@@ -25,6 +25,14 @@ const API_SERVER_TOOLSETS = [
   "nemoclaw",
   "audio",
 ];
+
+const MESSAGING_PLATFORM_BY_CHANNEL: Record<string, string> = {
+  discord: "discord",
+  slack: "slack",
+  telegram: "telegram",
+  wechat: "weixin",
+  whatsapp: "whatsapp",
+};
 
 function hermesApiMode(inferenceApi: string): string | null {
   // Source of truth: the host-side inference selector and Dockerfile patcher
@@ -45,7 +53,7 @@ function hermesApiMode(inferenceApi: string): string | null {
 }
 
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
-  const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
   const modelConfig: Record<string, unknown> = {
     default: settings.model,
     provider: "custom",
@@ -81,7 +89,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       enabled: ["nemoclaw"],
     },
     platform_toolsets: {
-      api_server: apiServerToolsets,
+      api_server: remotePlatformToolsets,
     },
   };
 
@@ -103,9 +111,9 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     }
     if (
       settings.managedToolGateways.presets.includes("nous-audio") &&
-      !apiServerToolsets.includes("tts")
+      !remotePlatformToolsets.includes("tts")
     ) {
-      apiServerToolsets.push("tts");
+      remotePlatformToolsets.push("tts");
     }
   }
 
@@ -137,6 +145,13 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   }
 
   config.platforms = platforms;
+  const platformToolsets = config.platform_toolsets as Record<string, string[]>;
+  for (const channel of settings.messaging.enabledChannels) {
+    const platform = MESSAGING_PLATFORM_BY_CHANNEL[channel];
+    if (platform) {
+      platformToolsets[platform] = [...remotePlatformToolsets];
+    }
+  }
 
   return config;
 }

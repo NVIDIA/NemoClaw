@@ -73,7 +73,7 @@ function normalizeEndpointPath(value: string | undefined, fallback: string): str
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
     try {
       const path = new URL(raw).pathname;
-      if (path && path !== "/") return path;
+      if (path) return path;
     } catch {
       // Treat malformed URL-like values as path fragments below.
     }

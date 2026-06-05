@@ -101,7 +101,7 @@ Use the provider variables from [Inference Options](../inference/inference-optio
 When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes dashboard URL.
 Hermes exposes its built-in browser dashboard on port `18789`.
 NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients.
-The Hermes dashboard assets are built into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
+NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only if you want Hermes' optional in-browser TUI tab.
 
 ```text

@@ -16,9 +16,8 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { createSelectOnboardAgent }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
-const {
-  createInferenceSelectionValidationHelpers,
-}: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const { createInferenceSelectionValidationHelpers }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
@@ -434,11 +433,14 @@ const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = 
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
+const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const { tryCleanupOrphanedDashboardForward } =
+  require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { applyPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
@@ -2079,20 +2081,12 @@ async function preflight(
       // if its command line contains "openshell" to avoid killing unrelated SSH
       // tunnels the user may have set up on the same port. (#1950)
       if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
-        // Use `ps` to get the command line — works on Linux, macOS, and WSL.
-        const cmdline = captureProcessArgs(portCheck.pid);
-        if (cmdline.includes("openshell")) {
-          console.log(
-            `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
-          );
-          run(["kill", String(portCheck.pid)], { ignoreError: true });
-          sleepSeconds(1);
-          portCheck = await checkPortAvailable(port, portCheckOptions);
-          if (portCheck.ok) {
-            console.log(`  ✓ Port ${port} available after orphaned forward cleanup (${label})`);
-            continue;
-          }
-        }
+        const outcome = await tryCleanupOrphanedDashboardForward({
+          port, pid: portCheck.pid, label, portCheckOptions,
+          captureProcessArgs, runCaptureOpenshell, run, sleepSeconds, checkPortAvailable,
+        });
+        if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
+        else if (outcome.kind !== "not-openshell") continue;
       }
       console.error("");
       console.error(`  !! Port ${port} is not available.`);
@@ -3501,15 +3495,6 @@ async function createSandbox(
       provider,
       { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
     );
-  let hermesToolBrokerToken: string | null = null;
-  if (hermesToolGateways.length > 0) {
-    hermesToolBrokerToken = getHermesToolGatewayBroker().getHermesToolGatewayBrokerToken(sandboxName);
-    if (!hermesToolBrokerToken) {
-      console.error("  Hermes managed tools were selected, but no broker token was prepared.");
-      console.error("  Re-run OAuth setup with managed tools enabled and retry onboarding.");
-      process.exit(1);
-    }
-  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -3574,10 +3559,6 @@ async function createSandbox(
   const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-  if (hermesToolBrokerToken) {
-    // Runtime-only: do not bake the per-sandbox broker token into image layers.
-    envArgs.push(formatEnvAssignment("TOOL_GATEWAY_USER_TOKEN", hermesToolBrokerToken));
   }
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
@@ -5160,6 +5141,7 @@ async function setupNim(
   }
 
   const selectedModel = isBackToSelection(model) ? null : model;
+  await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, { isNonInteractive, prompt });
   return {
     model: selectedModel,
     provider,
@@ -5534,13 +5516,7 @@ async function selectPolicyTier(): Promise<string> {
   const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
 
   if (isNonInteractive()) {
-    const name = (process.env.NEMOCLAW_POLICY_TIER || "balanced").trim().toLowerCase();
-    if (!tiers.getTier(name)) {
-      console.error(
-        `  Unknown policy tier: ${name}. Valid: ${allTiers.map((t) => t.name).join(", ")}`,
-      );
-      process.exit(1);
-    }
+    const name = policyTierEnv.resolvePolicyTierFromEnv();
     note(`  [non-interactive] Policy tier: ${name}`);
     return name;
   }
@@ -6156,6 +6132,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.error("  A sandbox name cannot be prompted for in this context.");
     process.exit(1);
   }
+  // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
+  if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
     acceptedByFlag: opts.acceptThirdPartySoftware === true,

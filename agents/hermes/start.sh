@@ -44,6 +44,15 @@ if [ -d /opt/hermes/hermes_cli/web_dist ]; then
   export HERMES_WEB_DIST="${HERMES_WEB_DIST:-/opt/hermes/hermes_cli/web_dist}"
 fi
 
+# Hermes' browser Chat tab shells out to the React/Ink TUI. Force it to the
+# trusted prebuilt bundle baked into the image so `hermes dashboard --tui
+# --skip-build` never honors a stale/user-controlled TUI path or tries to run
+# npm under root-owned /opt/hermes at runtime. Remove this when upstream Hermes
+# reliably discovers the prebaked ui-tui bundle without HERMES_TUI_DIR.
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
 # failures before /tmp/gateway.log exists are still diagnosable.
@@ -177,6 +186,7 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/tmp/hermes-dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -612,10 +622,28 @@ build_hermes_dashboard_args() {
   fi
 }
 
+prepare_hermes_dashboard_home() {
+  local owner="${1:-}"
+  if [ -L "$HERMES_DASHBOARD_HOME" ]; then
+    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
+    return 1
+  fi
+  mkdir -p "$HERMES_DASHBOARD_HOME"
+  if [ -L "$HERMES_DASHBOARD_HOME" ] || [ ! -d "$HERMES_DASHBOARD_HOME" ]; then
+    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
+    chown "$owner" "$HERMES_DASHBOARD_HOME"
+  fi
+  chmod 700 "$HERMES_DASHBOARD_HOME"
+}
+
 start_hermes_dashboard_current_user() {
   build_hermes_dashboard_args
+  prepare_hermes_dashboard_home ""
   prepare_restricted_log /tmp/dashboard.log "" 600
-  HERMES_HOME="${HERMES_DIR}" \
+  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
     nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
   DASHBOARD_PID=$!
@@ -626,14 +654,47 @@ start_hermes_dashboard_current_user() {
 
 start_hermes_dashboard_sandbox_user() {
   build_hermes_dashboard_args
+  prepare_hermes_dashboard_home sandbox:sandbox
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600
-  HERMES_HOME="${HERMES_DIR}" \
+  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
     nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   start_dashboard_log_stream
   start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
+}
+
+wait_for_hermes_gateway_internal() {
+  local gateway_pid="$1"
+  local attempts=0
+  while [ "$attempts" -lt 45 ]; do
+    if curl -sf --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$gateway_pid" 2>/dev/null; then
+      wait "$gateway_pid"
+      return $?
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  echo "[gateway] Hermes gateway did not become healthy on internal port ${INTERNAL_PORT}" >&2
+  return 1
+}
+
+restore_hermes_config_permissions_after_dashboard_start() {
+  [ "$(id -u)" -eq 0 ] || return 0
+  # Hermes dashboard startup may tighten HERMES_HOME to 0700 because it runs as
+  # the sandbox owner. The gateway process runs as the separate gateway user and
+  # reads config via sandbox-group membership, so restore NemoClaw's shared
+  # mutable-root mode after the dashboard has performed its startup checks.
+  local attempts=0
+  while [ "$attempts" -lt 5 ]; do
+    ensure_hermes_config_root_mode || return 1
+    attempts=$((attempts + 1))
+    sleep 1
+  done
 }
 
 # ── Messaging egress ─────────────────────────────────────────────
@@ -695,6 +756,11 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
+    cat <<'TUIENVEOF'
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+TUIENVEOF
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -979,6 +1045,114 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+validate_hermes_env_secret_boundary() {
+  local env_file="${HERMES_DIR}/.env"
+  [ -e "$env_file" ] || return 0
+  if [ -L "$env_file" ]; then
+    echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
+    return 1
+  fi
+  [ -f "$env_file" ] || return 0
+
+  python3 - "$env_file" <<'PYSECRETBOUNDARY'
+import re
+import sys
+
+env_file = sys.argv[1]
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+violations = []
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+with open(env_file, encoding="utf-8") as fh:
+    for lineno, raw_line in enumerate(fh, 1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in allowed_nonsecret_keys:
+            continue
+        if not secret_key_re.search(key):
+            continue
+        value = unquote(value)
+        if value in allowed_literals:
+            continue
+        if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+            continue
+        violations.append(f"{key} (line {lineno})")
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYSECRETBOUNDARY
+}
+
+validate_hermes_runtime_env_secret_boundary() {
+  python3 - <<'PYRUNTIMESECRETBOUNDARY'
+import os
+import re
+import sys
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+allowed_raw_secret_keys = {"OPENCLAW_GATEWAY_TOKEN"}
+allowed_nonsecret_keys = set((
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "GPG_KEY",
+    "NEMOCLAW_INFERENCE_API",
+    "NEMOCLAW_PROVIDER_KEY",
+))
+violations = []
+
+for key, value in sorted(os.environ.items()):
+    if key in allowed_raw_secret_keys or key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    if value in allowed_literals:
+        continue
+    if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+        continue
+    violations.append(key)
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because the process environment "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYRUNTIMESECRETBOUNDARY
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .hermes
@@ -1002,6 +1176,8 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   apply_shields_up_runtime_env
+  validate_hermes_env_secret_boundary
+  validate_hermes_runtime_env_secret_boundary
   refresh_hermes_provider_placeholders
   configure_messaging_channels
   retry_tirith_marker_if_needed
@@ -1025,6 +1201,8 @@ if [ "$(id -u)" -ne 0 ]; then
   GATEWAY_PID=$!
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
   start_gateway_log_stream
+  wait_for_hermes_gateway_internal "$GATEWAY_PID"
+  start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
   start_hermes_dashboard_current_user
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
@@ -1035,7 +1213,6 @@ if [ "$(id -u)" -ne 0 ]; then
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
-  start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
   [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
   [ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
   print_dashboard_urls
@@ -1049,6 +1226,8 @@ fi
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 apply_shields_up_runtime_env
+validate_hermes_env_secret_boundary
+validate_hermes_runtime_env_secret_boundary
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 retry_tirith_marker_if_needed
@@ -1072,7 +1251,10 @@ HERMES_HOME="${HERMES_DIR}" \
 GATEWAY_PID=$!
 echo "[gateway] hermes gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 start_gateway_log_stream
+wait_for_hermes_gateway_internal "$GATEWAY_PID"
+start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
 start_hermes_dashboard_sandbox_user
+restore_hermes_config_permissions_after_dashboard_start
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
@@ -1082,7 +1264,6 @@ SANDBOX_CHILD_PIDS=("$GATEWAY_PID" "$DASHBOARD_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT
-start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
 [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
 [ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
 print_dashboard_urls

@@ -46,6 +46,9 @@
 #   hermes-root-entrypoint-smoke-e2e
 #                            Builds the real Hermes image and verifies root entrypoint startup,
 #                            gateway-user execution, v0.14 layout repair, and PID migration.
+#   hermes-secret-boundary-e2e
+#                            Builds Hermes default and managed-tool images, then verifies
+#                            no raw secret-shaped values enter sandbox env/config.
 #   openclaw-onboard-security-posture-e2e
 #                            Full OpenClaw onboard on a non-root host user
 #                            with trusted rc-file and runtime guard assertions.
@@ -55,6 +58,9 @@
 #   hermes-inference-switch-e2e
 #                            Switches a running Hermes sandbox with `nemohermes inference set`
 #                            and verifies route, config.yaml, hashes, and live requests.
+#   hermes-anthropic-inference-switch-e2e
+#                            Switches a running Hermes sandbox to a compatible
+#                            Anthropic Messages provider and verifies agent traffic.
 #   hermes-discord-e2e       Hermes Discord onboarding — validates the top-level Hermes
 #                            Discord schema plus OpenShell placeholder/token isolation.
 #   hermes-slack-e2e         Hermes Slack onboarding — validates the Hermes Slack policy,
@@ -62,6 +68,17 @@
 #   openclaw-inference-switch-e2e
 #                            Switches a running OpenClaw sandbox with `nemoclaw inference set`
 #                            and verifies route, openclaw.json, hashes, and live requests.
+#   openclaw-anthropic-inference-switch-e2e
+#                            Switches a running OpenClaw sandbox to a compatible
+#                            Anthropic Messages provider and verifies agent traffic.
+#   openclaw-skill-cli-e2e   Validates workspace-installed OpenClaw skills survive sandbox
+#                            lifecycle through OPENCLAW_HOME/STATE_DIR/WORKSPACE_DIR pinning
+#                            (#4766 / #4709). Seven-phase deterministic skill-CLI exercise
+#                            inside a real onboarded sandbox (install, list, info, check).
+#   channels-add-remove-e2e  Telegram/Discord/Slack channel add/remove lifecycle plus
+#                            gateway-credential reuse on rebuild (#4745 / #3895). Exercises
+#                            the path where the host env credential is empty but the
+#                            gateway already holds the provider credential.
 #   issue-4434-tui-unreachable-inference-e2e
 #                            Recreates #4434's NVIDIA endpoint firewall block and verifies
 #                            OpenClaw TUI shows a visible error and stops the active spinner.
@@ -71,6 +88,10 @@
 #   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
+#   concurrent-gateway-ports-e2e
+#                            Two sandboxes coexisting on the same host with distinct
+#                            NEMOCLAW_GATEWAY_PORT values; verifies per-instance
+#                            gateway and dashboard segregation.
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
 #
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps
@@ -104,12 +125,16 @@ on:
           issue-4462-gateway-pinned-approval-characterization-e2e,
           messaging-compatible-endpoint-e2e, sessions-agents-cli-e2e,
           channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
-          kimi-inference-compat-e2e, bedrock-runtime-compatible-anthropic-e2e,
-          token-rotation-e2e, sandbox-survival-e2e, issue-2478-crash-loop-recovery-e2e,
+          common-egress-agent-e2e, kimi-inference-compat-e2e,
+          bedrock-runtime-compatible-anthropic-e2e, token-rotation-e2e,
+          sandbox-survival-e2e, issue-2478-crash-loop-recovery-e2e,
           hermes-e2e, hermes-dashboard-e2e, hermes-root-entrypoint-smoke-e2e,
+          hermes-secret-boundary-e2e,
           openclaw-onboard-security-posture-e2e, hermes-onboard-security-posture-e2e,
-          hermes-inference-switch-e2e, hermes-discord-e2e, hermes-slack-e2e,
-          sandbox-operations-e2e, inference-routing-e2e, openclaw-inference-switch-e2e,
+          hermes-inference-switch-e2e, hermes-anthropic-inference-switch-e2e,
+          hermes-discord-e2e, hermes-slack-e2e, sandbox-operations-e2e,
+          inference-routing-e2e, openclaw-inference-switch-e2e,
+          openclaw-anthropic-inference-switch-e2e,
           network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e,
           diagnostics-e2e, credential-migration-e2e, snapshot-commands-e2e,
           shields-config-e2e, vm-driver-privileged-exec-routing-e2e, rebuild-openclaw-e2e,
@@ -117,7 +142,8 @@ on:
           rebuild-hermes-stale-base-e2e, double-onboard-e2e, onboard-repair-e2e,
           onboard-resume-e2e, onboard-negative-paths-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e, overlayfs-autofix-e2e,
-          device-auth-health-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e
+          device-auth-health-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
+          concurrent-gateway-ports-e2e
         required: false
         type: string
         default: ""
@@ -334,18 +360,19 @@ jobs:
       env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-token-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-msg-provider","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-e2e","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
       nvidia_api_key: true
       github_token: true
+      messaging_live_secrets: ${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
       DOCKERHUB_USERNAME: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
       DOCKERHUB_TOKEN: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
-      TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
-      TELEGRAM_CHAT_ID_E2E: ${{ secrets.TELEGRAM_CHAT_ID_E2E }}
-      DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
-      DISCORD_CHANNEL_ID_E2E: ${{ secrets.DISCORD_CHANNEL_ID_E2E }}
-      SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
-      SLACK_APP_TOKEN_REAL: ${{ secrets.SLACK_APP_TOKEN_REAL }}
-      SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
+      TELEGRAM_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
+      TELEGRAM_CHAT_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
+      DISCORD_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
+      DISCORD_CHANNEL_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DISCORD_CHANNEL_ID_E2E || '' }}
+      SLACK_BOT_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_BOT_TOKEN_REAL || '' }}
+      SLACK_APP_TOKEN_REAL: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_APP_TOKEN_REAL || '' }}
+      SLACK_CHANNEL_ID_E2E: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.SLACK_CHANNEL_ID_E2E || '' }}
   openclaw-slack-pairing-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
@@ -717,6 +744,22 @@ jobs:
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
+  common-egress-agent-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',common-egress-agent-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-common-egress-agent-e2e.sh
+      timeout_minutes: 120
+      artifact_name: "common-egress-agent-e2e-logs"
+      artifact_path: "/tmp/nemoclaw-e2e-common-egress-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets: *nightly-e2e-default-secrets
   kimi-inference-compat-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -930,7 +973,7 @@ jobs:
       timeout_minutes: 60
       artifact_name: "hermes-dashboard-e2e-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
       nvidia_api_key: true
       github_token: true
     secrets: *nightly-e2e-default-secrets
@@ -946,6 +989,19 @@ jobs:
       timeout_minutes: 45
       artifact_name: "hermes-root-entrypoint-smoke-log"
       artifact_path: "/tmp/nemoclaw-hermes-root-entrypoint-smoke.log"
+    secrets: *nightly-e2e-default-secrets
+  hermes-secret-boundary-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-secret-boundary-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-sandbox-secret-boundary.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-secret-boundary-log"
+      artifact_path: "/tmp/nemoclaw-hermes-sandbox-secret-boundary.log"
     secrets: *nightly-e2e-default-secrets
   openclaw-onboard-security-posture-e2e:
     if: >-
@@ -994,6 +1050,21 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-inference-switch"}'
       nvidia_api_key: true
       github_token: true
+    secrets: *nightly-e2e-default-secrets
+  hermes-anthropic-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-anthropic-inference-switch-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-inference-switch.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-anthropic-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-anthropic-inference-switch","NEMOCLAW_SWITCH_INFERENCE_API":"anthropic-messages","NEMOCLAW_SWITCH_MOCK_ANTHROPIC":"1","NEMOCLAW_SWITCH_MODEL":"mock-anthropic-model","NEMOCLAW_SWITCH_PROVIDER":"compatible-anthropic-endpoint"}'
+      nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   hermes-discord-e2e:
     if: >-
@@ -1304,6 +1375,20 @@ jobs:
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-inference-switch"}'
       nvidia_api_key: true
       github_token: true
+    secrets: *nightly-e2e-default-secrets
+  openclaw-anthropic-inference-switch-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-anthropic-inference-switch-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-inference-switch.sh
+      artifact_name: "openclaw-anthropic-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"openclaw","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-anthropic-inference-switch","NEMOCLAW_SWITCH_INFERENCE_API":"anthropic-messages","NEMOCLAW_SWITCH_MOCK_ANTHROPIC":"1","NEMOCLAW_SWITCH_MODEL":"mock-anthropic-model","NEMOCLAW_SWITCH_PROVIDER":"compatible-anthropic-endpoint"}'
+      nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
   network-policy-e2e:
     if: >-
@@ -2009,6 +2094,58 @@ jobs:
           path: /tmp/nemoclaw-gpu-double-onboard-test.log
           if-no-files-found: ignore
 
+  concurrent-gateway-ports-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',concurrent-gateway-ports-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_E2E_PHASE_TIMEOUT: "1200"
+    steps:
+      - *target-ref-checkout
+      - *dockerhub-auth-step
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run concurrent gateway ports E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-concurrent-gateway-ports.sh
+      - name: Upload sandbox A onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-a-onboard-log
+          path: /tmp/e2e-cgp-a-onboard.log
+          if-no-files-found: ignore
+      - name: Upload sandbox B onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-b-onboard-log
+          path: /tmp/e2e-cgp-b-onboard.log
+          if-no-files-found: ignore
+      - name: Upload sandbox B destroy log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concurrent-gateway-ports-sandbox-b-destroy-log
+          path: /tmp/e2e-cgp-b-destroy.log
+          if-no-files-found: ignore
+
   notify-on-failure:
     runs-on: ubuntu-latest
     needs:
@@ -2033,6 +2170,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2041,14 +2179,17 @@ jobs:
         hermes-e2e,
         hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
+        hermes-secret-boundary-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
@@ -2074,6 +2215,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     permissions:
@@ -2144,6 +2286,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2152,14 +2295,17 @@ jobs:
         hermes-e2e,
         hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
+        hermes-secret-boundary-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
@@ -2185,6 +2331,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
@@ -2284,10 +2431,12 @@ jobs:
             });
 
   # ── Nightly Scorecard ──────────────────────────────────────────────────
-  # Aggregates overnight results into a scorecard published to
-  # $GITHUB_STEP_SUMMARY. Identifies flaky jobs, computes pass/fail/cancel
-  # breakdowns, and compares trends against the prior day.
-  # Only runs on schedule (not workflow_dispatch — that uses report-to-pr).
+  # Aggregates results into a scorecard published to $GITHUB_STEP_SUMMARY
+  # and optionally to Slack. Computes pass/fail/cancel breakdowns and
+  # compares trends vs prior day. Runs on:
+  #   - schedule (cron)            → Slack post (DAILY route)
+  #   - workflow_dispatch full run → Slack post (FULLRUN route)
+  #   - workflow_dispatch selective→ silent unless post_to_slack=true (preview)
   scorecard:
     runs-on: ubuntu-latest
     needs:
@@ -2312,6 +2461,7 @@ jobs:
         channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
+        common-egress-agent-e2e,
         kimi-inference-compat-e2e,
         bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
@@ -2320,14 +2470,17 @@ jobs:
         hermes-e2e,
         hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
+        hermes-secret-boundary-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
+        hermes-anthropic-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
         sandbox-operations-e2e,
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
+        openclaw-anthropic-inference-switch-e2e,
         network-policy-e2e,
         state-backup-restore-e2e,
         tunnel-lifecycle-e2e,
@@ -2353,6 +2506,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     permissions:
@@ -2383,7 +2537,7 @@ jobs:
             const needs = ${{ toJSON(needs) }};
             const today = formatDate(new Date());
             const isDispatch = context.eventName === 'workflow_dispatch';
-            const requestedJobsRaw = isDispatch ? '${{ inputs.jobs }}'.trim() : '';
+            const requestedJobsRaw = isDispatch ? (${{ toJSON(inputs.jobs) }} || '').trim() : '';
             const requestedJobs = requestedJobsRaw
               ? requestedJobsRaw.split(',').map((name) => name.trim()).filter(Boolean)
               : [];
@@ -2394,48 +2548,92 @@ jobs:
                 ? 'Manual full run'
                 : 'Scheduled full nightly';
 
+            // ── Canonical job set (API truth) ──
+            // Contract:
+            //   - Source: listJobsForWorkflowRun (paginated). `needs` is
+            //     insufficient because reusable-workflow inner jobs surface
+            //     in the API as "<caller> / <inner>" but in `needs` as the
+            //     plain caller ID, and wrapper-vs-inner conclusions can
+            //     diverge on re-runs.
+            //   - Authoritative fields: name (suffix-stripped), conclusion,
+            //     status, html_url, run_attempt, completed_at.
+            //   - Fallback on API throw: counts + names from `needs`, no
+            //     URLs, may mis-classify wrapper-vs-inner mismatches.
+            //     Degraded but still renders the scorecard.
+            //   - Removable when `needs` exposes inner reusable-workflow
+            //     conclusions + html_url natively (no GitHub feature yet).
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
+
+            let canonicalJobs = null;
+            try {
+              const apiJobs = await github.paginate(
+                github.rest.actions.listJobsForWorkflowRun,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                },
+              );
+              const dedupedByName = new Map();
+              for (const j of apiJobs) {
+                const name = j.name.replace(/ \/ [^/]+$/, '');
+                if (EXCLUDED_JOBS.has(name)) continue;
+                // Deterministic: prefer higher run_attempt, then later
+                // completed_at as tiebreaker. Independent of API page order.
+                const existing = dedupedByName.get(name);
+                const isNewer = !existing
+                  || (j.run_attempt ?? 0) > (existing.run_attempt ?? 0)
+                  || ((j.run_attempt ?? 0) === (existing.run_attempt ?? 0)
+                      && (j.completed_at ?? '') > (existing.completed_at ?? ''));
+                if (isNewer) dedupedByName.set(name, { ...j, name });
+              }
+              canonicalJobs = [...dedupedByName.values()];
+            } catch (e) {
+              const safeMsg = String(e.message ?? 'unknown').slice(0, 200);
+              core.warning(`Could not fetch jobs from API (status ${e.status ?? 'unknown'}); falling back to needs context. Reason: ${safeMsg}`);
+            }
+
+            // ── Counts ──
             let success = 0;
             let failure = 0;
             let cancelled = 0;
             let skipped = 0;
 
-            for (const [, { result }] of entries) {
-              if (result === 'success') success++;
-              else if (result === 'failure') failure++;
-              else if (result === 'cancelled') cancelled++;
-              else if (result === 'skipped') skipped++;
-            }
-
-            const total = entries.length;
-            const ran = total - skipped;
-            const perfect = failure === 0 && cancelled === 0 && ran > 0;
-
-            // ── Identify failed jobs (with html_url for clickable links) ──
-            const failedNames = entries
-              .filter(([, { result }]) => result === 'failure')
-              .map(([name]) => name)
-              .sort();
-
-            let urlByName = new Map();
-            if (failedNames.length > 0) {
-              try {
-                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: context.runId,
-                  per_page: 100,
-                });
-                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
-              } catch (e) {
-                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+            if (canonicalJobs) {
+              for (const j of canonicalJobs) {
+                if (j.conclusion === 'success') success++;
+                else if (j.conclusion === 'failure') failure++;
+                else if (j.conclusion === 'cancelled') cancelled++;
+                else if (j.conclusion === 'skipped' || j.status !== 'completed') skipped++;
+                // Catch-all for any other terminal conclusion (timed_out,
+                // action_required, neutral, stale, future values) → count as
+                // failure so `perfect` stays false on anomalies.
+                else failure++;
+              }
+            } else {
+              for (const [, { result }] of entries) {
+                if (result === 'success') success++;
+                else if (result === 'failure') failure++;
+                else if (result === 'cancelled') cancelled++;
+                else if (result === 'skipped') skipped++;
               }
             }
 
-            const failedJobs = failedNames.map((name) => ({
-              name,
-              url: urlByName.get(name) || null,
-            }));
+            const total = canonicalJobs ? canonicalJobs.length : entries.length;
+            const ran = total - skipped;
+            const perfect = failure === 0 && cancelled === 0 && ran > 0;
+
+            // ── Failed jobs ──
+            const failedJobs = canonicalJobs
+              ? canonicalJobs
+                  .filter((j) => j.conclusion === 'failure')
+                  .map((j) => ({ name: j.name, url: j.html_url }))
+                  .sort((a, b) => a.name.localeCompare(b.name))
+              : entries
+                  .filter(([, { result }]) => result === 'failure')
+                  .map(([name]) => ({ name, url: null }))
+                  .sort((a, b) => a.name.localeCompare(b.name));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
@@ -2536,9 +2734,11 @@ jobs:
 
             // Structured data for the Slack step.
             // Contract: scripts/scorecard/build-slack-blocks.ts
+            const actor = context.actor || '';
             core.setOutput('scorecardData', JSON.stringify({
               today,
               runMode,
+              actor,
               isSelectiveDispatch,
               requestedJobs,
               total,
@@ -2555,8 +2755,8 @@ jobs:
 
       # ── Slack notification ────────────────────────────
       # Production routes (always post; runMode is computed by the generate step):
-      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
-      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #   "Scheduled full nightly" → SLACK_WEBHOOK_URL_DAILY
+      #   "Manual full run"        → SLACK_WEBHOOK_URL_FULLRUN
       #
       # Selective dispatch is skipped by default. Devs may opt into the
       # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
@@ -2564,8 +2764,8 @@ jobs:
         if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
-          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_DAILY: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+          SLACK_WEBHOOK_URL_FULLRUN: ${{ secrets.SLACK_WEBHOOK_URL_FULLRUN }}
           SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
           POST_TO_SLACK: ${{ inputs.post_to_slack }}
@@ -2592,8 +2792,8 @@ jobs:
             }
 
             const envByChannel = {
-              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
-              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'daily': 'SLACK_WEBHOOK_URL_DAILY',
+              'fullrun': 'SLACK_WEBHOOK_URL_FULLRUN',
               'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const webhookUrl = process.env[envByChannel[channel]];
@@ -2621,7 +2821,8 @@ jobs:
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
+              const errBody = (await resp.text()).slice(0, 100).replace(/\s+/g, ' ');
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}. Reason (truncated): ${errBody}`);
             } else {
               core.info(`Scorecard posted to Slack (${channel})`);
             }

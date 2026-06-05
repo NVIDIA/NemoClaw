@@ -286,19 +286,19 @@ describe("Hermes managed-tool gateway broker", () => {
         {
           method: "POST",
           headers: {
-            Authorization: "Bearer broker-1",
             "Content-Type": "application/json",
-            "x-api-key": "sandbox-secret",
+            "x-api-key": "refresh-2",
           },
           body: JSON.stringify({ url: "https://example.com" }),
         },
       );
-      expect(firecrawl.status).toBe(200);
+      const firecrawlBody = await firecrawl.text();
+      expect(firecrawl.status, `${firecrawlBody}\n${output}`).toBe(200);
       expect(firecrawl.headers.get("content-encoding")).toBeNull();
       expect(firecrawl.headers.get("content-length")).toBeNull();
       expect(firecrawl.headers.get("content-md5")).toBeNull();
       expect(firecrawl.headers.get("set-cookie")).toBeNull();
-      expect(await firecrawl.json()).toEqual({ ok: true, path: "/v1/scrape?debug=1" });
+      expect(JSON.parse(firecrawlBody)).toEqual({ ok: true, path: "/v1/scrape?debug=1" });
       expect(tokenRequests).toHaveLength(1);
       expect(tokenRequests[0]?.refreshHeader).toBe("refresh-1");
       expect(new URLSearchParams(tokenRequests[0]?.body).get("refresh_token")).toBeNull();

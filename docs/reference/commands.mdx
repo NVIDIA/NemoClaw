@@ -182,6 +182,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 NEMOCLAW_POLICY_TIER=restricted $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+Any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight with an error listing the valid options.
+
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy-add`](#$$nemoclaw-name-policy-add) across re-onboards.
@@ -615,9 +618,34 @@ Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes.
+`doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding.
+Restarting the sandbox repairs the same drift automatically.
+
+```bash
+$$nemoclaw my-assistant doctor [--json | --fix]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 ```bash
 $$nemoclaw my-assistant doctor [--json]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> exec`
 
@@ -1408,6 +1436,15 @@ $$nemoclaw tunnel stop
 
 `$$nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
+### `$$nemoclaw tunnel status`
+
+Show the current cloudflared public-URL tunnel status for the default sandbox dashboard.
+The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `$$nemoclaw status`.
+
+```console
+$$nemoclaw tunnel status
+```
+
 ### `$$nemoclaw start`
 
 <Warning>
@@ -1759,7 +1796,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `deepseek-v4-flash`, `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
 <AgentOnly variant="openclaw">
