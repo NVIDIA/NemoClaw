@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Ecosystem
 
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.

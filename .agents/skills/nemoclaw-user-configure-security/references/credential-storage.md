@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Credential Storage
 
 import { AgentOnly } from "../_components/AgentGuide";
@@ -46,6 +44,9 @@ This means you can:
 - Prefix any command with the credential to override the gateway-stored value: `NVIDIA_API_KEY=nvapi-... nemoclaw onboard`
 - Use short-lived or rotated credentials in CI by exporting them once per pipeline run
 - Avoid registering credentials in the gateway entirely if your environment supplies them
+
+When the host environment is empty, day-two operations such as `nemoclaw <name> rebuild` and remote-provider updates can reuse the credential already registered with the OpenShell gateway.
+Export the credential only when you want to create, replace, or rotate the stored provider value.
 
 ## Deploy Reads from Environment Only
 

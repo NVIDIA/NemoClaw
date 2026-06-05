@@ -58,6 +58,25 @@ describe("check-docs link validation", () => {
     expect(result.status).toBe(0);
   });
 
+  it("ignores markdown-looking links inside inline code spans", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-inlinecode-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      [
+        "# Guide",
+        "",
+        "Use `For more information, refer to [DOC PAGE](/doc/path).` as a placeholder.",
+        "",
+      ].join("\n"),
+    );
+
+    const result = runCheckDocs(mdPath);
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("/doc/path");
+  });
+
   it("resolves Fern user-guide variant routes in Markdown and MDX hrefs", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-fern-"));
     const mdPath = path.join(tempDir, "guide.mdx");

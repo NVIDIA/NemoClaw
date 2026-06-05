@@ -204,8 +204,8 @@ Commit changes and open a pull request with a concise summary of the doc updates
 - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `documentation` label and the corresponding release label so reviewers can identify doc-only changes for the target release.
-When creating the PR with `gh pr create`, pass both labels, for example `--label documentation --label v0.0.37`.
+Apply the `area: docs`, `area: skills`, and corresponding release labels so reviewers can identify doc-only changes for the target release and generated skill updates.
+When creating the PR with `gh pr create`, pass all labels, for example `--label "area: docs" --label "area: skills" --label v0.0.37`.
 If the release label does not exist, report that instead of substituting another label.
 
 ## Tips
@@ -226,10 +226,10 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
 6. **Release prep only:** Determine the release label from the user-requested release version.
-7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
+7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
 9. Build with `npm run docs` to verify.
-10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+10. **Release prep only:** Commit changes and open a pull request with the `area: docs`, `area: skills`, and corresponding `vX.Y.Z` release labels. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
    - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
