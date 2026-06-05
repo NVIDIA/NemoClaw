@@ -194,5 +194,6 @@ RUN set -eu; \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
-ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
+    HERMES_TUI_DIR="/opt/hermes/ui-tui"
 RUN /usr/local/bin/hermes --version
