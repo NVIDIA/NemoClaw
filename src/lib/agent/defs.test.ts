@@ -148,6 +148,38 @@ describe("agent definitions", () => {
     expect(() => loadAgent(agentName)).toThrow(/health_probe\.port/);
   });
 
+  it("rejects invalid dashboard auth values in manifests", () => {
+    const agentName = `invalid-dashboard-auth-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Dashboard Auth",
+        "dashboard:",
+        "  kind: ui",
+        "  auth: bearer",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/dashboard\.auth/);
+  });
+
+  it("rejects invalid dashboard health path values in manifests", () => {
+    const agentName = `invalid-dashboard-health-path-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Dashboard Health Path",
+        "dashboard:",
+        "  kind: ui",
+        "  health_path: api/status",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/dashboard\.health_path/);
+  });
+
   it("rejects invalid dashboard_ui.port values in manifests", () => {
     const agentName = `invalid-dashboard-ui-port-${String(Date.now())}`;
     writeTempAgentManifest(

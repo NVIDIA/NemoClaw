@@ -42,7 +42,7 @@ OpenClaw-specific sections below describe the `/nemoclaw` slash command, the Ope
 Use `nemohermes` for the Hermes variant.
 It selects Hermes by default during onboarding and for other commands.
 Use `--agent hermes` during onboarding or set `NEMOCLAW_AGENT=hermes` when you need the same selection through another entry point.
-Hermes-specific sections below describe the OpenAI-compatible API endpoint, optional Hermes dashboard, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
+Hermes-specific sections below describe the built-in Hermes dashboard, the separate OpenAI-compatible API endpoint, Hermes config under `/sandbox/.hermes`, and provider updates that patch `config.yaml`.
 
 ```bash
 nemohermes onboard              # selects Hermes by default
@@ -679,10 +679,17 @@ This warning applies when the command prints an OpenClaw tokenized URL.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-`dashboard-url` is not applicable to Hermes sandboxes because Hermes exposes an OpenAI-compatible API endpoint instead of the OpenClaw dashboard URL.
-Use `nemohermes my-assistant status` to find the forwarded API endpoint.
-The Hermes API remains on port `8642` and uses `/v1` for OpenAI-compatible clients.
-If you enabled `NEMOCLAW_HERMES_DASHBOARD=1`, use the optional Hermes dashboard port from the status output instead.
+Print the browser dashboard URL for a running Hermes sandbox.
+Hermes manages dashboard sessions itself, so this command prints a plain URL without an OpenClaw `#token=` fragment.
+The built-in dashboard is forwarded on port `18789` by default.
+
+```bash
+nemohermes my-assistant dashboard-url
+nemohermes my-assistant dashboard-url --quiet
+```
+
+The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for OpenAI-compatible clients.
+Use `nemohermes my-assistant status` to see both the dashboard and API endpoints.
 
 </AgentOnly>
 
@@ -1718,15 +1725,14 @@ For OpenClaw, `NEMOCLAW_DASHBOARD_PORT` controls the OpenClaw dashboard forward.
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the OpenAI-compatible API forward.
-For Hermes sandboxes, `NEMOCLAW_HERMES_DASHBOARD=1` starts the native Hermes dashboard separately from the OpenAI-compatible API.
-The Hermes API remains on port `8642`; the optional browser dashboard uses `NEMOCLAW_HERMES_DASHBOARD_PORT`.
+For Hermes, `NEMOCLAW_DASHBOARD_PORT` controls the built-in dashboard forward, which defaults to `18789`.
+The Hermes OpenAI-compatible API remains separate on port `8642` and uses `/v1` for API clients.
+Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-browser TUI tab.
 
 | Variable | Default | Service |
 |----------|---------|---------|
-| `NEMOCLAW_HERMES_DASHBOARD` | 0 | Optional Hermes native web dashboard (`1`, `true`, `yes`, or `on` enables it) |
-| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 9119 | Optional Hermes native web dashboard forward port |
-| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab when the dashboard is enabled |
+| `NEMOCLAW_DASHBOARD_PORT` | 18789 | Hermes built-in dashboard forward port |
+| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab |
 
 </AgentOnly>
 

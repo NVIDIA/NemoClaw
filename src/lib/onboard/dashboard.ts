@@ -10,14 +10,16 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
+import { createSandboxForwardStopper, type DashboardForwardOptions, normalizeDashboardForwardOptions } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
+import { bestEffortForwardStop } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
@@ -67,11 +69,7 @@ export interface OnboardDashboardHelpers {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl?: string,
-    options?: {
-      rollbackSandboxOnFailure?: boolean;
-      preserveSandboxPorts?: Array<number | string>;
-      allowPortReallocation?: boolean;
-    },
+    options?: DashboardForwardOptions,
   ): number;
   ensureAgentDashboardForward(
     sandboxName: string,
@@ -223,34 +221,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    options: {
-      rollbackSandboxOnFailure?: boolean;
-      preserveSandboxPorts?: Array<number | string>;
-      allowPortReallocation?: boolean;
-    } = {},
+    options: DashboardForwardOptions = {},
   ): number {
-    const {
-      rollbackSandboxOnFailure = false,
-      preserveSandboxPorts = [],
-      allowPortReallocation = true,
-    } = options;
-    const preservedPorts = new Set(preserveSandboxPorts.map((port) => String(port)));
+    const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
+      normalizeDashboardForwardOptions(options);
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stoppedPorts = new Set<string>();
-    const stopForwardForSandbox = (port: string | number) => {
-      const portKey = String(port);
-      if (stoppedPorts.has(portKey)) return null;
-      const result = bestEffortForwardStopForSandbox(
-        deps.runOpenshell,
-        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
-        port,
-        sandboxName,
-      );
-      if (result === "stopped" || result === "no-entry") {
-        stoppedPorts.add(portKey);
-      }
-      return result;
-    };
+    const stopForwardForSandbox = createSandboxForwardStopper({
+      runOpenshell: deps.runOpenshell,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+      sandboxName,
+    });
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -270,9 +250,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     if (actualPort !== preferredPort) {
       if (!allowPortReallocation) {
-        throw new Error(
-          `Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`,
-        );
+        throw new Error(`Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`);
       }
       if (rollbackSandboxOnFailure) {
         const err = new Error(
@@ -342,32 +320,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    const agentDashboardPort = agent.forwardPort ?? CONTROL_UI_PORT;
-    const agentDashboardUrl = `http://127.0.0.1:${agentDashboardPort}`;
-    const declaredPorts = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
-    const preservePorts = [...new Set([agentDashboardPort, ...declaredPorts])]
-      .filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535);
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl, {
-      preserveSandboxPorts: preservePorts,
-    });
-    process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
-    const portsToPreserve = [...new Set([...preservePorts, actualAgentDashboardPort])];
-    for (const port of preservePorts) {
-      if (port === agentDashboardPort) continue;
-      try {
-        ensureDashboardForward(sandboxName, `http://127.0.0.1:${port}`, {
-          preserveSandboxPorts: portsToPreserve,
-          allowPortReallocation: false,
-        });
-      } catch (err) {
-        console.warn(
-          `  ! Could not start optional agent port forward ${port}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
-    return actualAgentDashboardPort;
+    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
   }
 
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
@@ -413,8 +366,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const needsOpenClawToken = !agent || agent.dashboard.auth === "url_token";
-    const token = needsOpenClawToken ? fetchGatewayAuthTokenFromSandbox(sandboxName) : null;
+    const token = !agent || agent.dashboard.auth === "url_token" ? fetchGatewayAuthTokenFromSandbox(sandboxName) : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,

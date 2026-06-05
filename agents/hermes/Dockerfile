@@ -23,8 +23,11 @@ RUN set -eu; \
     /usr/local/bin/hermes --version
 
 # Published base images can lag Dockerfile.base while local feature branches
-# still layer this final image on top. Prebuild the dashboard bundle here too
-# so `hermes dashboard` never tries to run npm from the sandbox user account.
+# still layer this final image on top. Invalid state: the selected base has
+# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
+# dashboard bundle here too so `hermes dashboard` never tries to run npm from
+# the sandbox user account. Remove this fallback after all supported base image
+# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
 RUN set -eu; \
     hermes_web_dist=/opt/hermes/hermes_cli/web_dist; \
     hermes_web_dir=/opt/hermes/web; \
