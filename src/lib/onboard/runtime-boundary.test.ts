@@ -110,6 +110,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         if (nextState) transitionMachine(current, nextState);
         return current;
       }),
+    markStepCompleteRecordOnly: () => cloneSession(session ?? createSession()),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
@@ -121,6 +122,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
         return current;
       }),
+    markStepFailedRecordOnly: () => cloneSession(session ?? createSession()),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

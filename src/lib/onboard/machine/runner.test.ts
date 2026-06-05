@@ -51,6 +51,11 @@ function createRuntime(initialSession: Session = createSession()) {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (_stepName, message) =>
       updateSession((current) => {
@@ -58,6 +63,7 @@ function createRuntime(initialSession: Session = createSession()) {
         current.failure = sanitizeFailure({ step: _stepName, message, recordedAt: "now" });
         return current;
       }),
+    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
