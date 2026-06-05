@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
-  parseFrontmatter,
-  resolveSkillPaths,
   collectFiles,
+  parseFrontmatter,
   postInstall,
-  validateRelativePath,
+  resolveSkillPaths,
   shellQuote,
+  validateRelativePath,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -272,6 +272,61 @@ describe("postInstall", () => {
       expect(result).toEqual({ success: true, messages: [] });
       expect(commands).toContain(
         "printf '{}' > '/sandbox/.openclaw/agents/main/sessions/sessions.json'",
+      );
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("mirrors the uploaded skill into the OpenClaw home dir so the agent loads it", () => {
+    // Regression for #4819: on sandboxes whose agent $HOME differs from the
+    // OpenClaw state dir, `skills list` shows the upload dir while the agent
+    // loads skills from $HOME/.openclaw/skills. Install must populate that
+    // mirror — symmetric with `skill remove`, which deletes it.
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-"));
+    const commands: string[] = [];
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
+      const paths = resolveSkillPaths(null, "report-writer");
+      postInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, skillDir, {
+        sshExecImpl: (_ctx, command) => {
+          commands.push(command);
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+      // A command must copy the upload dir into the home mirror dir.
+      const mirrorCmd = commands.find(
+        (c) => c.includes(paths.uploadDir) && c.includes('"$HOME/.openclaw/skills/report-writer"'),
+      );
+      expect(mirrorCmd, "postInstall should mirror the skill into $HOME/.openclaw/skills").toBeDefined();
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when the OpenClaw home mirror cannot be created", () => {
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-fail-"));
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
+      const paths = resolveSkillPaths(null, "report-writer");
+      const result = postInstall(
+        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+        paths,
+        skillDir,
+        {
+          sshExecImpl: (_ctx, command) => ({
+            // Fail only the mirror command; session refresh still succeeds.
+            status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
+            stdout: "",
+            stderr: "",
+          }),
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.messages.some((m) => m.startsWith("Warning:") && m.includes("mirror"))).toBe(
+        true,
       );
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
