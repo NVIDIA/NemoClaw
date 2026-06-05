@@ -349,6 +349,12 @@ lock_openclaw_config_baseline_if_present() {
 
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
+#
+# This also self-heals a sandbox whose mutable config tree was tightened to
+# single-user 700/600 by `openclaw doctor --fix` (#4538): every (re)start
+# restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
+# doctor --fix` and the rebuild post-upgrade repair step apply the same
+# normalization without requiring a restart.
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
   [ -d "$config_dir" ] || return 0

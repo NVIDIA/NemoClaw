@@ -618,9 +618,34 @@ Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes.
+`doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding.
+Restarting the sandbox repairs the same drift automatically.
+
+```bash
+$$nemoclaw my-assistant doctor [--json | --fix]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 ```bash
 $$nemoclaw my-assistant doctor [--json]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> exec`
 
