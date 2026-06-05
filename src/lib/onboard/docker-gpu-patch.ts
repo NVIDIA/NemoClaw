@@ -121,8 +121,15 @@ export type DockerGpuPatchResult = {
   applied: true;
   oldContainerId: string;
   newContainerId: string;
+  originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
+  // True when the patch path also confirmed supervisor reconnect AND removed
+  // the backup container. False when the caller deferred the reconnect wait
+  // (via `waitForSupervisor: false`); the backup is still in place and the
+  // caller is responsible for calling `finalizeDockerGpuPatchBackup` after
+  // its own supervisor wait completes.
+  backupRemoved: boolean;
 };
 
 export type DockerGpuCloneRunOptions = {
@@ -903,6 +910,55 @@ function rollbackToBackupContainer(
   return isZeroStatus(started);
 }
 
+// Post-reconnect finaliser for callers that ran `recreateOpenShellDockerSandboxWithGpu`
+// with `waitForSupervisor: false`. The patch path defers backup cleanup so the
+// create flow can keep the pre-patch container available until its own
+// supervisor probe completes. The caller must invoke this function after that
+// probe with the observed outcome.
+//
+// `supervisorReady: true`  → remove the backup container.
+// `supervisorReady: false` → roll back to the backup container; the boolean
+//    return reflects whether the rollback completed (rename + start both
+//    succeeded). On a false return the caller is expected to surface the
+//    rollback-failed error path to the user.
+export type DockerGpuPatchFinalizeOptions = {
+  result: DockerGpuPatchResult;
+  supervisorReady: boolean;
+};
+
+export type DockerGpuPatchFinalizeOutcome = {
+  backupRemoved: boolean;
+  rolledBack: boolean;
+};
+
+export function finalizeDockerGpuPatchBackup(
+  options: DockerGpuPatchFinalizeOptions,
+  deps: DockerGpuPatchDeps = {},
+): DockerGpuPatchFinalizeOutcome {
+  const d = depsWithDefaults(deps);
+  const containerOpts = {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+  };
+  if (options.result.backupRemoved) {
+    return { backupRemoved: true, rolledBack: false };
+  }
+  if (options.supervisorReady) {
+    d.dockerRm(options.result.backupContainerName, containerOpts);
+    return { backupRemoved: true, rolledBack: false };
+  }
+  const rolledBack = rollbackToBackupContainer(
+    {
+      newContainerId: options.result.newContainerId,
+      backupContainerName: options.result.backupContainerName,
+      originalName: options.result.originalName,
+    },
+    d,
+  );
+  return { backupRemoved: false, rolledBack };
+}
+
 export function recreateOpenShellDockerSandboxWithGpu(
   options: {
     sandboxName: string;
@@ -997,14 +1053,30 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    const execReady =
-      options.waitForSupervisor === false
-        ? true
-        : waitForOpenShellSupervisorReconnect(
-            options.sandboxName,
-            options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
-            deps,
-          );
+    // When the caller defers the supervisor reconnect wait (create-time
+    // patching, where readiness probing happens later in the create flow),
+    // leave the backup container in place so the caller can choose to either
+    // remove it after its own reconnect confirms (`finalizeDockerGpuPatchBackup`
+    // with `supervisorReady: true`), or roll back to it on failure. Removing
+    // the backup here would re-introduce the deleted-backup / failed-new
+    // state #4664 set out to eliminate.
+    if (options.waitForSupervisor === false) {
+      return {
+        applied: true,
+        oldContainerId,
+        newContainerId,
+        originalName,
+        backupContainerName,
+        mode: selection.mode,
+        backupRemoved: false,
+      };
+    }
+
+    const execReady = waitForOpenShellSupervisorReconnect(
+      options.sandboxName,
+      options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+      deps,
+    );
 
     if (!execReady) {
       const rolledBack = rollbackToBackupContainer(
@@ -1029,8 +1101,10 @@ export function recreateOpenShellDockerSandboxWithGpu(
       applied: true,
       oldContainerId,
       newContainerId,
+      originalName,
       backupContainerName,
       mode: selection.mode,
+      backupRemoved: true,
     };
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

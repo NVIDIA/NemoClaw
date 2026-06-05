@@ -12,6 +12,7 @@ import type {
 } from "./docker-gpu-patch";
 import {
   applyDockerGpuPatchOrExit,
+  finalizeDockerGpuPatchBackup,
   findOpenShellDockerSandboxContainerIds,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -147,10 +148,17 @@ export function createDockerGpuSandboxCreatePatch(
           sleep: options.deps.sleep,
         },
       );
+      const finalizeOutcome = result
+        ? finalizeDockerGpuPatchBackup({ result, supervisorReady }, options.deps)
+        : { backupRemoved: false, rolledBack: false };
       if (supervisorReady) return;
       printDockerGpuPatchFailureAndExit(
         options.sandboxName,
-        new Error("OpenShell supervisor did not reconnect to the GPU-enabled container."),
+        new Error(
+          finalizeOutcome.rolledBack
+            ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+            : "OpenShell supervisor did not reconnect to the GPU-enabled container.",
+        ),
         {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
@@ -160,6 +168,7 @@ export function createDockerGpuSandboxCreatePatch(
             newContainerId: result?.newContainerId,
             backupContainerName: result?.backupContainerName,
             selectedMode: result?.mode ?? null,
+            rolledBack: finalizeOutcome.rolledBack,
           },
         },
       );
