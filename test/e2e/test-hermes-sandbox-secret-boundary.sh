@@ -47,8 +47,9 @@ import re
 import sys
 from pathlib import Path
 
-secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)(_|$)")
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_remote_toolsets = {
     "web",
@@ -87,6 +88,8 @@ def env_violations(path: Path) -> list[str]:
         key, value = stripped.split("=", 1)
         key = key.strip()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in allowed_nonsecret_keys:
             continue
         if not secret_key_re.search(key):
             continue
@@ -186,6 +189,27 @@ assert_startup_rejects_env_entry() {
   pass "Hermes startup rejects ${key} without echoing its value"
 }
 
+assert_startup_rejects_runtime_env_entry() {
+  local assignment="$1"
+  local key="$2"
+  local value="$3"
+  local output
+
+  info "Verifying Hermes startup rejects runtime env ${key}"
+  if output="$(docker run --rm --user sandbox --env "$assignment" --entrypoint /usr/local/bin/nemoclaw-start "$IMAGE" true 2>&1)"; then
+    printf '%s\n' "$output"
+    fail "Hermes startup accepted runtime env ${key}"
+  fi
+  printf '%s\n' "$output" | grep -F "process environment" >/dev/null \
+    || fail "Hermes startup rejection did not mention process environment"
+  printf '%s\n' "$output" | grep -F "$key" >/dev/null \
+    || fail "Hermes startup rejection did not name ${key}"
+  if printf '%s\n' "$output" | grep -F "$value" >/dev/null; then
+    fail "Hermes startup rejection printed the raw value for runtime env ${key}"
+  fi
+  pass "Hermes startup rejects runtime env ${key} without echoing its value"
+}
+
 require_docker
 docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "image not found: ${IMAGE}"
 
@@ -195,8 +219,16 @@ assert_startup_rejects_env_entry \
   "DEVTEST_API_TOKEN" \
   "01234567-89ab-cdef-0123-456789abcdef"
 assert_startup_rejects_env_entry \
+  "INTERNAL_API=01234567-89ab-cdef-0123-456789abcdef" \
+  "INTERNAL_API" \
+  "01234567-89ab-cdef-0123-456789abcdef"
+assert_startup_rejects_env_entry \
   "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE" \
   "OPENAI_API_KEY" \
   "sk-OPENSHELL-PROXY-REWRITE"
+assert_startup_rejects_runtime_env_entry \
+  "DEVTEST_API_TOKEN=01234567-89ab-cdef-0123-456789abcdef" \
+  "DEVTEST_API_TOKEN" \
+  "01234567-89ab-cdef-0123-456789abcdef"
 
 pass "Hermes sandbox secret-boundary smoke passed"

@@ -114,8 +114,9 @@ function expectRemotePlatformToolsets(toolsets: unknown, extraToolsets: string[]
 }
 
 function findRawSecretEnvEntries(envFile: string): string[] {
-  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)(_|$)/;
+  const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)/;
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
+  const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
   const allowedLiterals = new Set(["", "[STRIPPED_BY_MIGRATION]"]);
   const violations: string[] = [];
 
@@ -125,6 +126,7 @@ function findRawSecretEnvEntries(envFile: string): string[] {
     if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
     const [rawKey, ...valueParts] = line.split("=");
     const key = rawKey.trim();
+    if (allowedNonsecretKeys.has(key)) continue;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !secretKey.test(key)) continue;
     let value = valueParts.join("=").trim();
     if (
@@ -176,6 +178,22 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
+  });
+
+  it("flags bare API-named .env secrets while allowing API server config", () => {
+    const rawSecret = "01234567-89ab-cdef-0123-456789abcdef";
+
+    expect(
+      findRawSecretEnvEntries(
+        [
+          "API_SERVER_PORT=18642",
+          "API_SERVER_HOST=127.0.0.1",
+          `INTERNAL_API=${rawSecret}`,
+          "SERVICE_API=openshell:resolve:env:SERVICE_API",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual(["INTERNAL_API line 3"]);
   });
 
   it("regression #4230: configures Anthropic Messages routing for Hermes managed inference", () => {

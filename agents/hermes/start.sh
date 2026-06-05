@@ -944,8 +944,9 @@ import re
 import sys
 
 env_file = sys.argv[1]
-secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)(_|$)")
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 violations = []
 
@@ -968,6 +969,8 @@ with open(env_file, encoding="utf-8") as fh:
         key = key.strip()
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
+        if key in allowed_nonsecret_keys:
+            continue
         if not secret_key_re.search(key):
             continue
         value = unquote(value)
@@ -988,6 +991,51 @@ if violations:
         print(f"[SECURITY]   {item}", file=sys.stderr)
     sys.exit(1)
 PYSECRETBOUNDARY
+}
+
+validate_hermes_runtime_env_secret_boundary() {
+  python3 - <<'PYRUNTIMESECRETBOUNDARY'
+import os
+import re
+import sys
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+allowed_raw_secret_keys = {"OPENCLAW_GATEWAY_TOKEN"}
+allowed_nonsecret_keys = set((
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "GPG_KEY",
+    "NEMOCLAW_INFERENCE_API",
+    "NEMOCLAW_PROVIDER_KEY",
+))
+violations = []
+
+for key, value in sorted(os.environ.items()):
+    if key in allowed_raw_secret_keys or key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    if value in allowed_literals:
+        continue
+    if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+        continue
+    violations.append(key)
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because the process environment "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYRUNTIMESECRETBOUNDARY
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -1014,6 +1062,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
   apply_shields_up_runtime_env
   validate_hermes_env_secret_boundary
+  validate_hermes_runtime_env_secret_boundary
   refresh_hermes_provider_placeholders
   configure_messaging_channels
   retry_tirith_marker_if_needed
@@ -1063,6 +1112,7 @@ export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 apply_shields_up_runtime_env
 validate_hermes_env_secret_boundary
+validate_hermes_runtime_env_secret_boundary
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 retry_tirith_marker_if_needed
