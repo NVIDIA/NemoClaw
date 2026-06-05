@@ -7,11 +7,11 @@ import {
   createSession,
   filterSafeUpdates,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
-  type StepMutationOptions,
+  sanitizeFailure,
 } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
 import {
   advanceTo,
@@ -68,6 +68,15 @@ function createHarness(initialSession: Session | null = createSession()) {
         return current;
       });
     },
+    markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "complete";
+        current.lastCompletedStep = stepName;
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         const step = current.steps[stepName];
@@ -86,6 +95,14 @@ function createHarness(initialSession: Session | null = createSession()) {
         return current;
       });
     },
+    markStepFailedRecordOnly: (stepName, message) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "failed";
+        step.error = message ?? null;
+        return current;
+      }),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

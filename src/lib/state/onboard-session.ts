@@ -15,8 +15,8 @@ import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
 import {
-  sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
+  sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
 import {
   createOnboardMachineEvent,
@@ -26,6 +26,8 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
+import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -374,31 +376,6 @@ function createMachineSnapshot(
     stateEnteredAt,
     revision: Math.max(0, Math.trunc(revision)),
   };
-}
-
-function nextMachineStateAfterCompletedStep(
-  stepName: string | null | undefined,
-  session: Pick<Session, "agent">,
-): OnboardMachineState | null {
-  switch (stepName) {
-    case "preflight":
-      return "gateway";
-    case "gateway":
-      return "provider_selection";
-    case "provider_selection":
-      return "inference";
-    case "inference":
-      return "sandbox";
-    case "sandbox":
-      return session.agent ? "agent_setup" : "openclaw";
-    case "openclaw":
-    case "agent_setup":
-      return "policies";
-    case "policies":
-      return "finalizing";
-    default:
-      return null;
-  }
 }
 
 function inferMachineState(session: Session): OnboardMachineState {
@@ -1005,25 +982,8 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-export interface StepMutationOptions {
-  /**
-   * Transitional FSM migration escape hatch for fresh-flow slices where the
-   * runtime applies explicit OnboardStateResult transitions immediately after
-   * legacy step helpers record status. Set this false only through
-   * OnboardRuntimeBoundary-owned runner adapters so the runtime remains the
-   * durable machine source of truth. Remove this option once all live phase
-   * bodies return explicit FSM results without relying on step helper machine
-   * mutation.
-   */
-  updateMachine?: boolean;
-}
-
-function shouldUpdateMachine(options: StepMutationOptions | undefined): boolean {
-  return options?.updateMachine !== false;
-}
-
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
-  let shouldEmitMachineEvent = false;
+function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
+  let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1036,11 +996,11 @@ export function markStepStarted(stepName: string, options: StepMutationOptions =
     session.failure = null;
     session.status = "in_progress";
     const state = machineStateFromOnboardSessionStep(stepName);
-    shouldEmitMachineEvent = Boolean(state && shouldUpdateMachine(options));
-    if (state && shouldEmitMachineEvent) transitionMachineSnapshot(session, state, now);
+    shouldEmit = Boolean(state && shouldUpdateMachine(options));
+    if (state && shouldEmit) transitionMachineSnapshot(session, state, now);
     return session;
   });
-  if (shouldEmitMachineEvent) {
+  if (shouldEmit) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
     );
@@ -1048,14 +1008,10 @@ export function markStepStarted(stepName: string, options: StepMutationOptions =
   return updatedSession;
 }
 
-export function markStepComplete(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
-): Session {
+function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates = {}, options: StepMutationOptions = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
-  let shouldEmitContextEvent = false;
-  let shouldEmitMachineEvent = false;
+  const hasUpdates = Object.keys(safeUpdates).length > 0;
+  let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1067,29 +1023,46 @@ export function markStepComplete(
     session.failure = null;
     Object.assign(session, safeUpdates);
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    shouldEmitContextEvent = Object.keys(safeUpdates).length > 0;
-    shouldEmitMachineEvent = Boolean(nextState && shouldUpdateMachine(options));
-    if (nextState && shouldEmitMachineEvent) transitionMachineSnapshot(session, nextState, now);
+    shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
+    if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
     return session;
   });
-  if (shouldEmitContextEvent || shouldEmitMachineEvent) {
-    if (shouldEmitContextEvent) {
-      emitOnboardMachineEvent(
-        createOnboardMachineEvent({
-          type: "context.updated",
-          session: updatedSession,
-          step: stepName,
-          metadata: { fields: Object.keys(safeUpdates) },
-        }),
-      );
-    }
-    if (shouldEmitMachineEvent) {
-      emitOnboardMachineEvent(
-        createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
-      );
-    }
+  if (hasUpdates) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "context.updated",
+        session: updatedSession,
+        step: stepName,
+        metadata: { fields: Object.keys(safeUpdates) },
+      }),
+    );
+  }
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+    );
   }
   return updatedSession;
+}
+
+export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+  return markStepStartedWithOptions(stepName, options);
+}
+
+export function markStepStartedRecordOnly(stepName: string): Session {
+  return markStepStartedWithOptions(stepName, { updateMachine: false });
+}
+
+export function markStepComplete(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
+  return markStepCompleteWithOptions(stepName, updates, options);
+}
+
+export function markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Session {
+  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1113,12 +1086,8 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepFailed(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = {},
-): Session {
-  let shouldEmitMachineEvent = false;
+function markStepFailedWithOptions(stepName: string, message: string | null = null, options: StepMutationOptions = {}): Session {
+  let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1126,19 +1095,15 @@ export function markStepFailed(
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    shouldEmitMachineEvent = shouldUpdateMachine(options);
-    if (shouldEmitMachineEvent) {
-      session.failure = sanitizeFailure({
-        step: stepName,
-        message,
-        recordedAt: now,
-      });
+    shouldEmit = shouldUpdateMachine(options);
+    if (shouldEmit) {
+      session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
       session.status = "failed";
       transitionMachineSnapshot(session, "failed", now);
     }
     return session;
   });
-  if (shouldEmitMachineEvent) {
+  if (shouldEmit) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
         type: "state.failed",
@@ -1158,6 +1123,18 @@ export function markStepFailed(
     );
   }
   return updatedSession;
+}
+
+export function markStepFailed(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
+  return markStepFailedWithOptions(stepName, message, options);
+}
+
+export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
+  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {

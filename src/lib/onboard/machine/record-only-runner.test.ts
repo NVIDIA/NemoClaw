@@ -9,15 +9,15 @@ import {
   normalizeSession,
   type Session,
   type SessionUpdates,
-  type StepMutationOptions,
 } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
-import { advanceTo, branchTo, completeOnboardMachine } from "./result";
-import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import {
   createRecordOnlyOnboardRuntimeBoundary,
   runOnboardMachineWithRecordOnlySteps,
 } from "./record-only-runner";
+import { advanceTo, branchTo, completeOnboardMachine } from "./result";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
@@ -64,6 +64,12 @@ function createHarness() {
         if (stepName === "gateway") maybeLegacyTransition("provider_selection", options);
         return current;
       }),
+    markStepCompleteRecordOnly: (stepName: string, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        current.steps[stepName].status = "complete";
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
@@ -72,11 +78,18 @@ function createHarness() {
     markStepFailed: (stepName, message, options) =>
       updateSession((current) => {
         current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
         if (options?.updateMachine !== false) {
           current.status = "failed";
           current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
           maybeLegacyTransition("failed", options);
         }
+        return current;
+      }),
+    markStepFailedRecordOnly: (stepName, message) =>
+      updateSession((current) => {
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
         return current;
       }),
     completeSession: (updates: SessionUpdates = {}) =>

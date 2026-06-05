@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Session, StepMutationOptions } from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import { OnboardRuntimeBoundary, type OnboardRuntimeBoundaryOptions } from "../runtime-boundary";
 import {
-  runOnboardMachine,
   type OnboardMachineRunnerOptions,
   type OnboardMachineRunnerResult,
+  runOnboardMachine,
 } from "./runner";
 
 export type RecordOnlyOnboardRuntimeBoundaryOptions = Omit<

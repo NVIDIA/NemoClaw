@@ -98,8 +98,8 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(6);
   });
 
-  it("defaults the debounce to 5 polls and honors the env override", () => {
-    expect(getDockerGpuSupervisorReconnectErrorDebouncePolls({})).toBe(5);
+  it("defaults the debounce to 15 polls and honors the env override", () => {
+    expect(getDockerGpuSupervisorReconnectErrorDebouncePolls({})).toBe(15);
     expect(
       getDockerGpuSupervisorReconnectErrorDebouncePolls({
         NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE: "2",
@@ -151,9 +151,9 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       });
 
       expect(ok).toBe(false);
-      // Default K=5 from the env-backed helper: 5 polls + 4 sleeps before fast-fail.
-      expect(runOpenshell).toHaveBeenCalledTimes(5);
-      expect(sleep).toHaveBeenCalledTimes(4);
+      // Default K=15 from the env-backed helper: 15 polls + 14 sleeps before fast-fail.
+      expect(runOpenshell).toHaveBeenCalledTimes(15);
+      expect(sleep).toHaveBeenCalledTimes(14);
     }
   });
 });
