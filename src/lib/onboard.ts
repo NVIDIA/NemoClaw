@@ -437,6 +437,7 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
+  getOccupiedPorts,
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
@@ -2082,6 +2083,21 @@ async function preflight(
         // Use `ps` to get the command line — works on Linux, macOS, and WSL.
         const cmdline = captureProcessArgs(portCheck.pid);
         if (cmdline.includes("openshell")) {
+          // #4422: if another live sandbox owns this dashboard forward, do NOT
+          // kill it. The runtime allocator (findAvailableDashboardPort) will
+          // pick a different port for this sandbox at create time.
+          const forwardListOutput = runCaptureOpenshell(["forward", "list"], {
+            ignoreError: true,
+            suppressOutput: true,
+            timeout: 10_000,
+          });
+          const owner = getOccupiedPorts(forwardListOutput).get(String(port)) ?? null;
+          if (owner) {
+            console.log(
+              `  Port ${port} held by live sandbox '${owner}'; leaving its forward intact (this sandbox will auto-allocate a different dashboard port).`,
+            );
+            continue;
+          }
           console.log(
             `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
           );
