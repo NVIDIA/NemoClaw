@@ -26,17 +26,14 @@ invalid state it tolerates is "legacy base image planted a runtime shim into
 an rc file owned by a different uid than the entrypoint currently runs as".
 The preferred source boundary is the base image build: newer base images
 either own the rc file as the entrypoint user or do not plant the shim at
-all. The reason the source cannot be fixed in this PR is that previously
-shipped sandboxes already have the mismatched-owner rc files on disk;
-crashing the entrypoint with exit code 1 on them (the pre-fix behaviour
-that surfaced as #4713) is strictly worse than logging and skipping.
-Regression test: test/clean-runtime-shell-env-shim.test.ts (direct fixture
-asserts skip path) and test/service-env.test.ts (composed startup invariant
-asserting /tmp/nemoclaw-proxy-env.sh stays mode 444). Removal condition:
-when no supported NemoClaw release ships with a base image that plants the
-legacy shim AND every reachable sandbox has been rebuilt off a newer base
-image, drop the mismatched-owner branch and have the script exit 1 on EPERM
-again.
+all. Previously shipped sandboxes already have the mismatched-owner rc
+files on disk; crashing the entrypoint with exit code 1 on them is strictly
+worse than logging and skipping. Regression tests cover the direct fixture
+skip path and the composed startup invariant asserting
+/tmp/nemoclaw-proxy-env.sh stays mode 444. Removal condition: when no
+supported release ships a base image that plants the legacy shim AND every
+reachable sandbox has been rebuilt off a newer base image, drop the
+mismatched-owner branch and have the script exit 1 on EPERM again.
 """
 
 import errno

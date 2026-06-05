@@ -136,7 +136,7 @@ export function finalizeDockerGpuPatchBackup(
 }
 
 export type SupervisorReconnectOutcome =
-  | { execReady: true }
+  | { execReady: true; backupRemoved: boolean }
   | { execReady: false; rolledBack: boolean; error: Error };
 
 export function reconcileSupervisorReconnect(
@@ -151,8 +151,13 @@ export function reconcileSupervisorReconnect(
     timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
   };
   if (execReady) {
-    resolved.dockerRm(refs.backupContainerName, containerOpts);
-    return { execReady: true };
+    // Backup removal is best-effort here too: the supervisor probe already
+    // confirmed the new container is reachable, so a failed rm leaves a
+    // leaked backup container but the user-visible sandbox is healthy.
+    // Surface the actual rm status so callers can fold it into diagnostics
+    // alongside the deferred-finalize path in `finalizeDockerGpuPatchBackup`.
+    const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
+    return { execReady: true, backupRemoved: isZeroStatus(rmResult) };
   }
   const rolledBack = rollbackToBackupContainer(refs, resolved);
   return {

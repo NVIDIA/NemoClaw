@@ -1002,7 +1002,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
       context.rolledBack = reconcile.rolledBack;
       throw reconcile.error;
     }
-    return buildPatchResult(true);
+    return buildPatchResult(reconcile.backupRemoved);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     throw decoratePatchError(err, context);

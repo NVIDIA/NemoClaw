@@ -58,10 +58,9 @@ describe("clean_runtime_shell_env_shim.py", () => {
     expect(after).toBe("export FOO=1\nexport BAR=2\n");
   });
 
-  it("leaves the rc file untouched and exits 0 when uid does not own it (reproduces the #4713 deployment failure shape)", () => {
-    // The patched GPU sandbox container exits with code 1 after Docker GPU
-    // patching when the entrypoint runs as a non-root uid against an rc file
-    // owned by a different uid (e.g. root). Before this fix, the cleanup
+  it("leaves the rc file untouched and exits 0 when the entrypoint uid does not own it", () => {
+    // When the entrypoint runs as a non-root uid against an rc file owned by
+    // a different uid (e.g. root-owned legacy .bashrc), the pre-fix cleanup
     // raised EPERM under errexit and killed the container. The ownership
     // guard now logs and exits 0 instead.
     const rcPath = path.join(tmpDir, ".bashrc");

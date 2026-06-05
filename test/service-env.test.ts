@@ -816,13 +816,13 @@ describe("service environment", () => {
       }
     });
 
-    // Reproduces the #4713 deployment failure shape end-to-end in the startup
-    // sequence: write_runtime_shell_env emits the proxy env file with mode 444,
-    // ensure_runtime_shell_env_shim then sees a foreign-owned .bashrc and must
-    // exit 0 (otherwise the entrypoint would terminate the container with
-    // exit code 1 as reported). The composed assertion proves the legacy
-    // trust-boundary file remains non-user-writable across the skip path.
-    it("composed startup leaves the proxy env file at mode 444 when the rc cleanup skips a foreign-owned rc file (#4713)", () => {
+    // Composed startup invariant: write_runtime_shell_env emits the proxy
+    // env file with mode 444, ensure_runtime_shell_env_shim then sees a
+    // foreign-owned .bashrc and must exit 0 (otherwise the entrypoint would
+    // terminate the container with exit code 1). The composed assertion
+    // proves the legacy trust-boundary file remains non-user-writable
+    // across the skip path.
+    it("composed startup leaves the proxy env file at mode 444 when the rc cleanup skips a foreign-owned rc file", () => {
       const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-composed-"));
       const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-home-"));
       const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
