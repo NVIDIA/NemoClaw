@@ -1,32 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Command from "../../lib/commands/root/help";
-import { withCommandDisplay } from "../../lib/cli/command-display";
+import { showRootHelp } from "../../lib/actions/global";
+import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
-export default withCommandDisplay(Command, [
-  {
-    usage: "nemoclaw help",
-    description: "Show help",
-    group: "Getting Started",
-    hidden: true,
-    scope: "global",
-    order: 44,
-  },
-  {
-    usage: "nemoclaw --help",
-    description: "Show help",
-    group: "Getting Started",
-    hidden: true,
-    scope: "global",
-    order: 45,
-  },
-  {
-    usage: "nemoclaw -h",
-    description: "Show help",
-    group: "Getting Started",
-    hidden: true,
-    scope: "global",
-    order: 46,
-  },
-]);
+export default class RootHelpCommand extends NemoClawCommand {
+  static id = "root:help";
+  static hidden = true;
+  static strict = false;
+  static summary = "Show help";
+
+  public async run(): Promise<void> {
+    this.parsed = true;
+    showRootHelp();
+  }
+}

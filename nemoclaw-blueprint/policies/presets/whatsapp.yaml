@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+preset:
+  name: whatsapp
+  description: WhatsApp Web WebSocket and media access
+network_policies:
+  whatsapp:
+    name: whatsapp
+    endpoints:
+      # WhatsApp Web Noise-over-WebSocket. The /ws/chat upgrade requires
+      # HTTP/1.1; OpenShell's proxy negotiates h2 ALPN by default when it
+      # terminates TLS, and Meta's edge returns HTTP/2 405/400 because
+      # there is no 101 Switching Protocols flow over h2. OpenShell
+      # v0.0.15+ also auto-terminates TLS unconditionally on REST hosts,
+      # which would break the Noise handshake even if h1 were negotiated.
+      # Declaring the endpoint as a raw L4 CONNECT tunnel (`access: full,
+      # tls: skip`) tells the proxy to pass the encrypted bytes through
+      # unmodified, so Baileys negotiates h1 ALPN directly with Meta
+      # inside TLS and the Noise frames survive untouched. Falls back to
+      # numbered nodes (w1.web.whatsapp.com, w2.web.whatsapp.com, ...)
+      # when the primary connection drops; the wildcard covers them with
+      # the same shape.
+      - host: web.whatsapp.com
+        port: 443
+        access: full
+        tls: skip
+      - host: "*.web.whatsapp.com"
+        port: 443
+        access: full
+        tls: skip
+      # Baileys hits a handful of *.whatsapp.net subdomains during pairing
+      # and steady-state: mmg (media gateway), static (location maps and
+      # other static assets), cdn (CDN), pps (profile pictures), v
+      # (variants), e1/f/s (encrypted/file/signal media routes). All are
+      # Meta-controlled, so a wildcard keeps the preset future-proof without
+      # expanding trust beyond WhatsApp infrastructure. Follows the
+      # `*.atlassian.net` precedent in the jira preset. The apex is listed
+      # separately because OpenShell's wildcard matcher does not cover it.
+      - host: whatsapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: "*.whatsapp.net"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      # Baileys calls `fetchLatestBaileysVersion()` at session creation,
+      # fetching the current WhatsApp Web protocol version from the
+      # WhiskeySockets/Baileys master branch. Without this rule the fetch
+      # fails closed and Baileys advertises its bundled (stale) constant,
+      # which Meta now rejects with `<failure reason="405"/>` on pair.
+      # Scope is pinned to the single file the fetch reads, GET only.
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: "/WhiskeySockets/Baileys/master/src/Defaults/index.ts"
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

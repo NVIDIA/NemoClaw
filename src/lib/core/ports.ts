@@ -35,6 +35,7 @@ export interface GatewayPortValidationOptions {
   vllmPort: number;
   ollamaPort: number;
   ollamaProxyPort: number;
+  bedrockRuntimeAdapterPort: number;
 }
 
 /**
@@ -57,6 +58,11 @@ export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
 export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
 /** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
 export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
+/** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
+export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
+  "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+  11436,
+);
 
 export function validateGatewayPort(
   envVar: string,
@@ -73,6 +79,7 @@ export function validateGatewayPort(
     { label: "vLLM / NIM inference", port: 8000 },
     { label: "Ollama inference", port: 11434 },
     { label: "Ollama auth proxy", port: 11435 },
+    { label: "Bedrock Runtime adapter", port: 11436 },
   ];
   const reservedDefault = reservedDefaults.find((entry) => entry.port === port);
   if (reservedDefault) {
@@ -86,6 +93,10 @@ export function validateGatewayPort(
     { envVar: "NEMOCLAW_VLLM_PORT", port: options.vllmPort },
     { envVar: "NEMOCLAW_OLLAMA_PORT", port: options.ollamaPort },
     { envVar: "NEMOCLAW_OLLAMA_PROXY_PORT", port: options.ollamaProxyPort },
+    {
+      envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+      port: options.bedrockRuntimeAdapterPort,
+    },
   ];
   const conflict = conflicts.find((entry) => entry.port === port);
   if (conflict) {
@@ -105,12 +116,15 @@ export function parseGatewayPort(
   return port;
 }
 
+/** Default OpenShell gateway port when NEMOCLAW_GATEWAY_PORT is unset. */
+export const DEFAULT_GATEWAY_PORT = 8080;
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
-export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", 8080, {
+export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GATEWAY_PORT, {
   dashboardPort: DASHBOARD_PORT,
   dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
   dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
   vllmPort: VLLM_PORT,
   ollamaPort: OLLAMA_PORT,
   ollamaProxyPort: OLLAMA_PROXY_PORT,
+  bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
 });

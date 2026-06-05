@@ -105,4 +105,9 @@ RUN mkdir -p /sandbox/openclaw-state/extensions /sandbox/openclaw-state/skills /
     && printf '%s\n' '---' 'name: override-hook' 'description: Override hook fixture' '---' > /sandbox/openclaw-state/hooks/demo-hook/HOOK.md \
     && printf '%s\n' 'export default async function overrideHook() {}' > /sandbox/openclaw-state/hooks/demo-hook/handler.js
 
+# Test image: no long-running service, so just verify the runtime works.
+# Overrides any inherited HEALTHCHECK to avoid false-positive probes.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD node -e "process.exit(0)"
+
 ENTRYPOINT ["/bin/bash"]

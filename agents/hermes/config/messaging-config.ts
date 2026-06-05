@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DiscordGuilds, MessagingAllowedIds, WechatConfig } from "./build-env.ts";
+import type { DiscordGuilds, MessagingAllowedIds, SlackConfig, WechatConfig } from "./build-env.ts";
+import { loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 
 // Maps each Hermes-supported channel to the in-sandbox env-var name(s) the
 // adapter reads. The values are the names Hermes expects — not the names
@@ -23,8 +24,22 @@ export function buildMessagingEnvLines(
   allowedIds: MessagingAllowedIds,
   discordGuilds: DiscordGuilds,
   wechatConfig: WechatConfig,
+  slackConfig: SlackConfig,
+  managedToolGatewayPresets: string[] = [],
 ): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
+
+  if (managedToolGatewayPresets.length > 0) {
+    const matrix = loadManagedToolGatewayMatrix();
+    envLines.push("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1");
+    for (const preset of managedToolGatewayPresets) {
+      const entry = matrix[preset];
+      if (!entry) {
+        throw new Error(`Unknown Hermes managed-tool gateway preset: ${preset}`);
+      }
+      envLines.push(`${entry.envKey}=${entry.envValue}`);
+    }
+  }
 
   for (const channel of enabledChannels) {
     const envKeys = CHANNEL_TOKEN_ENVS[channel] ?? [];
@@ -39,6 +54,9 @@ export function buildMessagingEnvLines(
     }
     if (channel === "wechat") {
       envLines.push(...buildWechatEnvLines(allowedIds, wechatConfig));
+    }
+    if (channel === "whatsapp") {
+      envLines.push(...buildWhatsappEnvLines(allowedIds));
     }
   }
 
@@ -56,6 +74,10 @@ export function buildMessagingEnvLines(
   }
   if (allowedIds.slack?.length) {
     envLines.push(`SLACK_ALLOWED_USERS=${allowedIds.slack.map(String).join(",")}`);
+  }
+  const slackAllowedChannels = collectSlackAllowedChannels(slackConfig);
+  if (enabledChannels.has("slack") && slackAllowedChannels.length > 0) {
+    envLines.push(`SLACK_ALLOWED_CHANNELS=${slackAllowedChannels.join(",")}`);
   }
 
   return envLines;
@@ -113,6 +135,20 @@ function buildWechatEnvLines(
   return lines;
 }
 
+// Hermes' WhatsApp bridge is tokenless from NemoClaw's point of view: the
+// operator pairs it inside the sandbox with `hermes whatsapp`, accepting
+// Hermes-owned mutable session state under ~/.hermes/platforms/whatsapp/session.
+// The gateway still needs the env feature flag baked into .env so the platform
+// starts after rebuild.
+function buildWhatsappEnvLines(allowedIds: MessagingAllowedIds): string[] {
+  const lines = ["WHATSAPP_ENABLED=true", "WHATSAPP_MODE=bot"];
+  const allowedUsers = (allowedIds.whatsapp ?? []).map(String).filter(Boolean);
+  if (allowedUsers.length > 0) {
+    lines.push(`WHATSAPP_ALLOWED_USERS=${allowedUsers.join(",")}`);
+  }
+  return lines;
+}
+
 export function buildDiscordConfig(discordGuilds: DiscordGuilds): Record<string, unknown> {
   return {
     require_mention: getDiscordRequireMention(discordGuilds),
@@ -147,4 +183,13 @@ function collectDiscordAllowedUsers(
     }
   }
   return [...users];
+}
+
+function collectSlackAllowedChannels(slackConfig: SlackConfig): string[] {
+  const channels = Array.isArray(slackConfig.allowedChannels) ? slackConfig.allowedChannels : [];
+  return [
+    ...new Set(
+      channels.map((channel) => String(channel).replace(/[\r\n]/g, "").trim()).filter(Boolean),
+    ),
+  ];
 }

@@ -19,7 +19,7 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.4.24"
+expected_version: "2026.5.27"
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -52,6 +52,7 @@ state_dirs:
   - memory
   - telegram
   - wechat
+  - whatsapp
   - credentials
 
 # ── Authentication ──────────────────────────────────────────────
@@ -65,6 +66,7 @@ messaging_platforms:
     - discord
     - slack
     - wechat
+    - whatsapp
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

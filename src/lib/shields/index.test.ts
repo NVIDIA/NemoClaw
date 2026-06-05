@@ -327,6 +327,58 @@ describe("shields — unit logic", () => {
       expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
       expect(deriveShieldsMode({}, true)).toBe("mutable_default");
     });
+
+    it("getShieldsPosture exposes canonical status wording for callers", async () => {
+      const distModulePath = path.join(
+        process.cwd(),
+        "dist",
+        "lib",
+        "shields",
+        "index.js",
+      );
+      const { getShieldsPosture } = await import(distModulePath);
+      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+      fs.mkdirSync(stateDir, { recursive: true });
+
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "mutable_default",
+          detail: "not configured (default mutable state)",
+          statusText: "NOT CONFIGURED (default mutable state)",
+        }),
+      );
+
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify({ shieldsDown: false, updatedAt: "2026-05-20T00:00:00Z" }),
+        { mode: 0o600 },
+      );
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "locked",
+          detail: "up (lockdown active)",
+          statusText: "UP (lockdown active)",
+        }),
+      );
+
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: "2026-05-20T00:00:00Z",
+          shieldsDownTimeout: 300,
+          updatedAt: "2026-05-20T00:00:00Z",
+        }),
+        { mode: 0o600 },
+      );
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "temporarily_unlocked",
+          detail: "down (temporarily unlocked)",
+          statusText: "DOWN (temporarily unlocked)",
+        }),
+      );
+    });
   });
 
   describe("NC-3112: status self-heals stale expired auto-restore markers", () => {
@@ -581,6 +633,37 @@ describe("shields — unit logic", () => {
       );
     });
 
+    it("rejects state files whose fileHashes entries are not SHA-256 hex strings", async () => {
+      const sandboxName = "openclaw";
+      fs.mkdirSync(stateDir(), { recursive: true });
+      // Hash value is the right length but contains non-hex chars,
+      // and another value is far too short. Either alone should fail
+      // the isOptionalHashMap guard.
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify({
+          shieldsDown: false,
+          fileHashes: {
+            "/sandbox/.openclaw/openclaw.json": "not-a-real-hash",
+          },
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() => shieldsStatus(sandboxName)).toThrow("exit 1");
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  Shields: ERROR (state file is corrupt)",
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
     it("status fails fast on corrupt shields state instead of reporting NOT CONFIGURED", async () => {
       const sandboxName = "openclaw";
       fs.mkdirSync(stateDir(), { recursive: true });
@@ -601,6 +684,259 @@ describe("shields — unit logic", () => {
         "  Shields: ERROR (state file is corrupt)",
       );
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // shieldsStatus: locked-state drift surface
+  // -------------------------------------------------------------------
+  describe("shieldsStatus surfaces drift returned by the verifier", () => {
+    async function loadShieldsModule() {
+      const distModulePath = path.join(
+        process.cwd(),
+        "dist",
+        "lib",
+        "shields",
+        "index.js",
+      );
+      return import(distModulePath);
+    }
+
+    function stateDir(): string {
+      return path.join(tmpDir, ".nemoclaw", "state");
+    }
+
+    function writeLockedState(
+      sandboxName: string,
+      extra: Record<string, unknown> = {},
+    ): void {
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify(
+          {
+            shieldsDown: false,
+            updatedAt: new Date().toISOString(),
+            ...extra,
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+    }
+
+    const SEAL_HASH =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    function writeSealedLockedState(sandboxName: string): void {
+      writeLockedState(sandboxName, {
+        chattrApplied: true,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": SEAL_HASH },
+      });
+    }
+
+    it("prints DRIFTED with the issue list and exits 2 when the verifier reports drift", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/openclaw.json mode=660 (expected 444)",
+        "/sandbox/.openclaw/openclaw.json owner=sandbox:sandbox (expected root:root)",
+        "dir mode=2770 (expected 755)",
+        "dir owner=sandbox:sandbox (expected root:root)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  Shields: UP (DRIFTED — declared locked but sandbox filesystem differs)",
+      );
+      expect(errorSpy).toHaveBeenCalledWith("  Drift:");
+      for (const issue of driftIssues) {
+        expect(errorSpy).toHaveBeenCalledWith(`    - ${issue}`);
+      }
+      expect(errorSpy).toHaveBeenCalledWith(
+        `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
+      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
+    it("prints a clean locked status when the verifier reports no drift", async () => {
+      const sandboxName = "openclaw";
+      writeSealedLockedState(sandboxName);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const { shieldsStatus } = await loadShieldsModule();
+      shieldsStatus(sandboxName, true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      });
+
+      expect(logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+      expect(logSpy).toHaveBeenCalledWith("  Policy:  restrictive");
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("passes the persisted fileHashes seal to the verifier when present", async () => {
+      const sandboxName = "openclaw";
+      const fileHashes = {
+        "/sandbox/.openclaw/openclaw.json":
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify(
+          {
+            shieldsDown: false,
+            chattrApplied: true,
+            fileHashes,
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+      let receivedExpectedHashes:
+        | { [path: string]: string }
+        | undefined;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const { shieldsStatus } = await loadShieldsModule();
+      shieldsStatus(sandboxName, true, {
+        verifyLockState: (
+          _name: string,
+          _target: unknown,
+          options: { expectedHashes?: { [path: string]: string } },
+        ) => {
+          receivedExpectedHashes = options.expectedHashes;
+          return { ok: true, issues: [] };
+        },
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      });
+
+      expect(receivedExpectedHashes).toEqual(fileHashes);
+      // No legacy-state notice when a seal is recorded.
+      expect(
+        logSpy.mock.calls.map((args) => args[0]).join("\n"),
+      ).not.toContain("no content seal recorded");
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("exits 2 with an UNSEALED line when locked but no fileHashes seal is recorded", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      const errors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(errors).toContain(
+        "Shields: UP (UNSEALED — content integrity unknown for legacy lockdown)",
+      );
+      expect(errors).toContain(
+        `or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
+    it("surfaces content-drift entries from the verifier without re-locking", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/openclaw.json content drifted (sha256 fff... != sealed 012...)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain("content drifted");
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
+    it("treats a resolveConfig throw as drift so the locked status cannot mask a setup gap", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          resolveConfig: () => {
+            throw new Error("agent config not found");
+          },
+        }),
+      ).toThrow("exit 2");
+
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain(
+        "unable to resolve agent config target: agent config not found",
+      );
+      expect(exitSpy).toHaveBeenCalledWith(2);
     });
   });
 });

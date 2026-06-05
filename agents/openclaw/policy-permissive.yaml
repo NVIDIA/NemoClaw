@@ -25,6 +25,7 @@ filesystem_policy:
     - /dev/null
     - /sandbox/.openclaw
     - /sandbox/.nemoclaw
+    - /home/linuxbrew
 
 landlock:
   compatibility: best_effort
@@ -34,27 +35,6 @@ process:
   run_as_group: sandbox
 
 network_policies:
-
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-    binaries:
-      - { path: "/**" }
 
   nvidia:
     name: nvidia

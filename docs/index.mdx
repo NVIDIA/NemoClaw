@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
-sidebar-title: "NVIDIA NemoClaw Developer Guide"
-description: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
-keywords: "NemoClaw, OpenClaw, OpenShell, AI agents, sandboxing, inference routing"
+sidebar-title: "Home"
+description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and packaged agent skills."
+keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, agent skills, sandboxing, inference routing"
+layout: overview
 position: 1
 ---
 
 import { BadgeLinks } from "./_components/BadgeLinks";
+import { CommandTerminal } from "./_components/CommandTerminal";
 
 <BadgeLinks
   badges={[
@@ -23,11 +25,6 @@ import { BadgeLinks } from "./_components/BadgeLinks";
       alt: "Security Policy",
     },
     {
-      href: "https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md",
-      src: "https://img.shields.io/badge/status-alpha-orange",
-      alt: "Project Status",
-    },
-    {
       href: "https://discord.gg/XFpfPv9Uvx",
       src: "https://img.shields.io/badge/Discord-Join-7289da",
       alt: "Discord",
@@ -35,29 +32,18 @@ import { BadgeLinks } from "./_components/BadgeLinks";
   ]}
 />
 
-NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
-NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
-It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, setting up an environment designed for executing agents with additional security and inference routing capabilities.
+NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
+NemoClaw provides onboarding, lifecycle management, and agent operations within OpenShell containers.
+It installs the OpenShell runtime, part of NVIDIA Agent Toolkit, and sets up an environment designed for executing agents with additional security and inference routing capabilities.
+NemoClaw also ships user skills for AI coding assistants, so tools such as Cursor and Claude Code can guide you through setup, inference, policy management, monitoring, deployment, security, and troubleshooting from the same documentation.
 
 ## Get Started
 
-Install NemoClaw and run your first sandboxed agent.
+Install NemoClaw and run the onboard wizard to get started.
 
 <llms-ignore>
 
-<div className="nc-term">
-  <div className="nc-term-bar">
-    <span className="nc-term-dot nc-term-dot-r" />
-    <span className="nc-term-dot nc-term-dot-y" />
-    <span className="nc-term-dot nc-term-dot-g" />
-  </div>
-  <div className="nc-term-body">
-    <div>
-      <span className="nc-ps">$ </span>
-      <span>curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</span>
-    </div>
-  </div>
-</div>
+<CommandTerminal command="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash" />
 
 </llms-ignore>
 
@@ -69,45 +55,50 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 </llms-only>
 
-The Fern migration is starting with the About section while the remaining MyST pages stay in place as the legacy source for generated user skills and parity checks.
+By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
 
----
+| Agent | Guide |
+|-------|-------|
+| OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
+| Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
 
-## Explore
+## Select User Guide for Your Agent
 
-<div className="explore-cards">
+The NemoClaw documentation provides separate user guides for the agents it supports. Select the guide that matches your agent. You can also select the guide from the dropdown at the top of the left navigation pane.
+
 <Cards>
 
-<Card title="Overview" href="/about/overview">
+<Card title="NemoClaw for OpenClaw" href="../openclaw/about/overview">
 
-Learn what NemoClaw is, what capabilities it provides, and when to use it.
+Read the OpenClaw-focused overview before launching the default sandboxed agent.
 
-<Badge intent="tip" minimal outlined>Concept</Badge>
+<Badge intent="tip" minimal outlined>Overview</Badge>
 </Card>
 
-<Card title="How It Works" href="/about/how-it-works">
+<Card title="NemoClaw for Hermes" href="../hermes/about/overview">
 
-Understand the host CLI, plugin, blueprint, sandbox lifecycle, and protection layers.
+Read the Hermes-focused overview before launching a Hermes sandboxed agent.
 
-<Badge intent="tip" minimal outlined>Concept</Badge>
-</Card>
-
-<Card title="Ecosystem" href="/about/ecosystem">
-
-Learn how OpenClaw, OpenShell, and NemoClaw fit together.
-
-<Badge intent="tip" minimal outlined>Concept</Badge>
-</Card>
-
-<Card title="Release Notes" href="/about/release-notes">
-
-Track NemoClaw release changes and component version policy.
-
-<Badge intent="tip" minimal outlined>Reference</Badge>
+<Badge intent="tip" minimal outlined>Overview</Badge>
 </Card>
 
 </Cards>
-</div>
+
+## Use NemoClaw User Skills
+
+If you work from an AI coding assistant, load NemoClaw's user skills before you install or operate a sandbox.
+The skills turn these docs into task-focused guidance that your assistant can apply to your local environment.
+
+<Cards>
+
+<Card title="Set Up Agent Skills" href="resources/agent-skills">
+
+Clone the skills or add them to your assistant so NemoClaw guidance is available directly in chat.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
+</Card>
+
+</Cards>
 
 ---
 

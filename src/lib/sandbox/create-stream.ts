@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 
 import { ROOT } from "../state/paths";
 
@@ -19,6 +19,7 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  traceEvent?: (name: string, attributes?: Record<string, unknown>) => void;
   // Optional guard for the early-ready escape hatch. When set, readyCheck()
   // alone cannot detach the create stream until at least one streamed output
   // line matches a configured pattern.
@@ -96,6 +97,8 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
 ];
 
 const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
+const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
+const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 
 function matchesAny(line: string, patterns: readonly RegExp[]) {
   return patterns.some((pattern) => pattern.test(line));
@@ -132,6 +135,7 @@ export function streamSandboxCreate(
   });
 
   const logLine = options.logLine ?? console.log;
+  const traceEvent = options.traceEvent ?? (() => {});
   const lines: string[] = [];
   let pending = "";
   let lastPrintedLine = "";
@@ -155,6 +159,15 @@ export function streamSandboxCreate(
   let lastHeartbeatPhase: CreatePhase | null = null;
   let lastHeartbeatBucket = -1;
   let resolvePromise: (result: StreamSandboxCreateResult) => void;
+  let buildStartedAtMs: number | null = null;
+  let buildTimingFinished = false;
+  let activeBuildStep:
+    | {
+        label: string;
+        instruction: string;
+        startedAtMs: number;
+      }
+    | null = null;
 
   function getDisplayWidth() {
     return Math.max(60, Number(process.stdout.columns || 100));
@@ -173,6 +186,94 @@ export function streamSandboxCreate(
       logLine(display);
       lastPrintedLine = display;
     }
+  }
+
+  function formatDuration(ms: number) {
+    return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+  }
+
+  function timingNow() {
+    return Date.now();
+  }
+
+  function appendTimingLine(line: string) {
+    lines.push(line);
+    printProgressLine(line);
+  }
+
+  function emitTraceEvent(name: string, attributes: Record<string, unknown> = {}) {
+    traceEvent(name, attributes);
+  }
+
+  function markBuildStarted(nowMs: number = timingNow()) {
+    if (buildStartedAtMs === null) {
+      buildStartedAtMs = nowMs;
+    }
+  }
+
+  function finishActiveBuildStep(status: "completed" | "stopped", nowMs: number = timingNow()) {
+    if (!activeBuildStep) return;
+    const elapsedMs = nowMs - activeBuildStep.startedAtMs;
+    const phrase = status === "completed" ? "completed in" : "stopped after";
+    const elapsed = formatDuration(elapsedMs);
+    appendTimingLine(
+      `  ${activeBuildStep.label} ${phrase} ${elapsed} (${activeBuildStep.instruction})`,
+    );
+    emitTraceEvent("docker_build_step_end", {
+      status,
+      step: activeBuildStep.label,
+      instruction: activeBuildStep.instruction,
+      duration_ms: elapsedMs,
+    });
+    activeBuildStep = null;
+  }
+
+  function finishBuildTiming(status: "completed" | "stopped", nowMs: number = timingNow()) {
+    if (buildTimingFinished) return;
+    finishActiveBuildStep(status, nowMs);
+    if (buildStartedAtMs !== null) {
+      const elapsedMs = nowMs - buildStartedAtMs;
+      const phrase = status === "completed" ? "completed in" : "stopped after";
+      appendTimingLine(
+        `  Sandbox image build ${phrase} ${formatDuration(elapsedMs)}`,
+      );
+      emitTraceEvent("docker_build_end", {
+        status,
+        duration_ms: elapsedMs,
+      });
+    }
+    buildTimingFinished = true;
+  }
+
+  function maybeStartClassicBuildStep(line: string) {
+    const match = line.match(CLASSIC_DOCKER_STEP_RE);
+    if (!match) return;
+    const nowMs = timingNow();
+    finishActiveBuildStep("completed", nowMs);
+    markBuildStarted(nowMs);
+    activeBuildStep = {
+      label: `Step ${match[1]}/${match[2]}`,
+      instruction: match[3].trim().replace(/\s+/g, " "),
+      startedAtMs: nowMs,
+    };
+    emitTraceEvent("docker_build_step_start", {
+      step: activeBuildStep.label,
+      index: Number(match[1]),
+      total: Number(match[2]),
+      instruction: activeBuildStep.instruction,
+    });
+  }
+
+  function maybeRecordBuildKitStep(line: string) {
+    const match = line.match(BUILDKIT_STEP_RE);
+    if (!match) return;
+    if (!matchesAny(line, BUILD_PROGRESS_PATTERNS) && !matchesAny(line, PULL_PROGRESS_PATTERNS)) {
+      return;
+    }
+    emitTraceEvent("docker_buildkit_progress", {
+      step: Number(match[1]),
+      detail: match[2].trim().replace(/\s+/g, " "),
+    });
   }
 
   function elapsedSeconds() {
@@ -196,6 +297,10 @@ export function streamSandboxCreate(
               : nextPhase === "ready"
                 ? "  Waiting for sandbox to become ready..."
                 : null;
+    emitTraceEvent("sandbox_create_phase", {
+      phase: nextPhase,
+      elapsed_seconds: elapsedSeconds(),
+    });
     if (phaseLine) printProgressLine(phaseLine);
   }
 
@@ -206,6 +311,14 @@ export function streamSandboxCreate(
     lastOutputAt = Date.now();
     if (!readyCheckOutputMatched && matchesAny(line, readyCheckOutputPatterns)) {
       readyCheckOutputMatched = true;
+    }
+    if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
+      markBuildStarted();
+    }
+    maybeStartClassicBuildStep(line);
+    maybeRecordBuildKitStep(line);
+    if (/^(?:Successfully built | {2}Built image )/.test(line)) {
+      finishBuildTiming("completed");
     }
     if (/^ {2}Built image /.test(line)) {
       setPhase("create");
@@ -246,6 +359,9 @@ export function streamSandboxCreate(
     if (settled) return;
     settled = true;
     flushPendingLine();
+    if (!buildTimingFinished && buildStartedAtMs !== null) {
+      finishBuildTiming(status === 0 ? "completed" : "stopped");
+    }
     if (readyTimer) clearInterval(readyTimer);
     clearInterval(heartbeatTimer);
     resolvePromise({

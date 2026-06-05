@@ -53,8 +53,17 @@ reviews:
           where multiple sentences appear on the same line.
         - CLI commands, file paths, flags, parameter names, and values must use
           inline `code` formatting.
-        - CLI code blocks must use the `console` language tag with `$` prompt
-          prefix. Flag ```bash or ```shell for CLI examples.
+        - Copyable CLI code blocks must use language-specific tags such as
+          `bash`, `sh`, or `powershell`, and must not include prompt markers
+          such as `$`. Reserve `console` blocks for terminal transcripts that
+          include prompts, output, or interactive sessions.
+        - Do not flag `$$nemoclaw` in docs. It is the correct build-time
+          variant placeholder for shared OpenClaw and Hermes command examples.
+        - When a docs PR adds a command-line example that works across all
+          NemoClaw agent aliases, comment if it uses a concrete alias such as
+          `nemoclaw` or `nemohermes`; ask the author to use `$$nemoclaw`
+          instead so generated OpenClaw and Hermes docs render the right
+          command name.
         - Use Fern callout components (<Note>, <Tip>, <Warning>) for callouts
           in MDX pages, not bold text or blockquotes. MyST admonitions are
           acceptable only in legacy .md pages that have not migrated yet.
@@ -112,10 +121,685 @@ reviews:
         - NemoClaw, OpenClaw, and OpenShell must use correct casing.
         - No emoji in technical prose.
 
+    # ── E2E test recommendations ──────────────────────────────────
+    # Maps sensitive file paths to the nightly E2E jobs that exercise them.
+    # CodeRabbit surfaces these as review comments on PRs that touch a
+    # matched path, so reviewers know which E2E jobs to run before merge.
+    #
+    # When adding a new E2E job to nightly-e2e.yaml, add a matching
+    # path_instructions entry below. The cross-validation test in
+    # test/validate-e2e-coverage.test.ts verifies consistency.
+
+    - path: "scripts/nemoclaw-start.sh"
+      instructions: &e2e-entrypoint |
+        This file is a sandbox entrypoint script. Changes affect every
+        sandbox boot and are invisible to unit tests (Landlock, non-root
+        execution, process lifecycle).
+
+        **E2E test recommendation:**
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `sandbox-operations-e2e` — process recovery after gateway kill
+        - `cloud-e2e` — full onboard + cloud inference
+        - `openclaw-slack-pairing-e2e` — gateway/connect-shell OpenClaw
+          pairing state root parity for Slack
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,cloud-e2e,openclaw-slack-pairing-e2e
+        ```
+
+    - path: "scripts/lib/sandbox-init.sh"
+      instructions: *e2e-entrypoint
+
+    - path: "Dockerfile"
+      instructions: &e2e-dockerfile |
+        This file affects the sandbox container image. Layer ordering,
+        permissions, and baked config changes are only testable with a
+        real container build.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `hermes-e2e` — Hermes agent onboard + inference
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+        - `openclaw-tui-chat-correlation-e2e` — baked OpenClaw chat send
+          patch preserves user/assistant turn correlation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-survival-e2e,hermes-e2e,rebuild-openclaw-e2e,openclaw-tui-chat-correlation-e2e
+        ```
+
+    - path: "Dockerfile.base"
+      instructions: *e2e-dockerfile
+
+    - path: "nemoclaw-blueprint/scripts/http-proxy-fix.js"
+      instructions: |
+        This file is the L7 proxy rewrite script. Changes affect all
+        inference routing through the proxy. FORWARD-mode path needs
+        manual validation until a dedicated forward-proxy-e2e exists.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full inference through the proxy chain
+        - `inference-routing-e2e` — credential isolation + error classification
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,inference-routing-e2e
+        ```
+
+    - path: "src/lib/onboard.ts"
+      instructions: |
+        This file contains core onboarding logic. Changes here affect
+        the full sandbox creation and configuration flow.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `sandbox-operations-e2e` — multi-sandbox lifecycle
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+        - `channels-stop-start-e2e` — channel disable/enable lifecycle across
+          rebuild with cached Telegram credentials
+        - `messaging-compatible-endpoint-e2e` — Telegram + compatible endpoint
+          inference.local regression
+        - `bedrock-runtime-compatible-anthropic-e2e` — Bedrock Runtime
+          compatible Anthropic endpoint adapter boundary
+        - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
+          isolation
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+        - `openshell-gateway-upgrade-e2e` — stale Linux Docker-driver gateway
+          process restart after OpenShell upgrade
+        - `issue-3600-gpu-proof-optional-e2e` — direct GPU verification remains
+          optional when CUDA probing fails before sandbox creation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,bedrock-runtime-compatible-anthropic-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e,issue-3600-gpu-proof-optional-e2e
+        ```
+
+    - path: "src/lib/onboard/bedrock-runtime.ts"
+      instructions: &e2e-bedrock-runtime-compatible-anthropic |
+        This file is part of the Bedrock Runtime compatible Anthropic endpoint
+        path. Changes affect endpoint classification, hidden adapter startup,
+        adapter-token isolation, and the sandbox-facing inference.local route.
+
+        **E2E test recommendation:**
+        - `bedrock-runtime-compatible-anthropic-e2e` — fake Bedrock Runtime
+          endpoint through OpenClaw and Hermes with sandbox leak checks
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=bedrock-runtime-compatible-anthropic-e2e
+        ```
+
+    - path: "src/lib/inference/bedrock-runtime*.ts"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
+    - path: "src/lib/onboard/channel-state.ts"
+      instructions: &e2e-channel-stop-start |
+        This file controls disabled channel resolution used during onboard
+        and rebuild. Changes affect whether `channels stop` persists across
+        sandbox destroy/recreate and whether `channels start` reattaches
+        cached credentials.
+
+        **E2E test recommendation:**
+        - `channels-stop-start-e2e` — Telegram channel stop/start lifecycle
+          across rebuild with cached credentials
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=channels-stop-start-e2e
+        ```
+
+    - path: "src/lib/state/onboard-session.ts"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/actions/sandbox/rebuild.ts"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/commands/sandbox/channels/**"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/sandbox/channels-command-support.ts"
+      instructions: *e2e-channel-stop-start
+
+    - path: "test/e2e/test-channels-stop-start.sh"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/actions/inference-set.ts"
+      instructions: |
+        This file switches the OpenShell inference route and patches the
+        selected running agent config. Changes here affect OpenClaw and
+        Hermes model switching without a sandbox rebuild.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e,hermes-inference-switch-e2e
+        ```
+
+    - path: "src/nemoclaw.ts"
+      instructions: |
+        This file contains CLI dispatch, status, recovery, and connect
+        functions. Changes affect sandbox lifecycle commands.
+
+        **E2E test recommendation:**
+        - `sandbox-survival-e2e` — gateway restart recovery
+        - `sandbox-operations-e2e` — process recovery after gateway kill
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e
+        ```
+
+    - path: "src/lib/cluster-image-patch.ts"
+      instructions: &e2e-overlayfs |
+        This file handles Docker 26+ overlayfs compatibility. Changes
+        are only testable under real Docker + K3s execution.
+
+        **E2E test recommendation:**
+        - `overlayfs-autofix-e2e` — Docker 26+ nested-mount auto-fix
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=overlayfs-autofix-e2e
+        ```
+
+    - path: "src/lib/onboard/preflight.ts"
+      instructions: *e2e-overlayfs
+
+    - path: "src/lib/deploy/**"
+      instructions: |
+        This file contains deployment lifecycle logic (start/stop
+        cloudflared tunnel).
+
+        **E2E test recommendation:**
+        - `tunnel-lifecycle-e2e` — start/stop cloudflared tunnel
+        - `state-backup-restore-e2e` — backup/restore workspace state
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=tunnel-lifecycle-e2e,state-backup-restore-e2e
+        ```
+
+    - path: "src/lib/state/sandbox.ts"
+      instructions: |
+        This file manages sandbox state (backup, restore, rebuild,
+        snapshot). Changes affect data persistence across sandbox
+        lifecycle operations.
+
+        **E2E test recommendation:**
+        - `state-backup-restore-e2e` — backup/restore workspace state
+        - `snapshot-commands-e2e` — snapshot create/list/restore lifecycle
+        - `rebuild-openclaw-e2e` — workspace state survives rebuild
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=state-backup-restore-e2e,snapshot-commands-e2e,rebuild-openclaw-e2e
+        ```
+
+    - path: "src/lib/shields/**"
+      instructions: |
+        These files control shields down/up, config mutability, audit
+        trail, and auto-restore timer.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct Docker/VM privileged
+          exec routing for shields/config mutations
+        - `shields-config-e2e` — shields lifecycle + config get/set/rotate
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/privileged-exec.ts"
+      instructions: |
+        This file selects the privileged mutation transport for host-side
+        sandbox writes. Changes can break shields up/down and config set on
+        Docker Desktop VM-driver sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — fake Docker registry
+          coverage for VM/Docker direct-container routing and prefix
+          collision handling
+        - `shields-config-e2e` — live shields lifecycle + config get/set/rotate
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/config.ts"
+      instructions: |
+        This file implements host-side config get/set/rotate. Changes to
+        config writes, hash recomputation, or privileged exec routing affect
+        Docker/VM sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct privileged exec
+          routing for host-side config mutation
+        - `shields-config-e2e` — live config get/set/rotate while shields
+          transitions are exercised
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "agents/hermes/**"
+      instructions: |
+        This directory contains the Hermes agent. Changes affect
+        multi-agent onboarding, health probes, and inference routing.
+
+        **E2E test recommendation:**
+        - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+        - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
+          isolation
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
+        - `rebuild-hermes-e2e` — Hermes upgrade path
+        - `rebuild-hermes-stale-base-e2e` — Hermes rebuild with stale cached base image
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-inference-switch-e2e,hermes-discord-e2e,hermes-slack-e2e,hermes-onboard-security-posture-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-slack-e2e.sh"
+      instructions: |
+        This script validates Hermes Slack onboarding, policy scoping, Slack
+        credential providers, and Python Slack API egress through OpenShell
+        placeholder substitution.
+
+        **E2E test recommendation:**
+        - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-slack-e2e
+        ```
+
+    - path: "scripts/patch-openclaw-chat-send.js"
+      instructions: &e2e-openclaw-tui-chat-correlation |
+        This helper patches OpenClaw chat send behavior inside the sandbox
+        image. Changes can affect TUI message ordering, duplicate sends, and
+        user/assistant turn correlation when OpenClaw is the active agent.
+
+        **E2E test recommendation:**
+        - `openclaw-tui-chat-correlation-e2e` - hermetic TUI chat proof for
+          correlated user/assistant turns
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-tui-chat-correlation-e2e
+        ```
+
+    - path: "test/e2e/test-openclaw-tui-chat-correlation.sh"
+      instructions: *e2e-openclaw-tui-chat-correlation
+
+    - path: "test/openclaw-tui-chat-correlation.test.ts"
+      instructions: *e2e-openclaw-tui-chat-correlation
+
+    - path: "test/e2e/test-issue-4434-tui-unreachable-inference.sh"
+      instructions: &e2e-issue-4434-tui-unreachable-inference |
+        This script is the privileged live repro for #4434. Changes affect
+        the Linux-only NVIDIA endpoint firewall block, OpenClaw TUI error
+        visibility, and active-spinner shutdown proof.
+
+        **E2E test recommendation:**
+        - `issue-4434-tui-unreachable-inference-e2e` - opt-in live proof
+          that unreachable NVIDIA inference surfaces a visible TUI error and
+          stops the active spinner
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-4434-tui-unreachable-inference-e2e
+        ```
+
+    - path: "test/issue-4434-tui-unreachable-inference.test.ts"
+      instructions: *e2e-issue-4434-tui-unreachable-inference
+
+    - path: "test/e2e/test-openclaw-slack-pairing.sh"
+      instructions: |
+        This script validates OpenClaw Slack DM pairing across the gateway
+        and connect-shell runtime contexts with a hermetic fake Slack Socket
+        Mode event and fake chat.postMessage reply.
+
+        **E2E test recommendation:**
+        - `openclaw-slack-pairing-e2e` - Slack pairing request approval and
+          allowFrom state root parity
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-slack-pairing-e2e
+        ```
+
+    - path: "test/e2e/lib/fake-slack-api.cjs"
+      instructions: |
+        This helper backs hermetic Slack REST and Socket Mode tests. Changes
+        can alter Slack credential rewrite assertions, fake Socket Mode
+        envelopes, or chat.postMessage capture.
+
+        **E2E test recommendation:**
+        - `messaging-providers-e2e` - Slack REST provider placeholder rewrite
+        - `openclaw-slack-pairing-e2e` - fake Slack Socket Mode pairing flow
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-providers-e2e,openclaw-slack-pairing-e2e
+        ```
+
+    - path: "test/e2e/lib/slack-api-proof.sh"
+      instructions: |
+        This helper applies hermetic Slack REST and Socket Mode policies for
+        messaging E2E scripts. Changes can affect REST credential rewrite
+        probes and native websocket policy coverage.
+
+        **E2E test recommendation:**
+        - `messaging-providers-e2e` - Slack REST provider placeholder rewrite
+        - `openclaw-slack-pairing-e2e` - fake Slack Socket Mode pairing flow
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-providers-e2e,openclaw-slack-pairing-e2e
+        ```
+
+    - path: "nemoclaw-blueprint/policies/**"
+      instructions: |
+        This directory contains network policy definitions and presets.
+        Changes affect sandbox egress rules and SSRF filtering.
+
+        **E2E test recommendation:**
+        - `network-policy-e2e` — deny-by-default, whitelist, hot-reload, SSRF
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=network-policy-e2e
+        ```
+
+    - path: "test/e2e/test-issue-2478-crash-loop-recovery.sh"
+      instructions: |
+        STAYS_IN_PR_UNTIL_SHIP — long-running soak test for the gateway
+        recovery preload chain hardening (issue #2478). Removed in the
+        same commit that drops the test file before merge.
+
+        **E2E test recommendation:**
+        - `issue-2478-crash-loop-recovery-e2e` — gateway recovery preload
+          chain hardening soak
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-2478-crash-loop-recovery-e2e
+        ```
+
+    - path: "test/e2e/lib/security-posture-assertions.sh"
+      instructions: &e2e-security-posture |
+        This helper asserts the Linux Docker-driver posture that protects
+        static rc-file shims and runtime proxy-env configure guards under
+        a non-root host user. Changes here affect both full onboard
+        security posture lanes.
+
+        **E2E test recommendation:**
+        - `openclaw-onboard-security-posture-e2e` — OpenClaw onboard under a
+          non-root host security posture
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-onboard-security-posture-e2e,hermes-onboard-security-posture-e2e
+        ```
+
+    - path: "test/e2e/test-full-e2e.sh"
+      instructions: |
+        This script drives the full OpenClaw onboard path. Changes can
+        alter the install, sandbox creation, health, inference, and
+        security posture assertions used by the OpenClaw nightly lanes.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `openclaw-onboard-security-posture-e2e` — OpenClaw onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,openclaw-onboard-security-posture-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-e2e.sh"
+      instructions: |
+        This script drives the full Hermes onboard path. Changes can alter
+        install, sandbox creation, health, inference, and security posture
+        assertions used by the Hermes nightly lanes.
+
+        **E2E test recommendation:**
+        - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-onboard-security-posture-e2e
+        ```
+
+    # ── Split cloud-experimental tests (#2644) ──────────────────
+    - path: "test/e2e/test-cloud-onboard-e2e.sh"
+      instructions: &e2e-cloud-onboard |
+        This script tests the public installer flow, Landlock read-only
+        enforcement, API key leak detection, and inference.local HTTPS.
+
+        **E2E test recommendation:**
+        - `cloud-onboard-e2e` — public installer + sandbox health + security
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-onboard-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/checks/**"
+      instructions: *e2e-cloud-onboard
+
+    - path: "test/e2e/test-cloud-inference-e2e.sh"
+      instructions: &e2e-cloud-inference |
+        This script tests live chat via inference.local and validates
+        the skill filesystem layout inside the sandbox.
+
+        **E2E test recommendation:**
+        - `cloud-inference-e2e` — live cloud inference + skill filesystem
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
+        ```
+
+    - path: "test/e2e/test-openclaw-inference-switch.sh"
+      instructions: |
+        This script validates OpenClaw model/provider switching with
+        `nemoclaw inference set`, including OpenShell route state,
+        /sandbox/.openclaw/openclaw.json, config hash recomputation, and
+        live requests after the switch.
+
+        **E2E test recommendation:**
+        - `openclaw-inference-switch-e2e` — OpenClaw route + config patch
+          + live OpenClaw request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-inference-switch-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-inference-switch.sh"
+      instructions: |
+        This script validates Hermes model/provider switching with
+        `nemohermes inference set`, including OpenShell route state,
+        /sandbox/.hermes/config.yaml, config hash recomputation, .env
+        preservation, and live requests after the switch.
+
+        **E2E test recommendation:**
+        - `hermes-inference-switch-e2e` — Hermes route + config.yaml patch
+          + live Hermes request after switch
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-inference-switch-e2e
+        ```
+
+    - path: "test/e2e/test-skill-agent-e2e.sh"
+      instructions: &e2e-skill-agent |
+        This script tests skill injection into the sandbox and verifies
+        the agent reads the skill and returns a verification token.
+
+        **E2E test recommendation:**
+        - `skill-agent-e2e` — skill injection + agent verification
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=skill-agent-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/features/**"
+      instructions: *e2e-skill-agent
+
+    - path: "test/e2e/test-docs-validation.sh"
+      instructions: &e2e-docs-validation |
+        This script validates CLI/docs parity (nemoclaw --help vs
+        commands.md) and markdown link resolution.
+
+        **E2E test recommendation:**
+        - `docs-validation-e2e` — CLI/docs parity + link validation
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=docs-validation-e2e
+        ```
+
+    - path: "test/e2e/e2e-cloud-experimental/check-docs.sh"
+      instructions: *e2e-docs-validation
+
+    - path: "docs/reference/commands.md"
+      instructions: *e2e-docs-validation
+
+    - path: "test/e2e/test-messaging-compatible-endpoint.sh"
+      instructions: |
+        This script validates the Telegram + OpenAI-compatible endpoint
+        regression path with a local mock endpoint. Changes here affect
+        the hermetic coverage for managed inference.local routing from
+        messaging-triggered agent turns.
+
+        **E2E test recommendation:**
+        - `messaging-compatible-endpoint-e2e` — Telegram + compatible
+          endpoint inference.local routing
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-compatible-endpoint-e2e
+        ```
+
+    - path: "test/e2e/test-kimi-inference-compat.sh"
+      instructions: &e2e-kimi-inference-compat |
+        This script validates Kimi K2.6 managed inference.local
+        compatibility with a hermetic OpenAI-compatible mock endpoint.
+        Changes here affect OpenClaw tool-call splitting and trajectory
+        proof for the Kimi compatibility path.
+
+        **E2E test recommendation:**
+        - `kimi-inference-compat-e2e` — Kimi managed inference.local
+          compatibility and safe exec splitting
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=kimi-inference-compat-e2e
+        ```
+
+    - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
+      instructions: *e2e-kimi-inference-compat
+
+    - path: "test/e2e/test-bedrock-runtime-compatible-anthropic.sh"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
+
+    - path: "test/e2e/test-openshell-gateway-upgrade.sh"
+      instructions: |
+        This script validates the old OpenShell install upgrade guard for
+        Linux Docker-driver gateway processes.
+
+        **E2E test recommendation:**
+        - `openshell-gateway-upgrade-e2e` — stale gateway process restart after
+          OpenShell upgrade
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openshell-gateway-upgrade-e2e
+        ```
+
+    - path: "test/e2e/test-gateway-health-honest.sh"
+      instructions: |
+        This script is the coverage guard for #3111. It sabotages the
+        openshell-gateway binary with a shim that crashes on startup and
+        asserts onboard does NOT falsely log "Docker-driver gateway is
+        healthy" and does exit non-zero. Exercises the NemoClaw-side
+        false-positive (detached-zombie isPidAlive + metadata-only
+        isGatewayHealthy) regardless of OpenShell packaging choices.
+
+        **Regression E2E test recommendation:**
+        - Run `regression-e2e.yaml` with the jobs input set to
+          gateway-health-honest-e2e to validate false-positive health
+          checks when the gateway binary crashes on startup (#3111).
+
+        To run selectively:
+        ```
+        gh workflow run regression-e2e.yaml --ref <branch> -f 'jobs=gateway-health-honest-e2e'
+        ```
+
+    - path: "test/e2e/test-sessions-agents-cli.sh"
+      instructions: &e2e-sessions-agents-cli |
+        This script exercises the host-side `nemoclaw <name> sessions` and
+        `nemoclaw <name> agents` subcommand groups end-to-end: gateway RPC
+        envelope round-trip for `sessions reset` / `sessions delete`, plus
+        passthrough for `sessions list` and `agents add` / `agents delete`.
+        These flows are invisible to unit tests because the wrapper layer
+        depends on `openshell sandbox exec` and a live OpenClaw gateway.
+
+        **E2E test recommendation:**
+        - `sessions-agents-cli-e2e` — sessions + agents CLI wrapper coverage
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sessions-agents-cli-e2e
+        ```
+
+    - path: "src/lib/actions/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/lib/actions/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/sessions/**"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents.ts"
+      instructions: *e2e-sessions-agents-cli
+
+    - path: "src/commands/sandbox/agents/**"
+      instructions: *e2e-sessions-agents-cli
+
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect
         which tests run and how they are triggered.
+
+        If a new E2E job is added, verify corresponding
+        `path_instructions` entries exist in `.coderabbit.yaml` for the
+        source files it covers.
 
         If a job is renamed or removed, update the corresponding aggregate
         job `needs` lists (`notify-on-failure`, `report-to-pr`, and

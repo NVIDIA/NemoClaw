@@ -13,6 +13,9 @@ const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("../runner");
 const registry = require("../state/registry");
 const { loadAgent } = require("../agent/defs");
+// Late-binding access via the module exports so tests can spy on
+// resolveOpenshell without rewiring requires.
+const openshellResolveModule = require("../adapters/openshell/resolve");
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -84,6 +87,102 @@ function loadPreset(name: string): string | null {
   return fs.readFileSync(file, "utf-8");
 }
 
+function isPolicyObject(value: PolicyValue): value is PolicyObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
+  if (!content) return null;
+  try {
+    const parsed = YAML.parse(content);
+    const networkPolicies = isPolicyDocument(parsed) ? parsed.network_policies : null;
+    return isPolicyObject(networkPolicies) ? networkPolicies : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
+  const presetEntries = extractPresetEntries(presetContent);
+  if (!presetEntries) return [];
+  return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
+}
+
+const AGENT_PRESET_KEY_ALIASES: Record<string, string[]> = {
+  wechat: ["wechat_bridge"],
+};
+
+function selectAgentPolicyKeys(
+  agentPolicies: PolicyObject,
+  presetName: string,
+  builtinPresetContent: string,
+): string[] {
+  const builtinKeys = parsePresetPolicyKeys(builtinPresetContent);
+  if (
+    builtinKeys.length > 0 &&
+    builtinKeys.every((key) => Object.prototype.hasOwnProperty.call(agentPolicies, key))
+  ) {
+    return builtinKeys;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(agentPolicies, presetName)) {
+    return [presetName];
+  }
+
+  const aliases = AGENT_PRESET_KEY_ALIASES[presetName] || [];
+  const aliasMatches = aliases.filter((key) =>
+    Object.prototype.hasOwnProperty.call(agentPolicies, key),
+  );
+  if (aliasMatches.length > 0) return aliasMatches;
+
+  return Object.entries(agentPolicies)
+    .filter(([, value]) => isPolicyObject(value) && value.name === presetName)
+    .map(([key]) => key);
+}
+
+function loadAgentPresetContent(
+  sandboxName: string,
+  presetName: string,
+  builtinPresetContent: string,
+): string | null {
+  try {
+    const sandbox = registry.getSandbox(sandboxName);
+    if (!sandbox?.agent) return null;
+
+    const agent = loadAgent(sandbox.agent);
+    if (!agent?.policyAdditionsPath || !fs.existsSync(agent.policyAdditionsPath)) return null;
+
+    const agentPolicies = parseNetworkPolicies(
+      fs.readFileSync(agent.policyAdditionsPath, "utf-8"),
+    );
+    if (!agentPolicies) return null;
+
+    const keys = selectAgentPolicyKeys(agentPolicies, presetName, builtinPresetContent);
+    if (keys.length === 0) return null;
+
+    const selectedPolicies: PolicyObject = {};
+    for (const key of keys) selectedPolicies[key] = agentPolicies[key];
+
+    return YAML.stringify({
+      preset: {
+        name: presetName,
+        description: `${agent.displayName} ${presetName} policy`,
+      },
+      network_policies: selectedPolicies,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
+  const builtinPresetContent = loadPreset(presetName);
+  if (!builtinPresetContent) return null;
+  return (
+    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
+  );
+}
+
 /**
  * Extract the bare hostnames declared in a preset YAML (anything matched by
  * `host: <value>`), with surrounding quotes stripped. Used to show the
@@ -91,7 +190,7 @@ function loadPreset(name: string): string | null {
  */
 function getPresetEndpoints(content: string): string[] {
   const hosts: string[] = [];
-  const regex = /host:\s*([^\s,}]+)/g;
+  const regex = /^[ \t]*(?:-[ \t]*)?host:[ \t]*([^#\s,}]+)/gm;
   let match;
   while ((match = regex.exec(content)) !== null) {
     hosts.push(match[1].replace(/^["']|["']$/g, ""));
@@ -111,17 +210,48 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
   discord: "Discord",
   slack: "Slack",
   wechat: "WeChat",
+  whatsapp: "WhatsApp",
 };
 
-function getMessagingPresetWarning(presetName: string): string | null {
+function getPresetValidationWarning(presetName: string): string | null {
+  if (presetName === "jira") {
+    return [
+      "Jira preset validation uses per-binary policy signals.",
+      "Node HTTPS is allowed for Atlassian API traffic:",
+      'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
+      "curl is intentionally not in the preset binary allowlist. Avoid plain",
+      "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
+      "redirect body, which looks the same as a blocked request. Use a",
+      "body-visible API probe instead:",
+      "curl -sS --max-time 10 -w '\\n%{http_code}\\n' https://api.atlassian.com/oauth/token/accessible-resources",
+      "Before approval, expect 000 or a local policy denial. After explicitly",
+      "approving curl for api.atlassian.com, expect Atlassian's 401 JSON",
+      "response, which proves curl reached the service without Jira credentials.",
+    ].join("\n  ");
+  }
+
   const label = MESSAGING_PRESET_LABELS[presetName];
   if (!label) return null;
-  return [
+  const lines = [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
-    "in the messaging channels step. The bot token and channel bridge are wired",
-    "up at onboard time and are not added by applying this preset alone.",
-  ].join("\n  ");
+    "in the messaging channels step. Channel setup, pairing, and runtime",
+    "configuration are wired up at onboard time and are not added by applying",
+    "this preset alone.",
+  ];
+
+  if (presetName === "discord") {
+    lines.push(
+      "For Discord preset validation, do not use curl as the success signal:",
+      "curl is not in the preset binary allowlist, so curl probes can fail even",
+      "when the policy is working. Use Node HTTPS against",
+      "https://discord.com/api/v10/gateway or validate the configured",
+      'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+      "can also be inconclusive behind a proxy.",
+    );
+  }
+
+  return lines.join("\n  ");
 }
 
 function setupPolicyPresetSupported(
@@ -198,19 +328,66 @@ function parseCurrentPolicy(raw: string | null | undefined): string {
 }
 
 /**
+ * Resolve the openshell binary, preferring an absolute path so spawnSync does
+ * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
+ * from PATH (issue #4224). Falls back to the literal "openshell" so callers
+ * that build argv at module scope (or in tests that only check argv shape)
+ * don't side-effect on a missing binary; command entry points call
+ * `assertOpenshellResolvable()` before invoking openshell to surface the
+ * actionable diagnostic.
+ */
+function resolveOpenshellBinary(): string {
+  return openshellResolveModule.resolveOpenshell() ?? "openshell";
+}
+
+/**
+ * Pre-spawn check used at command entry points before any
+ * `run(buildPolicy*Command(...))`. If the binary cannot be resolved, prints
+ * every location checked and an install hint, then exits nonzero — instead
+ * of letting the spawn surface as the opaque `spawnSync openshell ENOENT`
+ * (issue #4224).
+ */
+function assertOpenshellResolvable(): void {
+  if (openshellResolveModule.resolveOpenshell()) return;
+
+  const home = process.env.HOME;
+  const override = process.env.NEMOCLAW_OPENSHELL_BIN;
+  const currentPath = process.env.PATH;
+  const checked: string[] = [];
+  if (override) checked.push(`NEMOCLAW_OPENSHELL_BIN=${override}`);
+  // Log the concrete PATH so bug reports name what was actually searched.
+  // The whole point of #4224 is that non-interactive shells drop ~/.local/bin
+  // from PATH; the value is the most actionable single piece of context.
+  checked.push(
+    currentPath
+      ? `PATH=${currentPath} (via \`command -v openshell\`)`
+      : "PATH=<unset> (via `command -v openshell`)",
+  );
+  if (home?.startsWith("/")) checked.push(`${home}/.local/bin/openshell`);
+  checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
+
+  console.error("  openshell binary not found. Checked:");
+  for (const location of checked) {
+    console.error(`    - ${location}`);
+  }
+  console.error(
+    "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
+  );
+  process.exit(1);
+}
+
+/**
  * Build the openshell policy set command as an argv array.
  */
 function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
-  return [binary, "policy", "set", "--policy", policyFile, "--wait", sandboxName];
+  return [resolveOpenshellBinary(), "policy", "set", "--policy", policyFile, "--wait", sandboxName];
 }
 
 /**
  * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName: string): string[] {
-  const binary = process.env.NEMOCLAW_OPENSHELL_BIN || "openshell";
-  return [binary, "policy", "get", "--full", sandboxName];
+  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -425,7 +602,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   // Resolve preset content: built-in first, then custom presets persisted
   // in the registry. `isCustom` controls which registry bucket to prune on
   // success.
-  let presetContent: string | null = loadPreset(presetName);
+  let presetContent: string | null = loadPresetForSandbox(sandboxName, presetName);
   let isCustom = false;
   if (!presetContent) {
     const custom = registry
@@ -472,6 +649,10 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   if (endpoints.length > 0) {
     console.log(`  Narrowing sandbox egress — removing: ${endpoints.join(", ")}`);
   }
+
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
@@ -604,12 +785,22 @@ function applyPresetContent(
   }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
+  if (rawPolicy.trim() && !currentPolicy) {
+    console.error(
+      `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
+    );
+    return false;
+  }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);
   if (endpoints.length > 0) {
     console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
   }
+
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
@@ -649,6 +840,20 @@ function applyPresetContent(
       }
       registry.updateSandbox(sandboxName, { policies: pols });
     }
+  } else if (options.custom) {
+    // The preset reached the gateway, but sandbox `sandboxName` has no local
+    // registry entry, so it cannot be recorded under `customPolicies`. Custom
+    // presets are surfaced only from the registry (both `listCustomPresets`
+    // and `getGatewayPresets` read `registry.getCustomPolicies`), so an
+    // unrecorded custom preset never appears in `policy-list` or `status`.
+    // Report the gap instead of exiting 0 as if the preset were fully applied. (#4510)
+    console.error(
+      `  Warning: '${presetName}' was applied to the gateway but could not be ` +
+        `recorded locally because sandbox '${sandboxName}' is not in the ` +
+        `registry, so it will not appear in policy-list or status. Recover or ` +
+        `re-onboard the sandbox, then re-apply.`,
+    );
+    return false;
   }
 
   return true;
@@ -664,7 +869,7 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
-  const presetContent = loadPreset(presetName);
+  const presetContent = loadPresetForSandbox(sandboxName, presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -698,10 +903,16 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   let merged = parseCurrentPolicy(rawPolicy);
+  if (rawPolicy.trim() && !merged) {
+    console.error(
+      `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
+    );
+    return false;
+  }
   const endpointLogs: string[][] = [];
 
   for (const presetName of uniquePresetNames) {
-    const presetContent = loadPreset(presetName);
+    const presetContent = loadPresetForSandbox(sandboxName, presetName);
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
       return false;
@@ -723,6 +934,10 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
     }
   }
+
+  // Run before creating temp resources so a missing-binary exit doesn't
+  // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
+  assertOpenshellResolvable();
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
   const tmpFile = path.join(tmpDir, "policy.yaml");
@@ -891,9 +1106,38 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 }
 
 /**
+ * True when every `network_policies` key declared in `content` is present in
+ * `gatewayPolicyNames`. Works for both built-in preset YAML and the custom
+ * preset YAML stored under a sandbox's registry entry — keeping a single
+ * matching rule means `policy-list` and `status` stay consistent for either
+ * preset source. (#3590)
+ */
+function presetMatchesGateway(
+  content: string | null,
+  gatewayPolicyNames: ReadonlySet<string>,
+): boolean {
+  const entries = extractPresetEntries(content);
+  if (!entries) return false;
+
+  let presetPolicies;
+  try {
+    const presetParsed = YAML.parse("network_policies:\n" + entries);
+    presetPolicies = presetParsed?.network_policies;
+  } catch {
+    return false;
+  }
+
+  if (!presetPolicies || typeof presetPolicies !== "object") return false;
+
+  const presetKeys = Object.keys(presetPolicies);
+  return presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k));
+}
+
+/**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
- * against known preset definitions.
+ * against known preset definitions. Considers both built-in presets and
+ * sandbox-scoped custom presets recorded in the registry. (#3590)
  *
  * Returns an array of preset names whose network_policies keys are all
  * found in the gateway's loaded policy, or `null` when the gateway
@@ -929,30 +1173,17 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   }
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched = [];
+  const matched: string[] = [];
 
   for (const preset of listPresets()) {
-    const content = loadPreset(preset.name);
-    if (!content) continue;
-    const entries = extractPresetEntries(content);
-    if (!entries) continue;
-
-    let presetPolicies;
-    try {
-      const wrapped = "network_policies:\n" + entries;
-      const presetParsed = YAML.parse(wrapped);
-      presetPolicies = presetParsed?.network_policies;
-    } catch {
-      continue;
-    }
-
-    if (!presetPolicies || typeof presetPolicies !== "object") continue;
-
-    // A preset is considered "active on gateway" if ALL of its
-    // network_policies keys exist in the gateway's loaded policy.
-    const presetKeys = Object.keys(presetPolicies);
-    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
+    if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
       matched.push(preset.name);
+    }
+  }
+
+  for (const entry of registry.getCustomPolicies(sandboxName)) {
+    if (presetMatchesGateway(entry.content, gatewayPolicyNames)) {
+      matched.push(entry.name);
     }
   }
 
@@ -1062,6 +1293,7 @@ function applyPermissivePolicy(sandboxName: string): void {
   }
 
   console.log("  Applying permissive policy...");
+  assertOpenshellResolvable();
   run(buildPolicySetCommand(policyPath, sandboxName));
   console.log("  Applied permissive policy.");
 }
@@ -1072,15 +1304,17 @@ export {
   listPresets,
   loadPreset,
   getPresetEndpoints,
-  getMessagingPresetWarning,
+  getPresetValidationWarning,
   setupPolicyPresetSupported,
   filterSetupPolicyPresets,
   listSetupPolicyPresets,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
+  parsePresetPolicyKeys,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,
+  assertOpenshellResolvable,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   removePresetFromPolicy,

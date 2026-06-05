@@ -21,7 +21,7 @@ type ImportRef = {
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const SRC_LIB_ROOT = path.join(REPO_ROOT, "src", "lib");
+const SRC_ROOT = path.join(REPO_ROOT, "src");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 
 function toRepoPath(absPath: string): string {
@@ -119,16 +119,16 @@ function isAdapterFile(repoPath: string): boolean {
 }
 
 function isCommandFile(repoPath: string): boolean {
-  return repoPath.startsWith("src/lib/commands/");
+  return repoPath.startsWith("src/commands/");
+}
+
+function isMessagingManifestFile(repoPath: string): boolean {
+  return repoPath.startsWith("src/lib/messaging/manifest/");
 }
 
 function isActionFile(repoPath: string): boolean {
   if (repoPath.startsWith("src/lib/actions/")) return true;
   return /(^|\/)[^/]+-actions?\.ts$/.test(repoPath);
-}
-
-function isGeneratedOrRegistryCommandFile(repoPath: string): boolean {
-  return repoPath.endsWith("/common.ts");
 }
 
 function importTargetsForbiddenLayer(
@@ -181,7 +181,7 @@ function checkDomainFile(absPath: string, repoPath: string, violations: Violatio
     const target = importTargetsForbiddenLayer(
       absPath,
       ref,
-      ["src/lib/adapters/", "src/lib/commands/", "src/lib/cli/"],
+      ["src/lib/adapters/", "src/commands/", "src/lib/cli/"],
       true,
     );
     if (target) {
@@ -236,7 +236,7 @@ function checkActionFile(absPath: string, repoPath: string, violations: Violatio
 
 function checkAdapterFile(absPath: string, repoPath: string, violations: Violation[]): void {
   for (const ref of collectImportRefs(absPath)) {
-    const target = importTargetsForbiddenLayer(absPath, ref, ["src/lib/commands/"], true);
+    const target = importTargetsForbiddenLayer(absPath, ref, ["src/commands/"], true);
     if (target) {
       addViolation(
         violations,
@@ -250,8 +250,68 @@ function checkAdapterFile(absPath: string, repoPath: string, violations: Violati
   }
 }
 
+function checkNoBinLibShimImport(absPath: string, repoPath: string, violations: Violation[]): void {
+  for (const ref of collectImportRefs(absPath)) {
+    const target = resolveInternalImport(absPath, ref.specifier);
+    if (target?.startsWith("bin/lib/") && !target.endsWith(".json")) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "src-no-bin-lib-shims",
+        `src must import implementation modules directly instead of packaged shim ${target}`,
+      );
+    }
+  }
+}
+
+function checkMessagingManifestFile(
+  absPath: string,
+  repoPath: string,
+  violations: Violation[],
+): void {
+  const forbiddenFragments = [
+    "gateway",
+    "state/registry",
+    "credentials",
+    "node:fs",
+    "node:child_process",
+    "child_process",
+    "adapters/openshell",
+    "src/commands",
+    "lib/actions",
+  ];
+
+  for (const ref of collectImportRefs(absPath)) {
+    if (ref.specifier === "fs" || ref.specifier.startsWith("fs/")) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "messaging-manifest-purity",
+        "messaging manifest modules must not import fs",
+      );
+      continue;
+    }
+    const target = resolveInternalImport(absPath, ref.specifier);
+    const haystack = `${ref.specifier}\n${target ?? ""}`;
+    const fragment = forbiddenFragments.find((candidate) => haystack.includes(candidate));
+    if (fragment) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "messaging-manifest-purity",
+        `messaging manifest modules must not import ${fragment}`,
+      );
+    }
+  }
+}
+
 function checkCommandFile(absPath: string, repoPath: string, violations: Violation[]): void {
-  if (isGeneratedOrRegistryCommandFile(repoPath)) return;
   const sourceFile = sourceFileFor(absPath);
   let commandClassCount = 0;
 
@@ -286,13 +346,17 @@ function checkCommandFile(absPath: string, repoPath: string, violations: Violati
   }
 }
 
-export function findLayerImportBoundaryViolations(root = SRC_LIB_ROOT): Violation[] {
+export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] {
   const violations: Violation[] = [];
   for (const absPath of walk(root)) {
     const repoPath = toRepoPath(absPath);
+    checkNoBinLibShimImport(absPath, repoPath, violations);
     if (isDomainFile(repoPath)) checkDomainFile(absPath, repoPath, violations);
     if (isActionFile(repoPath)) checkActionFile(absPath, repoPath, violations);
     if (isAdapterFile(repoPath)) checkAdapterFile(absPath, repoPath, violations);
+    if (isMessagingManifestFile(repoPath)) {
+      checkMessagingManifestFile(absPath, repoPath, violations);
+    }
     if (isCommandFile(repoPath)) checkCommandFile(absPath, repoPath, violations);
   }
   return violations;

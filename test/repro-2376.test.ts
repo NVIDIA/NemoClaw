@@ -8,9 +8,9 @@
  *   configuration from /tmp/nemoclaw-proxy-env.sh are missing.
  *
  * Root cause:
- *   The OpenClaw base image (Dockerfile.base) pre-creates /sandbox/.bashrc
- *   and /sandbox/.profile that source /tmp/nemoclaw-proxy-env.sh — the file
- *   the entrypoint writes with HERMES_HOME (and proxy vars) at runtime.
+ *   Older OpenClaw base images pre-created /sandbox/.bashrc and
+ *   /sandbox/.profile entries that sourced /tmp/nemoclaw-proxy-env.sh — the
+ *   file the entrypoint writes with HERMES_HOME (and proxy vars) at runtime.
  *   The Hermes base image (agents/hermes/Dockerfile.base) was missing the
  *   equivalent block, so the proxy-env file existed but was never sourced.
  *

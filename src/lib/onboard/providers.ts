@@ -234,13 +234,23 @@ function getRequestedModelHint(nonInteractive) {
  * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
  * @param {string} credentialEnv - Credential environment variable name.
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
+ * @param {{ includeCredential?: boolean }} [opts] - When `includeCredential` is
+ *   false, the `--credential` flag is omitted from the args. Used on the
+ *   `provider update` path when the host env does not carry the credential and
+ *   the gateway already holds it (no rotation needed). OpenShell's CLI rejects
+ *   `--credential KEY` when the local env var is empty, so passing the flag
+ *   would fail before reaching the gateway.
  * @returns {string[]} Argument array for runOpenshell().
  */
-function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
+function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
+  const { includeCredential = true } = opts;
   const args =
     action === "create"
-      ? ["provider", "create", "--name", name, "--type", type, "--credential", credentialEnv]
-      : ["provider", "update", name, "--credential", credentialEnv];
+      ? ["provider", "create", "--name", name, "--type", type]
+      : ["provider", "update", name];
+  if (includeCredential) {
+    args.push("--credential", credentialEnv);
+  }
   if (baseUrl && type === "openai") {
     args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
   } else if (baseUrl && type === "anthropic") {
@@ -271,19 +281,47 @@ function providerExistsInGateway(name, _runOpenshell) {
  * Create or update an OpenShell provider in the gateway.
  *
  * Checks whether the provider already exists via `openshell provider get`;
- * uses `create` for new providers and `update` for existing ones.
+ * uses `create` for new providers and `update` for existing ones. When
+ * `options.replaceExisting` is true an existing provider is deleted and
+ * recreated instead of updated — required for provider-type changes that
+ * `provider update` cannot apply (e.g. the Brave Search migration from the
+ * legacy `generic` type to the `brave` profile). The caller must guarantee
+ * the provider is detached from any live sandbox before opting in: OpenShell
+ * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type ("openai", "anthropic", "generic").
+ * @param {string} type - Provider type ("openai", "anthropic", "generic", "brave").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
+ * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
-function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell) {
+function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
-  const action = exists ? "update" : "create";
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
+  if (exists && options.replaceExisting) {
+    const deleteResult = _runOpenshell(["provider", "delete", name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (deleteResult.status !== 0) {
+      const output =
+        compactText(redact(`${deleteResult.stderr || ""}`)) ||
+        compactText(redact(`${deleteResult.stdout || ""}`)) ||
+        `Failed to replace provider '${name}'.`;
+      return { ok: false, status: deleteResult.status || 1, message: output };
+    }
+  }
+  const action = exists && !options.replaceExisting ? "update" : "create";
+  // On the update path, the OpenShell CLI's `--credential KEY` form reads the
+  // value from the host env and aborts when empty. If the caller did not stage
+  // a credential value (rebuild after `channels add` with the original env
+  // unset), drop the flag so `provider update` becomes a no-op merge — the
+  // gateway already holds the secret.
+  const credentialValueAvailable =
+    !!credentialEnv && typeof env[credentialEnv] === "string" && env[credentialEnv].length > 0;
+  const includeCredential = action === "create" || credentialValueAvailable;
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const result = _runOpenshell(args, runOpts);
   if (result.status !== 0) {
@@ -299,21 +337,45 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell) 
 /**
  * Upsert all messaging providers that have tokens configured.
  * Returns the list of provider names that were successfully created/updated.
- * Exits the process if any upsert fails.
- * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ * Exits the process if any upsert fails unless `options.bestEffort` is true.
+ *
+ * Pass `options.replaceExisting` true only when every entry is guaranteed
+ * detached from any live sandbox (post-sandbox-delete on the recreate path);
+ * reuse paths must omit it because `provider delete` fails for attached
+ * providers. Pass `options.bestEffort` only from rollback paths that must
+ * continue restoring registry state and report residual gateway work instead
+ * of terminating the CLI.
+ * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
-function upsertMessagingProviders(tokenDefs, _runOpenshell) {
+function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const upserted = [];
-  for (const { name, envKey, token } of tokenDefs) {
+  const failures = [];
+  for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
-    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token }, _runOpenshell);
+    const result = upsertProvider(
+      name,
+      providerType || "generic",
+      envKey,
+      null,
+      { [envKey]: token },
+      _runOpenshell,
+      { replaceExisting: Boolean(options.replaceExisting) },
+    );
     if (!result.ok) {
+      if (options.bestEffort) {
+        failures.push(`${name}: ${result.message}`);
+        continue;
+      }
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
       process.exit(1);
     }
     upserted.push(name);
+  }
+  if (failures.length > 0) {
+    throw new Error(failures.join("; "));
   }
   return upserted;
 }

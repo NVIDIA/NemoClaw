@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ROOT } from "../../runner";
-import { dockerCapture, dockerRun, type DockerCaptureOptions, type DockerRunOptions } from "./run";
+import {
+  type DockerCaptureOptions,
+  type DockerRunOptions,
+  type DockerRunResult,
+  dockerCapture,
+  dockerRun,
+} from "./run";
 
 export type DockerBuildOptions = DockerRunOptions & { quiet?: boolean };
 
@@ -11,7 +17,7 @@ export function dockerBuild(
   tag: string,
   contextDir: string = ROOT,
   opts: DockerBuildOptions = {},
-) {
+): DockerRunResult {
   const { quiet, ...rest } = opts;
   // Dockerfile.base relies on `RUN --mount=type=bind`, which is BuildKit-only.
   // Hosts whose Docker daemon defaults to the legacy builder (e.g. fresh
@@ -33,7 +39,7 @@ export function dockerBuild(
   return dockerRun(args, { ...rest, env });
 }
 
-export function dockerRmi(imageRef: string, opts: DockerRunOptions = {}) {
+export function dockerRmi(imageRef: string, opts: DockerRunOptions = {}): DockerRunResult {
   return dockerRun(["rmi", imageRef], opts);
 }
 

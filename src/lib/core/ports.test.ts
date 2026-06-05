@@ -12,6 +12,7 @@ const GATEWAY_VALIDATION_OPTIONS = {
   vllmPort: 8000,
   ollamaPort: 11434,
   ollamaProxyPort: 11435,
+  bedrockRuntimeAdapterPort: 11436,
 };
 
 describe("parsePort", () => {
@@ -140,10 +141,21 @@ describe("parseGatewayPort", () => {
     ["8000", "vLLM / NIM inference"],
     ["11434", "Ollama inference"],
     ["11435", "Ollama auth proxy"],
+    ["11436", "Bedrock Runtime adapter"],
   ])("rejects overlap with default port %s", (port, label) => {
     process.env[ENV_KEY] = port;
     expect(() => parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toThrow(
       label,
     );
+  });
+
+  it("rejects overlap with a configured Bedrock Runtime adapter port", () => {
+    process.env[ENV_KEY] = "19002";
+    expect(() =>
+      parseGatewayPort(ENV_KEY, 8080, {
+        ...GATEWAY_VALIDATION_OPTIONS,
+        bedrockRuntimeAdapterPort: 19002,
+      }),
+    ).toThrow("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT");
   });
 });

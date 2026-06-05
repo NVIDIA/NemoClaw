@@ -68,11 +68,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
-    && rm -rf /var/lib/apt/lists/*
+        tmux=3.5a-3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3 /usr/local/bin/python
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
 # Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
+# Binary release asset downloads can be slower than hash fetches; keep
+# longer bounded transfer timeouts while preserving checksum verification.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -80,7 +84,9 @@ RUN arch="$(dpkg --print-architecture)" \
         arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
     && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
     && chmod +x /usr/local/bin/gosu \
     && gosu --version
@@ -126,19 +132,15 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
     && chmod -R g+w /sandbox/.openclaw \
     && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
-# Pre-create shell init files for the sandbox user.
-# Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
-# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
-# interactive session.
-# Ref: #2181 — the file must not be writable by the sandbox user.
+# Pre-create shell init files for the sandbox user. Runtime environment hooks
+# are installed system-wide below; user rc files stay clean and locked so
+# per-user startup files are not part of the trust boundary.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox shell init' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox login init' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
@@ -177,7 +179,12 @@ RUN printf '%s\n' \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.4.24
+ARG OPENCLAW_VERSION=2026.5.27
+ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
+# names do not persist in runtime snapshots or leak-scan inputs.
+ENV JITI_FS_CACHE=false
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -198,5 +205,102 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Error: OpenClaw version ${OPENCLAW_VERSION} not found on npm registry"; \
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
     fi; \
+    EXPECTED_INTEGRITY=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
+    if [ -n "$EXPECTED_INTEGRITY" ]; then \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
+            echo "Expected: ${EXPECTED_INTEGRITY}"; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
+        fi; \
+    fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+USER sandbox
+WORKDIR /sandbox
+# hadolint ignore=DL3059,DL4006
+RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.3' --pin \
+    && openclaw config set plugins.entries.openclaw-weixin.enabled true
+# hadolint ignore=DL3002
+USER root
+WORKDIR /
+
+# Baseline health check. The base image runs no service, so this only
+# verifies the Node.js runtime is functional. Child images that expose
+# a service (e.g. the production Dockerfile's gateway) MUST override
+# this with a service-specific probe; otherwise an unresponsive service
+# will still report healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD node -e "process.exit(0)"
+
+# Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
+#
+# Without this, applying the `brew` policy preset and trying to install
+# Homebrew at runtime fails: /home/linuxbrew is not in the sandbox
+# filesystem write paths, AND the install script's first step is `sudo`
+# to create + chown /home/linuxbrew/.linuxbrew, which the unprivileged
+# sandbox user cannot grant. The preset's binary whitelist for
+# /home/linuxbrew/.linuxbrew/bin/* is then dead code.
+#
+# Image-build runs as root, so we create the prefix, chown it to the
+# sandbox user, clone Homebrew core under it as the sandbox user, and expose a
+# /usr/local/bin wrapper. /usr/local/bin is already on the locked sandbox PATH,
+# but a plain symlink there makes Homebrew infer /usr/local as its prefix. The
+# wrapper must execute the Linuxbrew prefix shim, not the repository script
+# directly, so Homebrew keeps /home/linuxbrew/.linuxbrew as its writable prefix.
+# The wrapper also pins Homebrew's temp extraction to /tmp, because the sandbox
+# policy permits /tmp writes while /var/tmp stays outside the write set.
+# Installed formulae are added to the sandbox user's login-shell PATH via
+# /etc/profile.d instead of Docker ENV, because /home/linuxbrew is
+# sandbox-writable and must not be inherited by privileged startup code before
+# nemoclaw-start locks PATH down.
+#
+# Companion change: /home/linuxbrew is added to filesystem_policy.read_write
+# in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
+# formulae under the prefix at runtime.
+#
+# Cost: ~80 to 150 MB (Homebrew core only; formulae download on demand).
+#
+# HOMEBREW_VERSION pins the exact upstream Homebrew tag we ship, so the
+# base image layer is reproducible across rebuilds. Bump on demand; the
+# base-image workflow re-runs on push to main. Latest stable tags are
+# at https://github.com/Homebrew/brew/releases.
+ARG HOMEBREW_VERSION=5.1.12
+RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
+    && chown -R sandbox:sandbox /home/linuxbrew \
+    && gosu sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
+        https://github.com/Homebrew/brew.git \
+        /home/linuxbrew/.linuxbrew/Homebrew \
+    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
+        /home/linuxbrew/.linuxbrew/bin/brew \
+    && { \
+        printf '%s\n' '#!/bin/sh'; \
+        printf '%s\n' 'export HOMEBREW_TEMP=/tmp'; \
+        printf '%s\n' 'export TMPDIR=/tmp'; \
+        printf '%s\n' 'exec /home/linuxbrew/.linuxbrew/bin/brew "$@"'; \
+    } > /usr/local/bin/brew \
+    && chmod 755 /usr/local/bin/brew \
+    && grep -qx 'export HOMEBREW_TEMP=/tmp' /usr/local/bin/brew \
+    && grep -qx 'export TMPDIR=/tmp' /usr/local/bin/brew \
+    && gosu sandbox env HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
+        | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox /usr/local/bin/brew --version
+RUN { \
+        printf '%s\n' "if [ \"\$(/usr/bin/id -un 2>/dev/null || true)\" = sandbox ]; then"; \
+        printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
+        printf '%s\n' "fi"; \
+    } > /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && chmod 644 /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && mkdir -p /tmp/nemoclaw-hostile-bin \
+    && { printf '%s\n' '#!/bin/sh'; printf '%s\n' 'echo sandbox'; } > /tmp/nemoclaw-hostile-bin/id \
+    && chmod 755 /tmp/nemoclaw-hostile-bin/id \
+    && PATH="/tmp/nemoclaw-hostile-bin:${PATH}" bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && rm -rf /tmp/nemoclaw-hostile-bin \
+    && gosu sandbox bash -lc 'command -v brew >/dev/null' \
+    && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
+    && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"

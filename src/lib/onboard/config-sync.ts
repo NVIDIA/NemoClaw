@@ -4,7 +4,30 @@
 import fs from "node:fs";
 
 import type { ProviderSelectionConfig } from "../inference/config";
-import { secureTempFile } from "./temp-files";
+import { cleanupTempDir, secureTempFile } from "./temp-files";
+
+export interface RunSandboxConfigSyncDeps {
+  getSelectionConfig: () => ProviderSelectionConfig | null;
+  runConnectScript: (sandboxName: string, scriptContent: string) => void;
+}
+
+// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
+// inside the sandbox. Idempotent — safe to invoke from the rebuild resume
+// path where the Dockerfile leaves config.json as a zero-byte placeholder
+// that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
+export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
+  const selectionConfig = deps.getSelectionConfig();
+  if (!selectionConfig) return;
+  const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
+  const script = buildSandboxConfigSyncScript(sandboxConfig);
+  const scriptFile = writeSandboxConfigSyncFile(script);
+  try {
+    const scriptContent = fs.readFileSync(scriptFile, "utf-8");
+    deps.runConnectScript(sandboxName, scriptContent);
+  } finally {
+    cleanupTempDir(scriptFile, "nemoclaw-sync");
+  }
+}
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
   // Do not rewrite openclaw.json at runtime. Model routing is handled by the
@@ -14,10 +37,18 @@ export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionC
   // chance to perform its own startup initialization.
   return `
 set -euo pipefail
-mkdir -p ~/.nemoclaw
-cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
+nemoclaw_dir="\${HOME:-/sandbox}/.nemoclaw"
+nemoclaw_config="$nemoclaw_dir/config.json"
+mkdir -p -m 700 "$nemoclaw_dir"
+nemoclaw_dir_uid="$(stat -c '%u' "$nemoclaw_dir" 2>/dev/null || echo '')"
+current_uid="$(id -u 2>/dev/null || echo '')"
+if [ -n "$nemoclaw_dir_uid" ] && [ "$nemoclaw_dir_uid" = "$current_uid" ]; then
+  chmod 700 "$nemoclaw_dir"
+fi
+cat > "$nemoclaw_config" <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
+chmod 600 "$nemoclaw_config"
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"

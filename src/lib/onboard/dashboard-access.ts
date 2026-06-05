@@ -136,8 +136,11 @@ export function getDashboardAccessInfo(
   const wslHostAddress = getWslHostAddress(options);
   if (wslHostAddress) {
     const wslUrl = buildAuthenticatedDashboardUrl(`http://${wslHostAddress}:${chain.port}/`, token ?? null);
-    if (!dashboardAccess.some((access) => access.url === wslUrl)) {
-      dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
+    const existing = dashboardAccess.find((access) => access.url === wslUrl);
+    if (existing) {
+      existing.label = "WSL fallback";
+    } else {
+      dashboardAccess.push({ label: "WSL fallback", url: wslUrl });
     }
   }
 

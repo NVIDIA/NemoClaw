@@ -5,8 +5,8 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
-const fs = require("fs");
-const os = require("os");
+import type { GpuInfo } from "../local";
+
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
@@ -23,6 +23,7 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
+const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -30,10 +31,21 @@ const {
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
 } = require("../../onboard/ollama-proxy-reachability");
+const {
+  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  isLocalAdapterProcess,
+  killLocalAdapterPid,
+  loadLocalAdapterPid,
+  persistLocalAdapterPid,
+  readLocalAdapterTextFile,
+  removeLocalAdapterFile,
+  spawnDetachedNodeAdapter,
+  writeLocalAdapterSecretFile,
+} = require("../local-adapter-lifecycle");
 
 // ── State ────────────────────────────────────────────────────────
 
-const PROXY_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 
@@ -43,21 +55,10 @@ function sleep(seconds) {
   spawnSync("sleep", [String(seconds)]);
 }
 
-// ── Proxy state dir ──────────────────────────────────────────────
-
-function ensureProxyStateDir(): void {
-  if (!fs.existsSync(PROXY_STATE_DIR)) {
-    fs.mkdirSync(PROXY_STATE_DIR, { recursive: true });
-  }
-}
-
 // ── Token persistence ────────────────────────────────────────────
 
 function persistProxyToken(token: string): void {
-  ensureProxyStateDir();
-  fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
-  // mode only applies on creation; ensure permissions on existing files too
-  fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
+  writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
 }
 
 // Persist the proxy token then probe sandbox → proxy reachability. Runs
@@ -75,15 +76,7 @@ async function persistAndProbeOllamaProxy(token: string): Promise<void> {
 }
 
 function loadPersistedProxyToken(): string | null {
-  try {
-    if (fs.existsSync(PROXY_TOKEN_PATH)) {
-      const token = fs.readFileSync(PROXY_TOKEN_PATH, "utf-8").trim();
-      return token || null;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  return readLocalAdapterTextFile(PROXY_TOKEN_PATH);
 }
 
 function curlAuthHeaderConfig(token: string): string {
@@ -122,63 +115,45 @@ function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: s
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  ensureProxyStateDir();
-  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
-  fs.chmodSync(PROXY_PID_PATH, 0o600);
+  persistLocalAdapterPid(PROXY_PID_PATH, pid);
 }
 
 function loadPersistedProxyPid(): number | null {
-  try {
-    if (!fs.existsSync(PROXY_PID_PATH)) return null;
-    const raw = fs.readFileSync(PROXY_PID_PATH, "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
+  return loadLocalAdapterPid(PROXY_PID_PATH);
 }
 
 function clearPersistedProxyPid(): void {
-  try {
-    if (fs.existsSync(PROXY_PID_PATH)) {
-      fs.unlinkSync(PROXY_PID_PATH);
-    }
-  } catch {
-    /* ignore */
-  }
+  removeLocalAdapterFile(PROXY_PID_PATH);
 }
 
 // ── Process management ───────────────────────────────────────────
 
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
-  return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
+  return isLocalAdapterProcess(pid, "ollama-auth-proxy.js", runCapture);
 }
 
 function spawnOllamaAuthProxy(token: string): number | null {
-  const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
-    detached: true,
-    stdio: "ignore",
-    env: buildSubprocessEnv({
+  const child = spawnDetachedNodeAdapter({
+    scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.js"),
+    env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-    }),
+    },
+    buildEnv: buildSubprocessEnv,
   });
-  child.unref();
   persistProxyPid(child.pid);
   return child.pid ?? null;
 }
 
 function killStaleProxy(): void {
   try {
-    const persistedPid = loadPersistedProxyPid();
-    if (isOllamaProxyProcess(persistedPid)) {
-      run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
-    }
-    clearPersistedProxyPid();
+    killLocalAdapterPid({
+      pidPath: PROXY_PID_PATH,
+      processNeedle: "ollama-auth-proxy.js",
+      run,
+      runCapture,
+    });
 
     // Best-effort cleanup for older proxy processes created before the PID file
     // existed. Only kill processes that are actually the auth proxy, not
@@ -401,21 +376,40 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
-async function promptOllamaModel(gpu = null) {
+async function promptOllamaModel(gpu: GpuInfo | null = null) {
   const installed = getOllamaModelOptions();
-  const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
+  // Filter installed entries by registry-known memory fit so a host that
+  // currently cannot load the only installed model still gets a usable
+  // default — without the filter, pressing Enter would re-select the
+  // oversized model the runner is about to crash on. Unknown tags (user-
+  // pulled models the registry has never seen) pass the filter so the
+  // user's prior selection is respected.
+  const installedFitting = installed.filter((tag: string) => modelFitsAvailableMemory(tag, gpu));
+  const usingInstalled = installedFitting.length > 0;
+  const options = usingInstalled ? installedFitting : getBootstrapOllamaModelOptions(gpu);
   const defaultModel = getDefaultOllamaModel(gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
-  console.log(installed.length > 0 ? "  Ollama models:" : "  Ollama starter models:");
+  console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
   options.forEach((option, index) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
-  if (installed.length === 0) {
+  if (!usingInstalled) {
     console.log("");
-    console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    if (installed.length === 0) {
+      console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    } else {
+      console.log(
+        "  No installed Ollama model fits the host's currently available memory; showing starter models instead.",
+      );
+    }
+  }
+  if (!usingInstalled && !anyRegistryModelFits(gpu)) {
+    console.log(
+      "  ! Even the smallest known bootstrap model may not fit currently available GPU memory; free memory or expect the runner to reject the load.",
+    );
   }
   console.log("");
 
@@ -501,7 +495,12 @@ function pullOllamaModelViaHttp(model) {
         body,
         url,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        // #2616: inject NO_PROXY=localhost so the streamed pull against the
+        // local Ollama daemon doesn't tunnel through the user's host proxy.
+        env: buildSubprocessEnv(),
+      },
     );
 
     const readline = require("readline");
@@ -689,7 +688,7 @@ function printToolsIncompatibleWarning(model: string): void {
 
 async function checkOllamaModelToolSupport(
   model: string,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const caps = probeOllamaModelCapabilities(model);
 
   if (caps.supportsTools === true) {
@@ -706,11 +705,15 @@ async function checkOllamaModelToolSupport(
   }
 
   // supportsTools === false — model is on disk but advertises no tools support.
+  // Every code path below that returns ok:true must also set
+  // allowToolsIncompatible:true so downstream validators (validateOllamaModel,
+  // probeChatCompletionsToolCalling via setupOllama / setupInference) don't
+  // reject the same model on the same condition — see issue #4241.
   printToolsIncompatibleWarning(model);
 
   if (isProxyAutoYes()) {
     console.log("  Continuing because --yes was passed.");
-    return { ok: true };
+    return { ok: true, allowToolsIncompatible: true };
   }
 
   if (isProxyNonInteractive()) {
@@ -718,7 +721,7 @@ async function checkOllamaModelToolSupport(
       console.error(
         `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
       );
-      return { ok: true };
+      return { ok: true, allowToolsIncompatible: true };
     }
     console.error(
       "  Re-run with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 to override, or pick a tools-capable model.",
@@ -730,10 +733,18 @@ async function checkOllamaModelToolSupport(
   if (!proceed) {
     return { ok: false, message: "Choose a tools-capable model." };
   }
-  return { ok: true };
+  return { ok: true, allowToolsIncompatible: true };
 }
 
-async function prepareOllamaModel(model, installedModels = []) {
+async function prepareOllamaModel(
+  model,
+  installedModels: string[] = [],
+): Promise<{
+  ok: boolean;
+  message?: string;
+  allowToolsIncompatible?: boolean;
+  daemonFailure?: boolean;
+}> {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
@@ -754,7 +765,11 @@ async function prepareOllamaModel(model, installedModels = []) {
 
   console.log(`  Loading Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
-  return validateOllamaModel(model);
+  const allowToolsIncompatible = capCheck.allowToolsIncompatible === true;
+  const result = validateOllamaModel(model, undefined, undefined, undefined, {
+    allowToolsIncompatible,
+  });
+  return { ...result, allowToolsIncompatible };
 }
 
 /**
@@ -775,7 +790,9 @@ function unloadOllamaModels() {
     const psResult = spawnSync(
       "curl",
       ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
-      { encoding: "utf8" },
+      // #2616: env-sanitize so http_proxy=127.0.0.1:8118 (Privoxy) doesn't
+      // hijack this localhost probe.
+      { encoding: "utf8", env: buildSubprocessEnv() },
     );
     if (psResult.status !== 0) return;
 
@@ -805,7 +822,8 @@ function unloadOllamaModels() {
           JSON.stringify({ model: entry.name, keep_alive: 0 }),
           `http://localhost:${OLLAMA_PORT}/api/generate`,
         ],
-        { encoding: "utf8" },
+        // #2616: env-sanitize so http_proxy doesn't hijack the unload call.
+        { encoding: "utf8", env: buildSubprocessEnv() },
       );
     }
   } catch {

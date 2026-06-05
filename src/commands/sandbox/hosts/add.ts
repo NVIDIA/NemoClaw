@@ -1,16 +1,39 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Command from "../../../lib/commands/sandbox/hosts/add";
-import { withCommandDisplay } from "../../../lib/cli/command-display";
+import { addSandboxHostAlias } from "../../../lib/actions/sandbox/host-aliases";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-export default withCommandDisplay(Command, [
-  {
-    usage: "nemoclaw <name> hosts-add",
-    description: "Add a sandbox /etc/hosts alias",
-    flags: "(--dry-run)",
-    group: "Policy Presets",
-    scope: "sandbox",
-    order: 19.1,
-  },
-]);
+import {
+  hostAliasAddArgs,
+  hostAliasMutationFlags,
+  isHostAliasFailure,
+} from "../../../lib/sandbox/hosts-command-support";
+
+export default class HostsAddCommand extends NemoClawCommand {
+  static id = "sandbox:hosts:add";
+  static strict = true;
+  static summary = "Add a sandbox /etc/hosts alias";
+  static description = "Add a host alias to the sandbox pod template.";
+  static usage = ["<name> <hostname> <ip> [--dry-run]"];
+  static examples = ["<%= config.bin %> sandbox hosts add alpha searxng.local 192.168.1.105"];
+  static args = hostAliasAddArgs;
+  static flags = hostAliasMutationFlags;
+
+  public async run(): Promise<void> {
+    const { args, flags } = await this.parse(HostsAddCommand);
+    try {
+      addSandboxHostAlias(args.sandboxName, {
+        hostname: args.hostname,
+        ip: args.ip,
+        dryRun: flags["dry-run"] === true,
+      });
+    } catch (error) {
+      if (isHostAliasFailure(error)) {
+        this.failWithLines(error.lines, error.exitCode);
+        return;
+      }
+      throw error;
+    }
+  }
+}

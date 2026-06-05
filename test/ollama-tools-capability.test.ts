@@ -31,6 +31,7 @@ interface LocalInferenceModule {
     capture?: CaptureFn,
     isSparkImpl?: () => boolean,
     captureExImpl?: (cmd: string[]) => { stdout: string; exitCode: number | null; timedOut: boolean },
+    options?: { allowToolsIncompatible?: boolean },
   ) => { ok: boolean; message?: string };
   setResolvedOllamaHost: (host: string) => void;
   resetOllamaHostCache: () => void;
@@ -40,7 +41,7 @@ interface LocalInferenceModule {
 interface OnboardOllamaProxyModule {
   checkOllamaModelToolSupport: (
     model: string,
-  ) => Promise<{ ok: boolean; message?: string }>;
+  ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
 }
 
 function loadLocalInference(): LocalInferenceModule {
@@ -81,7 +82,7 @@ describe("probeOllamaModelCapabilities", () => {
         output: JSON.stringify({ capabilities: ["completion", "tools"] }),
       },
     ]);
-    const result = localInference.probeOllamaModelCapabilities("qwen2.5:7b", capture);
+    const result = localInference.probeOllamaModelCapabilities("qwen3.5:9b", capture);
     expect(result.source).toBe("api");
     expect(result.supportsTools).toBe(true);
     expect(result.capabilities).toEqual(["completion", "tools"]);
@@ -136,7 +137,7 @@ describe("probeOllamaModelCapabilities", () => {
     const { capture, calls } = makeCapture([
       { match: /\/api\/show/, output: JSON.stringify({ capabilities: ["tools"] }) },
     ]);
-    localInference.probeOllamaModelCapabilities("qwen2.5:7b", capture);
+    localInference.probeOllamaModelCapabilities("qwen3.5:9b", capture);
     expect(calls).toHaveLength(1);
     const argv = calls[0].argv;
     expect(argv[0]).toBe("curl");
@@ -156,7 +157,7 @@ describe("probeOllamaModelCapabilities", () => {
     // JSON body has model name
     const dIdx = argv.indexOf("-d");
     expect(dIdx).toBeGreaterThanOrEqual(0);
-    expect(argv[dIdx + 1]).toBe(JSON.stringify({ model: "qwen2.5:7b" }));
+    expect(argv[dIdx + 1]).toBe(JSON.stringify({ model: "qwen3.5:9b" }));
     // URL uses resolved host + OLLAMA_PORT (default 11434)
     expect(argv[argv.length - 1]).toBe("http://127.0.0.1:11434/api/show");
   });
@@ -324,7 +325,7 @@ describe("checkOllamaModelToolSupport", () => {
     }
   });
 
-  it("interactive yes → {ok:true}", async () => {
+  it("interactive yes → {ok:true, allowToolsIncompatible:true}", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
       source: "api",
@@ -333,7 +334,9 @@ describe("checkOllamaModelToolSupport", () => {
     });
     h.setPromptReply("y");
     const out = await h.proxy.checkOllamaModelToolSupport("phi4");
-    expect(out).toEqual({ ok: true });
+    // The override flag is what downstream validators consume to skip the
+    // strict tools probe — without it onboard would loop back. See #4241.
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
     // Warning banner was printed.
     expect(h.logs.some((l) => l.includes("does not advertise the 'tools' capability"))).toBe(true);
     // Prompt was actually shown.
@@ -367,7 +370,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(h.errors.some((e) => e.includes("NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0"))).toBe(true);
   });
 
-  it("non-interactive + NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 → {ok:true} after stderr warning", async () => {
+  it("non-interactive + NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 → {ok:true, allowToolsIncompatible:true} after stderr warning", async () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS = "0";
     const h = loadProxyWithStubs();
@@ -378,6 +381,7 @@ describe("checkOllamaModelToolSupport", () => {
     });
     const out = await h.proxy.checkOllamaModelToolSupport("phi4");
     expect(out.ok).toBe(true);
+    expect(out.allowToolsIncompatible).toBe(true);
     // Stderr warning mentions the env-var override + model name.
     const matched = h.errors.some(
       (e) => e.includes("NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0") && e.includes("phi4"),
@@ -385,7 +389,7 @@ describe("checkOllamaModelToolSupport", () => {
     expect(matched).toBe(true);
   });
 
-  it("NEMOCLAW_YES=1 → {ok:true} after note", async () => {
+  it("NEMOCLAW_YES=1 → {ok:true, allowToolsIncompatible:true} after note", async () => {
     process.env.NEMOCLAW_YES = "1";
     const h = loadProxyWithStubs();
     h.setProbeResult({
@@ -394,7 +398,7 @@ describe("checkOllamaModelToolSupport", () => {
       supportsTools: false,
     });
     const out = await h.proxy.checkOllamaModelToolSupport("phi4");
-    expect(out).toEqual({ ok: true });
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
     // Note about --yes is printed.
     expect(h.logs.some((l) => l.toLowerCase().includes("--yes"))).toBe(true);
     // Prompt should NOT have been shown.
@@ -410,9 +414,215 @@ describe("checkOllamaModelToolSupport", () => {
       rawError: "connection refused",
     });
     const out = await h.proxy.checkOllamaModelToolSupport("phi4");
+    // Probe could not determine capabilities — no override needed because we
+    // don't know the model is incompatible.
     expect(out).toEqual({ ok: true });
     // Informational note printed; no warning banner.
     expect(h.logs.some((l) => l.includes("Could not verify 'tools' capability"))).toBe(true);
     expect(h.logs.some((l) => l.includes("does not advertise the 'tools' capability"))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// Regression coverage for #4241: the no-tools override must propagate
+// through `validateOllamaModel`, so a model that the user explicitly
+// accepted does not get rejected again on the same "does not support
+// tools" error during the second validation pass in setupInference.
+// Without the override (`allowToolsIncompatible: false`/unset), the
+// validator must still fail early so the wizard does not silently
+// strand the user on an unusable model.
+// ─────────────────────────────────────────────────────────────────
+
+describe("validateOllamaModel — no-tools override propagation (#4241)", () => {
+  let localInference: LocalInferenceModule;
+
+  beforeEach(() => {
+    localInference = loadLocalInference();
+  });
+
+  function captureExReturning(errText: string) {
+    const payload = JSON.stringify({ error: errText });
+    return () => ({ stdout: payload, exitCode: 0, timedOut: false });
+  }
+
+  it("rejects a no-tools model when no override is set (back-to-selection path)", () => {
+    const { capture } = makeCapture([]);
+    const captureEx = captureExReturning(
+      "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+    );
+    const result = localInference.validateOllamaModel(
+      "tinyllama:1.1b",
+      capture,
+      () => false,
+      captureEx,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.message!).toContain("tinyllama");
+    expect(result.message!.toLowerCase()).toContain("tools");
+  });
+
+  it("rejects a no-tools model when allowToolsIncompatible is false (explicit no override)", () => {
+    const { capture } = makeCapture([]);
+    const captureEx = captureExReturning(
+      "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+    );
+    const result = localInference.validateOllamaModel(
+      "tinyllama:1.1b",
+      capture,
+      () => false,
+      captureEx,
+      { allowToolsIncompatible: false },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.message!.toLowerCase()).toContain("tools");
+  });
+
+  it("accepts a no-tools model when allowToolsIncompatible is true (override accepted upstream)", () => {
+    const { capture } = makeCapture([]);
+    const captureEx = captureExReturning(
+      "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+    );
+    const warned: string[] = [];
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation((...args) => {
+      warned.push(args.map((a) => String(a)).join(" "));
+    });
+    try {
+      const result = localInference.validateOllamaModel(
+        "tinyllama:1.1b",
+        capture,
+        () => false,
+        captureEx,
+        { allowToolsIncompatible: true },
+      );
+      expect(result.ok).toBe(true);
+      // The earlier accept-the-override warning is restated rather than
+      // reverted into a hard validation failure that would loop selection.
+      expect(warned.some((l) => l.includes("no-tools override was accepted"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("still surfaces non-tools errors (e.g. memory) regardless of override", () => {
+    const { capture } = makeCapture([]);
+    const captureEx = captureExReturning(
+      "model requires more system memory (50 GiB) than is available (8 GiB)",
+    );
+    const result = localInference.validateOllamaModel(
+      "tinyllama:1.1b",
+      capture,
+      () => false,
+      captureEx,
+      { allowToolsIncompatible: true },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.message!).toContain("more system memory");
+  });
+
+  // The override only suppresses the tools-capability rejection. The Spark
+  // CPU-only runtime check (probeOllamaRuntimeModelStatus) must still run
+  // after the warning fires and surface its own diagnostic — otherwise an
+  // accepted no-tools model on Spark could silently land on CPU.
+  it("Spark CPU-only check still rejects after override is accepted", () => {
+    const cpuOnlyApiPs = JSON.stringify({
+      models: [{ name: "tinyllama:1.1b", model: "tinyllama:1.1b", size_vram: 0, processor: "100% CPU" }],
+    });
+    const { capture } = makeCapture([{ match: /\/api\/ps/, output: cpuOnlyApiPs }]);
+    const captureEx = captureExReturning(
+      "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = localInference.validateOllamaModel(
+        "tinyllama:1.1b",
+        capture,
+        () => true,
+        captureEx,
+        { allowToolsIncompatible: true },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message!.toLowerCase()).toContain("cpu");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// End-to-end propagation: when checkOllamaModelToolSupport accepts the
+// override, the same model must clear the second validateOllamaModel
+// call without looping back to model selection (the user-visible
+// #4241 regression). Pre-fix this assertion fails because
+// validateOllamaModel does not know about the override and re-rejects.
+// ─────────────────────────────────────────────────────────────────
+
+describe("override propagation across checkOllamaModelToolSupport → validateOllamaModel (#4241)", () => {
+  it("user accepts override → later validateOllamaModel does NOT reject for the same tools-incompatible error", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    h.setPromptReply("y");
+
+    // (1) The capability check is what an onboarding session would run first.
+    const cap = await h.proxy.checkOllamaModelToolSupport("tinyllama:1.1b");
+    expect(cap.ok).toBe(true);
+    expect(cap.allowToolsIncompatible).toBe(true);
+
+    // (2) The same setupInference path runs validateOllamaModel(model) after
+    //     `openshell inference set`. Pre-fix it returned ok:false on the same
+    //     "does not support tools" condition and onboarding called
+    //     process.exit(1). Threading `allowToolsIncompatible` keeps it ok:true.
+    const localInference = loadLocalInference();
+    const captureEx = () => ({
+      stdout: JSON.stringify({
+        error: "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+      }),
+      exitCode: 0,
+      timedOut: false,
+    });
+    const result = localInference.validateOllamaModel(
+      "tinyllama:1.1b",
+      () => "",
+      () => false,
+      captureEx,
+      { allowToolsIncompatible: cap.allowToolsIncompatible === true },
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("user declines override → both stages refuse and no later validation runs", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    h.setPromptReply("n");
+
+    const cap = await h.proxy.checkOllamaModelToolSupport("tinyllama:1.1b");
+    expect(cap.ok).toBe(false);
+    // Override was never granted, so downstream validators must keep rejecting
+    // the same model.
+    expect(cap.allowToolsIncompatible).toBeUndefined();
+
+    const localInference = loadLocalInference();
+    const captureEx = () => ({
+      stdout: JSON.stringify({
+        error: "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+      }),
+      exitCode: 0,
+      timedOut: false,
+    });
+    const result = localInference.validateOllamaModel(
+      "tinyllama:1.1b",
+      () => "",
+      () => false,
+      captureEx,
+      { allowToolsIncompatible: cap.allowToolsIncompatible === true },
+    );
+    expect(result.ok).toBe(false);
   });
 });

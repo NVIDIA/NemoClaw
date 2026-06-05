@@ -7,6 +7,7 @@ import {
   type HermesAuthMethod,
 } from "../hermes-provider-auth";
 import type { WebSearchConfig } from "../inference/web-search";
+import { hermesToolGatewayLabels } from "./hermes-managed-tools";
 
 const HERMES_AUTH_METHOD_OAUTH: HermesAuthMethod = "oauth";
 const HERMES_AUTH_METHOD_API_KEY: HermesAuthMethod = "api_key";
@@ -24,6 +25,7 @@ export type OnboardConfigSummary = {
   hermesAuthMethod?: HermesAuthMethod | string | null;
   webSearchConfig?: WebSearchConfig | null;
   enabledChannels?: string[] | null;
+  hermesToolGateways?: string[] | null;
   sandboxName: string;
   notes?: string[] | null;
 };
@@ -75,6 +77,7 @@ export function formatOnboardConfigSummary({
   hermesAuthMethod = null,
   webSearchConfig = null,
   enabledChannels = null,
+  hermesToolGateways = null,
   sandboxName,
   notes = [],
 }: OnboardConfigSummary): string {
@@ -110,6 +113,7 @@ export function formatOnboardConfigSummary({
     `  Model:         ${model ?? "(unset)"}`,
     apiKeyLine,
     `  Web search:    ${webSearch}`,
+    `  Managed tools: ${hermesToolGatewayLabels(hermesToolGateways)}`,
     `  Messaging:     ${messaging}`,
     `  Sandbox name:  ${sandboxName}`,
     ...noteLines,

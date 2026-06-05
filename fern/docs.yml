@@ -6,11 +6,11 @@
 instances:
   - url: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
     custom-domain: docs.nvidia.com/nemoclaw
+    multi-source: true
 
 title: NVIDIA NemoClaw
 
-announcement:
-  message: "🔔 NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior may change without notice. Do not use in production."
+global-theme: nvidia
 
 layout:
   searchbar-placement: header
@@ -33,9 +33,6 @@ theme:
   footer-nav: minimal
 
 logo:
-  dark: ./assets/NVIDIA_dark.svg
-  light: ./assets/NVIDIA_light.svg
-  height: 20
   href: /nemoclaw/latest
   right-text: NemoClaw
 
@@ -55,7 +52,7 @@ navbar-links:
 experimental:
   mdx-components:
     - ../docs/_components
-  basepath-aware: true
+    - ./components
 
 versions:
   - display-name: Latest
@@ -76,6 +73,12 @@ redirects:
     destination: "/nemoclaw/latest"
   - source: "/nemoclaw/latest/index"
     destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
+  - source: "/nemoclaw/home"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
+  - source: "/nemoclaw/latest/home"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
   - source: "/nemoclaw/latest/:path*/index.html"
     destination: "/nemoclaw/latest/:path*"
   - source: "/nemoclaw/:path*/index.html"
@@ -83,12 +86,92 @@ redirects:
   - source: "/nemoclaw/:path*.html"
     destination: "/nemoclaw/:path*"
   - source: "/nemoclaw/latest/reference/inference-profiles"
-    destination: "/nemoclaw/latest/inference/inference-options"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/inference-options"
   - source: "/nemoclaw/latest/get-started/windows-setup"
-    destination: "/nemoclaw/latest/get-started/windows-preparation"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites/windows-preparation"
   - source: "/nemoclaw/latest/deployment/set-up-telegram-bridge"
-    destination: "/nemoclaw/latest/manage-sandboxes/messaging-channels"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/messaging-channels"
   - source: "/nemoclaw/latest/workspace/workspace-files"
-    destination: "/nemoclaw/latest/manage-sandboxes/workspace-files"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/workspace-files"
   - source: "/nemoclaw/latest/workspace/backup-restore"
-    destination: "/nemoclaw/latest/manage-sandboxes/backup-restore"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/backup-restore"
+  # Variant titles can differ from URL slugs; redirect auto-derived slugs to stable openclaw/hermes paths.
+  - source: "/nemoclaw/latest/user-guide/open-claw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/user-guide/open-claw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/user-guide/nemoclaw-for-openclaw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/user-guide/nemoclaw-for-hermes/:path*"
+    destination: "/nemoclaw/latest/user-guide/hermes/:path*"
+  - source: "/nemoclaw/user-guide/nemoclaw-for-openclaw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/user-guide/nemoclaw-for-hermes/:path*"
+    destination: "/nemoclaw/user-guide/hermes/:path*"
+  - source: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/user-guide/hermes/get-started/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  # User Guide tab with OpenClaw/Hermes variants: preserve legacy flat URLs (OpenClaw default).
+  - source: "/nemoclaw/latest/about/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/about/:path*"
+  - source: "/nemoclaw/latest/get-started/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/latest/get-started/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/latest/inference/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/:path*"
+  - source: "/nemoclaw/latest/manage-sandboxes/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/:path*"
+  - source: "/nemoclaw/latest/network-policy/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/network-policy/:path*"
+  - source: "/nemoclaw/latest/deployment/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/deployment/:path*"
+  - source: "/nemoclaw/latest/monitoring/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/monitoring/:path*"
+  - source: "/nemoclaw/latest/security/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/security/:path*"
+  - source: "/nemoclaw/latest/reference/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/reference/:path*"
+  - source: "/nemoclaw/latest/resources/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/resources/:path*"
+  # Prior tab layout redirects → User Guide OpenClaw variant.
+  - source: "/nemoclaw/latest/guides/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/get-started/openclaw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/latest/get-started/hermes/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/latest/get-started/hermes/:path*"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/:path*"
+  # Same redirects without the version slug (Fern check canonical paths).
+  - source: "/nemoclaw/about/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/about/:path*"
+  - source: "/nemoclaw/get-started/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/get-started/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/inference/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/inference/:path*"
+  - source: "/nemoclaw/manage-sandboxes/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/manage-sandboxes/:path*"
+  - source: "/nemoclaw/network-policy/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/network-policy/:path*"
+  - source: "/nemoclaw/deployment/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/deployment/:path*"
+  - source: "/nemoclaw/monitoring/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/monitoring/:path*"
+  - source: "/nemoclaw/security/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/security/:path*"
+  - source: "/nemoclaw/reference/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/reference/:path*"
+  - source: "/nemoclaw/resources/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/resources/:path*"
+  - source: "/nemoclaw/guides/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/get-started/openclaw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/get-started/hermes/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/get-started/hermes/:path*"
+    destination: "/nemoclaw/user-guide/hermes/get-started/:path*"

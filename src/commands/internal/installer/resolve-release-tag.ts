@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { resolveInstallRef } from "../../../lib/domain/installer/ref";
@@ -14,7 +15,7 @@ export default class InternalInstallerResolveReleaseTagCommand extends NemoClawC
   static usage = ["internal installer resolve-release-tag [--json]"];
   static examples = ["<%= config.bin %> internal installer resolve-release-tag --install-ref v0.1.0"];
   static flags = {
-    json: Flags.boolean({ description: "Print the resolved ref as JSON" }),
+    json: jsonFlag("Print the resolved ref as JSON"),
     "install-ref": Flags.string({ description: "NEMOCLAW_INSTALL_REF value" }),
     "install-tag": Flags.string({ description: "NEMOCLAW_INSTALL_TAG value" }),
   };

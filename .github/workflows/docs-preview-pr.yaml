@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Check Fern preview availability
         id: fern-preview
@@ -48,14 +48,11 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Install Fern CLI
-        run: |
-          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
-          npm install -g "fern-api@${FERN_VERSION}"
+      - name: Install docs dependencies
+        run: npm ci --ignore-scripts
 
       - name: Validate docs
-        working-directory: ./fern
-        run: fern check
+        run: npm run docs
 
       - name: Generate preview URL
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
@@ -63,14 +60,18 @@ jobs:
         env:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
-        working-directory: ./fern
         run: |
-          OUTPUT=$(fern generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          npm run docs:check-agent-variants
+          FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          set +e
+          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          STATUS=$?
+          set -e
           echo "$OUTPUT"
-          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K.*(?= \()')
+          URL=$(echo "$OUTPUT" | sed -nE 's/.*Published docs to (https?:\/\/[^[:space:]]+).*/\1/p' | head -n1)
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
-            exit 1
+            exit "$STATUS"
           fi
           echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
 

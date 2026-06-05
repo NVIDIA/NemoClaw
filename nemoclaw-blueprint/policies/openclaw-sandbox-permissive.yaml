@@ -14,7 +14,7 @@ version: 1
 
 filesystem_policy:
   # Filesystem section mirrors the default policy (openclaw-sandbox.yaml).
-  # OpenShell rejects include_workdir changes and read_only path removals on
+  # OpenShell rejects include_workdir changes and filesystem path removals on
   # live sandboxes.
   include_workdir: true
   read_only:
@@ -30,6 +30,7 @@ filesystem_policy:
     - /dev/null
     - /sandbox/.openclaw
     - /sandbox/.nemoclaw
+    - /home/linuxbrew
 
 landlock:
   compatibility: best_effort
@@ -40,27 +41,6 @@ process:
 
 network_policies:
   # ── Base policy endpoints (all methods, all paths) ──
-
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-    binaries:
-      - { path: "/**" }
 
   nvidia:
     name: nvidia

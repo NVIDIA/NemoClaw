@@ -4,7 +4,7 @@
 name: Docs / CLI Parity
 
 # Catches drift between the actual `nemoclaw --help` command list and the
-# command headings in `docs/reference/commands.md`. The same check runs in
+# command headings in `docs/reference/commands.mdx`. The same check runs in
 # nightly E2E (`docs-validation-e2e`); this workflow runs it on every PR
 # that touches CLI source so drift is caught before merge instead of next
 # morning. Ref: NVIDIA/NemoClaw#3224.
@@ -18,7 +18,7 @@ on:
       - "bin/**"
       - "install.sh"
       - "scripts/install.sh"
-      - "docs/reference/commands.md"
+      - "docs/reference/commands.mdx"
       - "package.json"
       - "package-lock.json"
       - "tsconfig.src.json"
@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6

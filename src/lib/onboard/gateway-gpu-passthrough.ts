@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as docker from "../adapters/docker";
+import type { NvidiaPlatform } from "../inference/nim";
 import type { GatewayReuseState } from "../state/gateway";
 import * as registry from "../state/registry";
-import * as docker from "../adapters/docker";
+import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { destroyGatewayForReuse } from "./gateway-cleanup";
 import { reportGpuPassthroughRecovery } from "./gpu-recovery";
-import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 
 export type LegacyGatewayGpuInspection = "gpu-enabled" | "cpu-only" | "not-found" | "unknown";
 
@@ -23,6 +24,7 @@ export type GatewayGpuReuseReconcileOptions = {
   gpuPassthrough: boolean;
   gatewayName: string;
   currentSandboxName: string | null;
+  hostGpuPlatform?: NvidiaPlatform | null;
   recreateSandbox: boolean;
   confirmedDockerDriverGateway: boolean;
   stopDashboardForwards: () => void;
@@ -116,6 +118,7 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   error(`    openshell gateway remove ${gatewayName}`);
   error("    # For OpenShell releases that still expose lifecycle commands:");
   error(`    openshell gateway destroy -g ${gatewayName}`);
+  error("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
   error("    nemoclaw onboard --gpu");
   exit(1);
 }

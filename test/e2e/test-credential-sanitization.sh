@@ -423,11 +423,17 @@ fi
 info "C7: Checking for secret patterns in sandbox config..."
 
 # Search for real API key patterns (not our test fakes).
-# Exclude policy preset files and vendored plugin dependencies; dependency
-# package names can contain strings like ghp_ or npm_ without storing secrets.
-c7_nvapi=$(sandbox_exec "grep -r 'nvapi-' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
-c7_ghp=$(sandbox_exec "grep -r 'ghp_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
-c7_npm=$(sandbox_exec "grep -r 'npm_' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | head -5" || true)
+# Exclude policy preset files and installed extension code/dependencies; package
+# sources can contain detector strings like nvapi-, ghp_, or npm_ without storing
+# user secrets.
+c7_scan_pattern() {
+  local pattern="$1"
+  sandbox_exec "grep -r '$pattern' /sandbox/.openclaw/ /sandbox/.nemoclaw/ 2>/dev/null | grep -v 'STRIPPED' | grep -v '/policies/' | grep -v '/plugin-runtime-deps/' | grep -Ev '/extensions/[^/]+/(dist|node_modules)/' | head -5" || true
+}
+
+c7_nvapi=$(c7_scan_pattern "nvapi-")
+c7_ghp=$(c7_scan_pattern "ghp_")
+c7_npm=$(c7_scan_pattern "npm_")
 
 if [ "$c7_nvapi" = "__PROBE_FAILED__" ] || [ "$c7_ghp" = "__PROBE_FAILED__" ] || [ "$c7_npm" = "__PROBE_FAILED__" ]; then
   fail "C7: Sandbox probe failed — SSH did not execute; cannot verify secret absence"

@@ -212,7 +212,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    // Default sandbox reflects live gateway state, with an onboarded drift note.
+    // Default sandbox reflects live gateway state, with an explicit drift note.
     expect(lines).toContain(
       "      agent: openclaw  model: live-model  provider: live-provider  sandbox GPU  policies: none",
     );
@@ -221,7 +221,7 @@ describe("inventory commands", () => {
       "      agent: openclaw  model: configured-alpha  provider: configured-provider  sandbox GPU  policies: none",
     );
     expect(lines).toContain(
-      "      (onboarded: model=configured-alpha, provider=configured-provider)",
+      "      (live OpenShell gateway differs from onboarded: model=configured-alpha, provider=configured-provider)",
     );
     // Non-default sandbox keeps its stored config — the gateway only applies
     // to whichever sandbox is currently connected.
@@ -306,7 +306,9 @@ describe("inventory commands", () => {
     expect(lines).toContain(
       "      agent: openclaw  model: live-model  provider: configured-provider  sandbox GPU  policies: none",
     );
-    expect(lines).toContain("      (onboarded: model=configured-alpha)");
+    expect(lines).toContain(
+      "      (live OpenShell gateway differs from onboarded: model=configured-alpha)",
+    );
   });
 
   it("annotates only the provider field when the live gateway provider drifts", async () => {
@@ -333,7 +335,9 @@ describe("inventory commands", () => {
     expect(lines).toContain(
       "      agent: openclaw  model: configured-alpha  provider: live-provider  sandbox GPU  policies: none",
     );
-    expect(lines).toContain("      (onboarded: provider=configured-provider)");
+    expect(lines).toContain(
+      "      (live OpenShell gateway differs from onboarded: provider=configured-provider)",
+    );
   });
 
   it("flags messaging bridge as degraded when checkMessagingBridgeHealth reports conflicts", () => {
@@ -599,7 +603,7 @@ describe("inventory commands", () => {
             model: "nvidia/nemotron-3-super-120b-a12b",
             provider: "nvidia-prod",
           },
-          { name: "beta", model: "qwen2.5:7b", provider: "ollama-local" },
+          { name: "beta", model: "qwen3.5:9b", provider: "ollama-local" },
         ],
         defaultSandbox: "alpha",
       }),
@@ -609,7 +613,7 @@ describe("inventory commands", () => {
     });
 
     expect(lines).toContain("      Inference: nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
-    expect(lines).toContain("      Inference: ollama-local / qwen2.5:7b");
+    expect(lines).toContain("      Inference: ollama-local / qwen3.5:9b");
   });
 
   it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", () => {

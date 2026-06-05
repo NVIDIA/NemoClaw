@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../core/shell-quote";
+import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
+import type { StdioOptions } from "node:child_process";
 
 type CompatibleEndpointSmokeAgent = {
   name?: string | null;
@@ -14,6 +16,16 @@ type CompatibleEndpointSandboxSmokeScriptOptions = {
   initialMaxTokens?: number;
   retryMaxTokens?: number;
 };
+
+type CompatibleEndpointSmokeRun = (
+  args: string[],
+  options?: {
+    ignoreError?: boolean;
+    suppressOutput?: boolean;
+    stdio?: StdioOptions;
+    timeout?: number;
+  },
+) => { status: number | null; stdout?: unknown; stderr?: unknown };
 
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
@@ -52,6 +64,103 @@ export function spawnOutputToString(value: unknown): string {
   if (Buffer.isBuffer(value)) return value.toString("utf-8");
   if (value == null) return "";
   return String(value);
+}
+
+export function verifyCompatibleEndpointSandboxSmoke(options: {
+  sandboxName: string;
+  provider: string;
+  model: string;
+  runOpenshell: CompatibleEndpointSmokeRun;
+  redact: (value: string) => string;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  messagingChannels?: string[] | null;
+  agent?: CompatibleEndpointSmokeAgent;
+}): void {
+  if (
+    !shouldRunCompatibleEndpointSandboxSmoke(
+      options.provider,
+      options.messagingChannels,
+      options.agent,
+    )
+  ) {
+    return;
+  }
+
+  console.log("  Verifying compatible endpoint through the messaging sandbox...");
+
+  const providerResult = options.runOpenshell(["provider", "get", options.provider], {
+    ignoreError: true,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const providerDetails = [
+    spawnOutputToString(providerResult.stdout),
+    spawnOutputToString(providerResult.stderr),
+  ]
+    .join("\n")
+    .trim();
+
+  if (providerResult.status !== 0) {
+    console.error(
+      `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
+    );
+    console.error(
+      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
+    );
+    if (providerDetails) {
+      console.error(`  ${compactText(options.redact(providerDetails)).slice(0, 800)}`);
+    }
+    process.exit(providerResult.status || 1);
+  }
+
+  if (
+    options.endpointUrl &&
+    providerDetails &&
+    /OPENAI_BASE_URL|baseUrl|base URL|endpoint/i.test(providerDetails) &&
+    !providerDetails.includes(options.endpointUrl)
+  ) {
+    console.warn(
+      `  \u26a0 Gateway provider '${options.provider}' did not report the selected endpoint URL.`,
+    );
+    console.warn("    Continuing to the sandbox-side inference.local smoke check.");
+  }
+  if (
+    options.credentialEnv &&
+    providerDetails &&
+    /credential|api key|secret/i.test(providerDetails) &&
+    !providerDetails.includes(options.credentialEnv)
+  ) {
+    console.warn(
+      `  \u26a0 Gateway provider '${options.provider}' did not report the selected credential binding.`,
+    );
+  }
+
+  const script = buildCompatibleEndpointSandboxSmokeCommand(options.model);
+  const smokeResult = options.runOpenshell(
+    ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
+    {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 90_000,
+    },
+  );
+  const smokeOutput = [
+    spawnOutputToString(smokeResult.stdout),
+    spawnOutputToString(smokeResult.stderr),
+  ]
+    .join("\n")
+    .trim();
+
+  if (smokeResult.status !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
+    console.error("  Compatible endpoint sandbox smoke check failed.");
+    console.error("  Telegram provider startup is not the root cause; inference.local failed.");
+    if (smokeOutput) console.error(`  ${compactText(options.redact(smokeOutput)).slice(0, 1200)}`);
+    process.exit(smokeResult.status || 1);
+  }
+
+  console.log("  \u2713 Compatible endpoint responds through inference.local inside the sandbox");
 }
 
 /**

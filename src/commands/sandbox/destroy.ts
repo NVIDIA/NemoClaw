@@ -1,16 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Command from "../../lib/commands/sandbox/destroy";
-import { withCommandDisplay } from "../../lib/cli/command-display";
+import { Args, Flags } from "@oclif/core";
 
-export default withCommandDisplay(Command, [
-  {
-    usage: "nemoclaw <name> destroy",
-    description: "Stop NIM + delete sandbox",
-    flags: "[--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]",
-    group: "Sandbox Management",
-    scope: "sandbox",
-    order: 15,
-  },
-]);
+import { destroySandbox } from "../../lib/actions/sandbox/destroy";
+import { forceFlag, yesFlag } from "../../lib/cli/common-flags";
+import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+
+export default class DestroyCliCommand extends NemoClawCommand {
+  static id = "sandbox:destroy";
+  static strict = true;
+  static summary = "Stop NIM and delete sandbox";
+  static description = "Destroy a sandbox and remove its local registry entry.";
+  static usage = ["<name> [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]"];
+  static examples = [
+    "<%= config.bin %> sandbox destroy alpha",
+    "<%= config.bin %> sandbox destroy alpha --yes",
+    "<%= config.bin %> sandbox destroy alpha --yes --cleanup-gateway",
+  ];
+  static args = {
+    sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
+  };
+  static flags = {
+    yes: yesFlag(),
+    force: forceFlag(),
+    "cleanup-gateway": Flags.boolean({
+      description:
+        "When destroying the last sandbox, also tear down the shared NemoClaw gateway. Default: preserve. NEMOCLAW_CLEANUP_GATEWAY=1 sets the same default.",
+      allowNo: true,
+    }),
+  };
+
+  public async run(): Promise<void> {
+    const { args, flags } = await this.parse(DestroyCliCommand);
+    const cleanupGatewayFlag = flags["cleanup-gateway"];
+    await destroySandbox(args.sandboxName, {
+      force: flags.force === true,
+      yes: flags.yes === true,
+      ...(cleanupGatewayFlag === undefined ? {} : { cleanupGateway: cleanupGatewayFlag }),
+    });
+  }
+}

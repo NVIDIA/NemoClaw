@@ -52,7 +52,7 @@ describe("uninstall paths", () => {
   it("#3456: exposes the Linux Docker-driver gateway state dir so uninstall can clean it", () => {
     // ~/.local/state/nemoclaw/ holds the openshell-gateway PID file, SQLite
     // database, audit log, and vm-driver/ state. Documented as
-    // NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR in docs/reference/commands.md.
+    // NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR in docs/reference/commands.mdx.
     // Before this fix, uninstall left it behind (#3456 hulynn comment).
     const paths = defaultUninstallPaths({ home: "/home/test" });
     expect(paths.gatewayLocalStateDir).toBe(path.join("/home/test", ".local", "state", "nemoclaw"));

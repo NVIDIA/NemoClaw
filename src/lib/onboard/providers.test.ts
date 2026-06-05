@@ -7,7 +7,7 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider } = require(
+const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } = require(
   "../../../dist/lib/onboard/providers",
 ) as {
   buildProviderArgs: (
@@ -25,7 +25,18 @@ const { buildProviderArgs, providerExistsInGateway, upsertProvider } = require(
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean },
   ) => { ok: boolean; status?: number; message?: string };
+  upsertMessagingProviders: (
+    tokenDefs: Array<{
+      name: string;
+      envKey: string;
+      token: string | null;
+      providerType?: string;
+    }>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+  ) => string[];
 };
 
 describe("onboard provider helpers", () => {
@@ -157,6 +168,71 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
   });
 
+  it("omits --credential from the update args when the env value is empty", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "nvidia-prod",
+      "openai",
+      "NVIDIA_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+      {},
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatch(/provider get/);
+    expect(commands[1]).toMatch(/^provider update nvidia-prod /);
+    // OpenShell CLI rejects `--credential KEY` when the host env is empty;
+    // dropping the flag turns the call into a no-op merge that succeeds.
+    expect(commands[1]).not.toMatch(/--credential/);
+    expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+  });
+
+  it("keeps --credential on the create path even when env is empty", () => {
+    // create cannot omit credentials — OpenShell rejects empty credential
+    // maps on creation. The caller is responsible for staging a value.
+    const commands: string[] = [];
+    upsertProvider(
+      "fresh-provider",
+      "generic",
+      "FRESH_TOKEN",
+      null,
+      {},
+      (command) => {
+        commands.push(command.join(" "));
+        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatch(/^provider create --name fresh-provider /);
+    expect(commands[1]).toMatch(/--credential FRESH_TOKEN/);
+  });
+
+  it("keeps --credential on the update path when a value is staged in env", () => {
+    const commands: string[] = [];
+    upsertProvider(
+      "nvidia-prod",
+      "openai",
+      "NVIDIA_API_KEY",
+      null,
+      { NVIDIA_API_KEY: "nvapi-staged" },
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatch(/^provider update nvidia-prod /);
+    expect(commands[1]).toMatch(/--credential NVIDIA_API_KEY/);
+  });
+
   it("returns redacted error details when create or update fails", () => {
     const result = upsertProvider("bad-provider", "generic", "SOME_KEY", null, {}, (command) => {
       if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
@@ -164,5 +240,112 @@ describe("onboard provider helpers", () => {
     });
 
     expect(result).toEqual({ ok: false, status: 1, message: "gateway unreachable" });
+  });
+
+  it("creates Brave Search providers with the Brave provider profile", () => {
+    const commands: string[] = [];
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toContain("provider get alpha-brave-search");
+    expect(commands).toContain(
+      "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",
+    );
+  });
+
+  it("updates an existing Brave Search provider in place on reuse paths", () => {
+    const commands: string[] = [];
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    // No `provider delete` — OpenShell rejects deleting providers that are
+    // still attached to a live sandbox, so reuse paths must use `update`.
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toEqual([
+      "provider get alpha-brave-search",
+      "provider update alpha-brave-search --credential BRAVE_API_KEY",
+    ]);
+  });
+
+  it("throws instead of exiting when best-effort messaging provider upsert fails", () => {
+    const originalExit = process.exit;
+    process.exit = ((code?: number | string | null) => {
+      throw new Error(`unexpected process.exit(${code ?? 0})`);
+    }) as typeof process.exit;
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [
+            {
+              name: "telegram-bridge",
+              envKey: "TELEGRAM_BOT_TOKEN",
+              token: "tg-test",
+            },
+          ],
+          (command) => {
+            if (command.includes("get")) return { status: 0, stdout: "", stderr: "" };
+            return { status: 1, stdout: "", stderr: "gateway unavailable" };
+          },
+          { bestEffort: true },
+        ),
+      ).toThrow(/telegram-bridge: gateway unavailable/);
+    } finally {
+      process.exit = originalExit;
+    }
+  });
+
+  it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {
+    const commands: string[] = [];
+    // replaceExisting: true is only safe after the sandbox holding the
+    // provider has been deleted. Used to migrate legacy generic-typed
+    // Brave providers to the brave profile on `--recreate-sandbox`.
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      { replaceExisting: true },
+    );
+
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toEqual([
+      "provider get alpha-brave-search",
+      "provider delete alpha-brave-search",
+      "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",
+    ]);
   });
 });

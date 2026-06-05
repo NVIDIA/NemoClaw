@@ -21,8 +21,16 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
+const BRAVE_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/brave.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+  import.meta.url,
+);
+const HERMES_POLICY_PATH = new URL(
+  "../agents/hermes/policy-additions.yaml",
   import.meta.url,
 );
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
@@ -84,6 +92,26 @@ type SandboxPolicy = {
 type PolicyPreset = {
   preset?: { name?: string; description?: string };
   network_policies?: Record<string, PolicyEntry>;
+};
+
+type ProviderProfileCredential = {
+  env_vars?: string[];
+  auth_style?: string;
+  header_name?: string;
+};
+
+type ProviderProfileEndpoint = {
+  host?: string;
+  port?: number;
+  protocol?: string;
+  access?: string;
+  enforcement?: string;
+};
+
+type ProviderProfile = {
+  id?: string;
+  credentials?: ProviderProfileCredential[];
+  endpoints?: ProviderProfileEndpoint[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -423,6 +451,33 @@ describe("base sandbox policy", () => {
   });
 });
 
+describe("Brave Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(BRAVE_PROVIDER_PROFILE_PATH);
+
+  it("routes BRAVE_API_KEY through Brave's subscription-token header", () => {
+    expect(profile.id).toBe("brave");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["BRAVE_API_KEY"],
+        auth_style: "header",
+        header_name: "x-subscription-token",
+      }),
+    ]);
+  });
+
+  it("matches the Brave Search API endpoint used by the policy preset", () => {
+    expect(profile.endpoints).toEqual([
+      expect.objectContaining({
+        host: "api.search.brave.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      }),
+    ]);
+  });
+});
+
 describe("permissive sandbox policy", () => {
   // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
   // permissive`. It must carry forward the gateway-managed inference route
@@ -456,6 +511,44 @@ describe("permissive sandbox policy", () => {
     // Matches the permissive-file convention used by every other block
     // (e.g. `nvidia`, `github`, `huggingface`, etc.).
     expect(binaries).toEqual(["/**"]);
+  });
+});
+
+describe("Hermes sandbox policy", () => {
+  const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
+
+  function expectManagedInferenceSecurityShape(): void {
+    const np = policy.network_policies ?? {};
+    const managedInference = np.managed_inference;
+    expect(managedInference?.name).toBe("managed_inference");
+    expect(managedInference?.binaries?.map((b) => b.path)).toEqual([
+      "/usr/local/bin/hermes",
+      "/usr/bin/python3.11",
+      "/opt/hermes/.venv/bin/python",
+    ]);
+
+    const endpoints = managedInference?.endpoints ?? [];
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0]).toMatchObject({
+      host: "inference.local",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+    });
+    expect(endpoints[0].access).toBeUndefined();
+    expect(endpoints[0].rules).toEqual([
+      { allow: { method: "POST", path: "/v1/chat/completions" } },
+      { allow: { method: "POST", path: "/v1/messages" } },
+      { allow: { method: "POST", path: "/v1/responses" } },
+      { allow: { method: "POST", path: "/v1/completions" } },
+      { allow: { method: "POST", path: "/v1/embeddings" } },
+      { allow: { method: "GET", path: "/v1/models" } },
+      { allow: { method: "GET", path: "/v1/models/**" } },
+    ]);
+  }
+
+  it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
+    expectManagedInferenceSecurityShape();
   });
 });
 
@@ -542,6 +635,24 @@ describe("huggingface preset", () => {
       );
       expect(hasGet).toBe(true);
     }
+  });
+});
+
+describe("jira preset", () => {
+  const JIRA_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/jira.yaml",
+    import.meta.url,
+  );
+  const jiraPreset = loadYaml<PolicyPreset>(JIRA_PRESET_PATH);
+
+  it("regression #3758: Jira allows Node but not curl", () => {
+    const binaries = (jiraPreset.network_policies?.atlassian?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+
+    expect(binaries).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    expect(binaries).not.toContain("/usr/bin/curl");
+    expect(binaries).not.toContain("/usr/local/bin/curl");
   });
 });
 

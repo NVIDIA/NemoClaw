@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/e2e-advisor/scenarios-schema.json",
+  "title": "NemoClaw E2E Scenario Advisor Result",
+  "type": "object",
+  "required": [
+    "version",
+    "baseRef",
+    "headRef",
+    "changedFiles",
+    "relevantChangedFiles",
+    "required",
+    "optional",
+    "noScenarioE2eReason",
+    "confidence"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "baseRef": { "type": "string" },
+    "headRef": { "type": "string" },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "relevantChangedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scenarioRecommendation" }
+    },
+    "optional": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/scenarioRecommendation" }
+    },
+    "noScenarioE2eReason": { "type": ["string", "null"] },
+    "confidence": { "enum": ["low", "medium", "high"] }
+  },
+  "$defs": {
+    "scenarioRecommendation": {
+      "type": "object",
+      "required": ["id", "workflow", "required", "reason", "dispatchCommand"],
+      "properties": {
+        "id": { "type": "string" },
+        "workflow": { "type": "string" },
+        "scenario": { "type": "string" },
+        "suiteFilter": { "type": "string" },
+        "required": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "dispatchCommand": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
