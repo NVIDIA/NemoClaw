@@ -7,18 +7,7 @@ export function dockerInspect(args: readonly string[], opts: DockerRunOptions = 
   return dockerRun(["inspect", ...args], opts);
 }
 
-export function dockerInspectFormat(
-  format: string,
-  target: string,
-  opts: DockerCaptureOptions = {},
-): string {
-  return dockerCapture(["inspect", "--format", format, target], opts);
-}
-
-export function dockerImageInspect(
-  target: string,
-  opts: DockerRunOptions = {},
-) {
+export function dockerImageInspect(target: string, opts: DockerRunOptions = {}) {
   return dockerRun(["image", "inspect", target], opts);
 }
 

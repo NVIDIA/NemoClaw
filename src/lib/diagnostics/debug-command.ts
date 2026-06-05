@@ -5,115 +5,52 @@ import type { DebugOptions } from "./debug";
 
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => string | undefined;
+  isSandboxKnown: (name: string) => boolean;
   runDebug: (options: DebugOptions) => void;
-  log?: (message?: string) => void;
-  error?: (message?: string) => void;
+  env?: NodeJS.ProcessEnv;
+  errorLine?: (message: string) => void;
   exit?: (code: number) => never;
 }
 
-export type DebugParseResult =
-  | { ok: true; options: DebugOptions }
-  | { ok: false; exitCode: number; kind: "help" | "error"; messages: string[] };
+const SANDBOX_NAME_ENV_VARS = ["NEMOCLAW_SANDBOX_NAME", "NEMOCLAW_SANDBOX", "SANDBOX_NAME"] as const;
 
-function debugHelpLines(): string[] {
-  return [
-    "Collect NemoClaw diagnostic information\n",
-    "Usage: nemoclaw debug [--quick] [--output FILE] [--sandbox NAME]\n",
-    "Options:",
-    "  --quick, -q        Only collect minimal diagnostics",
-    "  --output, -o FILE  Write a tarball to FILE",
-    "  --sandbox NAME     Target sandbox name",
-  ];
-}
-
-export function printDebugHelp(log: (message?: string) => void = console.log): void {
-  for (const line of debugHelpLines()) {
-    log(line);
+function resolveExplicitName(
+  options: DebugOptions,
+  env: NodeJS.ProcessEnv,
+): { name: string; source: "flag" | "env"; envVar?: string } | null {
+  const flagName = options.sandboxName?.trim();
+  if (flagName) return { name: flagName, source: "flag" };
+  for (const envVar of SANDBOX_NAME_ENV_VARS) {
+    const value = env[envVar]?.trim();
+    if (value) return { name: value, source: "env", envVar };
   }
-}
-
-export function parseDebugArgsResult(
-  args: string[],
-  deps: Pick<RunDebugCommandDeps, "getDefaultSandbox">,
-): DebugParseResult {
-  const opts: DebugOptions = {};
-
-  for (let i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case "--help":
-      case "-h":
-        return { ok: false, exitCode: 0, kind: "help", messages: debugHelpLines() };
-      case "--quick":
-      case "-q":
-        opts.quick = true;
-        break;
-      case "--output":
-      case "-o":
-        if (!args[i + 1] || args[i + 1].startsWith("-")) {
-          return {
-            ok: false,
-            exitCode: 1,
-            kind: "error",
-            messages: ["Error: --output requires a file path argument"],
-          };
-        }
-        opts.output = args[++i];
-        break;
-      case "--sandbox":
-        if (!args[i + 1] || args[i + 1].startsWith("-")) {
-          return {
-            ok: false,
-            exitCode: 1,
-            kind: "error",
-            messages: ["Error: --sandbox requires a name argument"],
-          };
-        }
-        opts.sandboxName = args[++i];
-        break;
-      default:
-        return {
-          ok: false,
-          exitCode: 1,
-          kind: "error",
-          messages: [`Unknown option: ${args[i]}`],
-        };
-    }
-  }
-
-  if (!opts.sandboxName) {
-    opts.sandboxName = deps.getDefaultSandbox();
-  }
-
-  return { ok: true, options: opts };
-}
-
-export function parseDebugArgs(
-  args: string[],
-  deps: Pick<RunDebugCommandDeps, "getDefaultSandbox" | "log" | "error" | "exit">,
-): DebugOptions {
-  const log = deps.log ?? console.log;
-  const error = deps.error ?? console.error;
-  const exit = deps.exit ?? ((code: number) => process.exit(code));
-  const parsed = parseDebugArgsResult(args, deps);
-  if (!parsed.ok) {
-    const writer = parsed.kind === "help" ? log : error;
-    for (const message of parsed.messages) {
-      writer(message);
-    }
-    return exit(parsed.exitCode);
-  }
-  return parsed.options;
+  return null;
 }
 
 export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
   const opts = { ...options };
-  if (!opts.sandboxName) {
+  const env = deps.env ?? process.env;
+  const errorLine = deps.errorLine ?? ((msg: string) => console.error(msg));
+  const exit =
+    deps.exit ??
+    ((code: number) => {
+      process.exit(code);
+    });
+
+  const explicit = resolveExplicitName(opts, env);
+  if (explicit) {
+    if (!deps.isSandboxKnown(explicit.name)) {
+      const sourceLabel =
+        explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
+      errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
+      errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      exit(1);
+      return;
+    }
+    opts.sandboxName = explicit.name;
+  } else {
     opts.sandboxName = deps.getDefaultSandbox();
   }
-  deps.runDebug(opts);
-}
 
-export function runDebugCommand(args: string[], deps: RunDebugCommandDeps): void {
-  const opts = parseDebugArgs(args, deps);
   deps.runDebug(opts);
 }

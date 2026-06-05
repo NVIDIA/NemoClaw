@@ -3,90 +3,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  parseDebugArgs,
-  parseDebugArgsResult,
-  printDebugHelp,
-  runDebugCommand,
-  runDebugCommandWithOptions,
-} from "../../../dist/lib/diagnostics/debug-command";
-
-function exitWithCode(code: number): never {
-  throw new Error(`exit:${code}`);
-}
+import { runDebugCommandWithOptions } from "../../../dist/lib/diagnostics/debug-command";
 
 describe("debug command", () => {
-  it("prints help text", () => {
-    const lines: string[] = [];
-    printDebugHelp((message = "") => lines.push(message));
-    expect(lines.join("\n")).toContain("Collect NemoClaw diagnostic information");
-    expect(lines.join("\n")).toContain("--quick");
-    expect(lines.join("\n")).toContain("--sandbox");
-  });
-
-  it("parses debug options and falls back to the default sandbox", () => {
-    const opts = parseDebugArgs(["--quick", "--output", "/tmp/out.tgz"], {
-      getDefaultSandbox: () => "alpha",
-      log: () => {},
-      error: () => {},
-      exit: exitWithCode,
-    });
-    expect(opts).toEqual({ quick: true, output: "/tmp/out.tgz", sandboxName: "alpha" });
-  });
-
-  it("returns typed parse errors without exiting or looking up defaults", () => {
-    const getDefaultSandbox = vi.fn(() => "alpha");
-
-    expect(parseDebugArgsResult(["--output"], { getDefaultSandbox })).toEqual({
-      ok: false,
-      exitCode: 1,
-      kind: "error",
-      messages: ["Error: --output requires a file path argument"],
-    });
-    expect(parseDebugArgsResult(["--quik"], { getDefaultSandbox })).toEqual({
-      ok: false,
-      exitCode: 1,
-      kind: "error",
-      messages: ["Unknown option: --quik"],
-    });
-    expect(getDefaultSandbox).not.toHaveBeenCalled();
-  });
-
-  it("returns typed help without exiting or looking up defaults", () => {
-    const getDefaultSandbox = vi.fn(() => "alpha");
-
-    expect(parseDebugArgsResult(["--help"], { getDefaultSandbox })).toEqual(
-      expect.objectContaining({
-        ok: false,
-        exitCode: 0,
-        kind: "help",
-        messages: expect.arrayContaining([expect.stringContaining("Usage: nemoclaw debug")]),
-      }),
-    );
-    expect(getDefaultSandbox).not.toHaveBeenCalled();
-  });
-
-  it("runs the debug command with parsed options", () => {
-    const runDebug = vi.fn();
-    runDebugCommand(["--sandbox", "beta"], {
-      getDefaultSandbox: () => "alpha",
-      runDebug,
-      log: () => {},
-      error: () => {},
-      exit: exitWithCode,
-    });
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "beta" });
-  });
-
   it("runs parsed debug options and falls back to the default sandbox", () => {
     const runDebug = vi.fn();
-    runDebugCommandWithOptions({ quick: true, output: "/tmp/out.tgz" }, {
-      getDefaultSandbox: () => "alpha",
-      runDebug,
-      log: () => {},
-      error: () => {},
-      exit: exitWithCode,
-    });
+    runDebugCommandWithOptions(
+      { quick: true, output: "/tmp/out.tgz" },
+      {
+        getDefaultSandbox: () => "alpha",
+        isSandboxKnown: () => true,
+        runDebug,
+      },
+    );
     expect(runDebug).toHaveBeenCalledWith({
       quick: true,
       output: "/tmp/out.tgz",
@@ -94,58 +23,121 @@ describe("debug command", () => {
     });
   });
 
-  it("--sandbox overrides the default sandbox", () => {
+  it("accepts an explicit --sandbox name that is registered", () => {
     const runDebug = vi.fn();
-    runDebugCommand(["--sandbox", "mybox"], {
-      getDefaultSandbox: () => "stale-default",
-      runDebug,
-      log: () => {},
-      error: () => {},
-      exit: exitWithCode,
-    });
-    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "mybox" });
-  });
-
-  it("falls back to undefined when getDefaultSandbox returns undefined", () => {
-    const runDebug = vi.fn();
-    runDebugCommand(["--quick"], {
-      getDefaultSandbox: () => undefined,
-      runDebug,
-      log: () => {},
-      error: () => {},
-      exit: exitWithCode,
-    });
-    expect(runDebug).toHaveBeenCalledWith({ quick: true, sandboxName: undefined });
-  });
-
-  it("exits on invalid arguments", () => {
-    expect(() =>
-      parseDebugArgs(["--output"], {
+    const isSandboxKnown = vi.fn().mockReturnValue(true);
+    runDebugCommandWithOptions(
+      { sandboxName: "alpha" },
+      {
         getDefaultSandbox: () => undefined,
-        log: () => {},
-        error: () => {},
-        exit: exitWithCode,
-      }),
-    ).toThrow("exit:1");
+        isSandboxKnown,
+        runDebug,
+      },
+    );
+    expect(isSandboxKnown).toHaveBeenCalledWith("alpha");
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  it("does not dispatch or look up defaults when --sandbox is missing its value", () => {
-    const getDefaultSandbox = vi.fn(() => "alpha");
+  it("rejects an explicit --sandbox name that is not registered, exits non-zero, skips runDebug", () => {
     const runDebug = vi.fn();
-    const errors: string[] = [];
-
+    const errorLines: string[] = [];
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    }) as unknown as (code: number) => never;
     expect(() =>
-      runDebugCommand(["--sandbox"], {
-        getDefaultSandbox,
-        runDebug,
-        log: () => {},
-        error: (message = "") => errors.push(message),
-        exit: exitWithCode,
-      }),
-    ).toThrow("exit:1");
-
-    expect(errors).toEqual(["Error: --sandbox requires a name argument"]);
-    expect(getDefaultSandbox).not.toHaveBeenCalled();
+      runDebugCommandWithOptions(
+        { sandboxName: "does-not-exist", output: "/tmp/out.tgz" },
+        {
+          getDefaultSandbox: () => "alpha",
+          isSandboxKnown: () => false,
+          runDebug,
+          errorLine: (msg) => errorLines.push(msg),
+          exit,
+        },
+      ),
+    ).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
     expect(runDebug).not.toHaveBeenCalled();
+    expect(errorLines[0]).toContain("does-not-exist");
+    expect(errorLines[0]).toContain("not registered");
+    expect(errorLines.join("\n")).toContain("nemoclaw list");
+  });
+
+  it("validates an env-sourced sandbox name and reports the env source on failure", () => {
+    const runDebug = vi.fn();
+    const errorLines: string[] = [];
+    const exit = vi.fn(() => {
+      throw new Error("exit");
+    }) as unknown as (code: number) => never;
+    expect(() =>
+      runDebugCommandWithOptions(
+        {},
+        {
+          env: { NEMOCLAW_SANDBOX_NAME: "ghost" } as NodeJS.ProcessEnv,
+          getDefaultSandbox: () => "alpha",
+          isSandboxKnown: () => false,
+          runDebug,
+          errorLine: (msg) => errorLines.push(msg),
+          exit,
+        },
+      ),
+    ).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(runDebug).not.toHaveBeenCalled();
+    expect(errorLines[0]).toContain("ghost");
+    expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX_NAME");
+  });
+
+  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", () => {
+    const runDebug = vi.fn();
+    const isSandboxKnown = vi.fn().mockReturnValue(true);
+    runDebugCommandWithOptions(
+      {},
+      {
+        env: {
+          NEMOCLAW_SANDBOX_NAME: "primary",
+          NEMOCLAW_SANDBOX: "secondary",
+          SANDBOX_NAME: "tertiary",
+        } as NodeJS.ProcessEnv,
+        getDefaultSandbox: () => undefined,
+        isSandboxKnown,
+        runDebug,
+      },
+    );
+    expect(isSandboxKnown).toHaveBeenCalledWith("primary");
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary" });
+  });
+
+  it("flag overrides env vars when both are present", () => {
+    const runDebug = vi.fn();
+    const isSandboxKnown = vi.fn().mockReturnValue(true);
+    runDebugCommandWithOptions(
+      { sandboxName: "alpha" },
+      {
+        env: { NEMOCLAW_SANDBOX: "beta" } as NodeJS.ProcessEnv,
+        getDefaultSandbox: () => undefined,
+        isSandboxKnown,
+        runDebug,
+      },
+    );
+    expect(isSandboxKnown).toHaveBeenCalledWith("alpha");
+    expect(isSandboxKnown).not.toHaveBeenCalledWith("beta");
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
+  });
+
+  it("falls back to getDefaultSandbox when neither flag nor env is set", () => {
+    const runDebug = vi.fn();
+    const isSandboxKnown = vi.fn();
+    runDebugCommandWithOptions(
+      {},
+      {
+        env: {} as NodeJS.ProcessEnv,
+        getDefaultSandbox: () => "alpha",
+        isSandboxKnown,
+        runDebug,
+      },
+    );
+    expect(isSandboxKnown).not.toHaveBeenCalled();
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 });

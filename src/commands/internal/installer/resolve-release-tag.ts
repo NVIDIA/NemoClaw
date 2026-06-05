@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
+import { jsonFlag } from "../../../lib/cli/common-flags";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { resolveInstallRef } from "../../../lib/domain/installer/ref";
 
-export default class InternalInstallerResolveReleaseTagCommand extends Command {
+export default class InternalInstallerResolveReleaseTagCommand extends NemoClawCommand {
   static hidden = true;
   static strict = true;
   static summary = "Internal: resolve the installer release ref";
@@ -13,8 +15,7 @@ export default class InternalInstallerResolveReleaseTagCommand extends Command {
   static usage = ["internal installer resolve-release-tag [--json]"];
   static examples = ["<%= config.bin %> internal installer resolve-release-tag --install-ref v0.1.0"];
   static flags = {
-    help: Flags.help({ char: "h" }),
-    json: Flags.boolean({ description: "Print the resolved ref as JSON" }),
+    json: jsonFlag("Print the resolved ref as JSON"),
     "install-ref": Flags.string({ description: "NEMOCLAW_INSTALL_REF value" }),
     "install-tag": Flags.string({ description: "NEMOCLAW_INSTALL_TAG value" }),
   };
@@ -26,7 +27,7 @@ export default class InternalInstallerResolveReleaseTagCommand extends Command {
       NEMOCLAW_INSTALL_TAG: flags["install-tag"] ?? process.env.NEMOCLAW_INSTALL_TAG,
     });
 
-    if (flags.json) console.log(JSON.stringify({ installRef }, null, 2));
+    if (flags.json) this.logJson({ installRef });
     else console.log(installRef);
   }
 }

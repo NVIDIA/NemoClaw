@@ -11,6 +11,7 @@ export const INSTALLER_PROVIDER_VALUES = [
   "custom",
   "nim-local",
   "vllm",
+  "routed",
 ] as const;
 
 export type InstallerProvider = (typeof INSTALLER_PROVIDER_VALUES)[number];

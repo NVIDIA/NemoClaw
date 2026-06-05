@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policies";
+import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;

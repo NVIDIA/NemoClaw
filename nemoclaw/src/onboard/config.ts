@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -138,10 +145,7 @@ function ensureConfigDir(): void {
     try {
       mkdirSync(configDir, { recursive: true });
     } catch {
-      configDir = join(tmpdir(), ".nemoclaw");
-      if (!existsSync(configDir)) {
-        mkdirSync(configDir, { recursive: true });
-      }
+      configDir = mkdtempSync(join(tmpdir(), "nemoclaw-config-"));
     }
   }
   configDirCreated = true;
@@ -157,9 +161,14 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-  const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-  return isOnboardConfig(parsedObject) ? parsedObject : null;
+  // Treat unreadable config as "no config" so plugin register doesn't abort.
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
+    return isOnboardConfig(parsedObject) ? parsedObject : null;
+  } catch {
+    return null;
+  }
 }
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {

@@ -1,24 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import policies from "../dist/lib/policies";
+import * as policies from "../dist/lib/policy";
 import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
 const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const resolveOpenshellModule = requireForTest(
+  path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "resolve.js"),
+) as { resolveOpenshell: (...args: unknown[]) => string | null };
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
-const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policies.js"));
+const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
 const SELECT_FROM_LIST_ITEMS = [
   { name: "npm", description: "npm and Yarn registry access" },
@@ -31,6 +33,7 @@ type PolicyCall = {
   sandboxName?: string;
   presetName?: string;
   path?: string;
+  presets?: string[];
 };
 
 type AppliedOptions = {
@@ -45,11 +48,23 @@ function requirePresetContent(content: string | null): string {
   return content;
 }
 
+function parsePresetYaml(presetName: string): Record<string, any> {
+  return YAML.parse(requirePresetContent(policies.loadPreset(presetName))) as Record<string, any>;
+}
+
+function parseRepoYaml(relativePath: string): Record<string, any> {
+  return YAML.parse(fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8")) as Record<
+    string,
+    any
+  >;
+}
+
 function runPolicyAdd(
   confirmAnswer: string,
   extraArgs: string[] = [],
   envOverrides: Record<string, string | undefined> = {},
   presetName: string = "pypi",
+  agent: string | null = null,
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-add-"));
   const scriptPath = path.join(tmpDir, "policy-add-check.js");
@@ -58,22 +73,30 @@ const registry = require(${REGISTRY_PATH});
 const policies = require(${POLICIES_PATH});
 const credentials = require(${CREDENTIALS_PATH});
 const calls = [];
-policies.selectFromList = async () => ${JSON.stringify(presetName)};
+policies.selectFromList = async (items) => {
+  calls.push({ type: "select", presets: items.map((item) => item.name) });
+  return ${JSON.stringify(presetName)};
+};
 policies.loadPreset = () => "network_policies:\n  example:\n    host: example.com\n";
 policies.getPresetEndpoints = () => ["example.com"];
 credentials.prompt = async (message) => {
   calls.push({ type: "prompt", message });
   return ${JSON.stringify(confirmAnswer)};
 };
-registry.getSandbox = (name) => (name === "test-sandbox" ? { name } : null);
-registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name, agent: ${JSON.stringify(agent)} } : null);
+registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox", agent: ${JSON.stringify(agent)} }] });
 policies.listPresets = () => [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "discord", description: "Discord API, gateway, and CDN access" },
+  { name: "openclaw-pricing", description: "OpenClaw pricing lookup" },
+  { name: "nous-web", description: "Nous Portal managed web search and crawl gateway" },
+  { name: "nous-code", description: "Nous Portal managed sandboxed code execution gateway" },
 ];
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
+  return true;
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
@@ -130,9 +153,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 12 presets", () => {
+    it("includes the OpenClaw OTEL diagnostics preset", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(12);
+      expect(presets.map((preset) => preset.name)).toContain("openclaw-diagnostics-otel-local");
     });
 
     it("each preset has name and description", () => {
@@ -140,6 +163,12 @@ describe("policies", () => {
         expect(p.name).toBeTruthy();
         expect(p.description).toBeTruthy();
       }
+    });
+
+    it("does not include the WhatsApp preset YAML body in the description", () => {
+      const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");
+      expect(whatsapp?.description).toBe("WhatsApp Web WebSocket and media access");
+      expect(whatsapp?.description).not.toContain("network_policies:");
     });
 
     it("returns expected preset names", () => {
@@ -150,16 +179,28 @@ describe("policies", () => {
       const expected = [
         "brave",
         "brew",
+        "claude-code",
         "discord",
         "github",
         "huggingface",
         "jira",
         "local-inference",
+        "nous-audio",
+        "nous-browser",
+        "nous-code",
+        "nous-image",
+        "nous-web",
         "npm",
+        "openclaw-diagnostics-otel-local",
+        "openclaw-pricing",
         "outlook",
+        "public-reference",
         "pypi",
         "slack",
         "telegram",
+        "weather",
+        "wechat",
+        "whatsapp",
       ];
       expect(names).toEqual(expected);
     });
@@ -181,11 +222,93 @@ describe("policies", () => {
     });
 
     it("includes /usr/bin/node in communication presets", () => {
-      for (const preset of ["discord", "slack", "telegram"]) {
+      for (const preset of ["discord", "slack", "telegram", "whatsapp"]) {
         const content = requirePresetContent(policies.loadPreset(preset));
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
+      // The /ws/chat upgrade is HTTP/1.1-only; if the proxy terminates TLS it
+      // negotiates h2 ALPN with Meta's edge and the WS upgrade fails (Meta
+      // returns 405/400 because there is no 101 Switching Protocols flow
+      // over h2). `access: full` + `tls: skip` keeps OpenShell out of the
+      // bytes so Baileys does the TLS handshake end-to-end and gets h1.
+      // Apex and *.web.whatsapp.com (fallback nodes w1.web.whatsapp.com,
+      // w2.web.whatsapp.com, ...) share the same shape so reconnects do
+      // not surprise the operator.
+      const parsed = parsePresetYaml("whatsapp");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      for (const host of ["web.whatsapp.com", "*.web.whatsapp.com"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.access).toBe("full");
+        expect(entry.tls).toBe("skip");
+        // L4 tunnels cannot enforce REST/WebSocket rules; declaring either
+        // would coerce the proxy into a TLS-terminating path that breaks
+        // the WS upgrade.
+        expect(entry.protocol).toBeUndefined();
+        expect(entry.rules).toBeUndefined();
+      }
+    });
+
+    it("whatsapp REST traffic is constrained to *.whatsapp.net with GET + POST", () => {
+      // Baileys touches several whatsapp.net subdomains during pairing and
+      // steady-state (mmg, static, cdn, pps, v, e1, f, s). Earlier the preset
+      // listed mmg and static individually; consolidating to a *.whatsapp.net
+      // wildcard keeps the preset future-proof without expanding trust
+      // beyond Meta-controlled infrastructure. Mirrors the jira preset's
+      // *.atlassian.net wildcard.
+      const parsed = parsePresetYaml("whatsapp");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      // Apex listed separately so the matcher (which does not cover the
+      // bare apex via `*.whatsapp.net`) still allows it if Baileys or a
+      // future plugin ever resolves the apex.
+      for (const host of ["whatsapp.net", "*.whatsapp.net"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.protocol).toBe("rest");
+        expect(entry.enforcement).toBe("enforce");
+        const rules = Array.isArray(entry.rules) ? entry.rules : [];
+        const methods = rules
+          .map((rule: { allow?: { method?: string } }) => rule.allow?.method)
+          .sort();
+        expect(methods).toEqual(["GET", "POST"]);
+      }
+    });
+
+    it("whatsapp preset narrowly allows the Baileys version-discovery file on raw.githubusercontent.com", () => {
+      // Baileys' fetchLatestBaileysVersion() reads one file from the
+      // WhiskeySockets/Baileys master branch to refresh the WA protocol
+      // constant at session creation. Without this allow rule the fetch
+      // fails closed and Baileys advertises a stale bundled constant
+      // which Meta now rejects on pair. Scope is pinned to that single
+      // file path with GET only so the rule does not turn into a general
+      // raw.githubusercontent.com escape hatch.
+      const parsed = parsePresetYaml("whatsapp");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      const entry = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!entry) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(entry.port).toBe(443);
+      expect(entry.protocol).toBe("rest");
+      expect(entry.enforcement).toBe("enforce");
+      expect(entry.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/WhiskeySockets/Baileys/master/src/Defaults/index.ts",
+          },
+        },
+      ]);
     });
 
     it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
@@ -212,6 +335,77 @@ describe("policies", () => {
       }
     });
 
+    it("openclaw-pricing preset pins LiteLLM and OpenRouter reference fetches to GET-only paths", () => {
+      // OpenClaw's gateway/model-pricing subsystem fetches the LiteLLM
+      // pricing table and the OpenRouter model catalogue on every start.
+      // Both endpoints are read-only metadata fetches, so the preset must
+      // expose exactly one GET rule per host on the specific path each
+      // fetch reads, with no wildcards that could widen into a general
+      // raw.githubusercontent.com or openrouter.ai escape hatch.
+      const parsed = parsePresetYaml("openclaw-pricing");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-pricing"]?.endpoints ?? [];
+      expect(endpoints).toHaveLength(2);
+
+      const litellm = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!litellm) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(litellm.port).toBe(443);
+      expect(litellm.protocol).toBe("rest");
+      expect(litellm.enforcement).toBe("enforce");
+      expect(litellm.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/BerriAI/litellm/main/model_prices_and_context_window.json",
+          },
+        },
+      ]);
+
+      const openrouter = endpoints.find((item) => item.host === "openrouter.ai");
+      if (!openrouter) throw new Error("expected openrouter.ai endpoint");
+      expect(openrouter.port).toBe(443);
+      expect(openrouter.protocol).toBe("rest");
+      expect(openrouter.enforcement).toBe("enforce");
+      expect(openrouter.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-pricing"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    });
+
+    it("openclaw-diagnostics-otel-local preset pins OTLP traces to the host collector path", () => {
+      const parsed = parsePresetYaml("openclaw-diagnostics-otel-local");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.endpoints ?? [];
+
+      expect(endpoints).toHaveLength(1);
+      expect(endpoints[0]).toMatchObject({
+        host: "host.openshell.internal",
+        port: 4318,
+        protocol: "rest",
+        enforcement: "enforce",
+        rules: [
+          { allow: { method: "POST", path: "/v1/traces" } },
+          { allow: { method: "POST", path: "/v1/traces/**" } },
+        ],
+      });
+      expect(endpoints[0].allowed_ips).toEqual([
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+      ]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual([
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+        "/usr/local/bin/openclaw",
+      ]);
+    });
+
     it("local-inference preset includes openclaw and common tool binaries", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("/usr/local/bin/openclaw");
@@ -221,6 +415,46 @@ describe("policies", () => {
       expect(content).toContain("/usr/bin/node");
       expect(content).toContain("/usr/bin/curl");
       expect(content).toContain("/usr/bin/python3");
+    });
+
+    it("Nous managed-tool presets expose only the host broker plus Browser Use CDP exception", () => {
+      const matrix = JSON.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "agents", "hermes", "host", "managed-tool-gateway-matrix.json"),
+          "utf8",
+        ),
+      );
+      const vendorHosts = [
+        "firecrawl-gateway.nousresearch.com",
+        "fal-queue-gateway.nousresearch.com",
+        "openai-audio-gateway.nousresearch.com",
+        "browser-use-gateway.nousresearch.com",
+        "modal-gateway.nousresearch.com",
+      ];
+
+      for (const [presetName, entry] of Object.entries(matrix) as Array<
+        [string, { brokerPath: string }]
+      >) {
+        const content = requirePresetContent(policies.loadPreset(presetName));
+        const parsed = YAML.parse(content);
+        const policyEntries = Object.values(parsed.network_policies ?? {}) as Array<{
+          endpoints?: Array<{ host?: string; port?: number }>;
+        }>;
+        const endpoints = policyEntries.flatMap((policy) => policy.endpoints ?? []);
+        const brokerEndpoint = endpoints.find(
+          (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
+        );
+        expect(brokerEndpoint, `missing broker endpoint for ${presetName}`).toBeDefined();
+        expect(JSON.stringify(brokerEndpoint)).toContain(entry.brokerPath);
+        for (const host of vendorHosts) {
+          expect(content).not.toContain(host);
+        }
+        if (presetName === "nous-browser") {
+          expect(content).toContain("*.cdp1.browser-use.com");
+        } else {
+          expect(content).not.toContain("browser-use.com");
+        }
+      }
     });
   });
 
@@ -240,6 +474,21 @@ describe("policies", () => {
       expect(hosts).toEqual(["api.telegram.org"]);
     });
 
+    it("extracts the explicit iLink hosts from wechat preset", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so the preset lists each known iLink IDC host explicitly.
+      // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
+      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // is the per-account baseUrl returned after QR confirm. Additional
+      // IDC hosts may need to be added when operators observe new
+      // `DENIED ... -> <host>:443` lines in OCSF logs.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts).toContain("ilinkai.weixin.qq.com");
+      expect(hosts).toContain("ilinkai.wechat.com");
+      expect(hosts.every((host: string) => !host.includes("`"))).toBe(true);
+    });
+
     it("every preset has at least one endpoint", () => {
       for (const p of policies.listPresets()) {
         const content = requirePresetContent(policies.loadPreset(p.name));
@@ -253,32 +502,293 @@ describe("policies", () => {
       const hosts = policies.getPresetEndpoints(yaml);
       expect(hosts).toEqual(["example.com", "other.com"]);
     });
+
+    it("ignores commented host examples and inline comments", () => {
+      const yaml = [
+        "# matches `host:` as text",
+        "  # host: commented.example.com",
+        "  - host: real.example.com # host: ignored.example.com",
+      ].join("\n");
+      const hosts = policies.getPresetEndpoints(yaml);
+      expect(hosts).toEqual(["real.example.com"]);
+    });
   });
 
-  describe("getMessagingPresetWarning", () => {
+  describe("getPresetValidationWarning", () => {
     it("returns a warning for the telegram preset that mentions re-running onboard", () => {
-      const warning = policies.getMessagingPresetWarning("telegram");
+      const warning = policies.getPresetValidationWarning("telegram");
       expect(warning).toBeTruthy();
       expect(warning).toContain("telegram");
       expect(warning).toContain("Telegram");
       expect(warning).toContain("nemoclaw onboard");
     });
 
-    it("returns a warning for discord and slack", () => {
-      expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
-      expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+    it("returns a warning for discord, slack, and wechat", () => {
+      expect(policies.getPresetValidationWarning("discord")).toContain("Discord");
+      expect(policies.getPresetValidationWarning("slack")).toContain("Slack");
+      expect(policies.getPresetValidationWarning("wechat")).toContain("WeChat");
     });
 
-    it("returns null for non-messaging presets", () => {
-      expect(policies.getMessagingPresetWarning("npm")).toBeNull();
-      expect(policies.getMessagingPresetWarning("pypi")).toBeNull();
-      expect(policies.getMessagingPresetWarning("github")).toBeNull();
-      expect(policies.getMessagingPresetWarning("brew")).toBeNull();
+    it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
+      const warning = policies.getPresetValidationWarning("discord");
+
+      expect(warning).toContain("curl");
+      expect(warning).toContain("preset binary allowlist");
+      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("https://discord.com/api/v10/gateway");
+      expect(warning).toContain('dns.resolve("gateway.discord.gg")');
+    });
+
+    it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
+      const warning = policies.getPresetValidationWarning("jira");
+
+      expect(warning).toContain("curl -s");
+      expect(warning).toContain("api.atlassian.com/oauth/token/accessible-resources");
+      expect(warning).toContain("401 JSON");
+      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("https://api.atlassian.com");
+    });
+
+    it("returns null for presets without extra validation guidance", () => {
+      expect(policies.getPresetValidationWarning("npm")).toBeNull();
+      expect(policies.getPresetValidationWarning("pypi")).toBeNull();
+      expect(policies.getPresetValidationWarning("github")).toBeNull();
+      expect(policies.getPresetValidationWarning("brew")).toBeNull();
     });
 
     it("returns null for unknown preset names", () => {
-      expect(policies.getMessagingPresetWarning("")).toBeNull();
-      expect(policies.getMessagingPresetWarning("nonexistent")).toBeNull();
+      expect(policies.getPresetValidationWarning("")).toBeNull();
+      expect(policies.getPresetValidationWarning("nonexistent")).toBeNull();
+    });
+  });
+
+  describe("applyPresets", () => {
+    it("merges built-in presets and submits one policy update", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-batch-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "test-sandbox", policies: [] });
+const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("test-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            CALLS_PATH: callsPath,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        expect(payload.result).toBe(true);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(1);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(1);
+        expect(payload.policy).toContain("npm_yarn:");
+        expect(payload.policy).toContain("pypi:");
+        expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses agent-specific preset content for Hermes Discord", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+const result = policies.applyPresets("hermes-sandbox", ["discord"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("hermes-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const parsed = YAML.parse(payload.policy);
+        const discordPolicy = parsed.network_policies.discord;
+        const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
+        expect(binaries).toContain("/usr/bin/python3*");
+        expect(binaries).toContain("/opt/hermes/.venv/bin/python");
+        const discordCom = discordPolicy.endpoints.find(
+          (endpoint: { host?: string }) => endpoint.host === "discord.com",
+        );
+        const mutationRules = discordCom.rules
+          .map((rule: { allow?: { method?: string; path?: string } }) => rule.allow)
+          .filter((rule: { method?: string } | undefined) =>
+            ["PUT", "PATCH", "DELETE"].includes(rule?.method || ""),
+          );
+        expect(mutationRules).toContainEqual({
+          method: "PATCH",
+          path: "/api/v*/channels/*/messages/*",
+        });
+        expect(mutationRules).not.toContainEqual({ method: "PATCH", path: "/**" });
+        expect(payload.registry.policies).toEqual(["discord"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses agent-specific preset aliases for Hermes WeChat", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-wechat-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+const result = policies.applyPresets("hermes-sandbox", ["wechat"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("hermes-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const parsed = YAML.parse(payload.policy);
+        expect(parsed.network_policies.wechat).toBeUndefined();
+        const wechatPolicy = parsed.network_policies.wechat_bridge;
+        const binaries = wechatPolicy.binaries.map((entry: { path: string }) => entry.path);
+        expect(binaries).toContain("/usr/bin/python3*");
+        expect(binaries).toContain("/opt/hermes/.venv/bin/python");
+        expect(payload.registry.policies).toEqual(["wechat"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -361,8 +871,10 @@ describe("policies", () => {
   describe("buildPolicySetCommand", () => {
     it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd).toEqual([
-        "openshell",
+      // The binary is resolved via resolveOpenshell() so it may be an absolute
+      // path; assert the openshell tail and the rest of the argv shape.
+      expect(cmd[0]).toMatch(/openshell$/);
+      expect(cmd.slice(1)).toEqual([
         "policy",
         "set",
         "--policy",
@@ -386,11 +898,15 @@ describe("policies", () => {
     });
 
     it("uses the resolved openshell binary when provided by the installer path", () => {
-      process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-bin-"));
+      const override = path.join(tmpDir, "openshell");
+      fs.writeFileSync(override, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const prev = process.env.NEMOCLAW_OPENSHELL_BIN;
+      process.env.NEMOCLAW_OPENSHELL_BIN = override;
       try {
         const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
         expect(cmd).toEqual([
-          "/tmp/fake path/openshell",
+          override,
           "policy",
           "set",
           "--policy",
@@ -399,7 +915,9 @@ describe("policies", () => {
           "my-assistant",
         ]);
       } finally {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        if (prev === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        else process.env.NEMOCLAW_OPENSHELL_BIN = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
   });
@@ -407,7 +925,361 @@ describe("policies", () => {
   describe("buildPolicyGetCommand", () => {
     it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toEqual(["openshell", "policy", "get", "--full", "my-assistant"]);
+      expect(cmd[0]).toMatch(/openshell$/);
+      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
+    });
+  });
+
+  // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
+  // (the installer's user-local location) but PATH from a non-interactive shell does
+  // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
+  // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
+  describe("issue 4224: spawnSync openshell ENOENT in non-interactive shells", () => {
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let origPath: string | undefined;
+    let origBin: string | undefined;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4224-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      origHome = process.env.HOME;
+      origPath = process.env.PATH;
+      origBin = process.env.NEMOCLAW_OPENSHELL_BIN;
+      // Simulate the non-interactive shell: openshell not on PATH, no override.
+      process.env.HOME = tmpHome;
+      process.env.PATH = "/nonexistent-nemoclaw-path";
+      delete process.env.NEMOCLAW_OPENSHELL_BIN;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      if (origPath === undefined) delete process.env.PATH;
+      else process.env.PATH = origPath;
+      if (origBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      else process.env.NEMOCLAW_OPENSHELL_BIN = origBin;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("buildPolicySetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+      expect(cmd[0]).toBe(fakeOpenshell);
+      expect(cmd).toEqual([
+        fakeOpenshell,
+        "policy",
+        "set",
+        "--policy",
+        "/tmp/policy.yaml",
+        "--wait",
+        "my-assistant",
+      ]);
+    });
+
+    it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
+      const cmd = policies.buildPolicyGetCommand("my-assistant");
+      expect(cmd[0]).toBe(fakeOpenshell);
+      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+    });
+
+    it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(null);
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map((a) => String(a)).join(" "));
+      });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        throw new Error("__test_exit__");
+      }) as never);
+
+      process.env.HOME = tmpHome;
+      process.env.PATH = "/nonexistent-nemoclaw-path";
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/nonexistent/openshell";
+
+      try {
+        expect(() => policies.assertOpenshellResolvable()).toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        const combined = errors.join("\n");
+        expect(combined).toMatch(/openshell binary not found/);
+        expect(combined).toMatch(/NEMOCLAW_OPENSHELL_BIN=\/nonexistent\/openshell/);
+        // PATH value should be logged verbatim so bug reports name what was searched.
+        expect(combined).toContain("PATH=/nonexistent-nemoclaw-path");
+        expect(combined).toContain(`${tmpHome}/.local/bin/openshell`);
+        expect(combined).toContain("/usr/local/bin/openshell");
+        expect(combined).toContain("/usr/bin/openshell");
+        expect(combined).toMatch(/Install OpenShell|NEMOCLAW_OPENSHELL_BIN/);
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+
+    it("assertOpenshellResolvable is a noop when openshell resolves", () => {
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        throw new Error("should not exit");
+      }) as never);
+      try {
+        expect(() => policies.assertOpenshellResolvable()).not.toThrow();
+        expect(exitSpy).not.toHaveBeenCalled();
+        expect(errSpy).not.toHaveBeenCalled();
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+
+    // The assertion must fire BEFORE any temp dir/file creation. With a real
+    // `process.exit(1)` the matching `finally` does not run, so a temp dir
+    // created before the exit gets orphaned in $TMPDIR. A mocked exit (which
+    // throws) doesn't reproduce that — `finally` still runs and cleans up. To
+    // catch the real-world bug, snapshot $TMPDIR at the *moment* of exit:
+    // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
+    // should exist yet.
+    it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
+      const beforeCount = fs
+        .readdirSync(os.tmpdir())
+        .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
+      let countAtExit = -1;
+
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(null);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        countAtExit = fs
+          .readdirSync(os.tmpdir())
+          .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
+        throw new Error("__test_exit__");
+      }) as never);
+
+      try {
+        // Apply a real built-in preset so applyPresetContent runs end-to-end
+        // up to the resolvability check.
+        expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        // No `nemoclaw-policy-*` temp dir should have been created before
+        // the resolvability check exited.
+        expect(countAtExit).toBe(beforeCount);
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("issue 4586: preset apply must not overwrite a live policy that could not be read", () => {
+    const registryModule = requireForTest(
+      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+    ) as Record<string, any>;
+    const CUSTOM = "network_policies:\n  example:\n    host: example.com\n";
+    const DEGRADED =
+      '#!/bin/sh\nif [ "$1" = "policy" ] && [ "$2" = "get" ]; then echo "error: gateway is restarting"; fi\nexit 0\n';
+    const EMPTY_OK = "#!/bin/sh\nexit 0\n";
+
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let resolveSpy: ReturnType<typeof vi.spyOn>;
+    let savedGetSandbox: any;
+    let savedAddCustomPolicy: any;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4586-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      origHome = process.env.HOME;
+      process.env.HOME = tmpHome;
+      resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      savedGetSandbox = registryModule.getSandbox;
+      savedAddCustomPolicy = registryModule.addCustomPolicy;
+      registryModule.getSandbox = (name: string) => ({ name });
+      registryModule.addCustomPolicy = () => true;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      resolveSpy.mockRestore();
+      registryModule.getSandbox = savedGetSandbox;
+      registryModule.addCustomPolicy = savedAddCustomPolicy;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("aborts applyPresetContent (returns false) when policy get exits 0 with degraded output", () => {
+      fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
+      const errs: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errs.push(a.map((x) => String(x)).join(" "));
+      });
+      const logs: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+        logs.push(a.map((x) => String(x)).join(" "));
+      });
+      try {
+        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
+          custom: { sourcePath: "/tmp/x.yaml" },
+        });
+        expect(result).toBe(false);
+        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+        expect(logs.join("\n")).not.toContain("Applied preset:");
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("still applies applyPresetContent when policy get returns an empty policy (fresh sandbox)", () => {
+      fs.writeFileSync(fakeOpenshell, EMPTY_OK, { mode: 0o755 });
+      const logs: string[] = [];
+      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+        logs.push(a.map((x) => String(x)).join(" "));
+      });
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
+          custom: { sourcePath: "/tmp/x.yaml" },
+        });
+        expect(result).toBe(true);
+        expect(logs.join("\n")).toContain("Applied preset:");
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
+    });
+
+    it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
+      fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
+      const errs: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errs.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresets("alpha", ["npm"]);
+        expect(result).toBe(false);
+        expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("issue 4510: policy-add --from-file false success when the sandbox is absent from the registry", () => {
+    const registryModule = requireForTest(
+      path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+    ) as Record<string, any>;
+    const CUSTOM_CONTENT = "network_policies:\n  slack-files-upload:\n    host: files.slack.com\n";
+    const SOURCE_PATH = "/tmp/slack-files-upload-case.yaml";
+
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let resolveSpy: ReturnType<typeof vi.spyOn>;
+    let savedGetSandbox: any;
+    let savedAddCustomPolicy: any;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4510-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      origHome = process.env.HOME;
+      process.env.HOME = tmpHome;
+      resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      savedGetSandbox = registryModule.getSandbox;
+      savedAddCustomPolicy = registryModule.addCustomPolicy;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      resolveSpy.mockRestore();
+      registryModule.getSandbox = savedGetSandbox;
+      registryModule.addCustomPolicy = savedAddCustomPolicy;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("returns false and warns when a custom preset cannot be recorded locally", () => {
+      // Sandbox is Ready on the gateway but missing from the local registry
+      // (e.g. after stale-registry pruning), so addCustomPolicy cannot persist.
+      registryModule.getSandbox = () => null;
+      const addSpy = vi.fn(() => false);
+      registryModule.addCustomPolicy = addSpy;
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => {
+        errors.push(a.map((x) => String(x)).join(" "));
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        // Pre-fix this returned true (silent exit 0) while policy-list/status
+        // never showed the preset. The command must not claim success.
+        expect(result).toBe(false);
+        expect(addSpy).not.toHaveBeenCalled();
+        const combined = errors.join("\n");
+        expect(combined).toContain("my-assistant");
+        expect(combined).toMatch(/could not be\s+recorded locally/);
+        expect(combined).toMatch(/policy-list or status/);
+      } finally {
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+      }
+    });
+
+    it("records the custom preset and returns true when the sandbox is registered", () => {
+      registryModule.getSandbox = (name: string) => ({ name });
+      const addSpy = vi.fn(() => true);
+      registryModule.addCustomPolicy = addSpy;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        const result = policies.applyPresetContent(
+          "my-assistant",
+          "slack-files-upload",
+          CUSTOM_CONTENT,
+          { custom: { sourcePath: SOURCE_PATH } },
+        );
+        expect(result).toBe(true);
+        expect(addSpy).toHaveBeenCalledWith(
+          "my-assistant",
+          expect.objectContaining({
+            name: "slack-files-upload",
+            content: CUSTOM_CONTENT,
+            sourcePath: SOURCE_PATH,
+          }),
+        );
+      } finally {
+        logSpy.mockRestore();
+        errSpy.mockRestore();
+      }
     });
   });
 
@@ -728,6 +1600,22 @@ describe("policies", () => {
       expect(content.includes("method: DELETE")).toBe(false);
     });
 
+    it("weather and public-reference presets stay read-only and narrowly client-scoped", () => {
+      for (const preset of ["weather", "public-reference"]) {
+        const content = requirePresetContent(policies.loadPreset(preset));
+        expect(content).toContain("protocol: rest");
+        expect(content).toContain("method: GET");
+        expect(content).toContain("method: HEAD");
+        expect(content).not.toContain("method: POST");
+        expect(content).not.toContain("method: PUT");
+        expect(content).not.toContain("method: PATCH");
+        expect(content).not.toContain("method: DELETE");
+        expect(content).toContain("/usr/local/bin/node");
+        expect(content).toContain("/opt/hermes/.venv/bin/python");
+        expect(content).toContain("/usr/bin/curl");
+      }
+    });
+
     it("npm preset uses L4 tunnel for CONNECT compatibility (#2767)", () => {
       // npm on Node 22 uses undici's built-in fetch which bypasses
       // http.request() and issues CONNECT directly through HTTPS_PROXY.
@@ -749,18 +1637,271 @@ describe("policies", () => {
       expect(graphSection).toContain("method: PATCH");
     });
 
-    it("messaging WebSocket presets keep tls: skip on gateway endpoints", () => {
+    it("messaging WebSocket presets use native inspected WebSocket policy", () => {
       const cases = [
-        { preset: "discord", pattern: /host:\s*gateway\.discord\.gg[\s\S]*?tls:\s*skip/ },
-        { preset: "slack", pattern: /host:\s*wss-primary\.slack\.com[\s\S]*?tls:\s*skip/ },
-        { preset: "slack", pattern: /host:\s*wss-backup\.slack\.com[\s\S]*?tls:\s*skip/ },
+        {
+          preset: "discord",
+          host: "gateway.discord.gg",
+          credentialRewrite: true,
+        },
+        {
+          preset: "discord",
+          host: "*.discord.gg",
+          credentialRewrite: true,
+        },
+        {
+          preset: "slack",
+          host: "wss-primary.slack.com",
+          credentialRewrite: true,
+        },
+        {
+          preset: "slack",
+          host: "wss-backup.slack.com",
+          credentialRewrite: true,
+        },
       ];
 
-      for (const { preset, pattern } of cases) {
+      for (const { preset, host, credentialRewrite } of cases) {
         const content = requirePresetContent(policies.loadPreset(preset));
-        expect(content).toBeTruthy();
-        expect(content).toMatch(pattern);
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                access?: string;
+                tls?: string;
+                websocket_credential_rewrite?: boolean;
+                request_body_credential_rewrite?: boolean;
+                rules?: Array<{ allow?: { method?: string; path?: string } }>;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        const endpoint = endpoints.find((candidate) => candidate.host === host);
+        expect(endpoint).toBeTruthy();
+        expect(endpoint).toMatchObject({ protocol: "websocket", enforcement: "enforce" });
+        expect(endpoint).not.toHaveProperty("access");
+        expect(endpoint).not.toHaveProperty("tls");
+        expect(endpoint?.websocket_credential_rewrite === true).toBe(credentialRewrite);
+        expect(endpoint?.rules).toEqual(
+          expect.arrayContaining([
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+          ]),
+        );
       }
+    });
+
+    it("Slack REST endpoints opt into OpenShell request-body credential rewrite", () => {
+      const policySources = [
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/slack.yaml"),
+          "utf8",
+        ),
+        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"), "utf8"),
+        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"), "utf8"),
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml"),
+          "utf8",
+        ),
+      ];
+      const slackRestHosts = new Set(["slack.com", "api.slack.com", "hooks.slack.com"]);
+
+      for (const content of policySources) {
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                request_body_credential_rewrite?: boolean;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        for (const endpoint of endpoints.filter((candidate) =>
+          slackRestHosts.has(candidate.host ?? ""),
+        )) {
+          expect(endpoint).toMatchObject({
+            protocol: "rest",
+            request_body_credential_rewrite: true,
+          });
+        }
+      }
+    });
+
+    it("Hermes messaging gateway policies use native inspected WebSocket policy", () => {
+      const policyFiles = [
+        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
+        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
+      ];
+      const cases = [
+        "gateway.discord.gg",
+        "*.discord.gg",
+        "wss-primary.slack.com",
+        "wss-backup.slack.com",
+      ];
+
+      for (const file of policyFiles) {
+        const content = fs.readFileSync(file, "utf8");
+        const parsed = YAML.parse(content) as {
+          network_policies?: Record<
+            string,
+            {
+              endpoints?: Array<{
+                host?: string;
+                protocol?: string;
+                access?: string;
+                tls?: string;
+                websocket_credential_rewrite?: boolean;
+                rules?: Array<{ allow?: { method?: string; path?: string } }>;
+              }>;
+            }
+          >;
+        };
+        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
+          (policy) => policy.endpoints ?? [],
+        );
+        for (const host of cases) {
+          const endpoint = endpoints.find((candidate) => candidate.host === host);
+          expect(endpoint).toBeTruthy();
+          expect(endpoint).toMatchObject({
+            protocol: "websocket",
+            enforcement: "enforce",
+            websocket_credential_rewrite: true,
+          });
+          expect(endpoint).not.toHaveProperty("access");
+          expect(endpoint).not.toHaveProperty("tls");
+          expect(endpoint?.rules).toEqual(
+            expect.arrayContaining([
+              { allow: { method: "GET", path: "/**" } },
+              { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+            ]),
+          );
+        }
+      }
+    });
+
+    it("Hermes Discord REST mutations are scoped to discord.com", () => {
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const networkPolicies = parsed.network_policies as Record<
+        string,
+        {
+          endpoints?: Array<{
+            host?: string;
+            rules?: Array<{ allow?: { method?: string; path?: string } }>;
+          }>;
+        }
+      >;
+      const rulesFor = (policy: string, host: string) =>
+        (networkPolicies[policy]?.endpoints ?? [])
+          .filter((endpoint) => endpoint.host === host)
+          .flatMap((endpoint) => endpoint.rules ?? [])
+          .map((rule) => rule.allow)
+          .filter((rule): rule is { method: string; path: string } =>
+            Boolean(rule?.method && rule?.path),
+          );
+      const sortRules = (rules: Array<{ method: string; path: string }>) =>
+        [...rules].sort((a, b) =>
+          `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`),
+        );
+
+      const nousRules = rulesFor("nous_research", "nousresearch.com");
+      expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
+      expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
+      expect(
+        nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method)),
+      ).toEqual([]);
+
+      const discordMutationRules = sortRules(
+        rulesFor("discord", "discord.com").filter((rule) =>
+          ["PUT", "PATCH", "DELETE"].includes(rule.method),
+        ),
+      );
+      expect(discordMutationRules).toEqual(
+        sortRules([
+          { method: "PUT", path: "/api/v*/applications/*/commands" },
+          { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
+          { method: "PATCH", path: "/api/v*/applications/*" },
+          { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
+          { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
+          { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
+          { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
+          { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
+          { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
+          { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
+        ]),
+      );
+      expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
+    });
+
+    it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string; path?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      expect(pypiPolicy).toBeTruthy();
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining([
+          "/usr/bin/curl",
+          "/usr/local/bin/curl",
+          "/usr/local/bin/pip3",
+          "/usr/bin/python3*",
+          "/opt/hermes/.venv/bin/python",
+        ]),
+      );
+
+      const endpoints = pypiPolicy?.endpoints ?? [];
+      expect(endpoints.map((endpoint) => endpoint.host).sort()).toEqual([
+        "files.pythonhosted.org",
+        "pypi.org",
+      ]);
+
+      for (const endpoint of endpoints) {
+        expect(endpoint).toMatchObject({
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+        });
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET"]);
+        expect(methods).not.toContain("POST");
+        expect(methods).not.toContain("PUT");
+        expect(methods).not.toContain("DELETE");
+      }
+    });
+
+    it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const githubPolicy = parsed.network_policies?.github as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (githubPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(["/opt/hermes/.venv/bin/python", "/usr/bin/git"]);
+      expect(binaries).not.toContain("/usr/bin/gh");
     });
 
     it("REST policy YAML avoids deprecated tls: terminate", () => {
@@ -786,6 +1927,113 @@ describe("policies", () => {
       }
     });
 
+    it("baseline filesystem_policy.read_write grants the Homebrew prefix (#3913)", () => {
+      // Companion to the Dockerfile.base step that bakes Homebrew core
+      // into the sandbox image. Without /home/linuxbrew in read_write,
+      // `brew install <formula>` cannot extract bottles or manage the
+      // Cellar/opt symlinks at runtime, and the brew preset's binary
+      // whitelist becomes dead code.
+      const parsed = parseRepoYaml("nemoclaw-blueprint/policies/openclaw-sandbox.yaml");
+      expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
+    });
+
+    it("OpenClaw permissive policies preserve baseline read_write paths (#3916)", () => {
+      const baseline = parseRepoYaml("nemoclaw-blueprint/policies/openclaw-sandbox.yaml") as {
+        filesystem_policy?: { read_write?: string[] };
+      };
+      const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = parseRepoYaml(relativePath) as {
+          filesystem_policy?: { read_write?: string[] };
+        };
+        expect(parsed.filesystem_policy?.read_write, relativePath).toEqual(
+          expect.arrayContaining(baselineReadWrite),
+        );
+      }
+    });
+
+    it("Claude Code hosts require the explicit claude-code preset", () => {
+      const claudeHosts = new Set(["api.anthropic.com", "statsig.anthropic.com", "sentry.io"]);
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+        "agents/hermes/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = parseRepoYaml(relativePath) as {
+          network_policies?: Record<string, { endpoints?: Array<{ host?: string }> }>;
+        };
+        expect(parsed.network_policies, relativePath).not.toHaveProperty("claude_code");
+        const hosts = Object.values(parsed.network_policies ?? {})
+          .flatMap((policy) => policy.endpoints ?? [])
+          .map((endpoint) => endpoint.host)
+          .filter((host): host is string => typeof host === "string");
+        expect(hosts.filter((host) => claudeHosts.has(host)), relativePath).toEqual([]);
+      }
+
+      const preset = parseRepoYaml("nemoclaw-blueprint/policies/presets/claude-code.yaml") as {
+        preset?: { name?: string };
+        network_policies?: Record<
+          string,
+          {
+            endpoints?: Array<{
+              host?: string;
+              port?: number;
+              protocol?: string;
+              enforcement?: string;
+              access?: string;
+              rules?: unknown[];
+            }>;
+            binaries?: Array<{ path?: string }>;
+          }
+        >;
+      };
+      const claudePolicy = preset.network_policies?.claude_code;
+      expect(preset.preset?.name).toBe("claude-code");
+      expect(claudePolicy).toBeDefined();
+      expect((claudePolicy?.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual(
+        [...claudeHosts].sort(),
+      );
+      for (const endpoint of claudePolicy?.endpoints ?? []) {
+        expect(endpoint.port).toBe(443);
+        expect(endpoint.protocol).toBe("rest");
+        expect(endpoint.enforcement).toBe("enforce");
+        expect(endpoint).not.toHaveProperty("access");
+        expect(endpoint.rules).toEqual(
+          expect.arrayContaining([
+            { allow: { method: "GET", path: "/**" } },
+            { allow: { method: "POST", path: "/**" } },
+          ]),
+        );
+      }
+      expect((claudePolicy?.binaries ?? []).map((binary) => binary.path)).not.toContain("/**");
+    });
+
+    it("brew preset whitelists the PATH wrapper and Homebrew-managed entrypoints (#3913)", () => {
+      const content = requirePresetContent(policies.loadPreset("brew"));
+      const parsed = YAML.parse(content);
+      const brewPolicy = parsed.network_policies?.brew as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (brewPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        [
+          "/home/linuxbrew/.linuxbrew/Homebrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/brew",
+          "/usr/bin/curl",
+          "/usr/bin/git",
+          "/usr/local/bin/brew",
+        ].sort(),
+      );
+    });
+
     it("telegram REST preset relies on automatic TLS handling", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       expect(content).toBeTruthy();
@@ -795,11 +2043,58 @@ describe("policies", () => {
       expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
     });
 
+    it("wechat REST preset enumerates explicit iLink hosts on port 443 with allow GET/POST", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so each iLink IDC host the upstream plugin can hit must be
+      // listed explicitly. The proxy must still see
+      // protocol/enforcement/method allowlists on each entry — dropping any
+      // of those silently widens egress past what the preset documents.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      for (const host of ["ilinkai\\.weixin\\.qq\\.com", "ilinkai\\.wechat\\.com"]) {
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?port:\\s*443[\\s\\S]*?protocol:\\s*rest[\\s\\S]*?enforcement:\\s*enforce`,
+          ),
+        );
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*GET[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*POST`,
+          ),
+        );
+      }
+    });
+
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
       // pip and uv use HEAD requests for lazy wheel downloads and
       // range-request support. GET-only would break pip install.
       const content = requirePresetContent(policies.loadPreset("pypi"));
       expect(content.includes("method: HEAD")).toBe(true);
+    });
+
+    it("pypi preset lets curl verify read-only package index access (#4014)", () => {
+      const content = requirePresetContent(policies.loadPreset("pypi"));
+      const parsed = YAML.parse(content);
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining(["/usr/bin/curl", "/usr/local/bin/curl"]),
+      );
+
+      for (const endpoint of pypiPolicy?.endpoints ?? []) {
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET", "HEAD"]);
+      }
     });
 
     it("package-manager presets include binaries section", () => {
@@ -1106,6 +2401,48 @@ selectForRemoval(items, options)
       );
     });
 
+    it("filters Hermes-only presets from the OpenClaw policy-add picker", () => {
+      const result = runPolicyAdd("y", [], {}, "pypi", "openclaw");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const selectCall = calls.find((call) => call.type === "select");
+      expect(selectCall?.presets).toEqual(
+        expect.arrayContaining(["npm", "pypi", "discord", "openclaw-pricing"]),
+      );
+      expect(selectCall?.presets).not.toContain("nous-web");
+      expect(selectCall?.presets).not.toContain("nous-code");
+    });
+
+    it("rejects Hermes-only preset names for OpenClaw policy-add", () => {
+      const result = runPolicyAdd("y", ["nous-web", "--yes"], {}, "pypi", "openclaw");
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Unknown preset 'nous-web'/);
+      expect(result.stderr).toMatch(/Valid presets: npm, pypi, discord, openclaw-pricing/);
+      expect(result.stderr).not.toMatch(/nous-code/);
+    });
+
+    it("filters OpenClaw-only presets from the Hermes policy-add picker", () => {
+      const result = runPolicyAdd("y", [], {}, "pypi", "hermes");
+
+      expect(result.status).toBe(0);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      const selectCall = calls.find((call) => call.type === "select");
+      expect(selectCall?.presets).toEqual(
+        expect.arrayContaining(["npm", "pypi", "discord", "nous-web", "nous-code"]),
+      );
+      expect(selectCall?.presets).not.toContain("openclaw-pricing");
+    });
+
+    it("rejects OpenClaw-only preset names for Hermes policy-add", () => {
+      const result = runPolicyAdd("y", ["openclaw-pricing", "--yes"], {}, "pypi", "hermes");
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/Unknown preset 'openclaw-pricing'/);
+      expect(result.stderr).toMatch(/Valid presets: npm, pypi, discord, nous-web, nous-code/);
+    });
+
     it("warns the user that the telegram preset alone does not enable Telegram messaging", () => {
       const result = runPolicyAdd("y", [], {}, "telegram");
 
@@ -1114,6 +2451,50 @@ selectForRemoval(items, options)
         /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("warns the user that the wechat preset alone does not enable WeChat messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "wechat");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
+    });
+
+    it("prints Discord validation guidance from the interactive preset flow", () => {
+      const result = runPolicyAdd("y", [], {}, "discord");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toContain("https://discord.com/api/v10/gateway");
+      expect(result.stdout).toMatch(/dns\.resolve\("gateway\.discord\.gg"\)/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
+    });
+
+    it("prints Discord validation guidance when the preset name is provided", () => {
+      const result = runPolicyAdd("n", ["discord", "--yes"]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toMatch(/Node HTTPS/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls.some((call: PolicyCall) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {

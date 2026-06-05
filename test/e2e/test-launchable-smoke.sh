@@ -52,6 +52,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+source "${SCRIPT_DIR}/lib/openclaw-json.sh"
 
 PASS=0
 FAIL=0
@@ -249,6 +251,13 @@ section "Phase 3: Verify installation artifacts"
 # and Node.js via nodesource. On the GH runner the shell may not have
 # picked up the new PATH entries yet.
 export PATH="/usr/local/bin:$PATH"
+if [ "${GITHUB_ACTIONS:-}" = "true" ] \
+  && [ "${GITHUB_REPOSITORY:-}" = "NVIDIA/NemoClaw" ] \
+  && [ "${GITHUB_REF:-}" = "refs/heads/fix/native-messaging-websocket" ] \
+  && [ -n "${NEMOCLAW_OPENSHELL_BIN:-}" ]; then
+  main_openshell_dir="$(dirname "$NEMOCLAW_OPENSHELL_BIN")"
+  export PATH="$main_openshell_dir:$PATH"
+fi
 hash -r 2>/dev/null || true
 
 # 3a: nemoclaw on PATH and --help works
@@ -501,6 +510,9 @@ fi
 info "[LIVE] openclaw agent → openclaw HTTP client → inference.local..."
 ssh_config="$(mktemp)"
 agent_response=""
+agent_stderr=""
+agent_rc=0
+agent_stderr_file="$(mktemp)"
 
 if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
   agent_session_id="e2e-launchable-$(date +%s)-$$"
@@ -510,29 +522,21 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
-    "openclaw agent --agent main --json --session-id '${agent_session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
-    2>/dev/null) || true
+    "openclaw agent --agent main --json --thinking off --session-id '${agent_session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>"$agent_stderr_file") || agent_rc=$?
+  agent_stderr="$(<"$agent_stderr_file")"
+else
+  agent_rc=255
+  agent_stderr="failed to get SSH config for ${SANDBOX_NAME}"
 fi
-rm -f "$ssh_config"
+rm -f "$ssh_config" "$agent_stderr_file"
 
-agent_reply=$(echo "$agent_response" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/null) || true
 
 if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
 else
-  fail "[LIVE] openclaw agent: expected '42' in agent reply, got: ${agent_reply:0:200}"
+  fail "[LIVE] openclaw agent: expected '42' in agent reply; rc=${agent_rc}; reply='${agent_reply:0:200}'; stdout='${agent_response:0:300}'; stderr='${agent_stderr:0:300}'"
 fi
 
 # ══════════════════════════════════════════════════════════════════

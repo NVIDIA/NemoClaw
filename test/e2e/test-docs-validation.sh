@@ -4,7 +4,7 @@
 #
 # Docs Validation E2E — CLI/docs parity + markdown link validation
 #
-# Runs check-docs.sh to verify nemoclaw --help matches commands.md
+# Runs check-docs.sh to verify nemoclaw --help matches commands.mdx
 # and that markdown links resolve. No sandbox needed — just needs
 # nemoclaw installed.
 #
@@ -23,6 +23,8 @@
 #   bash test/e2e/test-docs-validation.sh
 #   CHECK_DOC_LINKS_REMOTE=0 bash test/e2e/test-docs-validation.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -97,7 +99,7 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 section "Phase 2: CLI / docs parity"
 
-info "Running check-docs.sh --only-cli (nemoclaw --help vs commands.md)..."
+info "Running check-docs.sh --only-cli (nemoclaw --help vs commands.mdx)..."
 set +e
 bash "${E2E_DIR}/e2e-cloud-experimental/check-docs.sh" --only-cli
 cli_rc=$?

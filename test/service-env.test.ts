@@ -7,13 +7,27 @@ import {
   execFileSync,
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
-import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+  unlinkSync,
+  readFileSync,
+  lstatSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
-import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const RC_CLEAN_SCRIPT = join(
+  import.meta.dirname,
+  "../scripts/lib/clean_runtime_shell_env_shim.py",
+);
+
+function rcShimWrapperHeader(): string {
+  return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
+}
 
 function extractRuntimeShellEnvSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
@@ -165,34 +179,6 @@ describe("service environment", () => {
     });
   });
 
-  describe("chat-filter module", () => {
-    it("parseAllowedChatIds parses comma-separated IDs with whitespace", () => {
-      expect(parseAllowedChatIds("111, 222 , 333")).toEqual(["111", "222", "333"]);
-    });
-
-    it("isChatAllowed filters blocked chat IDs", () => {
-      const allowed = parseAllowedChatIds("111,222");
-      expect(isChatAllowed(allowed, "111")).toBe(true);
-      expect(isChatAllowed(allowed, "222")).toBe(true);
-      expect(isChatAllowed(allowed, "333")).toBe(false);
-      expect(isChatAllowed(allowed, "999")).toBe(false);
-    });
-
-    it("parseAllowedChatIds handles single chat ID (no commas)", () => {
-      expect(parseAllowedChatIds("111")).toEqual(["111"]);
-    });
-
-    it("parseAllowedChatIds filters empty entries from trailing commas", () => {
-      expect(parseAllowedChatIds("111,,222,")).toEqual(["111", "222"]);
-    });
-
-    it("parseAllowedChatIds returns null when unset, isChatAllowed allows all", () => {
-      expect(parseAllowedChatIds(undefined)).toBeNull();
-      expect(parseAllowedChatIds("")).toBeNull();
-      expect(isChatAllowed(null, "anyid")).toBe(true);
-    });
-  });
-
   describe("GIT_SSL_CAINFO for proxy CA trust (issue #2270)", () => {
     const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
 
@@ -263,7 +249,6 @@ describe("service environment", () => {
           '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           "_TOOL_REDIRECTS=()",
           `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
-          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
           // Simulate OpenShell injecting SSL_CERT_FILE and the entrypoint setting GIT_SSL_CAINFO
           `export SSL_CERT_FILE="${fakeCaBundle}"`,
           `export GIT_SSL_CAINFO="${fakeCaBundle}"`,
@@ -303,7 +288,6 @@ describe("service environment", () => {
           '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           "_TOOL_REDIRECTS=()",
           `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
-          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
           // GIT_SSL_CAINFO intentionally NOT set
           "set +u  # array expansion safe on macOS bash",
           persistBlock
@@ -564,21 +548,40 @@ describe("service environment", () => {
       }
     });
 
-    it("backfills proxy-env.sh source shims into stale rc files", () => {
-      const fakeHome = join(tmpdir(), `nemoclaw-rc-shim-test-${process.pid}`);
+    it("removes legacy proxy-env.sh source shims from sandbox user rc files", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-test-"));
       const proxyEnvPath = join(fakeHome, "proxy-env.sh");
-      const tmpFile = join(tmpdir(), `nemoclaw-rc-shim-write-test-${process.pid}.sh`);
-      const runtimeEnvShim = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
+      const tmpFile = join(fakeHome, "rc-shim-write-test.sh");
       try {
-        execFileSync("mkdir", ["-p", fakeHome]);
-        writeFileSync(join(fakeHome, ".bashrc"), "# old bashrc\n", { mode: 0o644 });
-        writeFileSync(join(fakeHome, ".profile"), "# old profile\n", { mode: 0o444 });
+        writeFileSync(
+          join(fakeHome, ".bashrc"),
+          [
+            "# old bashrc",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "export PATH=/usr/local/bin:$PATH",
+            "",
+          ].join("\n"),
+          { mode: 0o644 },
+        );
+        writeFileSync(
+          join(fakeHome, ".profile"),
+          [
+            "# old profile",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "umask 022",
+            "",
+          ].join("\n"),
+          { mode: 0o444 },
+        );
 
         const wrapper = [
           "#!/usr/bin/env bash",
           `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
           `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
           "ensure_runtime_shell_env_shim",
         ].join("\n");
@@ -587,7 +590,9 @@ describe("service environment", () => {
 
         for (const rcName of [".bashrc", ".profile"]) {
           const rcFile = readFileSync(join(fakeHome, rcName), "utf-8");
-          expect(rcFile.split(runtimeEnvShim).length - 1).toBe(1);
+          expect(rcFile.toLowerCase()).not.toContain("proxy");
+          expect(rcFile).not.toContain(proxyEnvPath);
+          expect(rcFile).toContain(rcName === ".bashrc" ? "export PATH" : "umask 022");
         }
       } finally {
         try {
@@ -597,6 +602,291 @@ describe("service environment", () => {
         }
         try {
           execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("does not follow pre-planted legacy rc cleanup temp symlinks", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-symlink-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const sensitivePath = join(fakeHome, "sensitive");
+      const tmpFile = join(fakeHome, "rc-shim-symlink-test.sh");
+      try {
+        writeFileSync(
+          rcPath,
+          [
+            "# old bashrc",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "export PATH=/usr/local/bin:$PATH",
+            "",
+          ].join("\n"),
+          { mode: 0o644 },
+        );
+        writeFileSync(sensitivePath, "SECRET\n", { mode: 0o600 });
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          'legacy_tmp="${_SANDBOX_HOME}/.bashrc.nemoclaw-clean.$$"',
+          `ln -s ${JSON.stringify(sensitivePath)} "$legacy_tmp"`,
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(readFileSync(sensitivePath, "utf-8")).toBe("SECRET\n");
+        const rcFile = readFileSync(rcPath, "utf-8");
+        expect(rcFile.toLowerCase()).not.toContain("proxy");
+        expect(rcFile).not.toContain(proxyEnvPath);
+        expect(rcFile).toContain("export PATH");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("cleans rc shims without shell chown/chmod on the rc path", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-no-path-chmod-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const tmpFile = join(fakeHome, "rc-shim-no-path-chmod-test.sh");
+      try {
+        writeFileSync(
+          rcPath,
+          [
+            "# old bashrc",
+            "# Source runtime proxy config",
+            `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+            "",
+          ].join("\n"),
+          { mode: 0o644 },
+        );
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          'chown() { echo "unexpected chown $*" >&2; exit 42; }',
+          'chmod() { echo "unexpected chmod $*" >&2; exit 43; }',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        const rcFile = readFileSync(rcPath, "utf-8");
+        expect(rcFile.toLowerCase()).not.toContain("proxy");
+        expect(rcFile).not.toContain(proxyEnvPath);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("does not rewrite locked clean rc files", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-clean-locked-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const profilePath = join(fakeHome, ".profile");
+      const tmpFile = join(tmpdir(), `rc-shim-clean-locked-test-${process.pid}.sh`);
+      try {
+        writeFileSync(rcPath, "# clean bashrc\n", { mode: 0o444 });
+        writeFileSync(profilePath, "# clean profile\n", { mode: 0o444 });
+        execFileSync("chmod", ["555", fakeHome]);
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(readFileSync(rcPath, "utf-8")).toBe("# clean bashrc\n");
+        expect(readFileSync(profilePath, "utf-8")).toBe("# clean profile\n");
+      } finally {
+        try {
+          execFileSync("chmod", ["755", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    const itOnProcFd = existsSync("/proc/self/fd") ? it : it.skip;
+    itOnProcFd("removes legacy rc shims without directory write permission", () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-shim-unwritable-dir-test-"));
+      const proxyEnvPath = join(fakeHome, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const profilePath = join(fakeHome, ".profile");
+      const tmpFile = join(tmpdir(), `rc-shim-unwritable-dir-test-${process.pid}.sh`);
+      try {
+        for (const rcPathToWrite of [rcPath, profilePath]) {
+          writeFileSync(
+            rcPathToWrite,
+            [
+              "# old rc",
+              "# Source runtime proxy config",
+              `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`,
+              "export PATH=/usr/local/bin:$PATH",
+              "",
+            ].join("\n"),
+            { mode: 0o444 },
+          );
+        }
+        execFileSync("chmod", ["555", fakeHome]);
+
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
+          extractRuntimeShellEnvShimSnippet(),
+          "ensure_runtime_shell_env_shim",
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        for (const rcPathToRead of [rcPath, profilePath]) {
+          const rcFile = readFileSync(rcPathToRead, "utf-8");
+          expect(rcFile.toLowerCase()).not.toContain("proxy");
+          expect(rcFile).not.toContain(proxyEnvPath);
+          expect(rcFile).toContain("export PATH");
+        }
+      } finally {
+        try {
+          execFileSync("chmod", ["755", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeHome]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    // Composed startup invariant: write_runtime_shell_env emits the proxy
+    // env file with mode 444, ensure_runtime_shell_env_shim then sees a
+    // foreign-owned .bashrc and must exit 0 (otherwise the entrypoint would
+    // terminate the container with exit code 1). The composed assertion
+    // proves the legacy trust-boundary file remains non-user-writable
+    // across the skip path.
+    it("composed startup leaves the proxy env file at mode 444 when the rc cleanup skips a foreign-owned rc file", () => {
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-composed-"));
+      const fakeHome = mkdtempSync(join(tmpdir(), "nemoclaw-rc-skip-home-"));
+      const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
+      const rcPath = join(fakeHome, ".bashrc");
+      const tmpFile = join(tmpdir(), `nemoclaw-rc-skip-composed-${process.pid}.sh`);
+      try {
+        const shimLine = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
+        const originalBashrc = [
+          "# user-managed bashrc owned by a foreign uid (e.g. root)",
+          "# Source runtime proxy config",
+          shimLine,
+          "export PATH=/usr/local/bin:$PATH",
+          "",
+        ].join("\n");
+        writeFileSync(rcPath, originalBashrc, { mode: 0o644 });
+
+        const persistBlock = extractRuntimeShellEnvSnippet()
+          .trimEnd()
+          .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnvPath);
+        // Foreign uid that does not match the test-runner's actual file owner.
+        // Overriding `id -u` for the bash function-level shim invocation is
+        // the cheapest way to drive the "uid != owner" branch without root.
+        const foreignUid = (process.getuid?.() ?? 1000) + 99999;
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          sandboxInitSource,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          "_TOOL_REDIRECTS=()",
+          `_AXIOS_FIX_SCRIPT="/nonexistent/axios-proxy-fix.js"`,
+          `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
+          `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
+          `_RUNTIME_SHELL_ENV_SHIM="[ -f \${_RUNTIME_SHELL_ENV_FILE} ] && . \${_RUNTIME_SHELL_ENV_FILE}"`,
+          rcShimWrapperHeader(),
+          // Override `id -u` BEFORE the entrypoint snippets are sourced so the
+          // function-shadow is in place when both write_runtime_shell_env and
+          // ensure_runtime_shell_env_shim consult `$(id -u)`.
+          `id() { case "\${1:-}" in -u) echo ${foreignUid};; *) command id "$@";; esac; }`,
+          "set +u",
+          persistBlock,
+          extractRuntimeShellEnvShimSnippet(),
+          "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const result = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+
+        expect(result).not.toContain("[SECURITY] " + proxyEnvPath + " has unsafe permissions");
+
+        const finalMode = (lstatSync(proxyEnvPath).mode & 0o777).toString(8);
+        expect(finalMode).toBe("444");
+
+        const rcAfter = readFileSync(rcPath, "utf-8");
+        expect(rcAfter).toBe(originalBashrc);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir, fakeHome]);
         } catch {
           /* ignore */
         }
@@ -791,7 +1081,6 @@ describe("service environment", () => {
           "NODE_USE_ENV_PROXY=1",
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="${fakeFixPath}"`,
-          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
           `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
@@ -835,7 +1124,6 @@ describe("service environment", () => {
           // NODE_USE_ENV_PROXY intentionally NOT set
           "_TOOL_REDIRECTS=()",
           `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
-          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
           `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
           "set +u  # array expansion safe on macOS bash",
           persistBlock
@@ -846,11 +1134,10 @@ describe("service environment", () => {
         execFileSync("bash", [tmpFile], { encoding: "utf-8" });
 
         const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        // Proxy and ws fix preloads should NOT be injected when NODE_USE_ENV_PROXY
-        // is not 1 and ws fix script does not exist. The Nemotron inference fix is
+        // Proxy preloads should NOT be injected when NODE_USE_ENV_PROXY
+        // is not 1. The Nemotron inference fix is
         // unconditional (always needed regardless of proxy config).
         expect(envFile).not.toContain("http-proxy-fix");
-        expect(envFile).not.toContain("ws-proxy-fix");
         expect(envFile).toContain("nemotron-inference-fix");
       } finally {
         try {
@@ -861,200 +1148,5 @@ describe("service environment", () => {
       }
     });
 
-    it("NemoClaw#1570: proxy-env.sh includes ws-proxy-fix NODE_OPTIONS when fix script exists", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-ws-fix-test-${process.pid}`);
-      const fakeWsFixScript = join(fakeDataDir, "ws-proxy-fix.js");
-      execFileSync("mkdir", ["-p", fakeDataDir]);
-      const tmpFile = join(tmpdir(), `nemoclaw-ws-fix-env-${process.pid}.sh`);
-      try {
-        const persistBlock = extractRuntimeShellEnvSnippet();
-        const wrapper = [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          sandboxInitSource,
-          `PROXY_HOST="10.200.0.1"`,
-          `PROXY_PORT="3128"`,
-          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
-          `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
-          `_WS_FIX_SCRIPT="${fakeWsFixScript}"`,
-          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
-          `_TOOL_REDIRECTS=()`,
-          "set +u  # array expansion safe on macOS bash",
-          persistBlock
-            .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
-        ].join("\n");
-        writeFileSync(fakeWsFixScript, "// fake", { mode: 0o644 });
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-
-        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).toContain("NODE_OPTIONS");
-        expect(envFile).toContain("--require");
-        expect(envFile).toContain(fakeWsFixScript);
-      } finally {
-        try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-
-    it("NemoClaw#1570: proxy-env.sh omits ws-proxy-fix when script does not exist", () => {
-      const fakeDataDir = join(tmpdir(), `nemoclaw-ws-noop-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
-      const tmpFile = join(tmpdir(), `nemoclaw-ws-noop-env-${process.pid}.sh`);
-      try {
-        const persistBlock = extractRuntimeShellEnvSnippet();
-        const wrapper = [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          sandboxInitSource,
-          `PROXY_HOST="10.200.0.1"`,
-          `PROXY_PORT="3128"`,
-          `_PROXY_URL="http://\${PROXY_HOST}:\${PROXY_PORT}"`,
-          `_NO_PROXY_VAL="localhost,127.0.0.1,::1,\${PROXY_HOST}"`,
-          `_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"`,
-          `_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"`,
-          `_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"`,
-          `_TOOL_REDIRECTS=()`,
-          "set +u  # array expansion safe on macOS bash",
-          persistBlock
-            .trimEnd()
-            .replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
-        ].join("\n");
-        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        execFileSync("bash", [tmpFile], { encoding: "utf-8" });
-
-        const envFile = readFileSync(join(fakeDataDir, "proxy-env.sh"), "utf-8");
-        expect(envFile).not.toContain("ws-proxy-fix");
-      } finally {
-        try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
-        } catch {
-          /* ignore */
-        }
-      }
-    });
-  });
-
-  describe("ws-proxy-fix preload (issue #1570)", () => {
-    const wsFixPath = join(import.meta.dirname, "../nemoclaw-blueprint/scripts/ws-proxy-fix.js");
-
-    it("patches https.request when HTTPS_PROXY is set", () => {
-      const result = execFileSync(
-        "node",
-        ["--require", wsFixPath, "-e", "console.log(require('https').request.name)"],
-        {
-          encoding: "utf-8",
-          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
-        },
-      ).trim();
-      expect(result).toBe("wsProxyFixedRequest");
-    });
-
-    it("is a no-op when HTTPS_PROXY is unset", () => {
-      const env = { ...process.env };
-      delete env.HTTPS_PROXY;
-      delete env.https_proxy;
-      const result = execFileSync(
-        "node",
-        ["--require", wsFixPath, "-e", "console.log(require('https').request.name)"],
-        { encoding: "utf-8", env },
-      ).trim();
-      expect(result).not.toBe("wsProxyFixedRequest");
-    });
-
-    it("is idempotent — loading twice does not double-patch", () => {
-      const result = execFileSync(
-        "node",
-        [
-          "--require",
-          wsFixPath,
-          "-e",
-          `require("${wsFixPath}"); console.log(require('https').request.name)`,
-        ],
-        {
-          encoding: "utf-8",
-          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
-        },
-      ).trim();
-      expect(result).toBe("wsProxyFixedRequest");
-    });
-
-    it("strips port from opts.host to avoid double-port CONNECT path", () => {
-      // When callers pass host:"gateway.discord.gg:443" instead of hostname,
-      // the CONNECT target must be "gateway.discord.gg:443" not
-      // "gateway.discord.gg:443:443".
-      const result = execFileSync(
-        "node",
-        [
-          "--require",
-          wsFixPath,
-          "-e",
-          `
-const https = require("https");
-const http = require("http");
-// Intercept http.request to capture the CONNECT path, then abort immediately
-http.request = function(opts) {
-  if (opts.method === "CONNECT") {
-    console.log(opts.path);
-    process.exit(0);
-  }
-  return http.__proto__.request.apply(this, arguments);
-};
-const req = https.request({
-  host: "gateway.discord.gg:443",
-  path: "/?v=10&encoding=json",
-  headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Key": "dGVzdA==", "Sec-WebSocket-Version": "13" },
-});
-req.on("error", () => {});
-req.end();
-          `,
-        ],
-        {
-          encoding: "utf-8",
-          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
-        },
-      ).trim();
-      expect(result).toBe("gateway.discord.gg:443");
-      expect(result).not.toContain("443:443");
-    });
-
-    it("ignores non-Discord WebSocket upgrades", () => {
-      const result = execFileSync(
-        "node",
-        [
-          "--require",
-          wsFixPath,
-          "-e",
-          `
-const https = require("https");
-const http = require("http");
-let sawConnect = false;
-http.request = function(opts) {
-  if (opts.method === "CONNECT") sawConnect = true;
-  return http.__proto__.request.apply(this, arguments);
-};
-const req = https.request({
-  hostname: "echo.websocket.org",
-  path: "/",
-  headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Key": "dGVzdA==", "Sec-WebSocket-Version": "13" },
-});
-req.on("error", () => {});
-req.destroy();
-console.log(sawConnect ? "CONNECT" : "NO_CONNECT");
-          `,
-        ],
-        {
-          encoding: "utf-8",
-          env: { ...process.env, HTTPS_PROXY: "http://10.200.0.1:3128" },
-        },
-      ).trim();
-      // Non-Discord host should NOT trigger the CONNECT tunnel
-      expect(result).toBe("NO_CONNECT");
-    });
   });
 });

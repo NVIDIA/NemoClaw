@@ -9,7 +9,7 @@
 
 import { DASHBOARD_PORT } from "../core/ports";
 import { shellQuote } from "../runner";
-import * as onboardSession from "../onboard-session";
+import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { loadAgent, type AgentDefinition } from "./defs";
 
@@ -143,18 +143,42 @@ function gatewayLaunchCommand(command: string, runAsUser?: string): string {
 }
 
 function hermesGatewayEnvPrefix(): string {
-  const decodeProxy = "http://127.0.0.1:3129";
-  return [
-    "HERMES_HOME=/sandbox/.hermes",
-    `HTTPS_PROXY=${decodeProxy}`,
-    `HTTP_PROXY=${decodeProxy}`,
-    `https_proxy=${decodeProxy}`,
-    `http_proxy=${decodeProxy}`,
-  ].join(" ");
+  return "HERMES_HOME=/sandbox/.hermes";
 }
 
-function hermesDecodeProxyRecoveryCommand(): string {
-  return 'if ! command -v ss >/dev/null 2>&1 || ! ss -tln 2>/dev/null | grep -q "127.0.0.1:3129"; then nohup python3 /usr/local/bin/nemoclaw-decode-proxy >/dev/null 2>&1 & for _i in 1 2 3 4 5 6 7 8 9 10; do ! command -v ss >/dev/null 2>&1 || ss -tln 2>/dev/null | grep -q "127.0.0.1:3129" && break; sleep 0.5; done; fi;';
+export interface HermesDashboardRecoveryConfig {
+  publicPort: number;
+  internalPort: number;
+  tuiEnabled?: boolean;
+}
+
+function buildHermesDashboardRecoveryLines(config: HermesDashboardRecoveryConfig): string[] {
+  const tuiFlag = config.tuiEnabled ? " --tui" : "";
+  const dashboardLogSelection =
+    '_DASHBOARD_LOG=/tmp/hermes-dashboard.log; if ! : >> "$_DASHBOARD_LOG" 2>/dev/null; then _DASHBOARD_LOG=/tmp/hermes-dashboard-recovery.log; : >> "$_DASHBOARD_LOG" 2>/dev/null || true; fi;';
+  return [
+    `_DASH_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${config.internalPort}/ 2>/dev/null || echo 000); case "$_DASH_CODE" in 200|301|302|307|308) echo DASHBOARD_ALREADY_RUNNING; ;; *)`,
+    `${buildNoFollowLogSetupCommand("/tmp/hermes-dashboard.log")} || exit 1;`,
+    dashboardLogSelection,
+    "_DASHBOARD_PROC_PATTERN='[h]ermes[[:space:]]+dashboard([[:space:]]|$)';",
+    'pkill -TERM -f "$_DASHBOARD_PROC_PATTERN" 2>/dev/null || true; sleep 1; pkill -KILL -f "$_DASHBOARD_PROC_PATTERN" 2>/dev/null || true;',
+    `${hermesGatewayEnvPrefix()} nohup "$AGENT_BIN" dashboard --host 127.0.0.1 --port ${config.internalPort} --skip-build --no-open${tuiFlag} >> "$_DASHBOARD_LOG" 2>&1 &`,
+    "DPID=$!; sleep 2;",
+    'if kill -0 "$DPID" 2>/dev/null; then echo "DASHBOARD_PID=$DPID"; else echo DASHBOARD_FAILED; tail -5 "$_DASHBOARD_LOG" 2>/dev/null; exit 1; fi ;; esac;',
+  ];
+}
+
+export function buildHermesDashboardProcessRecoveryScript(
+  config: HermesDashboardRecoveryConfig,
+): string {
+  return [
+    "[ -f ~/.bashrc ] && . ~/.bashrc;",
+    "export HERMES_HOME=/sandbox/.hermes;",
+    'if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;',
+    'AGENT_BIN=/usr/local/bin/hermes; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v hermes)"; fi;',
+    'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
+    ...buildHermesDashboardRecoveryLines(config),
+  ].join(" ");
 }
 
 /**
@@ -187,7 +211,11 @@ export function buildOpenClawRecoveryScript(port: number): string {
  * Returns the script string, or null if agent is null (use existing inline
  * OpenClaw script instead).
  */
-export function buildRecoveryScript(agent: AgentDefinition | null, port: number): string | null {
+export function buildRecoveryScript(
+  agent: AgentDefinition | null,
+  port: number,
+  options: { hermesDashboard?: HermesDashboardRecoveryConfig | null } = {},
+): string | null {
   if (!agent) return null;
 
   const probeUrl = getHealthProbeUrl(agent);
@@ -223,7 +251,7 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
 
   // Source /tmp/nemoclaw-proxy-env.sh immediately before launching. That file
   // is the single source of truth for NODE_OPTIONS preload guards (safety-net,
-  // ciao networkInterfaces, slack, http-proxy, ws-proxy, nemotron). Recovery
+  // ciao networkInterfaces, slack, http-proxy, nemotron). Recovery
   // also stops stale launcher/gateway processes that may have respawned
   // between the health probe and relaunch. A missing env file remains warning-
   // only; a present env file that does not install required guards is a hard
@@ -241,10 +269,12 @@ export function buildRecoveryScript(agent: AgentDefinition | null, port: number)
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
     '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
     '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
-    isHermes ? hermesDecodeProxyRecoveryCommand() : "",
     launchCommand,
     "GPID=$!; sleep 2;",
-    'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; fi',
+    'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; exit 1; fi',
+    ...(isHermes && options.hermesDashboard
+      ? buildHermesDashboardRecoveryLines(options.hermesDashboard)
+      : []),
   ].join(" ");
 }
 
@@ -274,6 +304,5 @@ export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: 
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
-  const decodeProxySetup = isHermes ? `${hermesDecodeProxyRecoveryCommand()} ` : "";
-  return `${buildGatewayLogSelection()} ${decodeProxySetup}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
+  return `${buildGatewayLogSelection()} ${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
 }

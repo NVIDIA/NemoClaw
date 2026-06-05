@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args } from "@oclif/core";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { runSetupDnsProxy } from "../../../lib/actions/dns";
 
-export default class InternalDnsSetupProxyCommand extends Command {
+export default class InternalDnsSetupProxyCommand extends NemoClawCommand {
   static hidden = true;
   static strict = true;
   static summary = "Internal: configure sandbox DNS proxy";
@@ -17,15 +18,11 @@ export default class InternalDnsSetupProxyCommand extends Command {
     sandboxName: Args.string({ description: "Sandbox name", required: true }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {
     const { args } = await this.parse(InternalDnsSetupProxyCommand);
     const result = runSetupDnsProxy({ gatewayName: args.gatewayName, sandboxName: args.sandboxName });
-    if (result.exitCode !== 0) {
-      if (result.message) console.error(result.message);
-      process.exit(result.exitCode);
-    }
+    this.applyExitResult(result);
   }
 }

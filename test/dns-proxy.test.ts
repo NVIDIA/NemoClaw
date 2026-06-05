@@ -57,7 +57,8 @@ shift # cluster name
 shift # kubectl
 cmd="$*"
 case "$cmd" in
-  *"get endpoints kube-dns"*) echo "10.43.0.10"; exit 0 ;;
+  *"get service kube-dns"*) echo "10.43.0.10"; exit 0 ;;
+  *"get endpoints kube-dns"*) echo "10.42.0.15"; exit 0 ;;
   *"get pods -n openshell -o name"*) echo "pod/box[1]-abc"; exit 0 ;;
   *"ip addr show"*) echo "10.200.0.1"; exit 0 ;;
   *"cat /tmp/dns-proxy.pid"*) echo "12345"; exit 0 ;;
@@ -89,7 +90,8 @@ exit 0
       expect(output).toContain("DNS verification: 4 passed, 0 failed");
 
       const calls = fs.readFileSync(dockerLog, "utf-8");
-      expect(calls).toContain("get endpoints kube-dns");
+      expect(calls).toContain("get service kube-dns");
+      expect(calls).not.toContain("get endpoints kube-dns");
       expect(calls).toContain("kube-system");
       expect(calls).toContain("nohup python3 -u /tmp/dns-proxy.py");
       expect(calls).toContain("10.43.0.10");

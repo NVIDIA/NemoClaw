@@ -99,8 +99,8 @@ if [ -z "${NVIDIA_API_KEY:-}" ]; then
 fi
 pass "NVIDIA_API_KEY is set"
 
-if ! command -v openshell >/dev/null 2>&1; then
-  info "openshell not found; running install"
+if ! command -v openshell >/dev/null 2>&1 || ! command -v nemoclaw >/dev/null 2>&1; then
+  info "openshell or nemoclaw not found; running install"
   bash "$REPO/install.sh" --yes-i-accept-third-party-software \
     >/tmp/nemoclaw-e2e-install.log 2>&1 || {
     fail "install.sh failed; see /tmp/nemoclaw-e2e-install.log"

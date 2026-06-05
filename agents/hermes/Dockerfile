@@ -28,23 +28,35 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
+# builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
+# bypassing SSL_CERT_FILE. Symlink certifi's bundle at SSL_CERT_FILE so
+# weixin TLS trusts the OpenShell L7 proxy CA. Done at image build (as
+# root, which has write perms on the venv) because at runtime root doesn't
+# see SSL_CERT_FILE and the gateway user can't write the venv.
+# The target doesn't need to exist at build time — OpenShell mounts it at
+# sandbox start; the forward-referencing symlink resolves then.
+ARG SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem
+# hadolint ignore=DL3059
+RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(certifi.where())') \
+    && ln -sf "$SSL_CERT_FILE" "$_hermes_certifi"
+
 # Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
-# transport when a proxy is present. The sandbox proxy chain
-# (decode-proxy → OpenShell L7 proxy) handles credential placeholder
-# rewriting and hostname-based policy enforcement. No monkey patch needed.
+# transport when a proxy is present. OpenShell handles REST credential
+# placeholder rewriting, hostname-based policy enforcement, and native
+# WebSocket credential rewrite at the egress boundary.
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generator and URL-decode proxy
+# Copy config generator
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
-COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
-RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -60,6 +72,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+ARG NEMOCLAW_INFERENCE_API=openai-completions
 # CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
 # Hermes this URL points at the OpenAI-compatible API server (port 8642,
 # exposing /v1 and /health), NOT a browser chat UI. Callers authenticate
@@ -70,17 +83,33 @@ ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+# Captured by NemoClaw's host-side iLink QR login during onboard (see
+# src/lib/onboard/wechat-config.ts). Carries {accountId, baseUrl, userId} so
+# the Hermes WeChat adapter starts with WEIXIN_ACCOUNT_ID/WEIXIN_BASE_URL
+# already populated from .env; no in-sandbox QR re-scan. The token itself
+# is never baked here — it flows through the OpenShell L7 proxy via the
+# WECHAT_BOT_TOKEN credential slot.
+ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
+ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
+ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
+    NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64}
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -100,18 +129,28 @@ RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
     && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
 
-# Write a default SOUL.md for the sandboxed agent.
+# Write the default SOUL.md (agent identity) for the sandboxed agent.
+# This is the stock Hermes default soul (hermes_cli/default_soul.py,
+# DEFAULT_SOUL_MD) shipped verbatim. The OpenShell/NemoClaw environment is
+# described separately via HERMES_ENVIRONMENT_HINT (below), which Hermes
+# appends to the system prompt's environment-hints block — the correct slot
+# for execution-environment facts, keeping the identity slot unmodified.
 RUN mkdir -p /sandbox/.hermes/memories \
-    && printf '%s\n' \
-    'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
-    'Your inference is routed through NemoClaw. You have access to terminal,' \
-    'file, and web tools. Be concise and helpful.' \
+    && printf '%s' \
+    'You are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below. Be targeted and efficient in your exploration and investigations.' \
     > /sandbox/.hermes/SOUL.md
 
-# Set mutable-default permissions (640/750 sandbox:sandbox).
+# Describe the execution environment via Hermes's dedicated environment-hint
+# mechanism (agent/prompt_builder.py:build_environment_hints). This lands in
+# the system prompt's environment slot, not the identity slot, and is read once
+# at prompt-build time so it stays in the cache-safe portion of the prompt.
+ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox, with inference routed through NemoClaw. Your terminal, file, and web tools execute against the sandbox filesystem and egress through the OpenShell L7 proxy, which enforces network policy and rewrites credentials at the boundary, so you never see raw secrets. Your config and memory live under /sandbox/.hermes and are mutable unless shields are up. Work within the sandbox boundary."
+
+# Set mutable-default permissions (640 files, 3770 config root).
 # The sandbox user can write config; the gateway user can read it via
-# supplementary sandbox-group membership. Shields-up applies 444 root:root +
-# chattr +i.
+# supplementary sandbox-group membership and create Hermes v0.14 runtime dirs
+# without being able to remove sticky-protected config files. Shields-up applies
+# 444 root:root + chattr +i.
 # hadolint ignore=DL3002
 USER root
 # Flatten stale published base images that still contain the old .hermes-data
@@ -188,12 +227,21 @@ RUN set -eu; \
         "$config_dir/plugins" \
         "$config_dir/cron" \
         "$config_dir/logs" \
+        "$config_dir/logs/curator" \
         "$config_dir/skins" \
         "$config_dir/plans" \
         "$config_dir/workspace" \
         "$config_dir/profiles" \
         "$config_dir/cache" \
+        "$config_dir/hooks" \
+        "$config_dir/image_cache" \
+        "$config_dir/audio_cache" \
         "$config_dir/pairing" \
+        "$config_dir/platforms" \
+        "$config_dir/platforms/whatsapp" \
+        "$config_dir/platforms/whatsapp/session" \
+        "$config_dir/weixin" \
+        "$config_dir/weixin/accounts" \
         "$config_dir/runtime"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
@@ -219,7 +267,7 @@ RUN set -eu; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox /sandbox/.hermes/runtime \
-    && chmod 750 /sandbox/.hermes \
+    && chmod 3770 /sandbox/.hermes \
     && chmod 770 \
         /sandbox/.hermes/memories \
         /sandbox/.hermes/sessions \
@@ -227,20 +275,36 @@ RUN set -eu; \
         /sandbox/.hermes/plugins \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/skins \
         /sandbox/.hermes/plans \
         /sandbox/.hermes/workspace \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/weixin \
+        /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
+    && chmod 2770 \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
-    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+    && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \
@@ -254,6 +318,16 @@ RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
     && chmod 600 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
+
+# OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
+# the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
+# that repair walks the trusted rc files too; keep this Darwin-only so Linux
+# Docker-driver sandboxes retain the tighter default permissions.
+RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        chmod -R a+rwX /sandbox/.hermes; \
+        find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
+    fi
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.

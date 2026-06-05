@@ -50,7 +50,7 @@ git log -50 --oneline --no-merges
 
 Filter to commits that are likely to affect docs. Apply every rule below before proceeding. A commit excluded by any rule must not produce doc changes.
 
-1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes. `chore`, `ci`, `test` commits rarely need doc updates.
+1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes, but still need a review pass when they fall in the scanned range.
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
 4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
@@ -67,18 +67,20 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 
 | Code area | Likely doc page(s) |
 |---|---|
-| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.md` |
-| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.md` |
-| `nemoclaw/src/blueprint/` | `docs/about/architecture.md` |
-| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.md`, `docs/get-started/quickstart.md` |
-| `nemoclaw-blueprint/orchestrator/` | `docs/about/architecture.md` |
-| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.md` |
-| `nemoclaw-blueprint/blueprint.yaml` | `docs/about/architecture.md`, `docs/reference/inference-profiles.md` |
-| `scripts/` (setup, start) | `docs/get-started/quickstart.md` |
-| `Dockerfile` | `docs/about/architecture.md` |
-| Inference-related changes | `docs/reference/inference-profiles.md` |
+| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.mdx` |
+| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.mdx` |
+| `nemoclaw/src/blueprint/` | `docs/reference/architecture.mdx` |
+| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.mdx`, `docs/get-started/quickstart.mdx` |
+| `nemoclaw-blueprint/orchestrator/` | `docs/reference/architecture.mdx` |
+| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.mdx` |
+| `nemoclaw-blueprint/blueprint.yaml` | `docs/reference/architecture.mdx`, `docs/inference/inference-options.mdx` |
+| `scripts/` (setup, start) | `docs/get-started/quickstart.mdx` |
+| `Dockerfile` | `docs/reference/architecture.mdx` |
+| Inference-related changes | `docs/inference/inference-options.mdx` |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
+If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
+Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
 
 ## Step 3: Read the Commit Details
 
@@ -98,6 +100,7 @@ Extract:
 ## Step 4: Read the Current Doc Page
 
 Before editing, read the full target doc page to understand its current content and structure.
+For target pages that were already changed by a scanned commit, compare the committed doc diff against the source behavior and the style guidance before deciding whether to edit further.
 
 Identify where the new content should go. Follow the page's existing structure.
 
@@ -112,7 +115,10 @@ Write the doc update following these conventions:
 - **No em dashes** unless used sparingly. Prefer commas or separate sentences.
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
-- **Code examples use `console` language** with `$` prompt prefix.
+- **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
+- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In shared OpenClaw/Hermes variant pages, write host CLI examples with the `$$nemoclaw` build-time placeholder so the docs build renders `nemoclaw` on OpenClaw pages and `nemohermes` on Hermes pages before Fern renders fenced code blocks.
+- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when the only difference is `nemoclaw` versus `nemohermes`; keep `<AgentOnly>` only when the surrounding text, flags, behavior, or setup steps actually differ.
+- **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
 - **Include the SPDX header** if creating a new page.
 - **Match existing frontmatter format** if creating a new page.
 - **Always write NVIDIA in all caps.** Wrong: Nvidia, nvidia.
@@ -128,10 +134,17 @@ When updating an existing page:
 - Do not reorganize sections unless the change requires it.
 - Update any cross-references or "Next Steps" links if relevant.
 
+**Release prep only:** When updating `docs/about/release-notes.mdx`:
+
+- For each release-note bullet that corresponds to a deeper doc page, end the bullet with `For more information, refer to [DOC PAGE](/doc/path).`
+- Link to the most specific existing page that explains the behavior, command, setup flow, or troubleshooting path.
+- Do not add a link when no deeper page exists or when the only possible target is unrelated or too broad.
+- Keep the source docs link as a normal MDX link. The docs-to-skills generator will convert it to the appropriate generated skill reference where needed.
+
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
-- Add the page to the appropriate `toctree` in `docs/index.md`.
+- Add the page to the appropriate navigation entry in `docs/index.yml`.
 
 ## Step 6: Present the Results
 
@@ -141,8 +154,8 @@ After drafting all updates, present a summary to the user:
 ## Doc Updates from Commits
 
 ### Updated pages
-- `docs/reference/commands.md`: Added `eject` command documentation (from commit abc1234).
-- `docs/reference/network-policies.md`: Updated policy schema for new egress rule (from commit def5678).
+- `docs/reference/commands.mdx`: Added `eject` command documentation (from commit abc1234).
+- `docs/reference/network-policies.mdx`: Updated policy schema for new egress rule (from commit def5678).
 
 ### New pages needed
 - None (or list any new pages created).
@@ -161,11 +174,11 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Make any requested doc version bumps in `versions1.json` and `project.json` in the `docs/` directory.
+1. Determine the release label from the release version requested by the user. Release labels use `vX.Y.Z` format. For example, release `0.0.37` uses label `v0.0.37`. If the user did not provide a release version, ask for it before opening the release-prep PR.
 2. Refresh the NemoClaw user skills:
 
    ```bash
-   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
    ```
 
 ## Step 9: Build and Verify
@@ -173,7 +186,7 @@ If the user invoked this skill for release prep, finish the release-specific doc
 After making changes, build the docs locally:
 
 ```bash
-make docs
+npm run docs
 ```
 
 Check for:
@@ -188,10 +201,12 @@ Check for:
 Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
 ```markdown
-- #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
+- #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `documentation` label so reviewers can identify doc-only changes.
+Apply the `area: docs`, `area: skills`, and corresponding release labels so reviewers can identify doc-only changes for the target release and generated skill updates.
+When creating the PR with `gh pr create`, pass all labels, for example `--label "area: docs" --label "area: skills" --label v0.0.37`.
+If the release label does not exist, report that instead of substituting another label.
 
 ## Tips
 
@@ -201,7 +216,7 @@ Apply the `documentation` label so reviewers can identify doc-only changes.
 - PRs that are purely internal refactors with no behavior change do not need doc updates, even if they touch high-signal directories.
 - To suppress documentation for a merged feature that is not ready for public docs, add it to `docs/.docs-skip`. Remove the entry once the feature is ready to document.
 
-## Example Usage
+## Summary of Steps
 
 User says: "Catch up the docs for everything merged since v0.1.0."
 
@@ -210,14 +225,14 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
-6. **Release prep only:** Apply release-prep version bumps if the user requested release prep.
-7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
+6. **Release prep only:** Determine the release label from the user-requested release version.
+7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
-9. Build with `make docs` to verify.
-10. **Release prep only:** Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+9. Build with `npm run docs` to verify.
+10. **Release prep only:** Commit changes and open a pull request with the `area: docs`, `area: skills`, and corresponding `vX.Y.Z` release labels. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
-   - #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
+   - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-11.Apply the `documentation` label so reviewers can identify doc-only changes.
+   If the release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.

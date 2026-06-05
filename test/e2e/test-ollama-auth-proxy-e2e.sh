@@ -22,6 +22,8 @@
 #
 # Triggered via workflow_dispatch (manual) or as part of nightly.
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -56,9 +58,13 @@ section() {
 
 # shellcheck disable=SC2329 # invoked via trap
 cleanup() {
-  [ -n "${PROXY_PID:-}" ] && kill "$PROXY_PID" 2>/dev/null || true
+  if [ -n "${PROXY_PID:-}" ]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+  fi
   # Don't kill system Ollama — only kill if we started it
-  [ -n "${OLLAMA_PID:-}" ] && kill "$OLLAMA_PID" 2>/dev/null || true
+  if [ -n "${OLLAMA_PID:-}" ]; then
+    kill "$OLLAMA_PID" 2>/dev/null || true
+  fi
   rm -rf "$TOKEN_DIR"
 }
 trap cleanup EXIT
@@ -159,10 +165,14 @@ OLLAMA_PROXY_TOKEN="$TOKEN" \
 PROXY_PID=$!
 sleep 2
 
-if curl -sf "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on 0.0.0.0:${PROXY_PORT}"
+# Liveness probe: any response means the proxy is up. After #3338 unauth
+# requests to /api/tags get 401, so we just verify a real HTTP status was
+# returned (any 3-digit code, not 000 = no response).
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PROXY_PORT}/api/tags")
+if [[ "$STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on 0.0.0.0:${PROXY_PORT} (HTTP $STATUS)"
 else
-  fail "Auth proxy failed to start"
+  fail "Auth proxy failed to start (no HTTP response: '$STATUS')"
   exit 1
 fi
 
@@ -202,22 +212,22 @@ else
   fail "Expected 200 for correct token, got $STATUS"
 fi
 
-# 4d: Health check GET /api/tags without auth → 200 (exempt)
+# 4d: GET /api/tags without auth → 401 (no health-check bypass — #3338)
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   "http://127.0.0.1:${PROXY_PORT}/api/tags")
-if [ "$STATUS" = "200" ]; then
-  pass "GET /api/tags without auth → 200 (health check exempt)"
+if [ "$STATUS" = "401" ]; then
+  pass "Unauthenticated GET /api/tags → 401"
 else
-  fail "Expected 200 for unauthenticated health check, got $STATUS"
+  fail "Expected 401 for unauthenticated GET /api/tags, got $STATUS"
 fi
 
-# 4e: POST /api/tags without auth → 401 (only GET exempt)
+# 4e: POST /api/tags without auth → 401
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
   -X POST "http://127.0.0.1:${PROXY_PORT}/api/tags" -d '{}')
 if [ "$STATUS" = "401" ]; then
-  pass "POST /api/tags without auth → 401 (only GET exempt)"
+  pass "Unauthenticated POST /api/tags → 401"
 else
-  fail "Expected 401 for POST /api/tags, got $STATUS"
+  fail "Expected 401 for unauthenticated POST /api/tags, got $STATUS"
 fi
 
 # 4f: Authorization header stripped before forwarding (Ollama doesn't see it)
@@ -328,7 +338,7 @@ else
 fi
 
 # 6c: Token file content matches
-FILE_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+FILE_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
 if [ "$FILE_TOKEN" = "$TOKEN" ]; then
   pass "Token file content matches generated token"
 else
@@ -357,7 +367,7 @@ fi
 
 # 7b: Restart proxy with persisted token (simulates reboot recovery)
 info "Restarting proxy from persisted token..."
-PERSISTED_TOKEN=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+PERSISTED_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
 OLLAMA_PROXY_TOKEN="$PERSISTED_TOKEN" \
   OLLAMA_PROXY_PORT="$PROXY_PORT" \
   OLLAMA_BACKEND_PORT="$OLLAMA_PORT" \
@@ -365,10 +375,13 @@ OLLAMA_PROXY_TOKEN="$PERSISTED_TOKEN" \
 PROXY_PID=$!
 sleep 2
 
-if curl -sf "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Proxy restarted from persisted token"
+# Liveness probe: 401 proves the restarted proxy is alive (the token check
+# is exercised in the 7c inference call below).
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${PROXY_PORT}/api/tags")
+if [[ "$STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Proxy restarted from persisted token (HTTP $STATUS)"
 else
-  fail "Proxy failed to restart"
+  fail "Proxy failed to restart (no HTTP response: '$STATUS')"
 fi
 
 # 7c: Verify inference still works with the same token after restart
@@ -408,16 +421,23 @@ section "Phase 8: Container reachability (Docker)"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   info "Docker available — testing container-to-proxy reachability..."
 
-  CONTAINER_RESULT=$(docker run --rm \
+  # Reachability only — the probe container doesn't carry the proxy token,
+  # so we accept any 3-digit HTTP code (the expected response after #3338 is
+  # 401). Mirrors how validateLocalProvider checks reachability.
+  # Drop Docker's own stderr (image-pull progress on cold runners) so it can't
+  # pollute the captured HTTP code. curl with -s -o /dev/null -w "%{http_code}"
+  # emits only the 3-digit code on stdout.
+  CONTAINER_STATUS=$(docker run --rm \
     --add-host "host.openshell.internal:host-gateway" \
     curlimages/curl:8.10.1 \
-    -sf "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>&1) || true
+    -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 \
+    "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_STATUS="000"
 
-  if echo "$CONTAINER_RESULT" | grep -q "$MODEL"; then
-    pass "Container can reach proxy at host.openshell.internal:${PROXY_PORT}"
+  if [[ "$CONTAINER_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+    pass "Container can reach proxy at host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_STATUS)"
   else
     fail "Container cannot reach proxy — reachability check would fail during onboard"
-    info "Result: ${CONTAINER_RESULT:0:200}"
+    info "Result: ${CONTAINER_STATUS:0:200}"
   fi
 
   # Verify container CANNOT reach Ollama directly on localhost

@@ -182,7 +182,7 @@ describe("credential rotation detection", () => {
       vi.restoreAllMocks();
     });
 
-    it("skips providers with null tokens", () => {
+    it("treats removed tokens as changed providers", () => {
       const hash = hashCredentialOrThrow("old-token");
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "test-sandbox",
@@ -193,8 +193,8 @@ describe("credential rotation detection", () => {
         { name: "test-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: null },
       ]);
 
-      expect(result.changed).toBe(false);
-      expect(result.changedProviders).toEqual([]);
+      expect(result.changed).toBe(true);
+      expect(result.changedProviders).toEqual(["test-telegram-bridge"]);
       vi.restoreAllMocks();
     });
 

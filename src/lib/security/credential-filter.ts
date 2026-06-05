@@ -11,6 +11,7 @@
 // They are injected at runtime via OpenShell's provider credential mechanism.
 
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -40,6 +41,20 @@ const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
  * excluded from backups entirely.
  */
 export const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json", "auth.json"]);
+
+/**
+ * Dependency lockfiles may contain package metadata that resembles credentials
+ * (for example package names or tarball URLs with `sk-` substrings). They do
+ * not store NemoClaw runtime credentials and should not fail snapshot leak
+ * checks.
+ */
+const SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "pnpm-lock.yml",
+]);
 
 /**
  * Credential field names that MUST be stripped from config files.
@@ -150,4 +165,14 @@ export function sanitizeConfigFile(configPath: string): void {
  */
 export function isSensitiveFile(filename: string): boolean {
   return CREDENTIAL_SENSITIVE_BASENAMES.has(filename.toLowerCase());
+}
+
+/**
+ * Return whether a snapshot file should be scanned for credential-looking
+ * payloads by coarse-grained E2E leak checks.
+ */
+export function shouldScanSnapshotFileForCredentials(filename: string): boolean {
+  const normalizedBasename = basename(filename).toLowerCase();
+  if (SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES.has(normalizedBasename)) return false;
+  return normalizedBasename === ".env" || normalizedBasename.endsWith(".env") || normalizedBasename.endsWith(".json");
 }

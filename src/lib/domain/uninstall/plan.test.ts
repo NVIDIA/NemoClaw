@@ -3,7 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { defaultUninstallPaths } from "./paths";
+import path from "node:path";
+
+import { defaultUninstallPaths, OPENSHELL_MANAGED_BINARIES } from "./paths";
 import { buildUninstallPlan, flattenUninstallPlan } from "./plan";
 
 describe("uninstall plan", () => {
@@ -33,8 +35,21 @@ describe("uninstall plan", () => {
         { kind: "delete-docker-volume", name: "openshell-cluster-nemoclaw" },
         { kind: "preserve-ollama-models", names: ["nemotron-3-super:120b", "nemotron-3-nano:30b"] },
         { kind: "delete-managed-swap" },
-        { kind: "delete-openshell-binary", path: "/usr/local/bin/openshell" },
+        ...OPENSHELL_MANAGED_BINARIES.map((binary) => ({
+          kind: "delete-openshell-install-path" as const,
+          path: path.join("/usr/local/bin", binary),
+        })),
+        { kind: "stop-ollama-auth-proxy" },
       ]),
+    );
+
+    // The Ollama auth proxy must be stopped during the "Stopping services"
+    // step, before any "State and binaries" cleanup deletes the PID file.
+    // Otherwise a stale proxy on :11435 blocks reinstall (issue #2759).
+    const stoppingServicesStep = plan.steps.find((step) => step.name === "Stopping services");
+    expect(stoppingServicesStep).toBeTruthy();
+    expect(stoppingServicesStep?.actions).toEqual(
+      expect.arrayContaining([{ kind: "stop-ollama-auth-proxy" }]),
     );
   });
 
@@ -52,7 +67,15 @@ describe("uninstall plan", () => {
     expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-docker-volume", name: "openshell-cluster-custom" }]));
     expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-ollama-model", name: "nemotron-3-super:120b" }]));
     expect(actions).toEqual(
-      expect.arrayContaining([{ kind: "preserve-openshell-binary", paths: ["/usr/local/bin/openshell", "/bin/openshell"] }]),
+      expect.arrayContaining([
+        {
+          kind: "preserve-openshell-install-paths",
+          paths: [
+            ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/usr/local/bin", binary)),
+            ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/bin", binary)),
+          ],
+        },
+      ]),
     );
     expect(actions).toEqual(
       expect.arrayContaining([{ kind: "preserve-shim", reason: "regular file is not an installer-managed shim" }]),

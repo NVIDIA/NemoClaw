@@ -195,7 +195,12 @@ EOF
   describe("validate_tmp_permissions", () => {
     let workDir: string;
     let tmpBackups: Record<string, string>;
-    const TMP_ARTIFACTS = ["/tmp/nemoclaw-proxy-env.sh", "/tmp/gateway.log", "/tmp/auto-pair.log"];
+    const TMP_ARTIFACTS = [
+      "/tmp/nemoclaw-proxy-env.sh",
+      "/tmp/gateway.log",
+      "/tmp/auto-pair.log",
+      "/tmp/nemoclaw-plugin-refresh.log",
+    ];
 
     beforeEach(() => {
       workDir = mkdtempSync(join(tmpdir(), "sandbox-init-validate-"));
@@ -236,6 +241,33 @@ EOF
         validate_tmp_permissions ${JSON.stringify(testFile)}
         echo "PASSED"
       `);
+    });
+
+    it("rejects a symlinked plugin refresh log", () => {
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
+      const target = join(workDir, "plugin-refresh-target.log");
+      writeFileSync(target, "do not truncate");
+      symlinkSync(target, pluginRefreshLog);
+
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} is a symlink`);
+      expect(readFileSync(target, "utf-8")).toBe("do not truncate");
+    });
+
+    it("keeps the plugin refresh log private", () => {
+      const pluginRefreshLog = join(workDir, "nemoclaw-plugin-refresh.log");
+      writeFileSync(pluginRefreshLog, "refresh output");
+      chmodSync(pluginRefreshLog, 0o644);
+
+      const { stderr } = runWithLib("validate_tmp_permissions", {
+        env: { PLUGIN_REFRESH_LOG: pluginRefreshLog },
+        expectFail: true,
+      });
+      expect(stderr).toContain(`${pluginRefreshLog} has unexpected permissions`);
+      expect(stderr).toContain("expected 600");
     });
   });
 
@@ -403,6 +435,296 @@ EOF
       );
       expect(stdout).toContain("SKIPPED_OK");
     });
+
+    // Context for reopened issue #3280 (NVBug 6159223), QA FAIL reported by
+    // hulynn on v0.0.54: on a host whose container runtime does not grant
+    // CAP_SETPCAP (e.g. the Colossus Ubuntu 24.04 image), capsh --drop cannot
+    // run, so the bounding-set drop is skipped and the dangerous caps
+    // (cap_sys_admin, cap_sys_ptrace, cap_net_raw, cap_dac_override,
+    // cap_net_bind_service, ...) remain in the bounding set.
+    //
+    // The strict-mode tests below use NEMOCLAW_PROC_STATUS — a test seam in
+    // sandbox-init.sh — to feed a known CapBnd fixture, so they exercise the
+    // real enforcement against a controlled bounding set without depending on
+    // the test runner's own /proc/self/status. CapBnd 0x4a82c35fb is the exact
+    // value hulynn decoded on the failing Colossus host.
+    const QA_CAPBND = "00000004a82c35fb"; // contains all 10 inspected dangerous caps
+    const CLEAN_CAPBND = "0000000000000000"; // none present
+    const QA_DANGEROUS =
+      "cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service";
+
+    // Stub capsh so it is found on PATH (command -v succeeds) but reports
+    // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
+    const capshNoSetpcapStub = [
+      'cat >"$TMP/capsh" <<\'STUB\'',
+      "#!/bin/sh",
+      '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
+      "exit 0",
+      "STUB",
+      'chmod +x "$TMP/capsh"',
+      'export PATH="$TMP:$PATH"',
+    ];
+    const writeStatusFixture = (capbndHex: string) => [
+      `printf 'CapBnd:\\t${capbndHex}\\n' >"$TMP/status"`,
+      'export NEMOCLAW_PROC_STATUS="$TMP/status"',
+    ];
+
+    // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
+    // dangerous caps remain — preserving the zero-regression posture for
+    // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
+    it("warns but does NOT refuse to start when CAP_SETPCAP is unavailable (issue #3280)", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(QA_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
+          'echo "SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
+      );
+      expect(stdout).toContain("CAP_SETPCAP not available — cannot drop bounding-set caps via capsh");
+      expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
+      expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
+      expect(stdout).not.toContain("Refusing to start sandbox");
+    });
+
+    // Exercise the REAL decode function (not a copy of its loop) so future
+    // drift in dangerous_caps_in_capbnd is caught.
+    it("dangerous_caps_in_capbnd decodes the inspected caps from a CapBnd hex", () => {
+      const { stdout } = runWithLib(
+        [
+          `echo "DANGEROUS:[$(dangerous_caps_in_capbnd ${QA_CAPBND})]"`,
+          `echo "CLEAN:[$(dangerous_caps_in_capbnd ${CLEAN_CAPBND})]"`,
+        ].join("\n"),
+      );
+      expect(stdout).toContain(`DANGEROUS:[${QA_DANGEROUS}]`);
+      expect(stdout).toContain("CLEAN:[]");
+    });
+
+    // ── Fix: opt-in fail-closed strict mode (issue #3280) ──────────────
+    // The inverse of the reverted #4266: default stays warn-and-continue (no
+    // regression), but NEMOCLAW_REQUIRE_CAP_DROP=1 refuses to start unless the
+    // ACTUAL bounding set is provably free of the dangerous caps.
+
+    it("refuses to start when REQUIRE_CAP_DROP=1 and dangerous caps remain (CAP_SETPCAP path)", () => {
+      const { stdout, stderr } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(QA_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint",
+          'echo "SHOULD_NOT_REACH"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" }, expectFail: true },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).toContain(`dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`);
+      expect(combined).not.toContain("SHOULD_NOT_REACH");
+    });
+
+    it("refuses to start when REQUIRE_CAP_DROP=1 and capsh is missing", () => {
+      const { stdout, stderr } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...writeStatusFixture(QA_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint",
+          'echo "SHOULD_NOT_REACH"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        {
+          // Hide capsh so command -v fails, exercising the capsh-missing branch.
+          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
+          expectFail: true,
+        },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("capsh not available");
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).not.toContain("SHOULD_NOT_REACH");
+    });
+
+    // Regression for the sentinel-bypass finding: a pre-set NEMOCLAW_CAPS_DROPPED=1
+    // must NOT let a host with residual caps slip past strict mode. The gate
+    // verifies the actual bounding set, so it still refuses.
+    it("refuses despite a pre-set NEMOCLAW_CAPS_DROPPED=1 when dangerous caps remain (strict)", () => {
+      const { stdout, stderr } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...writeStatusFixture(QA_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint",
+          'echo "BYPASSED_STRICT_MODE"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        {
+          env: { NEMOCLAW_CAPS_DROPPED: "1", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
+          expectFail: true,
+        },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).toContain("dangerous caps remain in bounding set");
+      expect(combined).not.toContain("BYPASSED_STRICT_MODE");
+    });
+
+    // Strict mode trusts the verified state, not the fall-through: if the
+    // bounding set is already clean it must NOT refuse.
+    it("continues under REQUIRE_CAP_DROP=1 when the bounding set is already clean", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(CLEAN_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
+          'echo "CONTINUED_CLEAN"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" } },
+      );
+      expect(stdout).toContain("CONTINUED_CLEAN");
+      expect(stdout).not.toContain("Refusing to start sandbox");
+    });
+
+    it("refuses under REQUIRE_CAP_DROP=1 when the bounding set cannot be verified", () => {
+      const { stdout, stderr } = runWithLib(
+        `
+        export NEMOCLAW_PROC_STATUS=/nonexistent/sandbox-init-status
+        drop_capabilities /usr/local/bin/fake-entrypoint
+        echo "SHOULD_NOT_REACH"
+      `,
+        {
+          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
+          expectFail: true,
+        },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).toContain("could not read bounding set");
+      expect(combined).not.toContain("SHOULD_NOT_REACH");
+    });
+
+    // Harden (issue #3280): a non-empty but unparseable CapBnd (corrupt /proc,
+    // CRLF fixture, future format change) must be treated as "cannot verify"
+    // — refusing in strict mode — and must NOT surface a raw bash arithmetic
+    // error. MALFORMED_CAPBND contains non-hex characters.
+    const MALFORMED_CAPBND = "00000000nothex0";
+    it("refuses under REQUIRE_CAP_DROP=1 when CapBnd is non-empty but unparseable", () => {
+      const { stdout, stderr } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...writeStatusFixture(MALFORMED_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint",
+          'echo "SHOULD_NOT_REACH"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        {
+          env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "1" },
+          expectFail: true,
+        },
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("Refusing to start sandbox");
+      expect(combined).toContain("could not parse bounding set");
+      expect(combined).not.toContain("SHOULD_NOT_REACH");
+      // No leaked bash arithmetic error.
+      expect(combined).not.toMatch(/value too great for base|invalid arithmetic|16#/);
+    });
+
+    it("warns and continues (no abort) on an unparseable CapBnd when REQUIRE_CAP_DROP is unset", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(MALFORMED_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
+          'echo "CONTINUED_ON_BAD_CAPBND"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
+      );
+      expect(stdout).toContain("residual caps unknown");
+      expect(stdout).toContain("CONTINUED_ON_BAD_CAPBND");
+      expect(stdout).not.toContain("Refusing to start sandbox");
+    });
+
+    it("continues (no regression) when NEMOCLAW_REQUIRE_CAP_DROP is unset even with residual caps", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          ...capshNoSetpcapStub,
+          ...writeStatusFixture(QA_CAPBND),
+          "drop_capabilities /usr/local/bin/fake-entrypoint 2>&1",
+          'echo "CONTINUED_OK"',
+          'rm -rf "$TMP"',
+        ].join("\n"),
+        { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
+      );
+      expect(stdout).toContain("CONTINUED_OK");
+      expect(stdout).not.toContain("Refusing to start sandbox");
+    });
+  });
+
+  describe("init_step_down_prefixes", () => {
+    it("falls back to gosu when setpriv is unavailable", () => {
+      // Source-time init runs before our test body, so re-run it with a
+      // PATH that hides setpriv and capsh to exercise the fallback.
+      const { stdout, stderr } = runWithLib(
+        [
+          "export PATH=/nonexistent",
+          "init_step_down_prefixes 2>&1",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+        ].join("\n"),
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("falling back to gosu");
+      expect(stdout).toContain("gosu\nsandbox");
+      expect(stdout).toContain("gosu\ngateway");
+    });
+
+    it("uses setpriv with the issue-3280 bounding-set drop when available", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "#!/bin/sh",
+          "exit 0",
+          "STUB",
+          'cat >"$TMP/capsh" <<\'STUB\'',
+          "#!/bin/sh",
+          '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
+          "exit 1",
+          "STUB",
+          'chmod +x "$TMP/setpriv" "$TMP/capsh"',
+          'export PATH="$TMP:$PATH"',
+          "init_step_down_prefixes",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+          'rm -rf "$TMP"',
+        ].join("\n"),
+      );
+      // setpriv prefix must include --reuid/--regid for the user and the
+      // bounding-set drop covering the five load-bearing caps from #3280.
+      expect(stdout).toContain("setpriv");
+      expect(stdout).toContain("--reuid=sandbox");
+      expect(stdout).toContain("--regid=sandbox");
+      expect(stdout).toContain("--reuid=gateway");
+      expect(stdout).toContain("--regid=gateway");
+      // setpriv expects unprefixed cap names (per `setpriv --list`),
+      // unlike capsh which uses cap_*. Keep these in sync with the
+      // STEP_DOWN_PREFIX_* arrays in sandbox-init.sh.
+      expect(stdout).toContain("--bounding-set=-setuid,-setgid,-fowner,-chown,-kill");
+      // Each prefix array must end with '--' so setpriv stops parsing
+      // its own flags before the caller's target command. printf splits
+      // array elements onto separate lines, so each prefix's last element
+      // is a line containing just '--'.
+      expect(stdout.match(/^--$/gm)?.length).toBeGreaterThanOrEqual(3);
+    });
   });
 
   describe("validate_config_symlinks", () => {
@@ -541,75 +863,6 @@ EOF
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }
-    });
-
-    it("hermes start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("source");
-      expect(src).toContain("sandbox-init.sh");
-    });
-
-    it("hermes start.sh calls lock_rc_files (vulnerability fix)", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("lock_rc_files");
-    });
-
-    it("hermes start.sh rewrites configure guard rc blocks through the symlink-safe helper", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const helperFn = src.match(/rewrite_rc_marker_block\(\) \{([\s\S]*?)^}/m);
-      const guardFn = src.match(/install_configure_guard\(\) \{([\s\S]*?)^# configure_messaging_channels/m);
-      expect(helperFn).toBeTruthy();
-      expect(guardFn).toBeTruthy();
-      expect(helperFn![1]).toContain('[ -L "$rc_file" ]');
-      expect(helperFn![1]).toContain('mktemp "${dir}/.${base}.tmp.XXXXXX"');
-      expect(helperFn![1]).toContain('mv -f "$tmp" "$rc_file"');
-      expect(src).toContain("rewrite_rc_marker_block_or_fail_in_root");
-      expect(guardFn![1]).toContain("rewrite_rc_marker_block_or_fail_in_root");
-      expect(guardFn![1]).not.toContain('cat "$tmp" >"$rc_file"');
-      expect(guardFn![1]).not.toContain('>>"$rc_file"');
-    });
-
-    it("hermes start.sh uses emit_sandbox_sourced_file for proxy config", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("emit_sandbox_sourced_file");
-      // Should NOT contain the old inline _write_proxy_snippet pattern
-      expect(src).not.toContain("_write_proxy_snippet");
-      expect(src).not.toContain("_PROXY_MARKER_BEGIN");
-    });
-
-    it("hermes start.sh calls validate_tmp_permissions", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("validate_tmp_permissions");
-    });
-
-    it("hermes start.sh checks immutable bits before legacy migration mutates files", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const fn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      expect(fn).toBeTruthy();
-      expect(src).toContain("path_has_immutable_bit");
-      expect(src).toContain("ensure_mutable_for_migration");
-      expect(fn![1]).toContain('[ -L "$config_dir" ]');
-      for (const target of ["$sentinel", "$config_dir", "$data_dir", "$entry", "$target"]) {
-        expect(fn![1]).toContain(`ensure_mutable_for_migration "${target}"`);
-      }
-      expect(fn![1]).toContain('elif [ -d "$target" ] && [ -d "$entry" ]; then');
-    });
-
-    it("hermes start.sh validates hidden legacy symlinks and avoids recursive chown following", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const existsFn = src.match(/legacy_symlinks_exist\(\) \{([\s\S]*?)^}/m);
-      const assertFn = src.match(/assert_no_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      const migrateFn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      expect(existsFn).toBeTruthy();
-      expect(assertFn).toBeTruthy();
-      expect(migrateFn).toBeTruthy();
-      for (const fn of [existsFn![1], assertFn![1]]) {
-        expect(fn).toContain('"$config_dir"/.[!.]*');
-        expect(fn).toContain('"$config_dir"/..?*');
-      }
-      expect(src).toContain("chown_tree_no_symlink_follow");
-      expect(migrateFn![1]).toContain("chown_tree_no_symlink_follow sandbox:sandbox");
-      expect(migrateFn![1]).not.toContain('chown -R sandbox:sandbox "$entry"');
     });
 
   });

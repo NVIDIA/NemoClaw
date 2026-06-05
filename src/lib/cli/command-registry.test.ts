@@ -13,14 +13,14 @@ import {
   sandboxActionTokens,
   GROUP_ORDER,
 } from "./command-registry";
-import type { CommandDef } from "./command-registry";
+import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 52 commands", () => {
-      // 23 global (18 visible + 5 hidden help/version aliases)
-      // 29 sandbox (23 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(52);
+    it("partitions commands into global and sandbox scopes", () => {
+      const partitioned = [...globalCommands(), ...sandboxCommands()];
+      expect(partitioned).toHaveLength(COMMANDS.length);
+      expect(new Set(partitioned).size).toBe(COMMANDS.length);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -39,9 +39,12 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 23 entries", () => {
-      // 18 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(23);
+    it("includes public global service commands", () => {
+      const usages = globalCommands().map((cmd) => cmd.usage);
+      expect(usages).toContain("nemoclaw tunnel start");
+      expect(usages).toContain("nemoclaw tunnel stop");
+      expect(usages).toContain("nemoclaw tunnel status");
+      expect(usages).toContain("nemoclaw status");
     });
 
     it("every entry has scope global", () => {
@@ -52,9 +55,11 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 29 entries", () => {
-      // 23 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(29);
+    it("should return exactly 42 entries", () => {
+      // 36 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 36 visible includes the sessions group (root + list + reset + delete)
+      // and the agents pair (add + delete).
+      expect(sandboxCommands()).toHaveLength(42);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +70,8 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (41 visible)", () => {
-      // 5 hidden global (help, --help, -h, --version, -v) +
-      // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(41);
+    it("returns exactly the non-hidden commands", () => {
+      expect(visibleCommands()).toEqual(COMMANDS.filter((cmd) => !cmd.hidden));
     });
 
     it("no visible command has hidden=true", () => {
@@ -79,9 +82,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 11 hidden commands: help/version aliases + shields + config", () => {
+    it("exactly 12 hidden commands: help/version aliases + shields + config", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(11);
+      expect(hidden).toHaveLength(12);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -95,7 +98,32 @@ describe("command-registry", () => {
         "nemoclaw <name> shields status",
         "nemoclaw <name> shields up",
         "nemoclaw help",
+        "nemoclaw version",
       ]);
+    });
+  });
+
+  describe("oclif discovery coverage", () => {
+    it("requires public leaf commands to have display metadata", () => {
+      const metadataById = getRegisteredOclifCommandsMetadata();
+      const discoveredIds = Object.keys(metadataById).sort();
+      const displayCommandIds = new Set(COMMANDS.map((command) => command.commandId));
+
+      for (const commandId of discoveredIds) {
+        if (commandId.startsWith("internal:")) continue;
+
+        const hasSubcommands = discoveredIds.some((id) => id.startsWith(`${commandId}:`));
+        if (hasSubcommands) continue;
+
+        expect(displayCommandIds.has(commandId), commandId).toBe(true);
+      }
+    });
+
+    it("keeps every public display entry attached to a discovered oclif command", () => {
+      const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
+      for (const command of COMMANDS) {
+        expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
+      }
     });
   });
 
@@ -143,13 +171,20 @@ describe("command-registry", () => {
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
     });
+
+    it("uses distinct placeholders for sandbox and skill names", () => {
+      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      expect(command?.usage).toBe("nemoclaw <name> skill remove");
+      expect(command?.flags).toBe("<skill>");
+    });
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 20 tokens matching the old GLOBAL_COMMANDS", () => {
+    it("returns the exact set of 24 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "onboard",
+        "update",
         "list",
         "deploy",
         "setup",
@@ -164,7 +199,10 @@ describe("command-registry", () => {
         "backup-all",
         "upgrade-sandboxes",
         "gc",
+        "inference",
+        "resources",
         "help",
+        "version",
         "--help",
         "-h",
         "--version",
@@ -175,19 +213,26 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 18 unique action tokens including empty string", () => {
+    it("returns exactly 25 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(18);
+      expect(tokens).toHaveLength(25);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
+        "agents",
         "connect",
+        "dashboard-url",
+        "exec",
         "status",
         "doctor",
         "logs",
         "policy-add",
         "policy-remove",
         "policy-list",
+        "hosts-add",
+        "hosts-list",
+        "hosts-remove",
         "destroy",
+        "sessions",
         "skill",
         "rebuild",
         "recover",
@@ -247,6 +292,7 @@ describe("command-registry", () => {
         "Credentials",
         "Backup",
         "Upgrade",
+        "Resources",
         "Cleanup",
       ]);
     });

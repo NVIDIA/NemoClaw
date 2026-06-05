@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { commandsByGroup, visibleCommands, type CommandDef } from "../cli/command-registry";
+import {
+  brandedPublicText,
+  commandsByGroup,
+  visibleCommands,
+  type CommandDef,
+} from "../cli/command-registry";
 import { getRegisteredOclifCommandSummary } from "../cli/oclif-metadata";
 import { getVersion } from "../core/version";
 
@@ -23,7 +28,7 @@ function getDisplayDescription(command: CommandDef): string {
   if (hasDisplaySpecificDescription(command)) {
     return command.description;
   }
-  return getRegisteredOclifCommandSummary(command.commandId) ?? command.description;
+  return brandedPublicText(getRegisteredOclifCommandSummary(command.commandId) ?? command.description);
 }
 
 export function version(): void {
@@ -73,15 +78,21 @@ export function help(): void {
   lines.push("");
   lines.push(`  ${G}Reconfiguration (after onboard):${R}`);
   lines.push(
-    `    ${D}• Change inference model:  openshell inference set -g nemoclaw --model <model> --provider <provider>${R}`,
+    `    ${D}• Check inference route:   ${CLI_NAME} inference get${R}`,
+    `    ${D}• Change inference model:  ${CLI_NAME} inference set --model <model> --provider <provider>${R}`,
   );
   lines.push(`    ${D}• Add network presets:     use the policy-add command on your sandbox${R}`);
   lines.push(
     `    ${D}• Change credentials:      credentials reset <PROVIDER>, then re-run onboard${R}`,
   );
-  lines.push(`    ${D}• Agent config is read-only inside the sandbox (Landlock enforced).${R}`);
   lines.push(
-    `    ${D}  To change ${AGENT_PRODUCT_NAME} settings, re-run onboard to rebuild the sandbox.${R}`,
+    `    ${D}• Agent config is writable in the default sandbox so ${AGENT_PRODUCT_NAME} can manage runtime state.${R}`,
+  );
+  lines.push(
+    `    ${D}  Use host-side commands or re-run onboard for durable ${AGENT_PRODUCT_NAME} settings.${R}`,
+  );
+  lines.push(
+    `    ${D}  Run \`${CLI_NAME} <name> shields up\` to lock config for sensitive workloads.${R}`,
   );
 
   lines.push("");

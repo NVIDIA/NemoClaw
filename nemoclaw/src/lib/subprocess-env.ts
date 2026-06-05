@@ -49,10 +49,10 @@ const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_", "OPENSHELL_", "GRPC_"];
 // ── Public API ─────────────────────────────────────────────────
 
 /**
- * When any HTTP proxy is forwarded, ensure localhost and loopback traffic is
- * not routed through it. Without this, tools that respect HTTP_PROXY (curl,
- * Node.js http, Python requests) will tunnel loopback requests to the user's
- * proxy (e.g. Privoxy), which fails with HTTP 500.
+ * When any HTTP proxy is forwarded, ensure local host-bound traffic is not
+ * routed through it. Without this, tools that respect HTTP_PROXY (curl, Node.js
+ * http, Python requests) will tunnel loopback or WSL Windows-host requests to
+ * the user's proxy (e.g. Privoxy), which fails with HTTP 500.
  * See: #2616
  */
 export function withLocalNoProxy(env: Record<string, string>): void {
@@ -60,9 +60,12 @@ export function withLocalNoProxy(env: Record<string, string>): void {
   if (!hasProxy) return;
   for (const key of ["NO_PROXY", "no_proxy"] as const) {
     const current = env[key] ?? "";
-    const parts = current ? current.split(",").map((s) => s.trim()) : [];
+    const parts = current
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     let changed = false;
-    for (const host of ["localhost", "127.0.0.1"]) {
+    for (const host of ["localhost", "127.0.0.1", "host.docker.internal", "::1", "0.0.0.0"]) {
       if (!parts.includes(host)) {
         parts.push(host);
         changed = true;

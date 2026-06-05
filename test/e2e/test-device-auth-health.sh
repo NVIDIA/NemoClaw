@@ -39,6 +39,8 @@
 #     bash test/e2e/test-device-auth-health.sh
 # =============================================================================
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 # ── Overall timeout ──────────────────────────────────────────────────────────

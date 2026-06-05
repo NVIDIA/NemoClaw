@@ -1,0 +1,933 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const {
+  getChatCompletionsProbeCurlArgs,
+  getChatCompletionsProbePayload,
+  getDeepSeekV4ProValidationProbeCurlArgs,
+  getKimiK26ValidationProbeCurlArgs,
+  getValidationProbeCurlArgs,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
+  hasResponsesToolCall,
+  isSandboxInternalUrl,
+  probeOpenAiLikeEndpoint,
+  RETRIABLE_HTTP_PROBE_STATUSES,
+} = require("../../../dist/lib/inference/onboard-probes");
+
+describe("OpenAI-compatible inference probe response parsing", () => {
+  it("detects tool-calling responses payloads conservatively", () => {
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "function_call",
+              name: "emit_ok",
+              arguments: '{"value":"OK"}',
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "function_call",
+                  name: "emit_ok",
+                  arguments: '{"value":"OK"}',
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "OK" }],
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasResponsesToolCall("{")).toBe(false);
+  });
+
+  it("detects structured chat-completions tool_calls", () => {
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "OK", tool_calls: [] } }],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send" },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "text",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCall("{")).toBe(false);
+  });
+
+  it("detects leaked stringified tool-call JSON in chat-completions content", () => {
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{\n  "arguments":{"message":"hello?"},\n  "name":"sessions_send"\n}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "function",
+                  function: {
+                    name: "sessions_send",
+                    arguments: JSON.stringify({ message: "hello?" }),
+                  },
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: {
+                        name: "sessions_send",
+                        arguments: JSON.stringify({ message: "hello?" }),
+                      },
+                    },
+                  ],
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: '{"arguments":{"message":"hello?"},"name":"sessions_send"}',
+                  },
+                ],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Regular assistant text response.",
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{"type":"function","function":{"name":"sessions_send"}}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Regular assistant text response." }],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCallLeak("{")).toBe(false);
+  });
+});
+
+describe("OpenAI-compatible inference probes", () => {
+  it("uses the NVIDIA Build request shape for DeepSeek V4 Pro", () => {
+    expect(getChatCompletionsProbePayload("deepseek-ai/deepseek-v4-pro")).toEqual({
+      model: "deepseek-ai/deepseek-v4-pro",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      temperature: 1,
+      top_p: 0.95,
+      max_tokens: 8192,
+      chat_template_kwargs: { thinking: false },
+      stream: true,
+    });
+  });
+
+  it("keeps the default chat-completions probe minimal for other models", () => {
+    expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+    });
+  });
+
+  it("allows onboard validation max-time to be raised from the environment", () => {
+    const original = process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
+    process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = "300";
+    try {
+      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "300",
+      ]);
+      expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "300",
+      ]);
+    } finally {
+      if (original === undefined) {
+        delete process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
+      } else {
+        process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = original;
+      }
+    }
+  });
+
+  it("uses an extended validation budget for slow NVIDIA Build models", () => {
+    for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
+      const args = getChatCompletionsProbeCurlArgs({
+        authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+        model,
+        url: "https://integrate.api.nvidia.com/v1/chat/completions",
+        isWsl: false,
+      });
+      expect(args[args.indexOf("--connect-timeout") + 1]).toBe("10");
+      expect(args[args.indexOf("--max-time") + 1]).toBe("300");
+    }
+
+    const wslArgs = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "qwen/qwen3.5-397b-a17b",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: true,
+    });
+    expect(wslArgs[wslArgs.indexOf("--connect-timeout") + 1]).toBe("30");
+    expect(wslArgs[wslArgs.indexOf("--max-time") + 1]).toBe("300");
+  });
+
+  it("caps Kimi K2.6 probe output and gives it a slower validation budget", () => {
+    expect(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")).toEqual({
+      model: "moonshotai/kimi-k2.6",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+      chat_template_kwargs: { thinking: false },
+    });
+
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "60",
+    ]);
+    expect(getKimiK26ValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "90",
+    ]);
+
+    const args = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "moonshotai/kimi-k2.6",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("60");
+    expect(args).toContain(JSON.stringify(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")));
+  });
+
+  it("uses an extended streaming validation budget for DeepSeek V4 Pro", () => {
+    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: false })).toEqual([
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "120",
+    ]);
+    expect(getDeepSeekV4ProValidationProbeCurlArgs({ isWsl: true })).toEqual([
+      "--connect-timeout",
+      "30",
+      "--max-time",
+      "150",
+    ]);
+
+    const args = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "deepseek-ai/deepseek-v4-pro",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: false,
+    });
+
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("120");
+    expect(args).toContain("Authorization: Bearer nvapi-test");
+  });
+
+  describe("sandbox-internal URL handling", () => {
+    it("identifies host.openshell.internal as sandbox-internal", () => {
+      expect(isSandboxInternalUrl("http://host.openshell.internal:8001/v1")).toBe(true);
+    });
+
+    it("does not treat normal hostnames as sandbox-internal", () => {
+      expect(isSandboxInternalUrl("http://localhost:8001/v1")).toBe(false);
+      expect(isSandboxInternalUrl("https://api.openai.com/v1")).toBe(false);
+      expect(isSandboxInternalUrl("http://127.0.0.1:8001/v1")).toBe(false);
+    });
+
+    it("skips the curl probe for sandbox-internal URLs and returns ok with a note", () => {
+      const result = probeOpenAiLikeEndpoint(
+        "http://host.openshell.internal:8001/v1",
+        "openai/local-model",
+        "dummy",
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        api: null,
+        note: expect.stringContaining("host.openshell.internal"),
+      });
+      expect(result.note).toMatch(/only resolves inside the sandbox/);
+    });
+
+    it("fails closed for unprobeable sandbox-internal URLs when strict tool calling is required", () => {
+      const result = probeOpenAiLikeEndpoint(
+        "http://host.openshell.internal:8001/v1",
+        "openai/local-model",
+        "dummy",
+        { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      );
+
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/cannot be validated.*structured Chat Completions tool calls/i);
+    });
+  });
+
+  describe("retriable HTTP statuses (issues #2980, #3033)", () => {
+    it("retries 429 (rate limit)", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
+    });
+
+    it("retries 502/503/504 (upstream gateway flakes)", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(502)).toBe(true);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(503)).toBe(true);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(504)).toBe(true);
+    });
+
+    it("does not retry on client-side or non-transient statuses", () => {
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(400)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(401)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(403)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(404)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(500)).toBe(false);
+      expect(RETRIABLE_HTTP_PROBE_STATUSES.has(200)).toBe(false);
+    });
+
+    it("recovers when an upstream 502 clears on retry (regression #2980)", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-502-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if [ "$n" -lt 2 ]; then
+  if [ -n "$outfile" ]; then
+    printf '<html>502 Bad Gateway</html>' > "$outfile"
+  fi
+  printf '502'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvapi-test",
+          { skipResponsesProbe: true },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(lines.join("\n")).toContain("HTTP 502");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("retries chat-completions when /responses errors then chat-completions times out", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mixed-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if echo "$url" | grep -q '/responses'; then
+  if [ -n "$outfile" ]; then
+    printf '404 page not found' > "$outfile"
+  fi
+  printf '404'
+  exit 0
+fi
+if [ "$n" -le 2 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "sk-test",
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        // /responses (404) + /chat/completions (28) + chat-completions retry (200)
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-query-retry-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+printf '%s\\n' "$@" > "${tmpDir}/args-$n.txt"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "secret key",
+          { skipResponsesProbe: true, authMode: "query-param" },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        for (const call of ["1", "2"]) {
+          const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
+          expect(args).toContain(
+            "https://api.example.com/v1/chat/completions?key=secret%20key",
+          );
+          expect(args).not.toContain("Authorization: Bearer");
+        }
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("keeps timeout retries strict when chat-completions tool calling is required", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-retry-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+payload=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+printf '%s' "$payload" > "${tmpDir}/request-$n.json"
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "sk-test",
+          { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+        );
+
+        expect(result).toMatchObject({ ok: false });
+        expect(result.message).toContain("did not return a tool call");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        const retryPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
+        );
+        expect(retryPayload).toMatchObject({
+          tool_choice: "required",
+          max_tokens: 256,
+          stream: false,
+        });
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("retries strict tool-call validation after the parent curl process times out", () => {
+      const repoRoot = path.join(import.meta.dirname, "../../..");
+      const onboardProbePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "inference", "onboard-probes.js"),
+      );
+      const httpProbePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"),
+      );
+      const script = `
+const httpProbe = require(${httpProbePath});
+let calls = 0;
+const timeoutMs = [];
+httpProbe.runCurlProbe = (_args, opts = {}) => {
+  calls += 1;
+  timeoutMs.push(opts.timeoutMs ?? null);
+  if (calls === 1) {
+    return {
+      ok: false,
+      httpStatus: 0,
+      curlStatus: -110,
+      body: "",
+      stderr: "spawnSync curl ETIMEDOUT",
+      message: "curl failed (exit -110): spawnSync curl ETIMEDOUT",
+    };
+  }
+  return {
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: JSON.stringify({
+      choices: [
+        {
+          message: {
+            tool_calls: [
+              {
+                type: "function",
+                function: {
+                  name: "sessions_send",
+                  arguments: { message: "hello" },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    }),
+    stderr: "",
+    message: "HTTP 200",
+  };
+};
+const probes = require(${onboardProbePath});
+const result = probes.probeOpenAiLikeEndpoint(
+  "https://api.example.com/v1",
+  "test-model",
+  null,
+  { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+);
+process.stdout.write(JSON.stringify({ result, calls, timeoutMs }));
+`;
+
+      const run = spawnSync(process.execPath, ["-e", script], {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
+
+      expect(run.status).toBe(0);
+      const payload = JSON.parse(run.stdout);
+      expect(payload.result).toMatchObject({ ok: true, api: "openai-completions" });
+      expect(payload.calls).toBe(2);
+      expect(payload.timeoutMs).toHaveLength(2);
+      expect(payload.timeoutMs[0]).toBeGreaterThan(0);
+      expect(payload.timeoutMs[1]).toBeGreaterThan(payload.timeoutMs[0]);
+    });
+
+    it("keeps retrying when initial timeout is followed by a transient 502", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-timeout-502-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ "$n" -eq 2 ]; then
+  if [ -n "$outfile" ]; then
+    printf '<html>502 Bad Gateway</html>' > "$outfile"
+  fi
+  printf '502'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
+      const originalLog = console.log;
+      const lines: string[] = [];
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          "nvapi-test",
+          { skipResponsesProbe: true },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(lines.join("\n")).toContain("HTTP 502");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+      } finally {
+        console.log = originalLog;
+        process.env.PATH = originalPath;
+        if (originalNoSleep === undefined) {
+          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+        } else {
+          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("continues with openai-completions when DeepSeek V4 Pro stream validation times out", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepseek-probe-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  : > "$outfile"
+fi
+printf '000'
+exit 28
+`,
+      { mode: 0o755 },
+    );
+
+    const originalPath = process.env.PATH;
+    const originalLog = console.log;
+    const lines: string[] = [];
+    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+    console.log = (...args) => lines.push(args.join(" "));
+    try {
+      const result = probeOpenAiLikeEndpoint(
+        "https://integrate.api.nvidia.com/v1",
+        "deepseek-ai/deepseek-v4-pro",
+        "nvapi-test",
+        { skipResponsesProbe: true },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        api: "openai-completions",
+        label: "Chat Completions API",
+        validated: false,
+      });
+      expect(lines.join("\n")).toContain("DeepSeek V4 Pro validation timed out");
+    } finally {
+      console.log = originalLog;
+      process.env.PATH = originalPath;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

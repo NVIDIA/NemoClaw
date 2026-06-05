@@ -3,17 +3,24 @@
 #
 # GitHub access preset.
 #
-# Until #1583 was fixed, github.com / api.github.com plus the git and gh
-# binaries were silently included in the base sandbox policy, so every
-# sandbox could clone, push, and call the GitHub API regardless of what
-# the user opted into. Moving the entry into a discoverable preset
-# restores least-privilege: a sandbox only gets GitHub if the user
-# explicitly selects this preset during `nemoclaw onboard` (or applies
-# it later via `openshell policy set`).
+# Until #1583 was fixed, github.com / api.github.com plus the git binary
+# were silently included in the base sandbox policy, so every sandbox
+# could clone, push, and call the GitHub API regardless of what the user
+# opted into. Moving the entry into a discoverable preset restores
+# least-privilege: a sandbox only gets GitHub if the user explicitly
+# selects this preset during `nemoclaw onboard` (or applies it later via
+# `openshell policy set`).
+#
+# The `gh` CLI was also whitelisted here historically (alongside `git`),
+# but the sandbox base image (Dockerfile.base) only apt-installs `git`,
+# not `gh`. Users selecting this preset and running `gh api …` would hit
+# `bash: gh: command not found`. Dropping `/usr/bin/gh` from the binaries
+# list and from the description keeps the preset surface honest about
+# what's actually usable in the shipped image. Closes #2179.
 
 preset:
   name: github
-  description: "GitHub.com and GitHub API access (git, gh)"
+  description: "GitHub.com and GitHub API access (git)"
 
 network_policies:
   github:
@@ -26,5 +33,4 @@ network_policies:
         port: 443
         access: full
     binaries:
-      - { path: /usr/bin/gh }
       - { path: /usr/bin/git }

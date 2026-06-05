@@ -37,6 +37,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 . "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/openclaw-json.sh"
 
 PASS=0
 FAIL=0
@@ -425,13 +427,32 @@ check_gateway_ready() {
   local result script
   script=$(
     cat <<'SH'
-node <<'NODE'
+last=""
+for _attempt in $(seq 1 30); do
+  result=$(node <<'NODE' 2>&1 || true
 const net = require("net");
+let done = false;
 const sock = net.connect(18789, "127.0.0.1");
-sock.on("connect", () => { console.log("OPEN"); sock.end(); });
-sock.on("error", (err) => console.log("ERROR " + err.message));
-setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
+function finish(line) {
+  if (done) return;
+  done = true;
+  console.log(line);
+  sock.destroy();
+}
+sock.on("connect", () => finish("OPEN"));
+sock.on("error", (err) => finish("ERROR " + err.message));
+sock.setTimeout(1000, () => finish("TIMEOUT"));
 NODE
+  )
+  if echo "$result" | grep -q "OPEN"; then
+    echo "$result"
+    exit 0
+  fi
+  last="$result"
+  sleep 1
+done
+echo "$last"
+exit 1
 SH
   )
   result=$(sandbox_exec_sh_script "$script" 2>&1 || true)
@@ -506,19 +527,7 @@ check_openclaw_agent_turn() {
     return
   fi
 
-  reply=$(printf '%s' "$raw" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
   if [ "$rc" -eq 0 ] && printf '%s' "$reply" | grep -qi "PONG"; then
     pass "C8: openclaw agent completed turn via compatible endpoint (http-proxy-fix.js FORWARD-mode path exercised)"

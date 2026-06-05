@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: pr-limit
+name: Automation / PR Limit
 
 # pull_request_target runs in the base repo context, giving the token write
 # access even for fork PRs. This is safe here because this workflow never

@@ -9,7 +9,7 @@
 //
 // Credentials are stripped from backups using shared credential-filter.ts.
 
-import { spawnSync } from "child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -21,17 +21,19 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "child_process";
 
-import * as registry from "./registry.js";
-import { loadAgent } from "../agent/defs.js";
-import type { AgentStateFile } from "../agent/defs.js";
+import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
-import { sanitizeConfigFile, isSensitiveFile } from "../security/credential-filter.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import type { AgentStateFile } from "../agent/defs.js";
+import { loadAgent } from "../agent/defs.js";
+import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
+import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import * as registry from "./registry.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -122,12 +124,6 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
-}
-
-type UnknownRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -310,6 +306,18 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
 
+          // Whitelisted npm symlinks baked into the base image at build time
+          // (see AUDIT_SYMLINK_WHITELIST). Accepting them here matches the
+          // pre-backup audit so legitimate plugin installs in extensions/
+          // can survive a rebuild without tripping the post-extraction check.
+          // Match both the source path AND the link target — a whitelisted
+          // path with a tampered target falls through to the normal
+          // containment check.
+          const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
+          if (isAllowedStateSymlink(relFromDir, linkTarget)) {
+            continue;
+          }
+
           // Resolve relative to the symlink's containing directory (standard).
           const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
 
@@ -457,8 +465,9 @@ function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const result = captureOpenshellCommand(openshellBinary, ["sandbox", "ssh-config", sandboxName], {
+  const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -551,6 +560,51 @@ function sanitizeBackupDirectory(dirPath: string): void {
 // ── Logging ────────────────────────────────────────────────────────
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
+
+// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// `openclaw plugins install`. Source paths are relative to the agent state-dir
+// root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
+// against the value of `readlink(source)`. Source-only matching is unsafe: a
+// compromised agent could repoint one of these to /etc/passwd and the audit
+// would still let it through.
+const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
+  [
+    "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
+    "../qrcode-terminal/bin/qrcode-terminal.js",
+  ],
+  [
+    "extensions/openclaw-weixin/node_modules/openclaw",
+    "/usr/local/lib/node_modules/openclaw",
+  ],
+]);
+
+const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
+const OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS = ["nemoclaw", "openclaw-weixin"] as const;
+
+function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
+  const normalizedRelPath = relPath.split(path.sep).join("/");
+  if (!EXTENSION_NPM_BIN_RE.test(normalizedRelPath)) return false;
+  if (linkTarget.length === 0 || path.posix.isAbsolute(linkTarget)) return false;
+
+  const binDir = path.posix.dirname(normalizedRelPath);
+  const nodeModulesDir = path.posix.dirname(binDir);
+  const resolvedTarget = path.posix.normalize(path.posix.join(binDir, linkTarget));
+  const targetWithinNodeModules = path.posix.relative(nodeModulesDir, resolvedTarget);
+
+  return (
+    targetWithinNodeModules.length > 0 &&
+    !targetWithinNodeModules.startsWith("../") &&
+    !path.posix.isAbsolute(targetWithinNodeModules) &&
+    !targetWithinNodeModules.startsWith(".bin/")
+  );
+}
+
+function isAllowedStateSymlink(relPath: string, linkTarget: string): boolean {
+  const exactTarget = AUDIT_SYMLINK_WHITELIST.get(relPath.split(path.sep).join("/"));
+  if (exactTarget !== undefined) return exactTarget === linkTarget;
+  return isAllowedExtensionNpmBinSymlink(relPath, linkTarget);
+}
+
 function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
@@ -610,6 +664,71 @@ function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
     }
   }
   return existing;
+}
+
+function shouldPreserveOpenClawManagedExtensions(
+  manifest: RebuildManifest,
+  dir: string,
+  localDirs: readonly string[],
+): boolean {
+  return (
+    localDirs.includes("extensions") &&
+    (manifest.agentType === "openclaw" || dir.replace(/\/+$/, "") === "/sandbox/.openclaw")
+  );
+}
+
+function buildRestoreTarArgs(
+  backupPath: string,
+  localDirs: readonly string[],
+  preserveManagedExtensions: boolean,
+): string[] {
+  const args = ["-cf", "-", "-C", backupPath];
+  if (preserveManagedExtensions) {
+    for (const extensionName of OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS) {
+      args.push("--exclude", `extensions/${extensionName}`);
+    }
+  }
+  args.push("--", ...localDirs);
+  return args;
+}
+
+function buildOpenClawExtensionsCleanupCommand(dir: string): string {
+  const extensionsDir = `${dir}/extensions`;
+  const quotedExtensionsDir = shellQuote(extensionsDir);
+  const validationCommands = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map((extensionName) => {
+    const managedPath = `${extensionsDir}/${extensionName}`;
+    return (
+      `p=${shellQuote(managedPath)}; ` +
+      'if [ -e "$p" ] && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
+      'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
+    );
+  }).join("; ");
+  const validateManagedPaths = `{ ${validationCommands}; }`;
+  const preservedNames = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map(
+    (extensionName) => `! -name ${shellQuote(extensionName)}`,
+  ).join(" ");
+
+  return [
+    `mkdir -p -- ${quotedExtensionsDir}`,
+    validateManagedPaths,
+    `find ${quotedExtensionsDir} -mindepth 1 -maxdepth 1 ${preservedNames} -exec rm -rf -- {} +`,
+  ].join(" && ");
+}
+
+function buildRestoreCleanupCommand(
+  dir: string,
+  localDirs: readonly string[],
+  preserveManagedExtensions: boolean,
+): string {
+  const commands: string[] = [];
+  for (const dirName of localDirs) {
+    if (preserveManagedExtensions && dirName === "extensions") continue;
+    commands.push(`rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
+  }
+  if (preserveManagedExtensions) {
+    commands.push(buildOpenClawExtensionsCleanupCommand(dir));
+  }
+  return commands.length > 0 ? commands.join(" && ") : ":";
 }
 
 function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFileSpec | null {
@@ -976,12 +1095,25 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
         // files inside state dirs. A compromised agent could plant a symlink like
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+        //
+        // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
+        // empty for non-symlinks but always present, so the field count is
+        // stable. Tab separator assumes state-dir paths don't contain tabs,
+        // matching the wider convention in this file.
+        // Per-dir `find` invocations are joined with `;` (not `&&`) and each
+        // is tolerant of its own exit code via `|| true`. The base image bakes
+        // a few state subdirs as root-owned (e.g. `extensions/<plugin>`,
+        // `agents/<id>`) and `find` walking those from the sandbox-user SSH
+        // session exits 1 on permission denied. The audit's real signal is
+        // stdout (the printf-emitted symlink/hardlink/special-file rows);
+        // letting one perm-denied subdir abort the whole chain blocks legitimate
+        // rebuilds.
         const auditCmd = existingDirs
           .map(
             (d) =>
-              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y %p\\n" 2>/dev/null`,
+              `{ find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null || true; }`,
           )
-          .join(" && ");
+          .join("; ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
         const auditResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), auditCmd], {
           encoding: "utf-8",
@@ -1005,22 +1137,48 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         }
         const auditOutput = (auditResult.stdout || "").trim();
         if (auditOutput.length > 0) {
-          // Found symlinks or special files — log them and reject the backup
-          const violations = auditOutput.split("\n").filter((l) => l.length > 0);
-          _log(
-            `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-          );
-          return {
-            success: false,
-            manifest,
-            backedUpDirs,
-            failedDirs: [...existingDirs],
-            backedUpFiles,
-            failedFiles: stateFiles.map((f) => f.path),
-            error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-          };
+          const allEntries = auditOutput.split("\n").filter((l) => l.length > 0);
+          const whitelisted: string[] = [];
+          const violations: string[] = [];
+          const dirPrefix = `${dir}/`;
+          for (const entry of allEntries) {
+            // find -printf "%y\t%p\t%l\n" → "<type>\t<absPath>\t<linkTarget>"
+            // (linkTarget is empty for non-symlinks).
+            const parts = entry.split("\t");
+            const type = parts[0] || "";
+            const absPath = parts[1] || entry;
+            const linkTarget = parts[2] || "";
+            const relPath = absPath.startsWith(dirPrefix)
+              ? absPath.slice(dirPrefix.length)
+              : absPath;
+            if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) {
+              whitelisted.push(entry);
+            } else {
+              violations.push(entry);
+            }
+          }
+          if (whitelisted.length > 0) {
+            _log(
+              `Pre-backup audit whitelisted ${whitelisted.length} entries (base-image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+            );
+          }
+          if (violations.length > 0) {
+            // Non-whitelisted symlinks / hard links / special files — reject
+            _log(
+              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+            );
+            return {
+              success: false,
+              manifest,
+              backedUpDirs,
+              failedDirs: [...existingDirs],
+              backedUpFiles,
+              failedFiles: stateFiles.map((f) => f.path),
+              error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+            };
+          }
         }
-        _log("Pre-backup audit passed — no symlinks, hard links, or special files found");
+        _log("Pre-backup audit passed — no unsafe symlinks, hard links, or special files found");
 
         // Download via SSH+tar
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
@@ -1218,11 +1376,20 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     if (localDirs.length > 0) {
       // Upload via tar pipe
       // NC-2227-04: Removed -h flag from restore as well — no symlink following.
-      const tarResult = spawnSync("tar", ["-cf", "-", "-C", backupPath, ...localDirs], {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60000,
-        maxBuffer: 256 * 1024 * 1024,
-      });
+      const preserveManagedExtensions = shouldPreserveOpenClawManagedExtensions(
+        manifest,
+        dir,
+        localDirs,
+      );
+      const tarResult = spawnSync(
+        "tar",
+        buildRestoreTarArgs(backupPath, localDirs, preserveManagedExtensions),
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 60000,
+          maxBuffer: 256 * 1024 * 1024,
+        },
+      );
 
       if (tarResult.status !== 0 || !tarResult.stdout) {
         return {
@@ -1234,9 +1401,12 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
         };
       }
 
-      // Remove existing state dirs before extracting so stale files from
-      // later snapshots don't persist after restoring an earlier one.
-      const rmCmd = localDirs.map((d) => `rm -rf -- ${shellQuote(`${dir}/${d}`)}`).join(" && ");
+      // Remove existing state dirs before extracting so stale files from later
+      // snapshots don't persist after restoring an earlier one. OpenClaw's
+      // image-managed extensions are preserved from the freshly built image and
+      // excluded from the restore tar; only user/non-managed extension entries
+      // are cleared and restored from the backup.
+      const rmCmd = buildRestoreCleanupCommand(dir, localDirs, preserveManagedExtensions);
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
         stdio: ["ignore", "pipe", "pipe"],

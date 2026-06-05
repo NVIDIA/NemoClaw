@@ -13,8 +13,24 @@ import { describe, it, expect } from "vitest";
 import YAML from "yaml";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const ROUTER_POOL_CONFIG_PATH = new URL(
+  "../nemoclaw-blueprint/router/pool-config.yaml",
+  import.meta.url,
+);
 const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+  import.meta.url,
+);
+const BRAVE_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/brave.yaml",
+  import.meta.url,
+);
+const PERMISSIVE_POLICY_PATH = new URL(
+  "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+  import.meta.url,
+);
+const HERMES_POLICY_PATH = new URL(
+  "../agents/hermes/policy-additions.yaml",
   import.meta.url,
 );
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
@@ -38,6 +54,16 @@ type Blueprint = {
   };
 };
 
+type RouterPoolModel = {
+  name?: string;
+  litellm_model?: string;
+  api_base?: string;
+};
+
+type RouterPoolConfig = {
+  models?: RouterPoolModel[];
+};
+
 type Rule = { allow?: { method?: string; path?: string } };
 type Endpoint = {
   host?: string;
@@ -46,6 +72,8 @@ type Endpoint = {
   enforcement?: string;
   access?: string;
   tls?: string;
+  websocket_credential_rewrite?: boolean;
+  request_body_credential_rewrite?: boolean;
   rules?: Rule[];
   binaries?: Array<{ path: string }>;
 };
@@ -64,6 +92,26 @@ type SandboxPolicy = {
 type PolicyPreset = {
   preset?: { name?: string; description?: string };
   network_policies?: Record<string, PolicyEntry>;
+};
+
+type ProviderProfileCredential = {
+  env_vars?: string[];
+  auth_style?: string;
+  header_name?: string;
+};
+
+type ProviderProfileEndpoint = {
+  host?: string;
+  port?: number;
+  protocol?: string;
+  access?: string;
+  enforcement?: string;
+};
+
+type ProviderProfile = {
+  id?: string;
+  credentials?: ProviderProfileCredential[];
+  endpoints?: ProviderProfileEndpoint[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -155,6 +203,32 @@ describe("blueprint.yaml", () => {
       expect(declared).toContain(name);
     });
   }
+});
+
+describe("Model Router pool config", () => {
+  const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
+
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+    const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
+    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
+  });
+
+  it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
+    const modelsByName = new Map(
+      (pool.models ?? []).map((model) => [model.name, model.litellm_model]),
+    );
+    expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
+      "openai/nvidia/nemotron-3-nano-30b-a3b",
+    );
+    expect(modelsByName.get("nemotron-3-super")).toBe(
+      "openai/nvidia/nemotron-3-super-120b-a12b",
+    );
+    for (const litellmModel of modelsByName.values()) {
+      expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
+      expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
+      expect(litellmModel).not.toContain("nemotron-3-super-v3");
+    }
+  });
 });
 
 describe("base sandbox policy", () => {
@@ -338,6 +412,7 @@ describe("base sandbox policy", () => {
       (h) =>
         h === "discord.com" ||
         h === "gateway.discord.gg" ||
+        h === "*.discord.gg" ||
         h === "cdn.discordapp.com" ||
         h === "media.discordapp.net",
     );
@@ -376,6 +451,107 @@ describe("base sandbox policy", () => {
   });
 });
 
+describe("Brave Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(BRAVE_PROVIDER_PROFILE_PATH);
+
+  it("routes BRAVE_API_KEY through Brave's subscription-token header", () => {
+    expect(profile.id).toBe("brave");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["BRAVE_API_KEY"],
+        auth_style: "header",
+        header_name: "x-subscription-token",
+      }),
+    ]);
+  });
+
+  it("matches the Brave Search API endpoint used by the policy preset", () => {
+    expect(profile.endpoints).toEqual([
+      expect.objectContaining({
+        host: "api.search.brave.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      }),
+    ]);
+  });
+});
+
+describe("permissive sandbox policy", () => {
+  // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
+  // permissive`. It must carry forward the gateway-managed inference route
+  // so the mental model stays consistent with the base policy and so we
+  // don't silently depend on OpenShell's implicit allow for
+  // gateway-bound virtual hostnames.
+  // Ref: https://github.com/NVIDIA/NemoClaw/issues/2513, #2663
+  const policy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+
+  it("parses and declares network_policies", () => {
+    expect(policy.network_policies).toBeDefined();
+  });
+
+  it("regression #2513: managed_inference block allows inference.local:443", () => {
+    const np = policy.network_policies ?? {};
+    expect(np.managed_inference).toBeDefined();
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+    // Permissive policy uses the `access: full` convention (any method, any
+    // path) rather than explicit per-method rules. That is consistent with
+    // every other host in this file.
+    expect(inferenceEp?.access).toBe("full");
+    expect(inferenceEp?.enforcement).toBe("enforce");
+  });
+
+  it("regression #2513: managed_inference uses permissive '/**' binary allowlist", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path);
+    // Matches the permissive-file convention used by every other block
+    // (e.g. `nvidia`, `github`, `huggingface`, etc.).
+    expect(binaries).toEqual(["/**"]);
+  });
+});
+
+describe("Hermes sandbox policy", () => {
+  const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
+
+  function expectManagedInferenceSecurityShape(): void {
+    const np = policy.network_policies ?? {};
+    const managedInference = np.managed_inference;
+    expect(managedInference?.name).toBe("managed_inference");
+    expect(managedInference?.binaries?.map((b) => b.path)).toEqual([
+      "/usr/local/bin/hermes",
+      "/usr/bin/python3.11",
+      "/opt/hermes/.venv/bin/python",
+    ]);
+
+    const endpoints = managedInference?.endpoints ?? [];
+    expect(endpoints).toHaveLength(1);
+    expect(endpoints[0]).toMatchObject({
+      host: "inference.local",
+      port: 443,
+      protocol: "rest",
+      enforcement: "enforce",
+    });
+    expect(endpoints[0].access).toBeUndefined();
+    expect(endpoints[0].rules).toEqual([
+      { allow: { method: "POST", path: "/v1/chat/completions" } },
+      { allow: { method: "POST", path: "/v1/messages" } },
+      { allow: { method: "POST", path: "/v1/responses" } },
+      { allow: { method: "POST", path: "/v1/completions" } },
+      { allow: { method: "POST", path: "/v1/embeddings" } },
+      { allow: { method: "GET", path: "/v1/models" } },
+      { allow: { method: "GET", path: "/v1/models/**" } },
+    ]);
+  }
+
+  it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
+    expectManagedInferenceSecurityShape();
+  });
+});
+
 describe("github preset", () => {
   // The fix for #1583 was *only* meaningful if the github preset
   // actually exists and is loadable — otherwise users have no way to
@@ -392,6 +568,18 @@ describe("github preset", () => {
     expect(meta?.name).toBe("github");
     const np = parsed.network_policies;
     expect(np && "github" in np).toBe(true);
+  });
+
+  it("regression #2179: github preset only advertises the installed git binary", () => {
+    const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
+    const meta = parsed.preset;
+    expect(meta?.description).toBe("GitHub.com and GitHub API access (git)");
+    expect(meta?.description ?? "").not.toMatch(/\bgh\b/);
+
+    const binaries = (parsed.network_policies?.github?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+    expect(binaries).toEqual(["/usr/bin/git"]);
   });
 });
 
@@ -448,6 +636,106 @@ describe("huggingface preset", () => {
       expect(hasGet).toBe(true);
     }
   });
+});
+
+describe("jira preset", () => {
+  const JIRA_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/jira.yaml",
+    import.meta.url,
+  );
+  const jiraPreset = loadYaml<PolicyPreset>(JIRA_PRESET_PATH);
+
+  it("regression #3758: Jira allows Node but not curl", () => {
+    const binaries = (jiraPreset.network_policies?.atlassian?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+
+    expect(binaries).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    expect(binaries).not.toContain("/usr/bin/curl");
+    expect(binaries).not.toContain("/usr/local/bin/curl");
+  });
+});
+
+describe("messaging WebSocket presets", () => {
+  const DISCORD_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    import.meta.url,
+  );
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+
+  const presets = [
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "gateway.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "*.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-primary.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-backup.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+  ];
+
+  for (const preset of presets) {
+    it(`${preset.name} ${preset.host} uses native WebSocket inspection`, () => {
+      const endpoints = preset.data.network_policies?.[preset.policyKey]?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === preset.host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({ protocol: "websocket", enforcement: "enforce" });
+      expect(endpoint).not.toHaveProperty("access");
+      expect(endpoint).not.toHaveProperty("tls");
+      expect(endpoint?.websocket_credential_rewrite === true).toBe(preset.credentialRewrite);
+      expect(endpoint?.rules).toEqual(
+        expect.arrayContaining([
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+        ]),
+      );
+    });
+  }
+});
+
+describe("Slack REST credential rewrite", () => {
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+  const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);
+  const slackRestHosts = ["slack.com", "api.slack.com", "hooks.slack.com"];
+
+  for (const host of slackRestHosts) {
+    it(`${host} enables request-body credential rewrite`, () => {
+      const endpoints = data.network_policies?.slack?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+      });
+    });
+  }
 });
 
 describe("npm preset", () => {

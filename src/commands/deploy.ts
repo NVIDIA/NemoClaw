@@ -1,16 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import Command from "../lib/commands/deploy";
-import { withCommandDisplay } from "../lib/cli/command-display";
+import { Args } from "@oclif/core";
+import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 
-export default withCommandDisplay(Command, [
-  {
-    usage: "nemoclaw deploy",
-    description: "Deprecated Brev-specific bootstrap path",
-    group: "Compatibility Commands",
-    deprecated: true,
-    scope: "global",
-    order: 31,
-  },
-]);
+import { runDeployAction } from "../lib/actions/global";
+
+export default class DeployCliCommand extends NemoClawCommand {
+  static id = "deploy";
+  static strict = true;
+  static summary = "Deprecated Brev-specific bootstrap path";
+  static description = "Deprecated compatibility command for Brev-specific deployment.";
+  static usage = ["deploy [instance-name]"];
+  static examples = ["<%= config.bin %> deploy my-gpu-instance"];
+  static args = {
+    instanceName: Args.string({
+      name: "instance-name",
+      description: "Brev instance name",
+      required: false,
+    }),
+  };
+  static flags = {
+  };
+
+  public async run(): Promise<void> {
+    const { args } = await this.parse(DeployCliCommand);
+    await runDeployAction(args.instanceName);
+  }
+}

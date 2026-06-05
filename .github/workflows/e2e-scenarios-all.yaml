@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scenario-based E2E fan-out. Generates the job matrix from the typed
+# scenario registry (`test/e2e-scenario/scenarios/registry.ts`) so that
+# adding a scenario in `baseline.ts` automatically produces a tile here on
+# the next run -- no workflow edits required.
+#
+# The single-scenario runner workflow `e2e-scenarios.yaml` remains the
+# authoritative execution path; this file just fans out one call per
+# scenario id with the runner label resolved by `--emit-matrix`.
+
+name: E2E / Scenario Runner / All
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-scenarios-all-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - id: emit
+        name: Emit scenario matrix from typed registry
+        run: |
+          set -euo pipefail
+          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix)"
+          # Sanity-check that the output is non-empty JSON before handing it
+          # to GHA, so a registry error fails this job loudly instead of
+          # producing zero matrix tiles.
+          if [ -z "${matrix}" ] || [ "${matrix}" = "[]" ]; then
+            echo "::error::scenario matrix is empty; check typed registry" >&2
+            exit 1
+          fi
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+      - name: Render matrix summary
+        env:
+          MATRIX_JSON: ${{ steps.emit.outputs.matrix }}
+        run: |
+          {
+            echo '## E2E scenario matrix'
+            echo ''
+            echo '| Scenario | Runner | Label |'
+            echo '| --- | --- | --- |'
+            python3 - <<'PY'
+          import json, os
+          for e in json.loads(os.environ["MATRIX_JSON"]):
+              print(f"| `{e['id']}` | {e['runner']} | {e['label']} |")
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  run-scenario:
+    needs: generate-matrix
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenarios: ${{ matrix.id }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}

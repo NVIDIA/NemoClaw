@@ -8,17 +8,23 @@ const require = createRequire(import.meta.url);
 const ORIGINAL_ENV = { ...process.env };
 const ONBOARD_MODULE = require.resolve("../dist/lib/onboard.js");
 const PORTS_MODULE = require.resolve("../dist/lib/core/ports.js");
+const GATEWAY_ADDRESS_MODULE = require.resolve("../dist/lib/core/gateway-address.js");
+const GATEWAY_ENV_MODULE = require.resolve("../dist/lib/onboard/docker-driver-gateway-env.js");
 
 function loadOnboard() {
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
+  delete require.cache[GATEWAY_ADDRESS_MODULE];
   return require("../dist/lib/onboard");
 }
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
+  delete require.cache[GATEWAY_ADDRESS_MODULE];
 });
 
 describe("gateway startup wait config", () => {
@@ -117,6 +123,28 @@ describe("gateway bootstrap secret repair", () => {
     const { getGatewayLocalEndpoint } = loadOnboard();
 
     expect(getGatewayLocalEndpoint()).toBe("https://127.0.0.1:9443");
+  });
+
+  it("uses wildcard only as the gateway bind address, not the local endpoint", () => {
+    process.env.NEMOCLAW_GATEWAY_PORT = "9443";
+    process.env.NEMOCLAW_GATEWAY_BIND_ADDRESS = "0.0.0.0";
+    process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
+    const { getDockerDriverGatewayEnv, getGatewayLocalEndpoint, getGatewayStartEnv } =
+      loadOnboard();
+
+    expect(getGatewayLocalEndpoint()).toBe("https://127.0.0.1:9443");
+    expect(getDockerDriverGatewayEnv("openshell 0.0.37", "linux")).toMatchObject({
+      OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+      OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:9443",
+      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+      OPENSHELL_SSH_GATEWAY_PORT: "9443",
+    });
+    expect(getGatewayStartEnv()).toMatchObject({
+      OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+      OPENSHELL_SERVER_PORT: "9443",
+      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+      OPENSHELL_SSH_GATEWAY_PORT: "9443",
+    });
   });
 
   it("repairs the client CA and client TLS secrets together", () => {

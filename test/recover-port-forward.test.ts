@@ -11,6 +11,14 @@ import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 
+// Each fixture grabs a unique high port. Sharing port 18789 across tests
+// collides with real nemoclaw installs on the developer's machine: the
+// post-#3334 reachability probe sees the real forward answering and
+// (correctly) classifies the dead-list entry as healthy, skipping recovery.
+// Seed the base with the worker PID so parallel vitest workers (if ever
+// enabled for this file) can't reuse the same ports across processes.
+let nextFixturePort = 47000 + (process.pid % 10000);
+
 afterEach(() => {
   for (const dir of tmpFixtures.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -33,7 +41,7 @@ function setupFixture(opts: {
   port?: string;
 }): Fixture {
   const sandboxName = opts.sandboxName;
-  const port = opts.port ?? "18789";
+  const port = opts.port ?? String(nextFixturePort++);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recover-"));
   tmpFixtures.push(tmpDir);
   const homeLocalBin = path.join(tmpDir, ".local", "bin");

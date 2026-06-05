@@ -64,14 +64,6 @@ function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function requireMatch(match: RegExpMatchArray | null, message: string): RegExpMatchArray {
-  expect(match).not.toBeNull();
-  if (!match) {
-    throw new Error(message);
-  }
-  return match;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers shared across suites
 // ---------------------------------------------------------------------------
@@ -342,6 +334,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -433,6 +426,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -488,9 +482,11 @@ exit 98
     expect(output).toMatch(/--version/);
     expect(output).toMatch(/NEMOCLAW_PROVIDER/);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
+    expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
+    expect(output).toMatch(/NEMOCLAW_NO_EXPRESS=1/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
   });
@@ -504,7 +500,7 @@ exit 98
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
     expect(output).toMatch(/build \| openai \| anthropic \| anthropicCompatible/);
-    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm/);
+    expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
@@ -533,10 +529,9 @@ exit 98
   });
 
   it("piped --help does not show the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--help"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --help`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -546,10 +541,9 @@ exit 98
   });
 
   it("piped --version omits the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --version`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -563,11 +557,34 @@ exit 98
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
     const npmLog = path.join(tmp, "npm.log");
+    const pythonLog = path.join(tmp, "python.log");
+    const gitLog = path.join(tmp, "git.log");
     fs.mkdirSync(fakeBin);
     fs.mkdirSync(path.join(tmp, ".git"));
     fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
 
     writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$GIT_LOG_PATH"
+exit 90
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "python3"),
+      `#!/usr/bin/env bash
+printf 'python3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 88
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "pip3"),
+      `#!/usr/bin/env bash
+printf 'pip3 %s\\n' "$*" >> "$PYTHON_LOG_PATH"
+exit 89
+`,
+    );
     writeNpmStub(
       fakeBin,
       `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
@@ -602,6 +619,13 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(tmp, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml"),
+      "[project]\nname = 'llm-router'\n",
+    );
 
     const result = spawnSync("bash", [INSTALLER], {
       cwd: tmp,
@@ -612,8 +636,11 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
+        PYTHON_LOG_PATH: pythonLog,
+        GIT_LOG_PATH: gitLog,
       },
     });
 
@@ -624,7 +651,179 @@ fi`,
     expect(log).toMatch(/^link/m);
     // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    // Model Router must not run provider-specific dependency setup from the generic installer.
+    expect(fs.existsSync(pythonLog)).toBe(false);
+    const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
+    expect(gitCalls).not.toMatch(/submodule/);
   });
+
+  it(
+    "source-checkout: installs OpenShell when missing from PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(true);
+      expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
+    },
+  );
+
+  it(
+    "source-checkout: skips OpenShell install when openshell is already on PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-skip-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
+exit 0
+`,
+      );
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(false);
+    },
+  );
 
   it("auto-resumes an interrupted onboarding session during install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-resume-"));
@@ -953,7 +1152,12 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  exit 1
+  # Let the installer's early ensure_docker gate pass, then simulate Docker
+  # becoming unavailable for the shared host preflight after the CLI is linked.
+  if [ -x "$NPM_PREFIX/bin/nemoclaw" ]; then
+    exit 1
+  fi
+  exit 0
 fi
 exit 0
 `,
@@ -1012,6 +1216,289 @@ fi`,
     expect(output).toMatch(/Start Docker/);
     expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
     expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  function runNvidiaCdiInstallerRepairTest({
+    systemctlScript,
+    isWsl = false,
+    runtime = "docker",
+    stale = false,
+    toolkitInstalled = true,
+  }: {
+    systemctlScript: string;
+    isWsl?: boolean;
+    runtime?: string;
+    stale?: boolean;
+    toolkitInstalled?: boolean;
+  }) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sourceRoot = path.join(tmp, "source");
+    const cdiDir = path.join(tmp, "cdi");
+    const cdiState = path.join(tmp, "cdi-generated");
+    const sudoLog = path.join(tmp, "sudo.log");
+    const systemctlLog = path.join(tmp, "systemctl.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(sourceRoot, "dist", "lib", "onboard"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(sourceRoot, "dist", "lib", "onboard", "preflight.js"),
+      `
+const fs = require("fs");
+exports.assessHost = () => ({
+  runtime: ${JSON.stringify(runtime)},
+  isWsl: ${isWsl ? "true" : "false"},
+  notes: [],
+  dockerCdiSpecDirs: [process.env.CDI_DIR],
+  cdiNvidiaGpuSpecMissing: ${stale ? "false" : "!fs.existsSync(process.env.CDI_STATE)"},
+  cdiNvidiaGpuSpecStale: ${stale ? "!fs.existsSync(process.env.CDI_STATE)" : "false"},
+  cdiNvidiaGpuSpecNeedsRepair: !fs.existsSync(process.env.CDI_STATE),
+  cdiNvidiaGpuSpecMismatch: process.env.CDI_STALE_FILE + " /dev/nvidia-uvm=498:0, live=499:0",
+  nvidiaContainerToolkitInstalled: ${toolkitInstalled ? "true" : "false"},
+});
+exports.getNvidiaCdiSpecPath = (host) =>
+  String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
+exports.isWslDockerDesktopRuntime = (host) =>
+  Boolean(host && host.isWsl && host.runtime === "docker-desktop");
+exports.planHostRemediation = (host) =>
+  host.cdiNvidiaGpuSpecMissing
+    ? host.isWsl && host.runtime === "docker-desktop"
+      ? [{
+          title: "Use Docker Desktop WSL GPU compatibility path",
+          reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
+          commands: ["verify Docker --gpus support from WSL"],
+          blocking: false,
+        }]
+      : [{
+          title: "Generate NVIDIA CDI device specs",
+          reason: "missing nvidia.com/gpu",
+          commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+          blocking: true,
+        }]
+    : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
+      ? [{
+          title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
+          reason: "nvidia-container-toolkit missing",
+          commands: ["sudo apt-get install -y nvidia-container-toolkit"],
+          blocking: true,
+        }]
+    : [];
+`,
+    );
+    writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SUDO_LOG"
+if [ "\${1:-}" = "-v" ]; then
+  exit 0
+fi
+exec "$@"
+`,
+    );
+    writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
+    writeExecutable(
+      path.join(fakeBin, "nvidia-ctk"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "cdi" ] && [ "\${2:-}" = "generate" ]; then
+  printf 'noisy nvidia-ctk generate stdout\\n'
+  printf 'noisy nvidia-ctk generate stderr\\n' >&2
+  touch "$CDI_STATE"
+  exit 0
+fi
+if [ "\${1:-}" = "cdi" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f "$CDI_STATE" ]; then
+    printf 'nvidia.com/gpu=all\\n'
+    exit 0
+  fi
+  exit 1
+fi
+exit 99
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "id"),
+      `#!/usr/bin/env bash
+if [ "\${1:-}" = "-u" ]; then
+  printf '1000\\n'
+  exit 0
+fi
+exec /usr/bin/id "$@"
+`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
+run_installer_host_preflight
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          SOURCE_ROOT: sourceRoot,
+          CDI_DIR: cdiDir,
+          CDI_STATE: cdiState,
+          CDI_STALE_FILE: path.join(cdiDir, "nvidia.yaml"),
+          SUDO_LOG: sudoLog,
+          SYSTEMCTL_LOG: systemctlLog,
+        },
+      },
+    );
+
+    return {
+      cdiDir,
+      output: `${result.stdout}${result.stderr}`,
+      result,
+      cdiStateExists: fs.existsSync(cdiState),
+      sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
+      systemctlLog: fs.existsSync(systemctlLog) ? fs.readFileSync(systemctlLog, "utf-8") : "",
+    };
+  }
+
+  it("enables nvidia-cdi-refresh before installer host preflight blocks", () => {
+    const { output, result, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
+      systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "enable" ]; then
+  touch "$CDI_STATE"
+  exit 0
+fi
+exit 99
+`,
+    });
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /NVIDIA GPU passthrough uses CDI specs so Docker\/OpenShell can request nvidia\.com\/gpu devices/,
+    );
+    expect(output).toMatch(/Docker is configured for CDI, but the nvidia\.com\/gpu spec is missing/);
+    expect(output).toMatch(
+      /You may be asked for your password to authorize these host-level admin changes/,
+    );
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(output).not.toMatch(/noisy nvidia-ctk generate/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+  });
+
+  it("repairs stale NVIDIA CDI specs with the refresh service only", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "start" ]; then
+  touch "$CDI_STATE"
+fi
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(cdiStateExists).toBe(true);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/effective nvidia\.com\/gpu spec may be stale/);
+    expect(output).toMatch(/refreshed the service-managed NVIDIA CDI device spec/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(systemctlLog).toMatch(/^start nvidia-cdi-refresh\.service$/m);
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+    expect(sudoLog).not.toMatch(/mkdir -p/);
+    expect(sudoLog).not.toMatch(/rm -f/);
+  });
+
+  it("does not auto-repair stale NVIDIA CDI specs before toolkit installation", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        toolkitInstalled: false,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(1);
+    expect(cdiStateExists).toBe(false);
+    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/Install NVIDIA Container Toolkit and refresh CDI device specs/);
+    expect(output).not.toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(systemctlLog).toBe("");
+    expect(sudoLog).toBe("");
+  });
+
+  it("falls back to direct NVIDIA CDI generation when refresh service does not repair", () => {
+    const { cdiDir, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+exit 1
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec/);
+    expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/NemoClaw does not store your password/);
+    expect(output).toMatch(/Generated NVIDIA CDI device spec/);
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(output).not.toMatch(/noisy nvidia-ctk generate/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toContain(`nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
+  });
+
+  it("skips Linux NVIDIA CDI auto-repair on WSL Docker Desktop", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        isWsl: true,
+        runtime: "docker-desktop",
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(cdiStateExists).toBe(false);
+    expect(output).toMatch(/Host preflight found warnings/);
+    expect(output).toMatch(/Use Docker Desktop WSL GPU compatibility path/);
+    expect(output).not.toMatch(/Trying NVIDIA CDI refresh service/);
+    expect(output).not.toMatch(/Generated NVIDIA CDI device spec/);
+    expect(systemctlLog).toBe("");
+    expect(sudoLog).toBe("");
   });
 
   it("warns on Podman but still runs onboarding", () => {
@@ -1319,11 +1806,22 @@ exit 99
 if [ "\${1:-}" = "-c" ]; then
   shift 2
 fi
-if [ "$1" = "clone" ]; then
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "init" ]; then
   target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
+  mkdir -p "$target/nemoclaw" "$target/scripts"
   echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  cat > "$target/scripts/install-openshell.sh" <<'EOS'
+#!/usr/bin/env bash
+exit 0
+EOS
+  chmod +x "$target/scripts/install-openshell.sh"
+  exit 0
+fi
+if [ "$1" = "remote" ] || [ "$1" = "fetch" ] || [ "$1" = "checkout" ]; then
   exit 0
 fi
 exit 0
@@ -1412,7 +1910,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(`export PATH="${fakeBin}:$PATH"`);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(path.join(prefix, "bin", "nemoclaw"));
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
+    expect(`${result.stdout}${result.stderr}`.match(/Created user-local shim/g) ?? []).toHaveLength(
+      1,
+    );
   });
 
   it("preserves ready output when nemoclaw is already resolvable after install", () => {
@@ -1539,8 +2039,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/this shell needs PATH refresh/);
-    expect(output).toMatch(/\$ source /);
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ source /);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).toContain("Use the Start chatting section above");
   });
 
   it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
@@ -1631,7 +2132,7 @@ fi`,
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
     );
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
@@ -1658,7 +2159,7 @@ describe("installer release-tag resolution", () => {
     });
   }
 
-  it("defaults to 'latest' with no env override", () => {
+  it("defaults to 'lkg' with no env override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -1668,7 +2169,7 @@ describe("installer release-tag resolution", () => {
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("latest");
+    expect(result.stdout.trim()).toBe("lkg");
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override", () => {
@@ -1770,6 +2271,7 @@ exit 0`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -1846,6 +2348,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -2451,7 +2954,11 @@ describe("installer flag parsing", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_INSTALL_TAG/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_INSTALL_TAG/);
+    expect(output).toMatch(/default: lkg/);
+    expect(output).toMatch(/set this on bash or export it first/);
+    expect(output).toMatch(/curl .* \| NEMOCLAW_INSTALL_TAG=v0\.0\.56 bash/);
   });
 });
 
@@ -2594,6 +3101,163 @@ exit 0`,
   });
 });
 
+describe("installer Docker bootstrap (sourced)", () => {
+  function runEnsureDockerWithStubs({
+    dockerScript,
+    idScript,
+    systemctlScript = `#!/usr/bin/env bash
+if [ "\${1:-}" = "is-active" ]; then exit 0; fi
+if [ "\${1:-}" = "enable" ]; then exit 0; fi
+exit 0
+`,
+    sudoScript = `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-n" ]; then shift; fi
+printf '%s\\n' "$*" >> "$SUDO_LOG"
+exec "$@"
+`,
+  }: {
+    dockerScript: string;
+    idScript: string;
+    systemctlScript?: string;
+    sudoScript?: string;
+  }) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-bootstrap-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sudoLog = path.join(tmp, "sudo.log");
+    const idLog = path.join(tmp, "id.log");
+    const dockerCount = path.join(tmp, "docker-count");
+    fs.mkdirSync(fakeBin);
+
+    writeExecutable(path.join(fakeBin, "docker"), dockerScript);
+    writeExecutable(path.join(fakeBin, "id"), idScript);
+    writeExecutable(path.join(fakeBin, "sudo"), sudoScript);
+    writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
+printf 'Linux\\n'
+`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+# These tests validate the Linux Docker bootstrap branches. On a real WSL
+# runner the installer intentionally skips that bootstrap, so force the helper
+# under test to behave as a non-WSL Linux host while keeping uname/id/docker
+# stubbed through PATH.
+is_wsl_host() { return 1; }
+info() { printf 'INFO: %s\\n' "$*" >&2; }
+warn() { printf 'WARN: %s\\n' "$*" >&2; }
+error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+ensure_docker
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          SUDO_LOG: sudoLog,
+          ID_LOG: idLog,
+          DOCKER_COUNT: dockerCount,
+        },
+      },
+    );
+
+    return {
+      result,
+      sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
+      idLog: fs.existsSync(idLog) ? fs.readFileSync(idLog, "utf-8") : "",
+    };
+  }
+
+  it("prompts for newgrp when persisted docker membership is not active", () => {
+    const { result, sudoLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice docker\\n' ;;
+  "-nG") printf 'alice adm\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Docker group membership is not active in this shell yet/);
+    expect(output).toMatch(/newgrp docker/);
+    expect(output).not.toMatch(/Docker is installed but not reachable/);
+    expect(sudoLog).not.toMatch(/usermod/);
+  });
+
+  it("reports daemon reachability when the active shell already has docker", () => {
+    const { result } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 1; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice docker\\n' ;;
+  "-nG") printf 'alice docker adm\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/Docker is installed but not reachable/);
+    expect(output).toMatch(/sudo systemctl start docker/);
+    expect(output).not.toMatch(/newgrp docker/);
+  });
+
+  it("skips docker group membership checks for root", () => {
+    const { result, idLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then
+  count=0
+  if [ -f "$DOCKER_COUNT" ]; then count="$(cat "$DOCKER_COUNT")"; fi
+  count=$((count + 1))
+  printf '%s\\n' "$count" > "$DOCKER_COUNT"
+  if [ "$count" -ge 2 ]; then exit 0; fi
+  exit 1
+fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$ID_LOG"
+case "$*" in
+  "-u") printf '0\\n' ;;
+  "-un") printf 'root\\n' ;;
+  "-nG"*) printf 'root should not check groups\\n' >&2; exit 99 ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(idLog).toMatch(/^-u$/m);
+    expect(idLog).not.toMatch(/-nG/);
+  });
+});
+
 describe("installer license acceptance (sourced)", () => {
   /**
    * Source scripts/install.sh and invoke show_usage_notice() in isolation. The
@@ -2698,6 +3362,221 @@ exit 0`,
     // No raw /dev/tty shell noise should leak (e.g. "exec 3</dev/tty")
     // — the friendly hint is the only TTY-related output we expect.
     expect(output).not.toMatch(/\/dev\/tty/);
+  });
+
+  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+    // The reporter on #3058 hit this error with `curl ... | bash` on a
+    // non-TTY box and was left guessing how to combine the env var with
+    // the documented one-liner. The fix surfaces the exact invocations
+    // (terminal, env-var-in-pipe, flag-via-bash-s) so users can resolve
+    // the failure without leaving the terminal output.
+    const { result } = callShowUsageNotice({});
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash/);
+    expect(output).toMatch(/bash -s -- --yes-i-accept-third-party-software/);
+    expect(output).toMatch(/bash <\(curl/);
+  });
+});
+
+describe("installer express install prompt (sourced)", () => {
+  function runExpressPromptWithTty(
+    answer: string,
+    stdinMode: "pipe" | "tty",
+    platform = "DGX Spark",
+  ) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
+    const python =
+      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      "python3";
+    const ptyRunner = `
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+installer = sys.argv[1]
+answer = sys.argv[2].encode()
+stdin_mode = sys.argv[3]
+platform = sys.argv[4]
+script = r'''
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
+NON_INTERACTIVE=""
+NEMOCLAW_PROVIDER=""
+NEMOCLAW_NO_EXPRESS=""
+maybe_offer_express_install
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
+'''
+env = dict(os.environ)
+env["INSTALLER_UNDER_TEST"] = installer
+env["EXPRESS_PLATFORM"] = platform
+pid, fd = pty.fork()
+if pid == 0:
+    if stdin_mode == "pipe":
+        devnull = os.open(os.devnull, os.O_RDONLY)
+        os.dup2(devnull, 0)
+        os.close(devnull)
+    os.execvpe("bash", ["bash", "-c", script], env)
+
+output = bytearray()
+os.set_blocking(fd, False)
+sent = False
+exit_code = 124
+deadline = time.time() + 10
+while True:
+    ready, _, _ = select.select([fd], [], [], 0.1)
+    if ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except BlockingIOError:
+            chunk = b""
+        except OSError:
+            chunk = b""
+        if chunk:
+            output.extend(chunk)
+        if (not sent) and b"[Y/n]" in output:
+            os.write(fd, answer)
+            sent = True
+    waited = os.waitpid(pid, os.WNOHANG)
+    if waited[0] == pid:
+        exit_code = os.waitstatus_to_exitcode(waited[1])
+        break
+    if time.time() > deadline:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+        break
+
+try:
+    os.close(fd)
+except OSError:
+    pass
+sys.stdout.buffer.write(output)
+sys.exit(exit_code)
+`;
+    return spawnSync(
+      python,
+      ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+        },
+      },
+    );
+  }
+
+  it("offers express install when curl-piped stdin still has a controlling TTY", () => {
+    const result = runExpressPromptWithTty("y\n", "pipe");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(
+      /Express install will configure managed local Ollama with model qwen3\.6:35b/,
+    );
+    expect(output).toMatch(/Sandbox name: my-spark-assistant/);
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
+    expect(output).toMatch(/Run express install/);
+    expect(output).toMatch(/Using express install for DGX Spark/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
+    );
+  });
+
+  it("detects Windows WSL as an express install platform", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform
+`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-detect-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          WSL_DISTRO_NAME: "Ubuntu",
+        },
+      },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Windows WSL");
+  });
+
+  it("maps Windows WSL express install to Windows-host Ollama", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(
+      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
+    expect(output).toMatch(/Run express install/);
+    expect(output).toMatch(/Using express install for Windows WSL/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1 SANDBOX=/,
+    );
+  });
+
+  it("skips express install without a controlling TTY", () => {
+    if (process.platform === "darwin") {
+      return;
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
+    const result = spawnSync(
+      "setsid",
+      [
+        "bash",
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "DGX Spark"; }
+NON_INTERACTIVE=""
+NEMOCLAW_PROVIDER=""
+NEMOCLAW_NO_EXPRESS=""
+maybe_offer_express_install
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        input: "",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
+    expect(output).not.toMatch(/Run express install/);
+    expect(output).toMatch(/RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= POLICY= YES= SANDBOX=/);
   });
 });
 
@@ -2877,9 +3756,8 @@ main() {
 }`,
     );
 
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(rootInstaller)} | bash -s -- --version`], {
       cwd: repoLike,
-      input: fs.readFileSync(rootInstaller, "utf-8"),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -2890,6 +3768,52 @@ main() {
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/^nemoclaw-installer\s*$/m);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/LOCAL_PAYLOAD_USED/);
+  });
+
+  it("piped root installer fails clearly when the selected ref is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-missing-ref-"));
+    const fakeBin = path.join(tmp, "bin");
+    const gitLog = path.join(tmp, "git.log");
+    fs.mkdirSync(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "$1" = "init" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target"
+  exit 0
+fi
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "remote" ]; then exit 0; fi
+if [ "$1" = "fetch" ]; then
+  echo "fatal: couldn't find remote ref \${@: -1}" >&2
+  exit 128
+fi
+exit 0`,
+    );
+
+    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: installerInput,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        GIT_LOG_PATH: gitLog,
+        NEMOCLAW_INSTALL_TAG: "v9.9.9",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Requested install ref 'v9\.9\.9' is not available/);
+    expect(output).toMatch(/Check NEMOCLAW_INSTALL_TAG\/NEMOCLAW_INSTALL_REF/);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/fetch --quiet --depth 1 origin v9\.9\.9/);
   });
 
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {
@@ -3062,10 +3986,13 @@ exit 0`,
       {
         cwd: tmp,
         encoding: "utf-8",
+        // input: "" makes spawnSync attach a non-TTY stdin pipe. setsid above
+        // additionally removes /dev/tty on Linux/WSL.
         input: options.stdinIsTty ? undefined : "",
         env: {
           HOME: tmp,
           PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
           ...env,
         },
       },
@@ -3110,7 +4037,7 @@ exit 0`,
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 echo "openshell $*" >> ${JSON.stringify(phaseLog)}
-if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.36"; fi
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then echo "openshell 0.0.37"; fi
 exit 0`,
     );
     writeExecutable(
@@ -3122,7 +4049,7 @@ exit 0`,
     );
 
     const python =
-      spawnSync("bash", ["-lc", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
+      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
       "python3";
     const ptyRunner = `
 import os
@@ -3221,6 +4148,11 @@ sys.exit(exit_code)
       env: {
         HOME: tmp,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        // These tests verify the third-party-license flow on non-Spark
+        // hardware. On real DGX Spark/Station the express prompt would
+        // also fire and consume the test's input. Skip it explicitly
+        // so the tests stay focused on what they're verifying.
+        NEMOCLAW_NO_EXPRESS: "1",
         ...env,
       },
     });
@@ -3348,5 +4280,115 @@ sys.exit(exit_code)
     );
     expect(output).toMatch(/--yes-i-accept-third-party-software/);
     expect(phases).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Build-dependency preflight (#4415): missing binutils/`strings` should fail
+// fast at preflight, before any clone/build/download work, instead of ~5
+// minutes in at OpenShell verification.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like buildIsolatedSystemPath but lets the caller exclude additional binary
+ * names (in addition to node/npm/npx). Used to simulate a host that is missing
+ * `strings` (binutils) while keeping the rest of coreutils available.
+ */
+function buildSystemPathExcluding(extra: readonly string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-nodep-"));
+  const EXCLUDE = new Set(["node", "npm", "npx", ...extra]);
+  for (const sysDir of ["/usr/bin", "/bin"]) {
+    if (!fs.existsSync(sysDir)) continue;
+    for (const name of fs.readdirSync(sysDir)) {
+      if (EXCLUDE.has(name)) continue;
+      try {
+        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+    }
+  }
+  return dir;
+}
+
+/** docker stub whose `info` always succeeds, so ensure_docker passes. */
+function writeDockerOkStub(fakeBin: string) {
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then exit 0; fi
+exit 0
+`,
+  );
+  writeExecutable(
+    path.join(fakeBin, "systemctl"),
+    `#!/usr/bin/env bash
+if [ "$1" = "is-active" ] && [ "$2" = "docker" ]; then echo "active"; exit 0; fi
+exit 0
+`,
+  );
+}
+
+describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
+  it("fails fast at preflight when binutils (strings) is missing, before any clone/build", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/'strings' \(from binutils\) is required/);
+    expect(output).toMatch(/sudo apt-get install -y binutils/);
+    // Fail-fast guarantee: never reached the OpenShell install/verify or the
+    // CLI build, which is the ~5-minutes-in failure point the issue reports.
+    expect(output).not.toMatch(/Installing OpenShell/);
+    expect(output).not.toMatch(/Cloning into/);
+  });
+
+  it("does not fire the binutils preflight when OpenShell install is deferred", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-deferred-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    // npm stub that fails fast on install, so the run stops shortly AFTER the
+    // (skipped) binutils preflight rather than doing real work. The assertion
+    // only cares that our binutils error never fires under DEFER.
+    writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+        NPM_PREFIX: path.join(tmp, "prefix"),
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    // The deferred path postpones all OpenShell work (and its own strings
+    // check) to a later phase, so the early preflight must stay silent.
+    expect(output).not.toMatch(/'strings' \(from binutils\) is required/);
   });
 });

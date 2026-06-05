@@ -10,7 +10,6 @@ import {
   classifySessionState,
   getActiveSandboxSessions,
   type ForwardEntry,
-  type SessionClassification,
   type SessionDetectionDeps,
 } from "./sandbox-session";
 
@@ -38,6 +37,20 @@ my-sandbox  127.0.0.1  18789  12345  running`;
       pid: 12345,
       status: "running",
     });
+  });
+
+  it("strips ANSI colors from forward list output", () => {
+    const output = `SANDBOX BIND      PORT     PID        STATUS
+hermes  127.0.0.1 8642     50394      \u001b[32mrunning\u001b[39m`;
+    expect(parseForwardList(output)).toEqual([
+      {
+        sandboxName: "hermes",
+        bind: "127.0.0.1",
+        port: "8642",
+        pid: 50394,
+        status: "running",
+      },
+    ]);
   });
 
   it("parses multiple forward entries", () => {

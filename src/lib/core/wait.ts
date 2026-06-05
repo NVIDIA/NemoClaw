@@ -5,6 +5,22 @@
  * Synchronous waiting primitives for CLI commands.
  */
 
+import { withLocalNoProxy } from "../subprocess-env.js";
+
+/**
+ * Build a curl-friendly env that injects NO_PROXY for loopback hosts so that
+ * probes against localhost-bound services (Ollama, gateway, dashboard, etc.)
+ * do not get routed through a user-configured HTTP_PROXY. See #4181.
+ */
+export function buildLoopbackProbeEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  withLocalNoProxy(env);
+  return env;
+}
+
 /**
  * Synchronously sleep for the given number of milliseconds.
  * Uses Atomics.wait to block without pegging the CPU.
@@ -20,4 +36,55 @@ export function sleepMs(ms: number): void {
  */
 export function sleepSeconds(seconds: number): void {
   sleepMs(seconds * 1000);
+}
+
+/**
+ * Synchronously wait until a condition is met.
+ */
+export function waitUntil(
+  conditionFn: () => boolean,
+  timeoutSeconds = 10,
+  pollIntervalMs = 250,
+): boolean {
+  const start = Date.now();
+  while (Date.now() - start < timeoutSeconds * 1000) {
+    if (conditionFn()) return true;
+    sleepMs(pollIntervalMs);
+  }
+  return false;
+}
+
+/**
+ * Synchronously wait for a TCP port to become reachable on localhost.
+ */
+export function waitForPort(port: number, timeoutSeconds = 5): boolean {
+  const { spawnSync } = require("node:child_process");
+  return waitUntil(() => {
+    try {
+      const result = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
+      return result.status === 0;
+    } catch {
+      return false;
+    }
+  }, timeoutSeconds, 200);
+}
+
+/**
+ * Synchronously wait for an HTTP endpoint to return a success status code.
+ */
+export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
+  const { spawnSync } = require("node:child_process");
+  const env = buildLoopbackProbeEnv();
+  return waitUntil(() => {
+    try {
+      const result = spawnSync(
+        "curl",
+        ["-sf", "--connect-timeout", "1", "--max-time", "1", url],
+        { stdio: "ignore", env },
+      );
+      return result.status === 0;
+    } catch {
+      return false;
+    }
+  }, timeoutSeconds, 200);
 }

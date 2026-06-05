@@ -62,6 +62,7 @@ run_nemoclaw() {
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-repair}"
 OTHER_SANDBOX_NAME="${NEMOCLAW_OTHER_SANDBOX_NAME:-e2e-other}"
+INSTALL_SANDBOX_NAME="${NEMOCLAW_E2E_INSTALL_SANDBOX_NAME:-}"
 
 # Shim so the teardown helper's trap can call `nemoclaw destroy` even when
 # this repo-local test run has no globally-installed `nemoclaw` on PATH (it
@@ -74,17 +75,46 @@ fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 register_sandbox_for_teardown "$OTHER_SANDBOX_NAME"
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  register_sandbox_for_teardown "$INSTALL_SANDBOX_NAME"
+fi
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
+
+wait_openshell_sandbox_absent() {
+  local sandbox_name="$1"
+  local timeout="${2:-60}"
+  local deadline=$((SECONDS + timeout))
+  local output status
+
+  while [ "$SECONDS" -le "$deadline" ]; do
+    output="$(openshell sandbox get "$sandbox_name" 2>&1)"
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qiE 'NotFound|Not Found|sandbox not found' <<<"$output"; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  info "OpenShell still reports sandbox '$sandbox_name' after ${timeout}s:"
+  printf '%s\n' "$output" | sed 's/^/    /'
+  return 1
+}
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Pre-cleanup"
 info "Destroying any leftover sandbox/gateway from previous runs..."
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  run_nemoclaw "$INSTALL_SANDBOX_NAME" destroy 2>/dev/null || true
+fi
 run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 run_nemoclaw "$OTHER_SANDBOX_NAME" destroy 2>/dev/null || true
+if [ -n "$INSTALL_SANDBOX_NAME" ]; then
+  openshell sandbox delete "$INSTALL_SANDBOX_NAME" 2>/dev/null || true
+fi
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell sandbox delete "$OTHER_SANDBOX_NAME" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
@@ -132,22 +162,19 @@ pass "Exported NVIDIA_API_KEY for the repair run (host writes nothing to disk; O
 # Phase 2: Create interrupted resumable state
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Create interrupted state"
-info "Running onboard with POLICY_MODE=custom but no POLICY_PRESETS to force a policy-step failure..."
+info "Running onboard with E2E failure injection at the policy step..."
 
-# Use NEMOCLAW_POLICY_MODE=custom without NEMOCLAW_POLICY_PRESETS — this is a
-# real validation path that exits 1 at the policy step after the sandbox is
-# already created, leaving resumable session state.
-#
-# Note: the previous approach (NEMOCLAW_POLICY_MODE=invalid) stopped working
-# after PR #2434 changed invalid modes from process.exit(1) to a graceful
-# fallback with console.warn(). See #2573 for details.
+# Force a deterministic interruption after the sandbox and OpenClaw setup
+# complete, but before policy setup completes. This keeps repair coverage
+# independent of product validation behavior such as policy-mode parsing.
 FIRST_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=custom \
-  NEMOCLAW_POLICY_PRESETS="" \
+  NEMOCLAW_POLICY_MODE=suggested \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=policies \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$FIRST_LOG" 2>&1
 first_exit=$?
 first_output="$(cat "$FIRST_LOG")"
@@ -167,7 +194,7 @@ else
   fail "Onboard session file missing after interrupted run"
 fi
 
-if echo "$first_output" | grep -q "NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom"; then
+if echo "$first_output" | grep -q "\[e2e\] Forced onboarding failure at step 'policies'."; then
   pass "First run failed at policy setup as intended"
 else
   fail "First run did not fail at the expected policy step"
@@ -188,10 +215,10 @@ info "Deleting the recorded sandbox under the session, then resuming..."
 openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true
 openshell forward stop 18789 >/dev/null 2>&1 || true
 
-if openshell sandbox get "$SANDBOX_NAME" >/dev/null 2>&1; then
-  fail "Sandbox '$SANDBOX_NAME' still exists after forced deletion"
-else
+if wait_openshell_sandbox_absent "$SANDBOX_NAME" 60; then
   pass "Sandbox '$SANDBOX_NAME' removed to simulate stale recorded state"
+else
+  fail "Sandbox '$SANDBOX_NAME' still exists after forced deletion"
 fi
 
 REPAIR_LOG="$(mktemp)"
@@ -258,8 +285,9 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=custom \
-  NEMOCLAW_POLICY_PRESETS="" \
+  NEMOCLAW_POLICY_MODE=suggested \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=policies \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$REINJECT_LOG" 2>&1 || true
 rm -f "$REINJECT_LOG"
 pass "Re-created interrupted session for conflict tests"

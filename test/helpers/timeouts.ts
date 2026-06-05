@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const DEFAULT_EXEC_TIMEOUT_MS = 10_000;
-const DEFAULT_TEST_TIMEOUT_MS = 15_000;
+const DEFAULT_TEST_TIMEOUT_MS = 5_000;
 
 function parsePositiveInt(value: string | undefined): number | null {
   if (!value) return null;

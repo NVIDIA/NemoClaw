@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # IPv4 and IPv6 networks that SSRF validation must reject. Consumed by:
-#   - src/lib/sandbox-config.ts            (CLI `config set` literal-IP gate)
+#   - src/lib/sandbox/config.ts            (CLI `config set` literal-IP gate)
 #   - nemoclaw/src/blueprint/ssrf.ts       (plugin endpoint URL validator)
 # Both consumers build a node:net BlockList from this data at module load.
 #

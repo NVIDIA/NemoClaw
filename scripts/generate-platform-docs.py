@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Generate platform and provider tables from ci/platform-matrix.json.
 
-Reads the single-source-of-truth metadata and patches markdown tables
+Reads the single-source-of-truth metadata and patches Markdown or MDX tables
 between sentinel comments in target files.
 
 Sentinel pairs:
-  <!-- platform-matrix:begin --> / <!-- platform-matrix:end -->
-  <!-- provider-status:begin --> / <!-- provider-status:end -->
+  <!-- platform-matrix:begin --> / <!-- platform-matrix:end -->  (Markdown only)
+  {/* platform-matrix:begin */} / {/* platform-matrix:end */}  (MDX)
+  {/* provider-status:begin */} / {/* provider-status:end */}  (MDX)
 
 Usage:
     python3 scripts/generate-platform-docs.py                  # patch files in place
@@ -32,25 +33,29 @@ TABLES = [
         "platform-matrix",
         "platforms",
         [
-            # README.md is the patch target. docs/get-started/platform-setup/
-            # index.md pulls the same table in via Sphinx `{include}` so the
-            # generator does not need a second target there.
-            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "get-started" / "prerequisites.mdx",
         ],
     ),
     (
         "provider-status",
         "providers",
         [
-            REPO_ROOT / "docs" / "inference" / "inference-options.md",
+            REPO_ROOT / "docs" / "inference" / "inference-options.mdx",
         ],
     ),
 ]
 
 
-def _sentinel_re(name: str) -> re.Pattern:
+def _sentinel_pairs(name: str) -> list[tuple[str, str]]:
+    return [
+        (f"<!-- {name}:begin -->", f"<!-- {name}:end -->"),
+        (f"{{/* {name}:begin */}}", f"{{/* {name}:end */}}"),
+    ]
+
+
+def _sentinel_re(begin: str, end: str) -> re.Pattern:
     return re.compile(
-        rf"(<!-- {re.escape(name)}:begin -->)\n.*?\n(<!-- {re.escape(name)}:end -->)",
+        rf"({re.escape(begin)})\n.*?\n({re.escape(end)})",
         re.DOTALL,
     )
 
@@ -108,30 +113,39 @@ TABLE_GENERATORS = {
 def patch_file(path: Path, sentinel_name: str, table: str, check_only: bool) -> bool:
     """Replace content between sentinels. Returns True if file was changed."""
     text = path.read_text()
-    begin = f"<!-- {sentinel_name}:begin -->"
-    end = f"<!-- {sentinel_name}:end -->"
-    if begin not in text:
-        return False
+    for begin, end in _sentinel_pairs(sentinel_name):
+        if begin not in text:
+            continue
 
-    if end not in text:
-        raise ValueError(
-            f"{path.relative_to(REPO_ROOT)} has '{begin}' but no matching '{end}'"
-        )
+        if end not in text:
+            raise ValueError(
+                f"{path.relative_to(REPO_ROOT)} has '{begin}' but no matching '{end}'"
+            )
 
-    pattern = _sentinel_re(sentinel_name)
-    replacement = f"<!-- {sentinel_name}:begin -->\n{table}\n<!-- {sentinel_name}:end -->"
-    new_text = pattern.sub(replacement, text)
+        pattern = _sentinel_re(begin, end)
+        replacement = f"{begin}\n{table}\n{end}"
+        new_text, count = pattern.subn(replacement, text, count=1)
+        if count != 1:
+            raise ValueError(
+                f"{path.relative_to(REPO_ROOT)} has malformed '{sentinel_name}' sentinels"
+            )
 
-    if new_text == text:
-        return False
+        if new_text == text:
+            return False
 
-    if check_only:
-        print(f"  DIFF {path.relative_to(REPO_ROOT)} [{sentinel_name}]")
+        if check_only:
+            print(f"  DIFF {path.relative_to(REPO_ROOT)} [{sentinel_name}]")
+            return True
+
+        path.write_text(new_text)
+        print(f"  PATCH {path.relative_to(REPO_ROOT)} [{sentinel_name}]")
         return True
 
-    path.write_text(new_text)
-    print(f"  PATCH {path.relative_to(REPO_ROOT)} [{sentinel_name}]")
-    return True
+    supported = " or ".join(begin for begin, _ in _sentinel_pairs(sentinel_name))
+    raise ValueError(
+        f"{path.relative_to(REPO_ROOT)} is configured for '{sentinel_name}' "
+        f"but contains no supported begin sentinel ({supported})"
+    )
 
 
 def main():

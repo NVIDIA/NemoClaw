@@ -15,6 +15,15 @@
 export interface GatewayTokenCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
   fetchToken: (sandboxName: string) => string | null;
+  /**
+   * Resolve the agent name registered for the sandbox (e.g. "openclaw",
+   * "hermes"). When omitted -- or when the lookup throws -- the OpenClaw
+   * code path is used unchanged so callers without registry access keep
+   * working. Returning null is treated the same as "openclaw" since the
+   * registry stored that as the implicit default before the agent field
+   * existed.
+   */
+  getSandboxAgent?: (sandboxName: string) => string | null;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
@@ -26,21 +35,56 @@ export interface GatewayTokenCommandOptions {
   quiet?: boolean;
 }
 
+export class GatewayTokenCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "GatewayTokenCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function gatewayTokenFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new GatewayTokenCommandError(lines, exitCode);
+}
+
 const SECURITY_WARNING =
   "Treat this token like a password -- do not log, share, or commit it.";
 
 /**
- * Run the gateway-token command. Returns the process exit code (0 on success,
- * 1 on failure). The caller is responsible for invoking `process.exit` and for
- * having validated that the sandbox exists in the registry.
+ * Run the gateway-token command. Throws {@link GatewayTokenCommandError} on
+ * failure. The caller is responsible for rendering failures and for having
+ * validated that the sandbox exists in the registry.
  */
 export function runGatewayTokenCommand(
   sandboxName: string,
   options: GatewayTokenCommandOptions,
   deps: GatewayTokenCommandDeps,
-): number {
+): void {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
+
+  // NCQ #3180: gateway-token only applies to the OpenClaw agent. Hermes (and
+  // any other non-OpenClaw agent) does not store a gateway auth token, so
+  // skip the OpenClaw lookup entirely and surface an agent-aware message
+  // instead of the misleading "make sure the sandbox is running" hint.
+  let resolvedAgent: string | null = null;
+  if (deps.getSandboxAgent) {
+    try {
+      resolvedAgent = deps.getSandboxAgent(sandboxName);
+    } catch {
+      resolvedAgent = null;
+    }
+  }
+  if (resolvedAgent && resolvedAgent !== "openclaw") {
+    gatewayTokenFail(
+      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
+    );
+  }
 
   let token: string | null;
   try {
@@ -50,16 +94,16 @@ export function runGatewayTokenCommand(
   }
 
   if (!token) {
-    error(`  Could not retrieve the gateway auth token for sandbox '${sandboxName}'.`);
-    error(`  Make sure the sandbox is running: nemoclaw ${sandboxName} status`);
-    return 1;
+    gatewayTokenFail([
+      `  Could not retrieve the gateway auth token for sandbox '${sandboxName}'.`,
+      `  Make sure the sandbox is running: nemoclaw ${sandboxName} status`,
+    ]);
   }
 
   log(token);
   if (!options.quiet) {
     error(SECURITY_WARNING);
   }
-  return 0;
 }
 
 /** Parse the raw `gateway-token` action arguments. */

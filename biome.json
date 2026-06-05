@@ -17,8 +17,11 @@
       "src/**/*.ts",
       "bin/**/*.js",
       "scripts/**/*.js",
+      "scripts/**/*.mjs",
       "scripts/**/*.ts",
       "test/**/*.js",
+      "test/credentials-shim.test.ts",
+      "test/runner-basic.test.ts",
       "docs/_ext/**/*.js",
       "nemoclaw/src/**/*.ts",
       "!dist",
@@ -92,7 +95,10 @@
         "bin/**/*.js",
         "commitlint.config.js",
         "scripts/**/*.js",
+        "scripts/**/*.mjs",
         "test/**/*.js",
+        "test/credentials-shim.test.ts",
+        "test/runner-basic.test.ts",
         "docs/_ext/**/*.js"
       ],
       "linter": {

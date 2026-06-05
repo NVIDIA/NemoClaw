@@ -5,10 +5,8 @@ import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
 import {
-  classifyGatewayStatus,
-  classifySandboxLookup,
   parseLiveSandboxNames,
-  shouldAttemptGatewayRecovery,
+  parseReadySandboxNames,
 } from "../../dist/lib/runtime-recovery";
 
 describe("runtime recovery helpers", () => {
@@ -34,65 +32,107 @@ describe("runtime recovery helpers", () => {
     expect(Array.from(parseLiveSandboxNames("Error: something went wrong"))).toEqual([]);
   });
 
+  it("does not parse protobuf schema mismatch output as live sandbox state", () => {
+    const output =
+      'Error:   × status: Internal, message: "Sandbox.metadata: SandboxResponse.sandbox: invalid wire type value: 6"';
+
+    expect(Array.from(parseLiveSandboxNames(output))).toEqual([]);
+  });
+
   it("handles empty input", () => {
     expect(Array.from(parseLiveSandboxNames(""))).toEqual([]);
     expect(Array.from(parseLiveSandboxNames())).toEqual([]);
   });
 
-  it("classifies missing sandbox lookups", () => {
+  it("does not drop sandboxes whose name starts with 'name' or 'no'", () => {
     expect(
-      classifySandboxLookup('Error:   × status: NotFound, message: "sandbox not found"').state,
-    ).toBe("missing");
-    expect(classifySandboxLookup("").state).toBe("missing");
+      Array.from(
+        parseLiveSandboxNames(
+          [
+            "NAME              NAMESPACE  CREATED              PHASE",
+            "name-prod         openshell  2026-03-24 10:00:00  Ready",
+            "no-sandboxes      openshell  2026-03-24 10:01:00  Ready",
+          ].join("\n"),
+        ),
+      ),
+    ).toEqual(["name-prod", "no-sandboxes"]);
   });
 
-  it("classifies transport and gateway failures as unavailable", () => {
-    expect(
-      classifySandboxLookup(
-        "Error:   × transport error\n  ╰─▶ Connection reset by peer (os error 104)",
-      ).state,
-    ).toBe("unavailable");
-    expect(
-      classifySandboxLookup(
-        "Error:   × client error (Connect)\n  ╰─▶ Connection refused (os error 111)",
-      ).state,
-    ).toBe("unavailable");
-  });
+  describe("parseReadySandboxNames", () => {
+    it("includes sandboxes whose PHASE is Ready or Running", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "alpha             openshell  2026-03-24 10:00:00  Ready",
+              "epsilon           openshell  2026-03-24 10:00:30  Running",
+              "beta              openshell  2026-03-24 10:01:00  Provisioning",
+              "gamma             openshell  2026-03-24 10:02:00  Error",
+              "delta             openshell  2026-03-24 10:03:00  Ready",
+              "zeta              openshell  2026-03-24 10:04:00  NotReady",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual(["alpha", "epsilon", "delta"]);
+    });
 
-  it("classifies successful sandbox lookups as present", () => {
-    expect(
-      classifySandboxLookup(
-        ["Sandbox:", "", "  Id: abc", "  Name: my-assistant", "  Phase: Ready"].join("\n"),
-      ).state,
-    ).toBe("present");
-  });
+    it("skips sandboxes that report Error PHASE (stopped container)", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "stopped-one       openshell  2026-03-24 10:00:00  Error",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual([]);
+    });
 
-  it("classifies gateway status output for restart recovery", () => {
-    expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Connected").state).toBe("connected");
-    expect(classifyGatewayStatus("Error:   × No active gateway").state).toBe("unavailable");
-    expect(classifyGatewayStatus("").state).toBe("inactive");
-    expect(classifyGatewayStatus("Gateway: nemoclaw\nStatus: Disconnected").state).toBe(
-      "inactive",
-    );
-    expect(classifyGatewayStatus("Status: Not connected").state).toBe("inactive");
-    expect(classifyGatewayStatus("Connected").state).toBe("connected");
-  });
+    it("does not treat Ready or Running tokens outside the PHASE column as live", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "alpha             Ready      2026-03-24 10:00:00  Provisioning",
+              "beta              Running    2026-03-24 10:01:00  Error",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual([]);
+    });
 
-  it("only attempts gateway recovery when sandbox access is unavailable and gateway is down", () => {
-    expect(
-      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "unavailable" }),
-    ).toBe(true);
-    expect(
-      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "inactive" }),
-    ).toBe(true);
-    expect(
-      shouldAttemptGatewayRecovery({ sandboxState: "present", gatewayState: "unavailable" }),
-    ).toBe(false);
-    expect(
-      shouldAttemptGatewayRecovery({ sandboxState: "missing", gatewayState: "inactive" }),
-    ).toBe(false);
-    expect(
-      shouldAttemptGatewayRecovery({ sandboxState: "unavailable", gatewayState: "connected" }),
-    ).toBe(false);
+    it("treats no-sandboxes output, error lines, and protobuf mismatch as empty", () => {
+      expect(Array.from(parseReadySandboxNames("No sandboxes found."))).toEqual([]);
+      expect(Array.from(parseReadySandboxNames("Error: something went wrong"))).toEqual([]);
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            'Error:   × status: Internal, message: "Sandbox.metadata: SandboxResponse.sandbox: invalid wire type value: 6"',
+          ),
+        ),
+      ).toEqual([]);
+    });
+
+    it("handles empty input", () => {
+      expect(Array.from(parseReadySandboxNames(""))).toEqual([]);
+      expect(Array.from(parseReadySandboxNames())).toEqual([]);
+    });
+
+    it("does not drop Ready sandboxes whose name starts with 'name' or 'no'", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "name-prod         openshell  2026-03-24 10:00:00  Ready",
+              "no-sandboxes      openshell  2026-03-24 10:01:00  Ready",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual(["name-prod", "no-sandboxes"]);
+    });
   });
 });

@@ -5,9 +5,9 @@
 
 ## Project Overview
 
-NVIDIA NemoClaw is an open-source reference stack for running [OpenClaw](https://openclaw.ai) always-on assistants inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes more safely. It provides CLI tooling, a blueprint for sandbox orchestration, and security hardening.
+NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents such as [OpenClaw](https://openclaw.ai) and [Hermes](https://get-hermes.ai/) inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes more safely. It provides CLI tooling, a blueprint for sandbox orchestration, and security hardening.
 
-**Status:** Alpha (March 2026+). Interfaces may change without notice.
+Status: Active development. Interfaces may change without notice.
 
 ## Agent Skills
 
@@ -27,8 +27,9 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS | End-to-end tests (Brev cloud instances) |
-| `docs/` | Markdown (MyST) | User-facing docs (Sphinx) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
+| `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
+| `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
 ## Quick Reference
 
@@ -43,8 +44,8 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | Run all hooks manually | `npx prek run --all-files` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Auto-format | `make format` |
-| Build docs | `make docs` |
-| Serve docs locally | `make docs-live` |
+| Build docs | `npm run docs` |
+| Serve docs locally | `npm run docs:live` |
 
 ## Key Architecture Decisions
 
@@ -52,7 +53,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 - **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
-- **Docs**: Sphinx/MyST Markdown
+- **Docs**: Fern MDX for migrated pages; legacy MyST Markdown remains during the transition for generated skills and parity checks
 - **Tooling scripts**: Bash and Python
 
 The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.

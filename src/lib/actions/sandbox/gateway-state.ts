@@ -1,24 +1,29 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- extracted legacy sandbox liveness paths are covered through CLI subprocess tests. */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+
 import { stripAnsi } from "../../adapters/openshell/client";
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  formatOpenShellStateRpcIssue,
+  type OpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -30,9 +35,12 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import * as registry from "../../state/registry";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
-type SandboxGatewayState = {
+export type SandboxGatewayState = {
   state: string;
   output: string;
   activeGateway?: string | null;
@@ -45,6 +53,14 @@ type SandboxGatewayStateLookup = (
   sandboxName: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
 
+function formatGatewaySchemaMismatchOutput(
+  issue: OpenShellStateRpcIssue,
+  action: string,
+  command?: string,
+): string {
+  return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
+}
+
 export function mergeLivePolicyIntoSandboxOutput(
   output: string,
   livePolicyOutput: string,
@@ -55,18 +71,26 @@ export function mergeLivePolicyIntoSandboxOutput(
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  const delimIdx = livePolicyOutput.search(/^---\s*$/m);
+  const cleanLivePolicy = stripAnsi(String(livePolicyOutput));
+  const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
+  const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
   const yamlPart =
     delimIdx !== -1
-      ? livePolicyOutput.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : livePolicyOutput;
+      ? cleanLivePolicy.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
+      : cleanLivePolicy;
   const trimmedYaml = yamlPart.trim();
   const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
   if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
     return output;
   }
 
-  const indented = trimmedYaml
+  const activeMatch = metadataPart.match(/^Active:\s*(\d+)\s*$/m);
+  const rewrittenYaml =
+    activeMatch && /^version:\s*\d+/m.test(trimmedYaml)
+      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${activeMatch[1]}`)
+      : trimmedYaml;
+
+  const indented = rewrittenYaml
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
@@ -75,10 +99,29 @@ export function mergeLivePolicyIntoSandboxOutput(
 
 /** Query sandbox presence and return its output with the live enforced policy. */
 export function getSandboxGatewayState(sandboxName: string): SandboxGatewayState {
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `verifying sandbox '${sandboxName}' against OpenShell`,
+      ),
+    };
+  }
   const result = captureOpenshell(["sandbox", "get", sandboxName], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result);
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `verifying sandbox '${sandboxName}' against OpenShell`,
+      }).join("\n"),
+    };
+  }
   if (result.status === 0) {
     const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
       ignoreError: true,
@@ -106,10 +149,31 @@ export async function getSandboxGatewayStateForStatus(
   sandboxName: string,
 ): Promise<SandboxGatewayState> {
   const timeoutMs = getStatusProbeTimeoutMs();
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ timeoutMs });
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `checking status for sandbox '${sandboxName}'`,
+        `${CLI_NAME} ${sandboxName} status`,
+      ),
+    };
+  }
   const result = await captureOpenshellForStatus(["sandbox", "get", sandboxName], {
     timeout: timeoutMs,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result, { timeoutMs });
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `checking status for sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} status`,
+      }).join("\n"),
+    };
+  }
   if (isCommandTimeout(result)) {
     return {
       state: "status_probe_timeout",
@@ -161,6 +225,9 @@ export function reconcileMissingAgainstNamedGateway(
     const retry = getSandboxGatewayState(sandboxName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
+    }
+    if (retry.state === "gateway_schema_mismatch") {
+      return retry;
     }
     if (retry.state === "missing") {
       const after = getNamedGatewayLifecycleState();
@@ -329,6 +396,14 @@ export async function ensureLiveSandboxOrExit(
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
+      // Don't steer toward rebuild when the host Docker daemon is down: the
+      // sandbox is fine and recreating it cannot succeed until Docker is back
+      // (#4428). Terminal phases (Failed/Error/...) are settled failures and
+      // keep the rebuild guidance so a genuine failure is never masked.
+      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
+        printDockerRuntimeDownGuidance(sandboxName);
+        process.exit(1);
+      }
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
       console.error(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
@@ -341,6 +416,10 @@ export async function ensureLiveSandboxOrExit(
     }
     return lookup;
   }
+  if (lookup.state === "gateway_schema_mismatch") {
+    console.error(lookup.output);
+    process.exit(1);
+  }
   if (lookup.state === "missing") {
     const guard = getNamedGatewayLifecycleState();
     if (guard.state !== "healthy_named") {
@@ -351,18 +430,23 @@ export async function ensureLiveSandboxOrExit(
       }
       process.exit(1);
     }
-    registry.removeSandbox(sandboxName);
-    const session = onboardSession.loadSession();
-    if (session && session.sandboxName === sandboxName) {
-      onboardSession.updateSession((state: Session) => {
-        state.sandboxName = null;
-        return state;
-      });
-    }
-    console.error(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-    console.error("  Removed stale local registry entry.");
+    // The sandbox is absent from a healthy NemoClaw gateway, but the local
+    // registry entry still holds the metadata that `rebuild` / `onboard
+    // --recreate-sandbox` need to recover it. Removing it here would race with
+    // the recovery guidance `status` prints for a stuck/stale sandbox: a
+    // routine `connect` would delete the very state the recommended
+    // `rebuild --yes` depends on, so the rebuild then fails with "does not
+    // exist" (#4497). Preserve the entry and route intentional purges through
+    // the explicit `destroy` command instead of deleting state automatically.
     console.error(
-      `  Run \`${CLI_NAME} list\` to confirm the remaining sandboxes, or \`${CLI_NAME} onboard\` to create a new one.`,
+      `  Sandbox '${sandboxName}' is registered locally, but is not present in the live OpenShell gateway.`,
+    );
+    console.error("  Your local registry entry has been preserved — nothing was removed.");
+    console.error(
+      `  If the live sandbox is stuck mid-provision, retry \`${CLI_NAME} ${sandboxName} rebuild --yes\` once it reappears to recreate it (workspace state is preserved when the live sandbox still exists).`,
+    );
+    console.error(
+      `  If the sandbox was intentionally deleted, run \`${CLI_NAME} ${sandboxName} destroy\` to remove the stale local entry, or \`${CLI_NAME} onboard\` to create a new one.`,
     );
     process.exit(1);
   }

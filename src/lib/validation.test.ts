@@ -119,6 +119,39 @@ describe("classifyValidationFailure", () => {
     });
   });
 
+  it("classifies model-related 404/405 responses as model retries before endpoint retries", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 404,
+        message: "HTTP 404: model not found",
+      }),
+    ).toEqual({ kind: "model", retry: "model" });
+    expect(
+      classifyValidationFailure({
+        httpStatus: 405,
+        message: "HTTP 405: unsupported model",
+      }),
+    ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("classifies TLS certificate errors as transport", () => {
+    expect(
+      classifyValidationFailure({
+        message: "transport error: invalid peer certificate: UnknownIssuer",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "SSL certificate problem: unable to get local issuer certificate",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "TLS handshake failure",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+  });
+
   it("classifies 404 as endpoint", () => {
     expect(classifyValidationFailure({ httpStatus: 404 })).toEqual({
       kind: "endpoint",

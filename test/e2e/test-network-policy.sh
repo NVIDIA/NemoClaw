@@ -8,13 +8,17 @@
 #
 # Covers:
 #   TC-NET-01: Deny-by-default egress (blocked URL returns 403)
-#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via pip)
+#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via curl GET; POST blocked)
 #   TC-NET-03: Live policy-add without restart (slack preset)
 #   TC-NET-04: policy-add --dry-run (no changes applied)
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
 #   TC-NET-06: Permissive policy mode (open all egress)
 #   TC-NET-07: Inference exemption + direct provider blocked
+#   TC-NET-08: Jira per-binary policy enforcement
 #   TC-NET-09: SSRF validation (dangerous IPs rejected)
+#   TC-NET-10: OpenClaw web_fetch can reach approved host gateway target,
+#              while OpenShell still denies unapproved host gateway ports
+#   TC-NET-11: Homebrew preset installs and runs a formula end-to-end
 #
 # Prerequisites:
 #   - Docker running
@@ -31,10 +35,11 @@ SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
-
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_NAME="e2e-net-policy"
 LOG_FILE="test-network-policy-$(date +%Y%m%d-%H%M%S).log"
+SANDBOX_EXEC_TIMEOUT_SECONDS=120
+PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS=300
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -172,6 +177,7 @@ EOF
 # Execute a command inside the sandbox via SSH.
 sandbox_exec() {
   local cmd="$1"
+  local timeout_seconds="${2:-$SANDBOX_EXEC_TIMEOUT_SECONDS}"
   local ssh_cfg
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
@@ -181,13 +187,57 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout "$timeout_seconds" ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
   rm -f "$ssh_cfg"
   echo "$result"
   return $ssh_exit
+}
+
+start_e2e_http_server() {
+  local docroot="$1"
+  local port_file="$2"
+  local log_file="$3"
+  python3 - "$docroot" "$port_file" >"$log_file" 2>&1 <<'PYHTTP' &
+import functools
+import http.server
+import socketserver
+import sys
+
+docroot = sys.argv[1]
+port_file = sys.argv[2]
+
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=docroot)
+with ReusableTCPServer(("0.0.0.0", 0), handler) as server:
+    with open(port_file, "w", encoding="utf-8") as handle:
+        handle.write(str(server.server_address[1]))
+        handle.flush()
+    print(f"serving {docroot} on port {server.server_address[1]}", flush=True)
+    server.serve_forever()
+PYHTTP
+  echo "$!"
+}
+
+wait_for_e2e_http_port() {
+  local port_file="$1"
+  local pid="$2"
+  local _
+  for _ in {1..50}; do
+    if [ -s "$port_file" ]; then
+      tr -d '[:space:]' <"$port_file"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
 }
 
 # ── Onboard sandbox ─────────────────────────────────────────────────────────
@@ -210,6 +260,7 @@ setup_sandbox() {
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="restricted" \
+    NEMOCLAW_WEB_SEARCH_ENABLED=1 \
     NEMOCLAW_RECREATE_SANDBOX=1 \
     run_with_timeout 600 nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | tee -a "$LOG_FILE" || {
@@ -258,19 +309,148 @@ test_net_02_whitelist_access() {
     return
   fi
 
-  log "  Probing PyPI from inside sandbox using pip..."
+  log "  Probing PyPI read-only access from inside sandbox using curl..."
+
+  local pypi_code
+  pypi_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://pypi.org/simple/requests/ 2>&1" 2>&1) || true
+  log "  pypi.org GET status: $pypi_code"
+
+  if [ "$pypi_code" = "200" ]; then
+    pass "TC-NET-02: pypi.org reachable via curl GET after preset applied"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to pypi.org did not return 200: ${pypi_code:0:200}"
+  fi
+
+  local files_code
+  files_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/rg/ 2>&1" 2>&1) || true
+  log "  files.pythonhosted.org GET status: $files_code"
+
+  if echo "$files_code" | grep -qE "^([23][0-9][0-9]|404)$"; then
+    pass "TC-NET-02: files.pythonhosted.org returns a real HTTP status via curl GET"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org did not return a real HTTP status: ${files_code:0:200}"
+  fi
+
+  local post_code
+  post_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' -X POST --max-time 20 https://pypi.org/simple/le/ 2>&1" 2>&1) || true
+  log "  pypi.org POST status: $post_code"
+
+  if [ "$post_code" = "403" ]; then
+    pass "TC-NET-02: PyPI POST remains blocked under read-only preset"
+  else
+    fail "TC-NET-02: Whitelist" "curl POST to pypi.org should remain blocked with 403: ${post_code:0:200}"
+  fi
+
+  # #4014 validates network-policy egress only. Keep pip as a log-only
+  # diagnostic so package-manager behavior cannot fail this regression.
+  log "  Optional diagnostic: probing PyPI from inside sandbox using pip..."
 
   local response
   response=$(sandbox_exec "rm -rf /tmp/pip-test && pip download --no-deps --no-cache-dir --dest /tmp/pip-test requests 2>&1 && echo PIP_OK || echo PIP_FAIL" 2>&1) || true
 
-  log "  Response: ${response:0:300}"
+  log "  pip diagnostic response: ${response:0:300}"
 
   if echo "$response" | grep -q "PIP_OK"; then
-    pass "TC-NET-02: PyPI reachable via pip after preset applied"
+    log "  pip diagnostic succeeded after pypi preset was applied"
   elif echo "$response" | grep -qiE "Downloading|Successfully"; then
-    pass "TC-NET-02: PyPI reachable via pip (download started)"
+    log "  pip diagnostic reached PyPI after pypi preset was applied"
   else
-    fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
+    log "  pip diagnostic did not succeed; ignoring for #4014 because curl egress checks are authoritative: ${response:0:200}"
+  fi
+}
+
+# =============================================================================
+# TC-NET-11: Homebrew preset install/use path
+# =============================================================================
+test_net_11_brew_install_hello() {
+  log "=== TC-NET-11: Homebrew Preset Installs and Runs hello ==="
+
+  log "  Adding brew preset for Homebrew formula install test..."
+  if ! apply_preset "brew"; then
+    fail "TC-NET-11: Setup" "Could not apply brew preset"
+    return
+  fi
+
+  local policy_list
+  if ! policy_list=$(nemoclaw "$SANDBOX_NAME" policy-list 2>&1); then
+    fail "TC-NET-11: policy-list" "policy-list failed after brew preset: ${policy_list:0:500}"
+    return
+  fi
+  log "  policy-list: ${policy_list:0:600}"
+  if printf '%s\n' "$policy_list" | grep -E "^[[:space:]]*●[[:space:]]+brew[[:space:]]" >/dev/null; then
+    pass "TC-NET-11: policy-list shows brew applied"
+  else
+    fail "TC-NET-11: policy-list" "brew preset not marked applied: ${policy_list:0:500}"
+    return
+  fi
+
+  local connect_probe connect_rc=0
+  connect_probe=$(run_with_timeout 60 nemoclaw "$SANDBOX_NAME" connect --probe-only 2>&1) || connect_rc=$?
+  log "  connect --probe-only: ${connect_probe:0:500}"
+  if [[ $connect_rc -eq 0 ]]; then
+    pass "TC-NET-11: nemoclaw connect --probe-only reaches sandbox"
+  else
+    fail "TC-NET-11: connect --probe-only" "connect probe failed: ${connect_probe:0:500}"
+    return
+  fi
+
+  log "  Probing Homebrew policy endpoints and installing hello through the wrapper..."
+  local brew_probe_script brew_probe_b64 response
+  brew_probe_script="$(
+    cat <<'BREW_PROBE'
+set -euo pipefail
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+
+check_status() {
+  local name="$1"
+  local url="$2"
+  local status
+  status=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$url") || {
+    echo "BREW_ENDPOINT_${name}_CURL_FAILED"
+    return 1
+  }
+  case "$status" in
+    2??|3??|401)
+      echo "BREW_ENDPOINT_${name}_OK_${status}"
+      ;;
+    *)
+      echo "BREW_ENDPOINT_${name}_BAD_${status}"
+      return 1
+      ;;
+  esac
+}
+
+check_status formulae https://formulae.brew.sh
+check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
+echo "BREW_ENDPOINT_github_OK"
+check_status ghcr https://ghcr.io/v2/
+
+command -v brew
+brew --prefix
+brew install --quiet hello
+command -v hello
+hello
+BREW_PROBE
+  )"
+  brew_probe_b64="$(printf '%s' "$brew_probe_script" | base64 | tr -d '\n')"
+  response=$(sandbox_exec "printf '%s' '${brew_probe_b64}' | base64 -d > /tmp/nemoclaw-brew-e2e.sh
+bash /tmp/nemoclaw-brew-e2e.sh" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1) || true
+
+  log "  Response: ${response:0:1000}"
+
+  if echo "$response" | grep -q "BREW_ENDPOINT_formulae_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_raw_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_github_OK" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_ghcr_OK_" \
+    && echo "$response" | grep -q "/usr/local/bin/brew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew/bin/hello" \
+    && echo "$response" | grep -q "Hello, world!"; then
+    pass "TC-NET-11: brew preset installed hello and ran the formula command"
+  else
+    fail "TC-NET-11: Homebrew install" "brew install/use path failed: ${response:0:500}"
   fi
 }
 
@@ -373,6 +553,101 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
     fail "TC-NET-04: Dry-run side effect" "api.atlassian.com reachable after dry-run (policy was modified)"
   else
     fail "TC-NET-04: Dry-run verification" "Unexpected response ($after)"
+  fi
+}
+
+# =============================================================================
+# TC-NET-08: Jira per-binary policy enforcement
+# =============================================================================
+test_net_08_jira_per_binary_enforcement() {
+  log "=== TC-NET-08: Jira Per-Binary Policy Enforcement ==="
+  local curl_probe_url="https://api.atlassian.com/oauth/token/accessible-resources"
+
+  log "  Step 1: Applying jira preset..."
+  if ! apply_preset "jira"; then
+    fail "TC-NET-08: Setup" "Could not apply jira preset"
+    return
+  fi
+
+  log "  Step 2: Verify Node HTTPS can reach Atlassian API..."
+  local node_response
+  node_response=$(sandbox_exec "node -e \"
+const https = require('https');
+const req = https.get('https://api.atlassian.com', (res) => {
+  console.log('NODE_STATUS_' + res.statusCode);
+  res.resume();
+});
+req.setTimeout(30000, () => {
+  console.log('NODE_ERROR_TIMEOUT');
+  req.destroy();
+});
+req.on('error', (error) => console.log('NODE_ERROR_' + (error.code || error.message)));
+\"" 2>&1) || true
+  log "  Node response: $node_response"
+
+  if echo "$node_response" | grep -qE "NODE_STATUS_[23][0-9][0-9]"; then
+    pass "TC-NET-08: Node reaches Atlassian API after jira preset ($node_response)"
+  elif echo "$node_response" | grep -qE "NODE_STATUS_403|NODE_ERROR_"; then
+    fail "TC-NET-08: Node policy" "Node did not reach Atlassian API after jira preset ($node_response)"
+    return
+  else
+    fail "TC-NET-08: Node policy" "Unexpected Node response ($node_response)"
+    return
+  fi
+
+  log "  Step 3: Verify curl remains blocked by the Jira preset..."
+  local curl_before
+  curl_before=$(sandbox_exec "set +e
+OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 ${curl_probe_url} 2>&1)
+RC=\$?
+echo \"\$OUT CURL_RC_\$RC\"
+" 2>&1) || true
+  log "  Curl before explicit approval: $curl_before"
+
+  if echo "$curl_before" | grep -qE "CURL_STATUS_[1-9][0-9][0-9]" \
+    && ! echo "$curl_before" | grep -qE "CURL_STATUS_403.*CURL_APPCONNECT_0(\.0+)?( |$)"; then
+    fail "TC-NET-08: Curl pre-approval" "curl reached Atlassian without explicit approval ($curl_before)"
+    return
+  elif echo "$curl_before" | grep -qE "CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden"; then
+    if echo "$curl_before" | grep -qE "CURL_APPCONNECT_0(\.0+)?( |$)"; then
+      pass "TC-NET-08: curl blocked before explicit approval and before outbound TLS ($curl_before)"
+    else
+      fail "TC-NET-08: Curl pre-approval" "curl was denied but appeared to establish outbound TLS ($curl_before)"
+      return
+    fi
+  else
+    fail "TC-NET-08: Curl pre-approval" "Unexpected curl denial signal ($curl_before)"
+    return
+  fi
+
+  log "  Step 4: Explicitly allow curl to api.atlassian.com via OpenShell policy update..."
+  if ! openshell policy update "$SANDBOX_NAME" \
+    --add-endpoint api.atlassian.com:443:read-only:rest:enforce \
+    --binary /usr/bin/curl \
+    --binary /usr/local/bin/curl \
+    --wait 2>&1 | tee -a "$LOG_FILE"; then
+    fail "TC-NET-08: Curl approval" "Could not apply explicit curl approval"
+    return
+  fi
+  sleep 5
+
+  log "  Step 5: Verify curl reaches Atlassian after explicit approval..."
+  local curl_after
+  curl_after=$(sandbox_exec "set +e
+rm -f /tmp/nemoclaw-jira-curl-body
+OUT=\$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 ${curl_probe_url} 2>&1)
+RC=\$?
+printf '%s CURL_RC_%s CURL_BODY_' \"\$OUT\" \"\$RC\"
+head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
+printf '\n'
+" 2>&1) || true
+  log "  Curl after explicit approval: $curl_after"
+
+  if echo "$curl_after" | grep -qE "CURL_STATUS_401" \
+    && echo "$curl_after" | grep -qE "Unauthorized|unauthorized"; then
+    pass "TC-NET-08: curl reaches Atlassian after explicit approval ($curl_after)"
+  else
+    fail "TC-NET-08: Curl post-approval" "curl did not reach Atlassian after explicit approval ($curl_after)"
   fi
 }
 
@@ -516,6 +791,282 @@ console.log(pass ? 'SSRF_PASS' : 'SSRF_FAIL');
   fi
 }
 
+# =============================================================================
+# TC-NET-10: OpenClaw web_fetch host gateway compatibility
+# =============================================================================
+test_net_10_openclaw_web_fetch_host_gateway() {
+  log "=== TC-NET-10: OpenClaw web_fetch Host Gateway ==="
+
+  local host_dir server_log port port_file server_pid marker
+  local deny_host_dir deny_server_log deny_port deny_port_file deny_server_pid deny_marker
+  marker="NEMOCLAW_HOST_GATEWAY_WEB_FETCH_OK"
+  deny_marker="NEMOCLAW_HOST_GATEWAY_WEB_FETCH_DENIED_PORT_SHOULD_NOT_LEAK"
+  host_dir="$(mktemp -d)"
+  deny_host_dir="$(mktemp -d)"
+  server_log="$host_dir/http.log"
+  deny_server_log="$deny_host_dir/http.log"
+  port_file="$host_dir/port"
+  deny_port_file="$deny_host_dir/port"
+  printf '<html><body>%s</body></html>\n' "$marker" >"$host_dir/index.html"
+  printf '<html><body>%s</body></html>\n' "$deny_marker" >"$deny_host_dir/index.html"
+
+  server_pid="$(start_e2e_http_server "$host_dir" "$port_file" "$server_log")"
+  deny_server_pid="$(start_e2e_http_server "$deny_host_dir" "$deny_port_file" "$deny_server_log")"
+  if ! port="$(wait_for_e2e_http_port "$port_file" "$server_pid")"; then
+    fail "TC-NET-10: Setup" "host HTTP server failed to publish a port ($(cat "$server_log" 2>/dev/null))"
+    kill "$server_pid" "$deny_server_pid" 2>/dev/null || true
+    wait "$server_pid" "$deny_server_pid" 2>/dev/null || true
+    rm -rf "$host_dir" "$deny_host_dir"
+    return
+  fi
+  if ! deny_port="$(wait_for_e2e_http_port "$deny_port_file" "$deny_server_pid")"; then
+    fail "TC-NET-10: Setup" "deny host HTTP server failed to publish a port ($(cat "$deny_server_log" 2>/dev/null))"
+    kill "$server_pid" "$deny_server_pid" 2>/dev/null || true
+    wait "$server_pid" "$deny_server_pid" 2>/dev/null || true
+    rm -rf "$host_dir" "$deny_host_dir"
+    return
+  fi
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    fail "TC-NET-10: Setup" "host HTTP server failed to start ($(cat "$server_log" 2>/dev/null))"
+    rm -rf "$host_dir"
+    kill "$deny_server_pid" 2>/dev/null || true
+    wait "$deny_server_pid" 2>/dev/null || true
+    rm -rf "$deny_host_dir"
+    return
+  fi
+  if ! kill -0 "$deny_server_pid" 2>/dev/null; then
+    fail "TC-NET-10: Setup" "deny host HTTP server failed to start ($(cat "$deny_server_log" 2>/dev/null))"
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+    rm -rf "$host_dir" "$deny_host_dir"
+    return
+  fi
+
+  cleanup_host_server() {
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+    kill "$deny_server_pid" 2>/dev/null || true
+    wait "$deny_server_pid" 2>/dev/null || true
+    rm -rf "$host_dir" "$deny_host_dir"
+  }
+
+  log "  Allowing node/openclaw access to host.openshell.internal:${port}..."
+  local host_gateway_policy
+  host_gateway_policy="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-host-gateway-policy.XXXXXX.yaml")"
+  cat >"$host_gateway_policy" <<EOF_POLICY
+preset:
+  name: e2e-host-gateway-web-fetch
+  description: "Network-policy E2E host-gateway web_fetch probe"
+
+network_policies:
+  e2e_host_gateway_web_fetch:
+    name: e2e_host_gateway_web_fetch
+    endpoints:
+      - host: host.openshell.internal
+        port: ${port}
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+EOF_POLICY
+  if ! NEMOCLAW_NON_INTERACTIVE=1 nemoclaw "$SANDBOX_NAME" policy-add --from-file "$host_gateway_policy" --yes 2>&1 | tee -a "$LOG_FILE"; then
+    rm -f "$host_gateway_policy"
+    fail "TC-NET-10: Setup" "Could not allow host.openshell.internal:${port}"
+    cleanup_host_server
+    return
+  fi
+  rm -f "$host_gateway_policy"
+  sleep 5
+
+  local direct
+  direct=$(sandbox_exec "node -e \"
+fetch('http://host.openshell.internal:${port}/', {signal: AbortSignal.timeout(15000)})
+  .then(async r => console.log('STATUS_' + r.status + ' ' + (await r.text()).slice(0, 120)))
+  .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
+\"" 2>&1) || true
+  log "  Direct Node host-gateway fetch: $direct"
+  if ! echo "$direct" | grep -q "$marker"; then
+    fail "TC-NET-10: Setup" "host gateway policy/proxy probe failed before OpenClaw web_fetch ($direct)"
+    cleanup_host_server
+    return
+  fi
+
+  log "  Verifying unapproved host.openshell.internal:${deny_port} remains denied..."
+  local denied_direct
+  denied_direct=$(sandbox_exec "node -e \"
+fetch('http://host.openshell.internal:${deny_port}/', {signal: AbortSignal.timeout(15000)})
+  .then(async r => console.log('STATUS_' + r.status + ' ' + (await r.text()).slice(0, 120)))
+  .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
+\"" 2>&1) || true
+  log "  Direct Node denied-port probe: $denied_direct"
+  if echo "$denied_direct" | grep -q "$deny_marker"; then
+    fail "TC-NET-10: OpenShell policy" "unapproved host gateway port was reachable before OpenClaw web_fetch deny-case ($denied_direct)"
+    cleanup_host_server
+    return
+  fi
+  if echo "$denied_direct" | grep -qiE "STATUS_403|ERROR_|denied|policy|forbidden|not allowed|not permitted"; then
+    pass "TC-NET-10: OpenShell policy denies unapproved host gateway port"
+  else
+    fail "TC-NET-10: OpenShell policy" "unexpected denied-port response before OpenClaw web_fetch deny-case ($denied_direct)"
+    cleanup_host_server
+    return
+  fi
+
+  local web_fetch_probe_script web_fetch_probe_b64 web_fetch_output web_fetch_rc=0
+  web_fetch_probe_script="$(
+    cat <<'NODE'
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [approvedUrl, deniedUrl, marker, denyMarker] = process.argv.slice(2);
+const distDir = "/usr/local/lib/node_modules/openclaw/dist";
+
+function fail(code, detail) {
+  console.log(`E2E_FAIL_${code}: ${String(detail || "").slice(0, 1200)}`);
+  process.exitCode = 1;
+}
+
+function findDistFile(prefix) {
+  const candidates = fs
+    .readdirSync(distDir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".js"))
+    .sort();
+  if (candidates.length !== 1) {
+    throw new Error(`expected one ${prefix}*.js file, found ${candidates.length}: ${candidates.join(", ")}`);
+  }
+  return path.join(distDir, candidates[0]);
+}
+
+function summarize(value) {
+  return JSON.stringify(value, (_key, inner) => {
+    if (typeof inner === "string" && inner.length > 1200) return `${inner.slice(0, 1200)}...`;
+    return inner;
+  });
+}
+
+async function main() {
+  const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const fetchConfig = config?.tools?.web?.fetch;
+  if (fetchConfig?.useTrustedEnvProxy !== true) {
+    fail("CONFIG_MISSING_TRUSTED_ENV_PROXY", `tools.web.fetch.useTrustedEnvProxy=${fetchConfig?.useTrustedEnvProxy}`);
+    return;
+  }
+
+  const mod = await import(pathToFileURL(findDistFile("openclaw-tools-")).href);
+  const createOpenClawTools = mod.t || mod.createOpenClawTools;
+  if (typeof createOpenClawTools !== "function") {
+    fail("OPENCLAW_TOOLS_EXPORT_MISSING", Object.keys(mod).join(","));
+    return;
+  }
+
+  const tools = createOpenClawTools({
+    config,
+    sandboxed: true,
+    workspaceDir: "/sandbox/.openclaw/workspace-main",
+    wrapBeforeToolCallHook: false,
+    disablePluginTools: true,
+    disableMessageTool: true,
+  });
+  const webFetch = tools.find((tool) => tool?.name === "web_fetch");
+  if (!webFetch || typeof webFetch.execute !== "function") {
+    fail("WEB_FETCH_TOOL_MISSING", tools.map((tool) => tool?.name).filter(Boolean).join(","));
+    return;
+  }
+
+  let approvedRaw = "";
+  try {
+    const approved = await webFetch.execute("e2e-approved-host-gateway", {
+      url: approvedUrl,
+      extractMode: "text",
+      maxChars: 2000,
+    });
+    approvedRaw = summarize(approved);
+  } catch (error) {
+    const detail = error && (error.stack || error.message) ? error.stack || error.message : error;
+    if (/SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(String(detail))) {
+      fail("SSRF_BLOCKED_HOST_GATEWAY_APPROVED", detail);
+      return;
+    }
+    fail("APPROVED_FETCH_ERROR", detail);
+    return;
+  }
+  if (!approvedRaw.includes(marker)) {
+    fail("APPROVED_MARKER_MISSING", approvedRaw);
+    return;
+  }
+  console.log("E2E_WEB_FETCH_APPROVED_OK");
+
+  try {
+    const denied = await webFetch.execute("e2e-denied-host-gateway", {
+      url: deniedUrl,
+      extractMode: "text",
+      maxChars: 2000,
+    });
+    const deniedRaw = summarize(denied);
+    if (deniedRaw.includes(denyMarker)) {
+      fail("DENIED_PORT_REACHED", deniedRaw);
+      return;
+    }
+    fail("DENIED_PORT_UNEXPECTED_SUCCESS", deniedRaw);
+  } catch (error) {
+    const detail = String(error && (error.stack || error.message) ? error.stack || error.message : error);
+    if (/SsrFBlockedError|Blocked hostname|private\/internal\/special-use/i.test(detail)) {
+      fail("SSRF_BLOCKED_HOST_GATEWAY_DENIED", detail);
+      return;
+    }
+    if (/Web fetch failed \\(403\\)|\\b403\\b|policy|denied|forbidden|fetch failed|ECONN|UND_ERR|proxy/i.test(detail)) {
+      console.log(`E2E_WEB_FETCH_DENIED_OK ${detail.split("\n")[0].slice(0, 300)}`);
+      return;
+    }
+    fail("DENIED_PORT_UNEXPECTED_ERROR", detail);
+  }
+}
+
+main().catch((error) => {
+  fail("UNCAUGHT", error && (error.stack || error.message) ? error.stack || error.message : error);
+});
+NODE
+  )"
+  web_fetch_probe_b64="$(printf '%s' "$web_fetch_probe_script" | base64 | tr -d '\n')"
+  web_fetch_output=$(sandbox_exec "printf '%s' '${web_fetch_probe_b64}' | base64 -d > /tmp/nemoclaw-web-fetch-e2e.mjs
+nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.internal:${port}/' 'http://host.openshell.internal:${deny_port}/' '${marker}' '${deny_marker}'" 2>&1) || web_fetch_rc=$?
+  cleanup_host_server
+
+  log "  OpenClaw web_fetch probe: ${web_fetch_output:0:1000}"
+  if printf '%s' "$web_fetch_output" | grep -q "E2E_FAIL_SSRF_BLOCKED_HOST_GATEWAY"; then
+    fail "TC-NET-10: OpenClaw web_fetch" "OpenClaw SSRF guard blocked host gateway before OpenShell policy (${web_fetch_output:0:500})"
+    return
+  fi
+
+  if printf '%s' "$web_fetch_output" | grep -q "E2E_FAIL_DENIED_PORT_REACHED"; then
+    fail "TC-NET-10: OpenClaw web_fetch policy" "web_fetch reached unapproved host gateway port (${web_fetch_output:0:500})"
+    return
+  fi
+
+  if printf '%s' "$web_fetch_output" | grep -q "E2E_WEB_FETCH_APPROVED_OK"; then
+    pass "TC-NET-10: OpenClaw web_fetch reached approved host.openshell.internal target"
+  else
+    fail "TC-NET-10: OpenClaw web_fetch" "approved marker not returned (exit ${web_fetch_rc}, output='${web_fetch_output:0:500}')"
+    return
+  fi
+
+  if printf '%s' "$web_fetch_output" | grep -q "E2E_WEB_FETCH_DENIED_OK"; then
+    pass "TC-NET-10: OpenClaw web_fetch cannot reach unapproved host gateway port"
+  else
+    fail "TC-NET-10: OpenClaw web_fetch policy" "unapproved host gateway port did not produce a policy denial signal (exit ${web_fetch_rc}, output='${web_fetch_output:0:500}')"
+  fi
+}
+
 # ── Teardown ─────────────────────────────────────────────────────────────────
 teardown() {
   # Do not unlink ~/.nemoclaw/onboard.lock: that lock is global and PID-
@@ -562,12 +1113,15 @@ main() {
   setup_sandbox
 
   test_net_01_deny_default
+  test_net_11_brew_install_hello
   test_net_02_whitelist_access
   test_net_03_live_policy_add
   test_net_04_dry_run
+  test_net_08_jira_per_binary_enforcement
   test_net_05_hot_reload
   test_net_07_inference_exemption
   test_net_09_ssrf_validation
+  test_net_10_openclaw_web_fetch_host_gateway
   test_net_06_permissive_mode # last — opens all egress, affects subsequent tests
 
   trap - EXIT

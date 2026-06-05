@@ -69,7 +69,6 @@ describe("Seccomp guard preload", () => {
       '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
       '_TOOL_REDIRECTS=()',
       '_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"',
-      '_WS_FIX_SCRIPT="/nonexistent/ws-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"',
       "set +u",
       persistBlock,
@@ -179,56 +178,6 @@ describe("Seccomp guard preload", () => {
     expect(output.lo).toBeDefined();
     expect(output.lo[0].address).toBe("127.0.0.1");
   });
-});
-
-describe("ws-proxy-fix Landlock mitigation", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
-  it("copies ws-proxy-fix.js from a Landlock-readable source into /tmp and registers it", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ws-fix-entrypoint-"));
-    const sourcePath = path.join(tempDir, "source-ws-proxy-fix.js");
-    const runtimePath = path.join(tempDir, "runtime-ws-proxy-fix.js");
-    const start = src.indexOf('_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"');
-    const end = src.indexOf("# ── Seccomp syscall guard", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected ws-proxy-fix entrypoint block in scripts/nemoclaw-start.sh");
-    }
-    const block = src
-      .slice(start, end)
-      .replace(
-        '_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"',
-        `_WS_FIX_SOURCE=${JSON.stringify(sourcePath)}`,
-      )
-      .replace(
-        '_WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"',
-        `_WS_FIX_SCRIPT=${JSON.stringify(runtimePath)}`,
-      );
-    const wrapper = [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      "emit_sandbox_sourced_file() { local target=\"$1\"; cat > \"$target\"; chmod 444 \"$target\"; }",
-      "NODE_OPTIONS='--require /already-loaded.js'",
-      block,
-      "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",
-      "printf 'SCRIPT=%s\\n' \"$_WS_FIX_SCRIPT\"",
-    ].join("\n");
-    const wrapperPath = path.join(tempDir, "run.sh");
-
-    try {
-      fs.writeFileSync(sourcePath, "// ws preload fixture\n");
-      fs.writeFileSync(wrapperPath, wrapper, { mode: 0o700 });
-      const result = spawnSync("bash", [wrapperPath], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain(`SCRIPT=${runtimePath}`);
-      expect(result.stdout).toContain("--require /already-loaded.js");
-      expect(result.stdout).toContain(`--require ${runtimePath}`);
-      expect(fs.readFileSync(runtimePath, "utf-8")).toBe("// ws preload fixture\n");
-      expect((fs.statSync(runtimePath).mode & 0o777).toString(8)).toBe("444");
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
 });
 
 describe("Early entrypoint stderr capture", () => {

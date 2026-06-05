@@ -210,6 +210,34 @@ describe("commands/migration-state", () => {
       expect(result.errors.some((e) => e.includes("Failed to parse"))).toBe(true);
     });
 
+    // Empty / whitespace-only openclaw.json. Without the read-path guard,
+    // JSON5.parse("") throws "JSON5: invalid end of input at 1:1" (issue
+    // #3118). The guard surfaces a recovery hint instead of leaking the
+    // opaque parser error.
+    it("reports a structured error when config file is empty (0 bytes)", () => {
+      const env = { HOME: "/home/user" };
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", "");
+      const result = detectHostOpenClaw(env);
+      expect(
+        result.errors.some(
+          (e) => e.toLowerCase().includes("empty") && !e.includes("invalid end of input"),
+        ),
+      ).toBe(true);
+    });
+
+    it("reports a structured error when config file is whitespace-only", () => {
+      const env = { HOME: "/home/user" };
+      addDir("/home/user/.openclaw");
+      addFile("/home/user/.openclaw/openclaw.json", "   \n\t  ");
+      const result = detectHostOpenClaw(env);
+      expect(
+        result.errors.some(
+          (e) => e.toLowerCase().includes("empty") && !e.includes("invalid end of input"),
+        ),
+      ).toBe(true);
+    });
+
     it("reports error when config is an array", () => {
       const env = { HOME: "/home/user" };
       addDir("/home/user/.openclaw");

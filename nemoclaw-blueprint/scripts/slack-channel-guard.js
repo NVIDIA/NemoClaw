@@ -37,6 +37,21 @@
     'An API error occurred: invalid_auth',
   ];
 
+  function mentionsSlackHost(value) {
+    var tokens = String(value || '').split(/\s+/);
+    for (var i = 0; i < tokens.length; i++) {
+      var candidate = tokens[i].replace(/^[<("']+|[>),."']+$/g, '');
+      try {
+        var parsed = new URL(candidate);
+        var host = parsed.hostname.toLowerCase();
+        if (host === 'slack.com' || host.endsWith('.slack.com')) return true;
+      } catch (_e) {
+        if (/^(?:[a-z0-9-]+\.)*slack\.com(?::\d+)?$/i.test(candidate)) return true;
+      }
+    }
+    return false;
+  }
+
   function isSlackRejection(reason) {
     if (!reason) return false;
 
@@ -63,7 +78,7 @@
     // servers, the error comes from the HTTP client (CONNECT tunnel
     // failure), not from @slack/ code. The stack won't contain @slack/
     // but the error message or URL may reference the Slack hostname.
-    if (msg.indexOf('slack.com') !== -1) {
+    if (mentionsSlackHost(msg)) {
       return true;
     }
 

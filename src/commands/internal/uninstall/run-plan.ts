@@ -1,22 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { runUninstallPlan } from "../../../lib/actions/uninstall/run-plan";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 
-export default class InternalUninstallRunPlanCommand extends Command {
+export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
   static hidden = true;
   static strict = true;
-  static summary = "NemoClaw Uninstaller";
-  static description = "Remove host-side NemoClaw resources.";
+  static summary = `${CLI_DISPLAY_NAME} Uninstaller`;
+  static description = `Remove host-side ${CLI_DISPLAY_NAME} resources.`;
   static usage = ["internal uninstall run-plan [--yes] [--keep-openshell] [--delete-models]"];
-  static examples = ["<%= config.bin %> internal uninstall run-plan --yes"];
+  static examples = [`${CLI_NAME} internal uninstall run-plan --yes`];
   static flags = {
-    help: Flags.help({ char: "h" }),
     yes: Flags.boolean({ description: "Skip the confirmation prompt" }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
-    "delete-models": Flags.boolean({ description: "Remove NemoClaw-pulled Ollama models" }),
+    "delete-models": Flags.boolean({ description: `Remove ${CLI_DISPLAY_NAME}-pulled Ollama models` }),
     gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
   };
 
@@ -28,6 +29,6 @@ export default class InternalUninstallRunPlanCommand extends Command {
       gatewayName: flags.gateway,
       keepOpenShell: flags["keep-openshell"] ?? false,
     });
-    process.exit(result.exitCode);
+    this.applyExitResult(result);
   }
 }

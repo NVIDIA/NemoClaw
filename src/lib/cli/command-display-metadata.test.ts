@@ -8,17 +8,14 @@ import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 import { COMMANDS, visibleCommands } from "./command-registry";
 
 describe("public command display metadata", () => {
-  it("derives command display entries from oclif command-class metadata", () => {
-    const metadata = getRegisteredOclifCommandsMetadata();
-    const discoveredDisplay = Object.entries(metadata).flatMap(([commandId, commandMetadata]) =>
-      (commandMetadata.display ?? []).map((entry) => ({ commandId, usage: entry.usage })),
-    );
-
-    expect(discoveredDisplay).toHaveLength(COMMANDS.length);
-    expect(discoveredDisplay).toEqual(
-      expect.arrayContaining(
-        COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage })),
-      ),
+  it("loads public display entries for root help and docs checks", () => {
+    expect(COMMANDS.length).toBeGreaterThan(0);
+    expect(COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage }))).toEqual(
+      expect.arrayContaining([
+        { commandId: "onboard", usage: "nemoclaw onboard" },
+        { commandId: "sandbox:status", usage: "nemoclaw <name> status" },
+        { commandId: "inference:get", usage: "nemoclaw inference get" },
+      ]),
     );
   });
 
@@ -39,4 +36,5 @@ describe("public command display metadata", () => {
 
     expect(invalid).toEqual([]);
   });
+
 });

@@ -1,0 +1,117 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NVIDIA NemoClaw"
+sidebar-title: "Home"
+description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and packaged agent skills."
+keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, agent skills, sandboxing, inference routing"
+layout: overview
+position: 1
+---
+
+import { BadgeLinks } from "./_components/BadgeLinks";
+import { CommandTerminal } from "./_components/CommandTerminal";
+
+<BadgeLinks
+  badges={[
+    {
+      href: "https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE",
+      src: "https://img.shields.io/badge/License-Apache_2.0-blue",
+      alt: "License",
+    },
+    {
+      href: "https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md",
+      src: "https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red",
+      alt: "Security Policy",
+    },
+    {
+      href: "https://discord.gg/XFpfPv9Uvx",
+      src: "https://img.shields.io/badge/Discord-Join-7289da",
+      alt: "Discord",
+    },
+  ]}
+/>
+
+NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
+NemoClaw provides onboarding, lifecycle management, and agent operations within OpenShell containers.
+It installs the OpenShell runtime, part of NVIDIA Agent Toolkit, and sets up an environment designed for executing agents with additional security and inference routing capabilities.
+NemoClaw also ships user skills for AI coding assistants, so tools such as Cursor and Claude Code can guide you through setup, inference, policy management, monitoring, deployment, security, and troubleshooting from the same documentation.
+
+## Get Started
+
+Install NemoClaw and run the onboard wizard to get started.
+
+<llms-ignore>
+
+<CommandTerminal command="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash" />
+
+</llms-ignore>
+
+<llms-only>
+
+```shell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+</llms-only>
+
+By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
+
+| Agent | Guide |
+|-------|-------|
+| OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
+| Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
+
+## Select User Guide for Your Agent
+
+The NemoClaw documentation provides separate user guides for the agents it supports. Select the guide that matches your agent. You can also select the guide from the dropdown at the top of the left navigation pane.
+
+<Cards>
+
+<Card title="NemoClaw for OpenClaw" href="../openclaw/about/overview">
+
+Read the OpenClaw-focused overview before launching the default sandboxed agent.
+
+<Badge intent="tip" minimal outlined>Overview</Badge>
+</Card>
+
+<Card title="NemoClaw for Hermes" href="../hermes/about/overview">
+
+Read the Hermes-focused overview before launching a Hermes sandboxed agent.
+
+<Badge intent="tip" minimal outlined>Overview</Badge>
+</Card>
+
+</Cards>
+
+## Use NemoClaw User Skills
+
+If you work from an AI coding assistant, load NemoClaw's user skills before you install or operate a sandbox.
+The skills turn these docs into task-focused guidance that your assistant can apply to your local environment.
+
+<Cards>
+
+<Card title="Set Up Agent Skills" href="resources/agent-skills">
+
+Clone the skills or add them to your assistant so NemoClaw guidance is available directly in chat.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
+</Card>
+
+</Cards>
+
+---
+
+<Warning title="Notice and Disclaimer">
+  This software automatically retrieves, accesses or interacts with external
+  materials. Those retrieved materials are not distributed with this software
+  and are governed solely by separate terms, conditions and licenses. You are
+  solely responsible for finding, reviewing and complying with all applicable
+  terms, conditions, and licenses, and for verifying the security, integrity and
+  suitability of any retrieved materials for your specific use case. This
+  software is provided "AS IS", without warranty of any kind. The author makes
+  no representations or warranties regarding any retrieved materials, and
+  assumes no liability for any losses, damages, liabilities or legal
+  consequences from your use or inability to use this software or any retrieved
+  materials. Use this software and the retrieved materials at your own risk.
+</Warning>

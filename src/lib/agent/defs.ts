@@ -6,9 +6,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ROOT } from "../runner";
 import { DASHBOARD_PORT } from "../core/ports";
+import { ROOT } from "../runner";
+import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -47,6 +47,11 @@ export interface AgentDashboard {
   path: string;
 }
 
+export interface AgentInference {
+  provider_type?: string;
+  provider_options?: string[];
+}
+
 export interface AgentLegacyPaths {
   dockerfileBase: string | null;
   dockerfile: string | null;
@@ -68,6 +73,7 @@ export interface AgentDefinition {
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
   config?: ManifestRecord;
+  inference?: AgentInference;
   state_dirs?: string[];
   state_files?: AgentStateFile[];
   messaging_platforms?: { supported?: string[] };
@@ -78,7 +84,9 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
+  readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
   readonly stateFiles: AgentStateFile[];
   readonly versionCommand: string;
@@ -252,6 +260,35 @@ function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] 
   return supported ? { supported } : {};
 }
 
+function readInference(record: ManifestRecord): AgentInference | undefined {
+  const inference = readObject(record, "inference");
+  if (!inference) return undefined;
+
+  const providerType = inference.provider_type;
+  if (providerType !== undefined && typeof providerType !== "string") {
+    throw new Error("Agent manifest field 'inference.provider_type' must be a string");
+  }
+
+  const providerOptions = inference.provider_options;
+  let providerOptionList: string[] | undefined;
+  if (providerOptions !== undefined) {
+    if (
+      !Array.isArray(providerOptions) ||
+      providerOptions.some((entry) => typeof entry !== "string")
+    ) {
+      throw new Error(
+        "Agent manifest field 'inference.provider_options' must be an array of strings",
+      );
+    }
+    providerOptionList = providerOptions as string[];
+  }
+
+  return {
+    provider_type: providerType,
+    provider_options: providerOptionList,
+  };
+}
+
 function loadManifestRecord(manifestPath: string): ManifestRecord {
   const parsed = yaml.load(fs.readFileSync(manifestPath, "utf8"));
   if (!isManifestRecord(parsed)) {
@@ -298,11 +335,13 @@ export function loadAgent(name: string): AgentDefinition {
   const forwardPorts = readPortArray(raw, "forward_ports");
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
+  const inference = readInference(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
+  const dashboardUi = readDashboardUi(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -318,6 +357,7 @@ export function loadAgent(name: string): AgentDefinition {
     forward_ports: forwardPorts,
     health_probe: healthProbe,
     config,
+    inference,
     state_dirs: stateDirs,
     state_files: stateFiles,
     messaging_platforms: messagingPlatforms,
@@ -357,6 +397,10 @@ export function loadAgent(name: string): AgentDefinition {
       };
     },
 
+    get dashboardUi(): AgentDashboardUi | null {
+      return dashboardUi;
+    },
+
     get configPaths(): AgentConfigPaths {
       return {
         dir: readString(config ?? {}, "dir") ?? "/sandbox/.openclaw",
@@ -364,6 +408,10 @@ export function loadAgent(name: string): AgentDefinition {
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",
       };
+    },
+
+    get inferenceProviderOptions(): string[] {
+      return inference?.provider_options ?? [];
     },
 
     get stateDirs(): string[] {
