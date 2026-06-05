@@ -81,8 +81,8 @@
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
 #   concurrent-gateway-ports-e2e
 #                            Two sandboxes coexisting on the same host with distinct
-#                            NEMOCLAW_GATEWAY_PORT values; covers the multi-instance
-#                            scenarios referenced in #3053, #4422, and #4520.
+#                            NEMOCLAW_GATEWAY_PORT values; verifies per-instance
+#                            gateway and dashboard segregation.
 #   notify-on-failure        Auto-creates a GitHub issue when any E2E job fails.
 #
 # Runs directly on the runner (not inside Docker) because OpenShell bootstraps

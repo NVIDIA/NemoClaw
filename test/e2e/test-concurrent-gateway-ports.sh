@@ -2,19 +2,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Concurrent gateway ports — covers the multi-instance scenarios across three
-# linked issues that share the same underlying use case but were patched
-# piecemeal in earlier PRs:
-#
-#   #3053 — parent ask: multiple NemoClaw-managed instances on a single host
-#           with full segregation of state, registry, and gateways.
-#   #4422 — NEMOCLAW_GATEWAY_PORT=N onboard recreates the global gateway and
-#           destroys the previous sandbox; concurrent instances unsupported.
-#           QA flagged that the per-port fix in #4645 still collides on the
-#           dashboard port even though the gateway port is bound per instance.
-#   #4520 — containerised-compat gateway mode (host glibc < gateway requirement)
-#           judges a healthy compat gateway stale on the second onboard, causing
-#           a port 8080 recreate-collision.
+# Concurrent gateway ports — exercises multiple NemoClaw-managed sandboxes on a
+# single host with fully segregated gateways, dashboards, and registries. A
+# second onboard with NEMOCLAW_GATEWAY_PORT set to a non-default port must not
+# touch the first sandbox's gateway process, dashboard SSH forward, or sandbox
+# container.
 #
 # Scenario shape:
 #   1. Onboard sandbox A on the default gateway port (8080) + default dashboard
@@ -318,34 +310,34 @@ else
   fail "Sandbox A dashboard port is '${DASHBOARD_A:-missing}', expected ${DASHBOARD_PORT_A}"
 fi
 
-section "Stage 2: onboard sandbox B with NEMOCLAW_GATEWAY_PORT=${GATEWAY_PORT_B} (#4422 / #3053)"
+section "Stage 2: onboard sandbox B with NEMOCLAW_GATEWAY_PORT=${GATEWAY_PORT_B}"
 onboard_sandbox "${SANDBOX_B}" "${GATEWAY_PORT_B}" || {
-  info "B onboard failed; capturing pre-fail state of A for #4422 diagnostics"
+  info "B onboard failed; capturing pre-fail state of A for diagnostics"
   dump_diagnostics "stage-2-onboard-B"
   exit 1
 }
 
 section "Stage 3: assert both sandboxes coexist"
-verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's onboard (#4422 SIGKILL regression)" "${GATEWAY_A_NAME}"
+verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's onboard" "${GATEWAY_A_NAME}"
 verify_sandbox_alive "${SANDBOX_B}" "Sandbox B reaches Ready/Running on per-port gateway" "${GATEWAY_B_NAME}"
 
 DASHBOARD_B="$(dashboard_port_from_list "${SANDBOX_B}")"
 if [ -n "${DASHBOARD_B}" ] && [ "${DASHBOARD_B}" != "${DASHBOARD_A:-${DASHBOARD_PORT_A}}" ]; then
-  pass "Sandbox B got a distinct dashboard port (A=${DASHBOARD_A:-missing} B=${DASHBOARD_B}) (#4422 dashboard-port QA gap)"
+  pass "Sandbox B got a distinct dashboard port (A=${DASHBOARD_A:-missing} B=${DASHBOARD_B})"
 else
   fail "Sandbox B dashboard port collides with A: A=${DASHBOARD_A:-missing} B=${DASHBOARD_B:-missing}"
   dump_diagnostics "dashboard-port-collision"
 fi
 
 if ss -ltn 2>/dev/null | grep -qE ":${GATEWAY_PORT_A}\\b"; then
-  pass "Sandbox A gateway port ${GATEWAY_PORT_A} still listening (#4520 drift detection regression)"
+  pass "Sandbox A gateway port ${GATEWAY_PORT_A} still listening"
 else
   fail "Sandbox A gateway port ${GATEWAY_PORT_A} no longer listening — recreate destroyed first gateway"
   dump_diagnostics "gateway-port-A-missing"
 fi
 
 if ss -ltn 2>/dev/null | grep -qE ":${GATEWAY_PORT_B}\\b"; then
-  pass "Sandbox B gateway port ${GATEWAY_PORT_B} listening (#4422 per-port binding)"
+  pass "Sandbox B gateway port ${GATEWAY_PORT_B} listening"
 else
   fail "Sandbox B gateway port ${GATEWAY_PORT_B} not listening"
   dump_diagnostics "gateway-port-B-missing"

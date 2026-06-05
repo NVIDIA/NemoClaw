@@ -437,9 +437,10 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
-  getOccupiedPorts,
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const { tryCleanupOrphanedDashboardForward } =
+  require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { applyPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
@@ -2080,35 +2081,12 @@ async function preflight(
       // if its command line contains "openshell" to avoid killing unrelated SSH
       // tunnels the user may have set up on the same port. (#1950)
       if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
-        // Use `ps` to get the command line — works on Linux, macOS, and WSL.
-        const cmdline = captureProcessArgs(portCheck.pid);
-        if (cmdline.includes("openshell")) {
-          // #4422: if another live sandbox owns this dashboard forward, do NOT
-          // kill it. The runtime allocator (findAvailableDashboardPort) will
-          // pick a different port for this sandbox at create time.
-          const forwardListOutput = runCaptureOpenshell(["forward", "list"], {
-            ignoreError: true,
-            suppressOutput: true,
-            timeout: 10_000,
-          });
-          const owner = getOccupiedPorts(forwardListOutput).get(String(port)) ?? null;
-          if (owner) {
-            console.log(
-              `  Port ${port} held by live sandbox '${owner}'; leaving its forward intact (this sandbox will auto-allocate a different dashboard port).`,
-            );
-            continue;
-          }
-          console.log(
-            `  Cleaning up orphaned SSH port-forward on port ${port} (PID ${portCheck.pid})...`,
-          );
-          run(["kill", String(portCheck.pid)], { ignoreError: true });
-          sleepSeconds(1);
-          portCheck = await checkPortAvailable(port, portCheckOptions);
-          if (portCheck.ok) {
-            console.log(`  ✓ Port ${port} available after orphaned forward cleanup (${label})`);
-            continue;
-          }
-        }
+        const outcome = await tryCleanupOrphanedDashboardForward({
+          port, pid: portCheck.pid, label, portCheckOptions,
+          captureProcessArgs, runCaptureOpenshell, run, sleepSeconds, checkPortAvailable,
+        });
+        if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
+        else if (outcome.kind !== "not-openshell") continue;
       }
       console.error("");
       console.error(`  !! Port ${port} is not available.`);

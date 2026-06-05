@@ -315,7 +315,7 @@ describe("handleGatewayState", () => {
     );
   });
 
-  it("does not retire a foreign-active Docker-driver gateway (#4422 concurrent instances)", async () => {
+  it("does not retire a foreign-active Docker-driver gateway (concurrent instances)", async () => {
     const { deps, calls } = createDeps({
       isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
       reconcileGatewayGpuReuseForGpuIntent: vi.fn(
