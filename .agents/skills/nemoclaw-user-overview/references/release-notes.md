@@ -1,10 +1,18 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Release Notes
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
+
+## v0.0.59
+
+NemoClaw v0.0.59 improves OpenClaw runtime compatibility, inference setup, credential reuse, messaging safeguards, and sandbox startup diagnostics:
+
+- OpenClaw sandboxes stay aligned with the live gateway and current runtime layout. Sandbox startup reconciles the agent model from the live gateway, refreshes the OpenClaw plugin registry after gateway startup, pins OpenClaw home, state, and workspace paths inside the sandbox, and handles OpenClaw 2026.5.27 approval compatibility. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Inference setup has newer model choices and longer first-start budgets for local runtimes. NVIDIA Endpoints includes the Nemotron 3 Ultra 550B option, Local Ollama uses `qwen3.5:9b` as the starter fallback, managed vLLM on DGX Spark uses a 128K context window for `nvidia/Qwen3.6-35B-A3B-NVFP4`, and Local NVIDIA NIM waits longer for first container startup while still failing fast when the container exits. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+- Hermes sandboxes can route Anthropic Messages API traffic through managed inference, and runtime model switches keep the Hermes config synchronized with the OpenShell route. For more information, refer to Switch Inference Models at Runtime (use the `nemoclaw-user-configure-inference` skill).
+- Credential and messaging boundaries are clearer during day-two operations. Rebuild and remote-provider update paths can reuse credentials already stored in the OpenShell gateway when the host environment is empty, `channels add` warns or aborts before multiple sandboxes compete for the same token-based messaging credential, and `status` reports cross-sandbox channel overlaps. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- Sandbox startup and host preflight failures provide more actionable recovery guidance. NemoClaw heals `~/.nemoclaw` directory and config-file permissions on read paths, detects missing or stale NVIDIA CDI specs before GPU containers fail, probes legacy gateway containers before host-alias operations, and preserves argument validation before runtime probing. For more information, refer to Troubleshooting (use the `nemoclaw-user-reference` skill).
 
 ## v0.0.58
 
@@ -15,7 +23,6 @@ NemoClaw v0.0.58 improves GPU proof reporting, local-inference metadata, policy 
 - Policy and sandbox hardening paths avoid misleading success. `policy-add` refuses to merge a preset when the live policy read returns unparseable output, custom preset application reports when the gateway accepted a preset but the sandbox registry could not record it, and `NEMOCLAW_REQUIRE_CAP_DROP=1` lets operators make entrypoint capability dropping fail closed. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - OpenClaw runtime diagnostics can export conversation traces through the `diagnostics-otel` plugin. Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to bake the plugin config and apply the local OTLP policy preset. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 - Hermes sandboxes are more reliable across messaging, inference, and startup repair paths. Slack channel rebuilds enable the Hermes Slack platform block, `inference.local` routes include the placeholder API key LiteLLM expects, Telegram pseudo-tool text is normalized only for the active chat platform, the messaging response patch preserves Hermes method binding, retry markers are cleared before explicit command dispatch, and Hermes state repair preserves writable history and background dispatcher behavior in locked runtime state. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
-- Documentation generation now expands OpenClaw and Hermes variants from shared source pages, fixes generated variant route links, hides generated variant pages from navigation where appropriate, and documents remote deploy environment variables, one-off command guidance, SSRF egress interactions, and agent session state paths. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
 
 ## v0.0.57
 

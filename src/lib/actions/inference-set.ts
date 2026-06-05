@@ -417,7 +417,7 @@ export async function runInferenceSet(
   const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, deps);
 
   deps.appendAuditEntry({
-    action: "shields_down",
+    action: "inference_set",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `inference set ${agentName}:${provider}:${model}${

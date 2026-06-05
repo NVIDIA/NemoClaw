@@ -3,6 +3,7 @@
 
 import type { Session } from "../../../state/onboard-session";
 import { withPreflightTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export type PreflightSandboxGpuFlag = "enable" | "disable" | null;
 
@@ -86,6 +87,7 @@ export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuCon
   effectiveSandboxGpuFlag: PreflightSandboxGpuFlag;
   effectiveSandboxGpuDevice: string | null | undefined;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
@@ -180,5 +182,8 @@ export async function handlePreflightState<
     effectiveSandboxGpuFlag,
     effectiveSandboxGpuDevice,
     session,
+    stateResult: advanceTo("gateway", {
+      metadata: { state: "preflight", gpuPassthrough },
+    }),
   };
 }
