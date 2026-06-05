@@ -182,6 +182,9 @@ In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `bal
 NEMOCLAW_POLICY_TIER=restricted $$nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
 ```
 
+Unset, blank, or whitespace-only `NEMOCLAW_POLICY_TIER` values use the `balanced` default.
+Any non-blank value must be one of `restricted`, `balanced`, or `open`; otherwise onboarding exits before preflight with an error listing the valid options.
+
 `NEMOCLAW_POLICY_MODE` controls how non-interactive onboarding reconciles the tier-derived suggestions against the sandbox's currently-applied presets.
 The default is `suggested`, which is *additive*.
 Onboarding applies tier defaults and preserves any presets you previously added with [`$$nemoclaw <name> policy-add`](#$$nemoclaw-name-policy-add) across re-onboards.
@@ -615,9 +618,34 @@ Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw sandboxes, `doctor` also checks the mutable config permission contract.
+If `openclaw doctor --fix` was run inside the sandbox, it can tighten `/sandbox/.openclaw` and `openclaw.json` to a single-user `700/600` layout, which stops the gateway from persisting config changes.
+`doctor` reports this as a `Config permissions` warning; pass `--fix` to restore the group-writable `2770/660` contract without rebuilding.
+Restarting the sandbox repairs the same drift automatically.
+
+```bash
+$$nemoclaw my-assistant doctor [--json | --fix]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+| `--fix` | Restore the mutable OpenClaw config permission contract if it was tightened. Mutually exclusive with `--json` |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 ```bash
 $$nemoclaw my-assistant doctor [--json]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the report as JSON |
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> exec`
 
@@ -1397,6 +1425,15 @@ $$nemoclaw tunnel stop
 ```
 
 `$$nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
+
+### `$$nemoclaw tunnel status`
+
+Show the current cloudflared public-URL tunnel status for the default sandbox dashboard.
+The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `$$nemoclaw status`.
+
+```console
+$$nemoclaw tunnel status
+```
 
 ### `$$nemoclaw start`
 

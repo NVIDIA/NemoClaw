@@ -30,14 +30,6 @@ function runtimeShellEnvBlock(src: string): string {
   return src.slice(start, end);
 }
 
-function runtimeShellEnvShimBlock(src: string): string {
-  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
-  const end = src.indexOf("# ── Legacy layout migration", start);
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return src.slice(start, end);
-}
-
 function nonRootFallbackBlock(src: string): string {
   const start = src.indexOf("# ── Non-root fallback");
   const end = src.indexOf("# ── Root path", start);

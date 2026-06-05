@@ -930,6 +930,114 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+validate_hermes_env_secret_boundary() {
+  local env_file="${HERMES_DIR}/.env"
+  [ -e "$env_file" ] || return 0
+  if [ -L "$env_file" ]; then
+    echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
+    return 1
+  fi
+  [ -f "$env_file" ] || return 0
+
+  python3 - "$env_file" <<'PYSECRETBOUNDARY'
+import re
+import sys
+
+env_file = sys.argv[1]
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+violations = []
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+with open(env_file, encoding="utf-8") as fh:
+    for lineno, raw_line in enumerate(fh, 1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in allowed_nonsecret_keys:
+            continue
+        if not secret_key_re.search(key):
+            continue
+        value = unquote(value)
+        if value in allowed_literals:
+            continue
+        if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+            continue
+        violations.append(f"{key} (line {lineno})")
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYSECRETBOUNDARY
+}
+
+validate_hermes_runtime_env_secret_boundary() {
+  python3 - <<'PYRUNTIMESECRETBOUNDARY'
+import os
+import re
+import sys
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+allowed_raw_secret_keys = {"OPENCLAW_GATEWAY_TOKEN"}
+allowed_nonsecret_keys = set((
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "GPG_KEY",
+    "NEMOCLAW_INFERENCE_API",
+    "NEMOCLAW_PROVIDER_KEY",
+))
+violations = []
+
+for key, value in sorted(os.environ.items()):
+    if key in allowed_raw_secret_keys or key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    if value in allowed_literals:
+        continue
+    if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+        continue
+    violations.append(key)
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because the process environment "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYRUNTIMESECRETBOUNDARY
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .hermes
@@ -953,6 +1061,8 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   apply_shields_up_runtime_env
+  validate_hermes_env_secret_boundary
+  validate_hermes_runtime_env_secret_boundary
   refresh_hermes_provider_placeholders
   configure_messaging_channels
   retry_tirith_marker_if_needed
@@ -1001,6 +1111,8 @@ fi
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 apply_shields_up_runtime_env
+validate_hermes_env_secret_boundary
+validate_hermes_runtime_env_secret_boundary
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 retry_tirith_marker_if_needed
