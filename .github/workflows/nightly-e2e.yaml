@@ -2565,8 +2565,15 @@ jobs:
               const dedupedByName = new Map();
               for (const j of apiJobs) {
                 const name = j.name.replace(/ \/ [^/]+$/, '');
-                // Last-write-wins: re-runs reflect final attempt.
-                if (!EXCLUDED_JOBS.has(name)) dedupedByName.set(name, { ...j, name });
+                if (EXCLUDED_JOBS.has(name)) continue;
+                // Deterministic: prefer higher run_attempt, then later
+                // completed_at as tiebreaker. Independent of API page order.
+                const existing = dedupedByName.get(name);
+                const isNewer = !existing
+                  || (j.run_attempt ?? 0) > (existing.run_attempt ?? 0)
+                  || ((j.run_attempt ?? 0) === (existing.run_attempt ?? 0)
+                      && (j.completed_at ?? '') > (existing.completed_at ?? ''));
+                if (isNewer) dedupedByName.set(name, { ...j, name });
               }
               canonicalJobs = [...dedupedByName.values()];
             } catch (e) {
