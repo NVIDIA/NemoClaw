@@ -2535,7 +2535,7 @@ jobs:
             const needs = ${{ toJSON(needs) }};
             const today = formatDate(new Date());
             const isDispatch = context.eventName === 'workflow_dispatch';
-            const requestedJobsRaw = isDispatch ? '${{ inputs.jobs }}'.trim() : '';
+            const requestedJobsRaw = isDispatch ? (${{ toJSON(inputs.jobs) }} || '').trim() : '';
             const requestedJobs = requestedJobsRaw
               ? requestedJobsRaw.split(',').map((name) => name.trim()).filter(Boolean)
               : [];
