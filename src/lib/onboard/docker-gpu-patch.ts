@@ -1004,7 +1004,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
       throw new Error(
         rolledBack
           ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-          : "OpenShell supervisor did not reconnect to the GPU-enabled container; rollback to backup container failed.",
+          : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
       );
     }
 

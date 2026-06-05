@@ -20,6 +20,14 @@ import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const RC_CLEAN_SCRIPT = join(
+  import.meta.dirname,
+  "../scripts/lib/clean_runtime_shell_env_shim.py",
+);
+
+function rcShimWrapperHeader(): string {
+  return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
+}
 
 function extractRuntimeShellEnvSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
@@ -573,6 +581,7 @@ describe("service environment", () => {
           `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
           `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
           "ensure_runtime_shell_env_shim",
         ].join("\n");
@@ -627,6 +636,7 @@ describe("service environment", () => {
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
           'legacy_tmp="${_SANDBOX_HOME}/.bashrc.nemoclaw-clean.$$"',
           `ln -s ${JSON.stringify(sensitivePath)} "$legacy_tmp"`,
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
           "ensure_runtime_shell_env_shim",
         ].join("\n");
@@ -677,6 +687,7 @@ describe("service environment", () => {
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
           'chown() { echo "unexpected chown $*" >&2; exit 42; }',
           'chmod() { echo "unexpected chmod $*" >&2; exit 43; }',
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -716,6 +727,7 @@ describe("service environment", () => {
           `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
           `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
           "ensure_runtime_shell_env_shim",
         ].join("\n");
@@ -772,6 +784,7 @@ describe("service environment", () => {
           `_SANDBOX_HOME=${JSON.stringify(fakeHome)}`,
           `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(proxyEnvPath)}`,
           '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_RUNTIME_SHELL_ENV_FILE} ] && . ${_RUNTIME_SHELL_ENV_FILE}"',
+          rcShimWrapperHeader(),
           extractRuntimeShellEnvShimSnippet(),
           "ensure_runtime_shell_env_shim",
         ].join("\n");

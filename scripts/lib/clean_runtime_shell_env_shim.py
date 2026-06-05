@@ -38,6 +38,7 @@ def rewrite_open_rc_file(read_fd, original_stat, cleaned_lines, uid):
     # legacy shims in the rc files. In that case atomic rename into /sandbox
     # fails, so rewrite the already-validated inode through /proc/self/fd
     # instead.
+    final_mode = stat.S_IMODE(original_stat.st_mode)
     if uid == 0:
         os.fchown(read_fd, 0, 0)
     os.fchmod(read_fd, 0o600)
@@ -56,10 +57,10 @@ def rewrite_open_rc_file(read_fd, original_stat, cleaned_lines, uid):
     finally:
         if write_fd is not None:
             os.close(write_fd)
-        os.fchmod(read_fd, 0o644)
+        os.fchmod(read_fd, final_mode)
 
 
-def rewrite_by_rename(rc_path, cleaned_lines, uid, tmp_paths):
+def rewrite_by_rename(rc_path, original_stat, cleaned_lines, uid, tmp_paths):
     tmp_fd, tmp_path = tempfile.mkstemp(prefix="nemoclaw-rc-clean.", dir="/tmp", text=True)
     tmp_paths.append(tmp_path)
     with os.fdopen(tmp_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
@@ -68,7 +69,10 @@ def rewrite_by_rename(rc_path, cleaned_lines, uid, tmp_paths):
         os.fsync(handle.fileno())
     if uid == 0:
         os.chown(tmp_path, 0, 0)
-    os.chmod(tmp_path, 0o644)
+    # Mirror the original rc file's mode bits rather than fixing a permissive
+    # default. The pre-cleanup file's mode is the user-visible source of truth;
+    # widening it here would silently change rc file permissions.
+    os.chmod(tmp_path, stat.S_IMODE(original_stat.st_mode))
     os.replace(tmp_path, rc_path)
     tmp_paths.pop()
 
@@ -167,7 +171,7 @@ def main(argv):
         except OSError as exc:
             if exc.errno != errno.ENOENT:
                 raise
-            rewrite_by_rename(rc_path, cleaned, uid, tmp_paths)
+            rewrite_by_rename(rc_path, st, cleaned, uid, tmp_paths)
     except Exception as exc:
         print(
             f"[SECURITY] could not safely clean runtime env shim from {rc_path}: {exc}",
@@ -181,6 +185,10 @@ def main(argv):
             try:
                 os.unlink(tmp_path)
             except FileNotFoundError:
+                # The successful path in `rewrite_by_rename` removes the tmp
+                # path from `tmp_paths` before this finally block runs, so
+                # arriving here means the rename happened or the OS already
+                # reaped the file. Nothing left to clean up.
                 pass
 
     return 0

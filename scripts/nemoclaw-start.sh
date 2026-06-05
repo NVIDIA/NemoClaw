@@ -2448,14 +2448,13 @@ GUARDENVEOF
 # The Python body lives in scripts/lib/clean_runtime_shell_env_shim.py so it
 # can be unit-tested with controlled rc fixtures. Installed location in the
 # sandbox image: /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py.
-_CLEAN_RUNTIME_SHELL_ENV_SHIM_SCRIPT="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
-if [ ! -f "$_CLEAN_RUNTIME_SHELL_ENV_SHIM_SCRIPT" ]; then
-  _CLEAN_RUNTIME_SHELL_ENV_SHIM_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
-fi
-
 ensure_runtime_shell_env_shim() {
   local failed=0
   local rc_file
+  local clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT:-/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py}"
+  if [ ! -f "$clean_script" ]; then
+    clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
+  fi
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
     if [ -L "$rc_file" ]; then
@@ -2472,7 +2471,7 @@ ensure_runtime_shell_env_shim() {
       continue
     fi
 
-    if ! command python3 "$_CLEAN_RUNTIME_SHELL_ENV_SHIM_SCRIPT" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
+    if ! command python3 "$clean_script" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
       failed=1
       continue
     fi

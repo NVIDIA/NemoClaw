@@ -677,7 +677,7 @@ describe("docker-gpu-patch", () => {
           errorPhaseDebouncePolls: 1,
         },
       ),
-    ).toThrow(/rollback to backup container failed/);
+    ).toThrow(/rollback failed; pre-patch sandbox was NOT restored/);
 
     expect(dockerStart).not.toHaveBeenCalled();
   });
@@ -716,7 +716,7 @@ describe("docker-gpu-patch", () => {
           errorPhaseDebouncePolls: 1,
         },
       ),
-    ).toThrow(/rollback to backup container failed/);
+    ).toThrow(/rollback failed; pre-patch sandbox was NOT restored/);
 
     expect(dockerStart).toHaveBeenCalledWith(
       "openshell-alpha",

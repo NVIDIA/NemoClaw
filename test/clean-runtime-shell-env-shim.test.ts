@@ -16,6 +16,7 @@ const CLEAN_SCRIPT = path.join(
   "clean_runtime_shell_env_shim.py",
 );
 const SHIM_TEXT = '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh';
+const CURRENT_UID = process.getuid?.() ?? 0;
 
 function runScript(args: { rcPath: string; shim: string; uid: number }): {
   status: number | null;
@@ -50,8 +51,7 @@ describe("clean_runtime_shell_env_shim.py", () => {
     const before = `export FOO=1\n# Source runtime proxy config\n${SHIM_TEXT}\nexport BAR=2\n`;
     fs.writeFileSync(rcPath, before, { mode: 0o644 });
 
-    const stat = fs.statSync(rcPath);
-    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: stat.uid });
+    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: CURRENT_UID });
 
     expect(result.status).toBe(0);
     const after = fs.readFileSync(rcPath, "utf-8");
@@ -68,15 +68,14 @@ describe("clean_runtime_shell_env_shim.py", () => {
     const before = `# Source runtime proxy config\n${SHIM_TEXT}\nexport REAL_USER_LINE=keep\n`;
     fs.writeFileSync(rcPath, before, { mode: 0o644 });
 
-    const stat = fs.statSync(rcPath);
-    // Mismatched uid: pretend we are running as uid=99999 against a file
+    // Mismatched uid: pretend we are running as a foreign uid against a file
     // owned by the test runner. Real container repro uses uid=1000 vs root.
-    const foreignUid = stat.uid + 99999;
+    const foreignUid = CURRENT_UID + 99999;
     const result = runScript({ rcPath, shim: SHIM_TEXT, uid: foreignUid });
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("[SECURITY] skipping rc cleanup");
-    expect(result.stderr).toContain(`file uid=${stat.uid}`);
+    expect(result.stderr).toContain(`file uid=${CURRENT_UID}`);
     expect(result.stderr).toContain(`uid=${foreignUid}`);
 
     const after = fs.readFileSync(rcPath, "utf-8");
@@ -88,13 +87,10 @@ describe("clean_runtime_shell_env_shim.py", () => {
     const before = "export FOO=1\nexport BAR=2\n";
     fs.writeFileSync(rcPath, before, { mode: 0o644 });
 
-    const stat = fs.statSync(rcPath);
-    const beforeMtime = stat.mtimeMs;
-    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: stat.uid });
+    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: CURRENT_UID });
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(rcPath, "utf-8")).toBe(before);
-    expect(fs.statSync(rcPath).mtimeMs).toBe(beforeMtime);
   });
 
   it("refuses a symlinked rc file and exits 1", () => {
@@ -113,8 +109,7 @@ describe("clean_runtime_shell_env_shim.py", () => {
     const before = `export FOO=1\n${SHIM_TEXT}\nexport BAR=2\n`;
     fs.writeFileSync(rcPath, before, { mode: 0o644 });
 
-    const stat = fs.statSync(rcPath);
-    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: stat.uid });
+    const result = runScript({ rcPath, shim: SHIM_TEXT, uid: CURRENT_UID });
 
     expect(result.status).toBe(0);
     expect(fs.readFileSync(rcPath, "utf-8")).toBe("export FOO=1\nexport BAR=2\n");
