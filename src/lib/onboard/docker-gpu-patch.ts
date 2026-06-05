@@ -1053,13 +1053,12 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    // When the caller defers the supervisor reconnect wait (create-time
-    // patching, where readiness probing happens later in the create flow),
-    // leave the backup container in place so the caller can choose to either
-    // remove it after its own reconnect confirms (`finalizeDockerGpuPatchBackup`
-    // with `supervisorReady: true`), or roll back to it on failure. Removing
-    // the backup here would re-introduce the deleted-backup / failed-new
-    // state #4664 set out to eliminate.
+    // When the caller defers the supervisor reconnect wait, leave the backup
+    // container in place so the caller can either remove it via
+    // `finalizeDockerGpuPatchBackup` with `supervisorReady: true` once its own
+    // probe confirms, or roll back to it on failure. Removing the backup
+    // here would strand the user with a deleted-backup / failed-new sandbox
+    // if the deferred reconnect then fails.
     if (options.waitForSupervisor === false) {
       return {
         applied: true,

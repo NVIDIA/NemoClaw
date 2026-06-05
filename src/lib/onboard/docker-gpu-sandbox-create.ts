@@ -150,15 +150,19 @@ export function createDockerGpuSandboxCreatePatch(
       );
       const finalizeOutcome = result
         ? finalizeDockerGpuPatchBackup({ result, supervisorReady }, options.deps)
-        : { backupRemoved: false, rolledBack: false };
+        : null;
       if (supervisorReady) return;
+      const failureMessage = (() => {
+        if (!finalizeOutcome) {
+          return "OpenShell supervisor did not reconnect to the GPU-enabled container.";
+        }
+        return finalizeOutcome.rolledBack
+          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the GPU-enabled container; rollback to backup container failed.";
+      })();
       printDockerGpuPatchFailureAndExit(
         options.sandboxName,
-        new Error(
-          finalizeOutcome.rolledBack
-            ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-            : "OpenShell supervisor did not reconnect to the GPU-enabled container.",
-        ),
+        new Error(failureMessage),
         {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
@@ -168,7 +172,7 @@ export function createDockerGpuSandboxCreatePatch(
             newContainerId: result?.newContainerId,
             backupContainerName: result?.backupContainerName,
             selectedMode: result?.mode ?? null,
-            rolledBack: finalizeOutcome.rolledBack,
+            rolledBack: finalizeOutcome?.rolledBack ?? false,
           },
         },
       );
