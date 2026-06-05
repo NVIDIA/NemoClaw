@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import YAML from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes", "config");
@@ -105,7 +106,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: "sk-OPENSHELL-PROXY-REWRITE",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
     expect(config.platforms).toEqual({
       api_server: {
@@ -131,7 +132,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "test-model",
       provider: "custom",
       base_url: "https://inference.local",
-      api_key: "sk-OPENSHELL-PROXY-REWRITE",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
     });
   });
@@ -163,7 +164,13 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(typeof config.model.api_key).toBe("string");
     expect(config.model.api_key.startsWith("sk-")).toBe(true);
     expect(config.model.api_key).not.toBe("no-key-required");
-    expect(config.model.api_key).toMatch(/OPENSHELL/);
+    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
+  });
+
+  it("keeps generated and inference-switch Hermes proxy placeholders in sync", () => {
+    const { config } = runConfigScript();
+
+    expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
   });
 
   it("generates managed-tool gateway config and env for selected Nous presets", () => {
@@ -432,7 +439,7 @@ describe("agents/hermes/generate-config.ts", () => {
       default: "moonshotai/kimi-k2.6",
       provider: "custom",
       base_url: "https://inference.local/v1",
-      api_key: "sk-OPENSHELL-PROXY-REWRITE",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
     });
     expect(config.kimi).toBeUndefined();
     expect(config.openclawPlugins).toBeUndefined();
