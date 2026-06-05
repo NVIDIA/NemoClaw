@@ -3274,10 +3274,7 @@ async function createSandbox(
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
     console.log(`  Docker build context: ${buildContextDir}`);
     const shouldIncludeCustomContextPath = createCustomBuildContextFilter(buildContextDir);
-    const buildContextStats = collectBuildContextStats(
-      buildContextDir,
-      shouldIncludeCustomContextPath,
-    );
+    const buildContextStats = collectBuildContextStats(buildContextDir, shouldIncludeCustomContextPath);
     if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
       const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
       console.warn(
