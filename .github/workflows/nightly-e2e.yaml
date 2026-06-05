@@ -338,6 +338,7 @@ jobs:
       env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-token-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-msg-provider","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-e2e","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
       nvidia_api_key: true
       github_token: true
+      messaging_live_secrets: true
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
