@@ -2451,9 +2451,25 @@ GUARDENVEOF
 ensure_runtime_shell_env_shim() {
   local failed=0
   local rc_file
-  local clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT:-/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py}"
+  # Resolution order is deliberately fixed: the immutable installed helper at
+  # /usr/local/lib/nemoclaw/ ALWAYS wins when present. That path is set up
+  # by the Dockerfile, chmod 644, root-owned (or build-time owned), and lives
+  # under a system directory the sandbox user cannot write to. We refuse to
+  # honour any environment-supplied override when that file is in place so a
+  # malicious envvar cannot swap in arbitrary Python.
+  #
+  # The NEMOCLAW_RC_CLEAN_SCRIPT override is consulted ONLY when the installed
+  # helper is missing — i.e. running the unit-test wrappers against the
+  # repository tree, where the script lives at scripts/lib/ instead.
+  # The final fallback resolves the script relative to nemoclaw-start.sh so
+  # `bash scripts/nemoclaw-start.sh` works out-of-the-box for ad-hoc dev runs.
+  local clean_script="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
   if [ ! -f "$clean_script" ]; then
-    clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
+    if [ -n "${NEMOCLAW_RC_CLEAN_SCRIPT:-}" ] && [ -f "${NEMOCLAW_RC_CLEAN_SCRIPT}" ]; then
+      clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT}"
+    else
+      clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
+    fi
   fi
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do

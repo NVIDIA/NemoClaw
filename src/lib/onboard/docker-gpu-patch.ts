@@ -14,7 +14,7 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
-import { rollbackPatchToBackup } from "./docker-gpu-patch-finalize";
+import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import {
   type DockerGpuSupervisorReconnectDeps,
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
@@ -971,58 +971,38 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    // When the caller defers the supervisor reconnect wait, leave the backup
-    // container in place so the caller can either remove it via
-    // `finalizeDockerGpuPatchBackup` with `supervisorReady: true` once its own
-    // probe confirms, or roll back to it on failure. Removing the backup
-    // here would strand the user with a deleted-backup / failed-new sandbox
-    // if the deferred reconnect then fails.
-    if (options.waitForSupervisor === false) {
-      return {
-        applied: true,
-        oldContainerId,
-        newContainerId,
-        originalName,
-        backupContainerName,
-        mode: selection.mode,
-        backupRemoved: false,
-      };
-    }
+    const selectedMode = selection.mode;
+    const buildPatchResult = (backupRemoved: boolean): DockerGpuPatchResult => ({
+      applied: true,
+      oldContainerId,
+      newContainerId,
+      originalName,
+      backupContainerName,
+      mode: selectedMode,
+      backupRemoved,
+    });
+
+    // Deferred: caller will run the supervisor wait and call
+    // `finalizeDockerGpuPatchBackup` (success → remove the backup, failure →
+    // roll back to it). Removing the backup here would strand the user with
+    // a deleted-backup / failed-new sandbox if the deferred reconnect fails.
+    if (options.waitForSupervisor === false) return buildPatchResult(false);
 
     const execReady = waitForOpenShellSupervisorReconnect(
       options.sandboxName,
       options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
       deps,
     );
-
-    if (!execReady) {
-      const rolledBack = rollbackPatchToBackup(
-        { newContainerId, backupContainerName, originalName },
-        deps,
-      );
-      context.rolledBack = rolledBack;
-      throw new Error(
-        rolledBack
-          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-          : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
-      );
+    const reconcile = reconcileSupervisorReconnect(
+      execReady,
+      { newContainerId, backupContainerName, originalName },
+      deps,
+    );
+    if (!reconcile.execReady) {
+      context.rolledBack = reconcile.rolledBack;
+      throw reconcile.error;
     }
-
-    d.dockerRm(backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-
-    return {
-      applied: true,
-      oldContainerId,
-      newContainerId,
-      originalName,
-      backupContainerName,
-      mode: selection.mode,
-      backupRemoved: true,
-    };
+    return buildPatchResult(true);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     throw decoratePatchError(err, context);

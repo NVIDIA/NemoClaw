@@ -32,7 +32,14 @@ type RecreatePatchFn = typeof recreateOpenShellDockerSandboxWithGpu;
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
 type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
-type PatchFailureExitFn = typeof printDockerGpuPatchFailureAndExit;
+// Loosen the override return type from `never` to `void` so tests can pass a
+// plain `vi.fn()` mock. Production wires `printDockerGpuPatchFailureAndExit`
+// which has return type `never`; that is assignable to `void`.
+type PatchFailureExitFn = (
+  sandboxName: string,
+  error: unknown,
+  deps: Parameters<typeof printDockerGpuPatchFailureAndExit>[2],
+) => void;
 
 type DockerGpuSandboxCreatePatchOptions = {
   enabled: boolean;

@@ -34,6 +34,29 @@ const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // whose sandbox list cache divergence was observed at ~12s in the original
 // repro. Hosts that genuinely crashed on startup hit the rollback path in
 // applyDockerGpuPatch rather than waiting out the full window.
+//
+// Design choice for #4664: that issue's second suggested fix proposes that
+// when the patched Docker container reports Status=running + Health=starting,
+// reconnect should keep retrying rather than declaring fatal. We deliberately
+// chose the alternative path — generic Error-phase debounce wide enough to
+// absorb the observed sandbox-list cache divergence window, plus a
+// guaranteed rollback to the pre-patch backup container when reconnect still
+// cannot confirm. The reasons:
+//   1. The patched container's Health depends on the OpenShell supervisor
+//      script, which is exactly the thing the reconnect wait is observing
+//      via `openshell sandbox list`. Branching on Docker Health here would
+//      either reduplicate the same signal or trust an orthogonal one
+//      (`docker inspect`) that can lag the supervisor's view by several
+//      seconds — defeating the determinism of the existing classifier.
+//   2. The rollback path (docker-gpu-patch-finalize.ts) guarantees the user
+//      keeps the pre-patch CPU sandbox when reconnect cannot confirm. Under
+//      the debounce-plus-rollback alternative, slow hosts get extra time AND
+//      catastrophic failures get a recoverable sandbox instead of a deleted
+//      backup.
+// If a future repro shows Status=running + Health=starting genuinely failing
+// reconnect after this 30s window, switch the strategy to a Health-aware
+// retry — but only after extracting Docker health probing into a separate
+// observation channel rather than overloading this one.
 const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 15;
 
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =

@@ -93,4 +93,20 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome).toEqual({ backupRemoved: true, rolledBack: false });
     expect(dockerRm).not.toHaveBeenCalled();
   });
+
+  it("reports backupRemoved=false when supervisor reconnect succeeded but docker rm of the backup failed", () => {
+    const dockerRm = vi.fn((_name: string) => ({
+      status: 1,
+      stderr: "Error response from daemon: container is in use",
+    }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: true },
+      { dockerRm },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(dockerRm).toHaveBeenCalledWith(
+      "openshell-alpha-nemoclaw-gpu-backup-1780491860342",
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
 });

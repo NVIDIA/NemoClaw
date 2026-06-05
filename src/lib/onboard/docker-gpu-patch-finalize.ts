@@ -1,5 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//
+// Source-of-truth: this module is a NemoClaw-side workaround. The invalid
+// state it recovers from is "OpenShell Docker-driver GPU patch left the
+// sandbox in a deleted-backup / failed-new state when the post-recreate
+// supervisor reconnect could not confirm the GPU container". The preferred
+// source boundary for the fix is OpenShell: a Docker-driver sandbox create
+// that natively accepts NVIDIA GPU access would remove the need for the
+// post-create container recreation NemoClaw performs here. Until OpenShell
+// supports that natively, NemoClaw recreates the container with GPU access
+// and uses this module to either confirm the new container or restore the
+// pre-patch backup. Regression coverage:
+//   * src/lib/onboard/docker-gpu-patch-finalize.test.ts — direct unit tests
+//     for finalize success / rollback / no-op / rollback failure outcomes.
+//   * src/lib/onboard/docker-gpu-patch-rollback.test.ts — composed
+//     recreate-with-rollback scenarios.
+//   * src/lib/onboard/docker-gpu-sandbox-create.test.ts — composed create
+//     flow driving maybeApplyDuringCreate → waitForSupervisorReconnect →
+//     finalizeBackup.
+// Removal condition: when OpenShell supports native Docker-driver GPU
+// creation/reconnect, drop the NemoClaw post-create container recreation
+// and delete this module along with its callers in docker-gpu-patch.ts and
+// docker-gpu-sandbox-create.ts.
 
 import {
   dockerRename as defaultDockerRename,
@@ -91,8 +113,16 @@ export function finalizeDockerGpuPatchBackup(
     return { backupRemoved: true, rolledBack: false };
   }
   if (options.supervisorReady) {
-    resolved.dockerRm(options.result.backupContainerName, containerOpts);
-    return { backupRemoved: true, rolledBack: false };
+    // Backup removal is best-effort: the supervisor probe already confirmed
+    // the new GPU container is reachable, so the backup is no longer needed
+    // even if `docker rm` cannot delete it (e.g. concurrent admin action,
+    // daemon timeout). Reflect the actual rm status in the outcome so
+    // diagnostics can flag a leaked backup container.
+    const rmResult = resolved.dockerRm(
+      options.result.backupContainerName,
+      containerOpts,
+    );
+    return { backupRemoved: isZeroStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(
     {
@@ -105,9 +135,33 @@ export function finalizeDockerGpuPatchBackup(
   return { backupRemoved: false, rolledBack };
 }
 
-export function rollbackPatchToBackup(
+export type SupervisorReconnectOutcome =
+  | { execReady: true }
+  | { execReady: false; rolledBack: boolean; error: Error };
+
+export function reconcileSupervisorReconnect(
+  execReady: boolean,
   refs: { newContainerId: string; backupContainerName: string; originalName: string },
   deps: DockerGpuPatchDeps,
-): boolean {
-  return rollbackToBackupContainer(refs, resolveRollbackDeps(deps));
+): SupervisorReconnectOutcome {
+  const resolved = resolveRollbackDeps(deps);
+  const containerOpts = {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+  };
+  if (execReady) {
+    resolved.dockerRm(refs.backupContainerName, containerOpts);
+    return { execReady: true };
+  }
+  const rolledBack = rollbackToBackupContainer(refs, resolved);
+  return {
+    execReady: false,
+    rolledBack,
+    error: new Error(
+      rolledBack
+        ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
+        : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.",
+    ),
+  };
 }
