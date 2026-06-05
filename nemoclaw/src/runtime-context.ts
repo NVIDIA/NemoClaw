@@ -76,6 +76,6 @@ function buildRuntimeContextText(summary: RuntimeSummary): string {
  */
 export function registerRuntimeContext(api: OpenClawPluginApi, pluginConfig: NemoClawConfig): void {
   api.on("before_prompt_build", () => ({
-    prependContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig)),
+    prependSystemContext: buildRuntimeContextText(getRuntimeSummary(pluginConfig)),
   }));
 }

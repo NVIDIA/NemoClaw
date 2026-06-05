@@ -211,9 +211,15 @@ mark_in_container_gateway() {
 }
 # A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
 # (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
-# absent. Both the root and non-root entrypoint paths gate gateway startup on
-# the same emptiness check further below.
-if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+# absent. Docker-driver sandboxes also leave it absent because OpenShell runs
+# the gateway as a host-side process outside this container's namespace. Both
+# the root and non-root entrypoint paths gate local gateway startup on the same
+# emptiness check further below.
+case ",${OPENSHELL_DRIVERS:-}," in
+  *,docker,*) _NEMOCLAW_DOCKER_DRIVER=1 ;;
+  *) _NEMOCLAW_DOCKER_DRIVER=0 ;;
+esac
+if [ ${#NEMOCLAW_CMD[@]} -eq 0 ] && [ "$_NEMOCLAW_DOCKER_DRIVER" != "1" ]; then
   mark_in_container_gateway
 fi
 
@@ -1725,9 +1731,31 @@ start_auto_pair() {
   fi
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
+import importlib.util
 import os
+import stat
 import subprocess
 import time
+
+APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
+
+
+def load_approval_policy(path):
+    helper_stat = os.stat(path)
+    mode = helper_stat.st_mode
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RuntimeError('approval policy helper is writable by group or other')
+    if helper_stat.st_uid == os.geteuid() and mode & stat.S_IWUSR:
+        raise RuntimeError('approval policy helper is writable by the current user')
+    spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('approval policy helper could not be loaded')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.approval_request_decision, module.gateway_approval_env
+
+
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -1760,8 +1788,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # (the gateway stores connectParams.client.id verbatim). This allowlist
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
-ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat', 'cli'}
+# The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
@@ -1781,10 +1808,7 @@ def run(*args, strip_gateway_env=False):
     # the fast→slow transition and the 8h deadline check.
     env = None
     if strip_gateway_env:
-        env = os.environ.copy()
-        env.pop('OPENCLAW_GATEWAY_URL', None)
-        env.pop('OPENCLAW_GATEWAY_PORT', None)
-        env.pop('OPENCLAW_GATEWAY_TOKEN', None)
+        env = gateway_approval_env(os.environ)
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -1830,11 +1854,21 @@ while time.time() < DEADLINE:
             request_id = device.get('requestId')
             if not request_id or request_id in HANDLED:
                 continue
-            client_id = device.get('clientId', '')
-            client_mode = device.get('clientMode', '')
-            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+            decision = approval_request_decision(device)
+            client_id = decision['client_id']
+            client_mode = decision['client_mode']
+            if decision['reason'] == 'unknown-client':
                 HANDLED.add(request_id)
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
+                continue
+            if decision['reason'] == 'malformed-scopes':
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
+                continue
+            if decision['reason'] == 'disallowed-scopes':
+                HANDLED.add(request_id)
+                scopes = decision['scopes']
+                print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
@@ -2081,6 +2115,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
@@ -2110,8 +2145,90 @@ openclaw() {
   # the approval command itself. Approval calls temporarily drop the gateway
   # URL/port/token; other commands keep the full gateway environment.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
-    return $?
+    _nemoclaw_approve_request_id="${3:-}"
+    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+    _nemoclaw_approve_before=""
+    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
+      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+try:
+    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
+except Exception:
+    pending = {}
+if not isinstance(pending, dict):
+    pending = {}
+request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
+if request:
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": request.get("deviceId"),
+        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
+    }, sort_keys=True))
+PYAPPROVEBEFORE
+)"
+    fi
+    _nemoclaw_approve_errexit=0
+    case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
+    set +e
+    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    _nemoclaw_approve_rc=$?
+    if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
+    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
+      printf '%s\n' "$_nemoclaw_approve_output"
+      return 0
+    fi
+    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
+      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" python3 - <<'PYAPPROVEAFTER'; then
+import json
+import os
+from pathlib import Path
+
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+try:
+    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
+except Exception:
+    before = {}
+
+def load(name):
+    try:
+        value = json.loads((root / name).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+def norm(value):
+    return str(value or "").strip()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+requested = {norm(scope) for scope in (before.get("scopes") or []) if norm(scope)}
+device_id = norm(before.get("deviceId"))
+pending = load("pending.json")
+paired = load("paired.json")
+still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
+paired_entry = paired.get(device_id) if device_id else None
+if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(scopes(paired_entry)):
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": device_id,
+        "approvedScopes": sorted(requested),
+        "compatibility": "openclaw-approve-applied-after-nonzero",
+    }, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+PYAPPROVEAFTER
+        return 0
+      fi
+    fi
+    printf '%s\n' "$_nemoclaw_approve_output"
+    return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
     configure)
@@ -2327,9 +2444,33 @@ GUARDENVEOF
 # Keep per-user rc files out of runtime proxy wiring. Older images and prior
 # entrypoint versions wrote a two-line shim into .bashrc/.profile; remove that
 # managed stanza before lock_rc_files makes the files read-only again.
+#
+# The Python body lives in scripts/lib/clean_runtime_shell_env_shim.py so it
+# can be unit-tested with controlled rc fixtures. Installed location in the
+# sandbox image: /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py.
 ensure_runtime_shell_env_shim() {
   local failed=0
   local rc_file
+  # Resolution order is deliberately fixed: the immutable installed helper at
+  # /usr/local/lib/nemoclaw/ ALWAYS wins when present. That path is set up
+  # by the Dockerfile, chmod 644, root-owned (or build-time owned), and lives
+  # under a system directory the sandbox user cannot write to. We refuse to
+  # honour any environment-supplied override when that file is in place so a
+  # malicious envvar cannot swap in arbitrary Python.
+  #
+  # The NEMOCLAW_RC_CLEAN_SCRIPT override is consulted ONLY when the installed
+  # helper is missing — i.e. running the unit-test wrappers against the
+  # repository tree, where the script lives at scripts/lib/ instead.
+  # The final fallback resolves the script relative to nemoclaw-start.sh so
+  # `bash scripts/nemoclaw-start.sh` works out-of-the-box for ad-hoc dev runs.
+  local clean_script="/usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py"
+  if [ ! -f "$clean_script" ]; then
+    if [ -n "${NEMOCLAW_RC_CLEAN_SCRIPT:-}" ] && [ -f "${NEMOCLAW_RC_CLEAN_SCRIPT}" ]; then
+      clean_script="${NEMOCLAW_RC_CLEAN_SCRIPT}"
+    else
+      clean_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/clean_runtime_shell_env_shim.py"
+    fi
+  fi
 
   for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
     if [ -L "$rc_file" ]; then
@@ -2346,125 +2487,7 @@ ensure_runtime_shell_env_shim() {
       continue
     fi
 
-    if ! command python3 - "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)" <<'PY'; then
-import errno
-import os
-import stat
-import sys
-import tempfile
-
-rc_path, shim, uid_text = sys.argv[1:4]
-uid = int(uid_text)
-fd = None
-tmp_path = None
-
-
-def same_file(left, right):
-    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
-
-
-def rewrite_open_rc_file(read_fd, original_stat, cleaned_lines):
-    # The runtime test image can make /sandbox non-writable while leaving legacy
-    # shims in the rc files. In that case atomic rename into /sandbox fails, so
-    # rewrite the already-validated inode through /proc/self/fd instead.
-    if uid == 0:
-        os.fchown(read_fd, 0, 0)
-    os.fchmod(read_fd, 0o600)
-    write_fd = os.open(
-        f"/proc/self/fd/{read_fd}",
-        os.O_WRONLY | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0),
-    )
-    try:
-        if not same_file(original_stat, os.fstat(write_fd)):
-            raise RuntimeError("rc file descriptor target changed during cleanup")
-        with os.fdopen(write_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
-            write_fd = None
-            handle.writelines(cleaned_lines)
-            handle.flush()
-            os.fsync(handle.fileno())
-    finally:
-        if write_fd is not None:
-            os.close(write_fd)
-        os.fchmod(read_fd, 0o644)
-
-
-def rewrite_by_rename(cleaned_lines):
-    global tmp_path
-    tmp_fd, tmp_path = tempfile.mkstemp(prefix="nemoclaw-rc-clean.", dir="/tmp", text=True)
-    with os.fdopen(tmp_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
-        handle.writelines(cleaned_lines)
-        handle.flush()
-        os.fsync(handle.fileno())
-    if uid == 0:
-        os.chown(tmp_path, 0, 0)
-    os.chmod(tmp_path, 0o644)
-    os.replace(tmp_path, rc_path)
-    tmp_path = None
-
-try:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(rc_path, flags)
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            print(f"[SECURITY] refusing symlinked rc file during cleanup: {rc_path}", file=sys.stderr)
-        else:
-            print(f"[SECURITY] could not open rc file for cleanup: {rc_path}: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode):
-        print(f"[SECURITY] refusing non-regular rc file during cleanup: {rc_path}", file=sys.stderr)
-        sys.exit(1)
-    with os.fdopen(os.dup(fd), "r", encoding="utf-8", errors="surrogateescape") as handle:
-        lines = handle.readlines()
-
-    cleaned = []
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        bare = line.rstrip("\n")
-        if bare == "# Source runtime proxy config":
-            if index + 1 < len(lines):
-                next_line = lines[index + 1]
-                next_bare = next_line.rstrip("\n")
-                if next_bare == shim or "/tmp/nemoclaw-proxy-env.sh" in next_line:
-                    index += 2
-                    continue
-                cleaned.append(line)
-                cleaned.append(next_line)
-                index += 2
-                continue
-        if bare == shim or "/tmp/nemoclaw-proxy-env.sh" in line:
-            index += 1
-            continue
-        cleaned.append(line)
-        index += 1
-
-    if any(line.rstrip("\n") == shim or "/tmp/nemoclaw-proxy-env.sh" in line for line in cleaned):
-        print(f"[SECURITY] runtime env shim still present after cleanup: {rc_path}", file=sys.stderr)
-        sys.exit(1)
-    if cleaned == lines:
-        sys.exit(0)
-
-    try:
-        rewrite_open_rc_file(fd, st, cleaned)
-    except OSError as exc:
-        if exc.errno != errno.ENOENT:
-            raise
-        rewrite_by_rename(cleaned)
-except Exception as exc:
-    print(f"[SECURITY] could not safely clean runtime env shim from {rc_path}: {exc}", file=sys.stderr)
-    sys.exit(1)
-finally:
-    if fd is not None:
-        os.close(fd)
-    if tmp_path:
-        try:
-            os.unlink(tmp_path)
-        except FileNotFoundError:
-            pass
-PY
+    if ! command python3 "$clean_script" "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)"; then
       failed=1
       continue
     fi
