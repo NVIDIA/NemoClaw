@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface AgentSetupStateOptions<Agent> {
   agent: Agent | null;
@@ -41,6 +42,7 @@ export interface AgentSetupStateOptions<Agent> {
 
 export interface AgentSetupStateResult {
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleAgentSetupState<Agent>({
@@ -66,7 +68,7 @@ export async function handleAgentSetupState<Agent>({
     );
     deps.ensureAgentDashboardForward(sandboxName, agent);
     session = await deps.recordStepSkipped("openclaw");
-    return { session };
+    return { session, stateResult: advanceTo("policies", { metadata: { state: "agent_setup" } }) };
   }
 
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
@@ -87,5 +89,5 @@ export async function handleAgentSetupState<Agent>({
     );
   }
   session = await deps.recordStepSkipped("agent_setup");
-  return { session };
+  return { session, stateResult: advanceTo("policies", { metadata: { state: "openclaw" } }) };
 }

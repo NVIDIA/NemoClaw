@@ -22,6 +22,7 @@ chat transcript.
 """
 
 import atexit
+import inspect
 import ipaddress
 import json
 import os
@@ -52,6 +53,8 @@ _TOOL_GATEWAY_URL_ENV = {
     "browser-use": "BROWSER_USE_GATEWAY_URL",
     "modal": "MODAL_GATEWAY_URL",
 }
+_TOOL_GATEWAY_REFRESH_TOKEN_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"
+_LEGACY_TOOL_GATEWAY_USER_TOKEN_ENV = "TOOL_GATEWAY_USER_TOKEN"
 
 _NEMOCLAW_CONTEXT_KEYWORDS = (
     "browser",
@@ -208,8 +211,18 @@ def _broker_gateway_url(vendor):
 
 
 def _broker_user_token():
-    token = _get_env_value("TOOL_GATEWAY_USER_TOKEN", "")
-    return token.strip() if isinstance(token, str) and token.strip() else None
+    refresh_placeholder = _get_env_value(_TOOL_GATEWAY_REFRESH_TOKEN_ENV, "")
+    if isinstance(refresh_placeholder, str) and refresh_placeholder.strip():
+        return refresh_placeholder.strip()
+
+    legacy_placeholder = _get_env_value(_LEGACY_TOOL_GATEWAY_USER_TOKEN_ENV, "")
+    if (
+        isinstance(legacy_placeholder, str)
+        and legacy_placeholder.strip().startswith("openshell:resolve:env:")
+    ):
+        return legacy_placeholder.strip()
+
+    return f"openshell:resolve:env:{_TOOL_GATEWAY_REFRESH_TOKEN_ENV}"
 
 
 def _broker_resolve_managed_tool_gateway(vendor, gateway_builder=None, token_reader=None):
@@ -929,7 +942,7 @@ def _install_nous_tool_broker_patch():
     auth happen on the host instead:
 
       sandbox tool call -> host.openshell.internal:11436/<service>
-      broker token placeholder -> host broker -> Nous access token upstream
+      OpenShell resolver placeholder -> host broker -> Nous access token upstream
 
     This shim only tells Hermes that externally managed gateway auth is
     available when NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1. It does not mint,
@@ -1149,17 +1162,40 @@ def _install_messaging_response_patch():
     if agent_cls is None or getattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, False):
         return False
 
+    raw_original = inspect.getattr_static(agent_cls, "_strip_think_blocks", None)
     original = getattr(agent_cls, "_strip_think_blocks", None)
     if not callable(original):
         return False
 
-    def _strip_think_blocks(content):
-        return _normalize_raw_messaging_tool_response(
-            original(content),
-            current_platform=_get_current_messaging_platform(),
-        )
+    if isinstance(raw_original, staticmethod):
+        original_func = raw_original.__func__
 
-    agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
+        def _strip_think_blocks(content):
+            return _normalize_raw_messaging_tool_response(
+                original_func(content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
+    elif isinstance(raw_original, classmethod):
+        original_func = raw_original.__func__
+
+        def _strip_think_blocks(cls, content):
+            return _normalize_raw_messaging_tool_response(
+                original_func(cls, content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = classmethod(_strip_think_blocks)
+    else:
+        def _strip_think_blocks(self, content):
+            return _normalize_raw_messaging_tool_response(
+                original(self, content),
+                current_platform=_get_current_messaging_platform(),
+            )
+
+        agent_cls._strip_think_blocks = _strip_think_blocks
+
     setattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, True)
     return True
 

@@ -232,7 +232,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "group": "Sandbox Management",
       "order": 5,
       "description": "Run host, gateway, sandbox, and inference health checks",
-      "flags": "[--json]"
+      "flags": "[--json] [--fix]"
     }
   ],
   "sandbox:exec": [
@@ -443,6 +443,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Services",
       "order": 33
+    }
+  ],
+  "tunnel:status": [
+    {
+      "group": "Services",
+      "order": 33.5,
+      "description": "Show cloudflared public-URL tunnel status"
     }
   ],
   "uninstall": [

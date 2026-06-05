@@ -12,6 +12,7 @@ import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import type { SandboxGpuProofResult } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
@@ -28,26 +29,26 @@ import {
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
-import { collectSandboxStatusSnapshot } from "./status-snapshot";
 import {
   getSandboxStatusPreflight,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
+import { collectSandboxStatusSnapshot } from "./status-snapshot";
 
 export {
+  type ClassifySandboxStatusPreflightFailureDeps,
   classifySandboxContainerFailureForStatus,
   classifySandboxStatusPreflightFailure,
-  isDockerDaemonUnreachableForStatus,
   getSandboxStatusPreflight,
+  isDockerDaemonUnreachableForStatus,
   printGatewayFailureLayerHeader,
   printSandboxStatusPreflightHeader,
-  withoutTerminalPhasePreflight,
-  type ClassifySandboxStatusPreflightFailureDeps,
   type SandboxStatusFailureLayer,
   type SandboxStatusPreflightFailure,
   type SandboxStatusPreflightResult,
+  withoutTerminalPhasePreflight,
 } from "./status-preflight";
 export {
   collectSandboxStatusSnapshot,
@@ -66,6 +67,29 @@ function shouldProbeSandboxRuntimeVersion(
   sandbox: registry.SandboxEntry,
 ): boolean {
   return lookup.state === "present" && Boolean(sandbox.agentVersion);
+}
+
+// True when sandbox GPU is enabled but no CUDA-usability proof has confirmed it
+// (older entries with no recorded proof, or a run whose CUDA proof could not
+// execute). Treated as not-yet-proven rather than healthy (#4231).
+export function sandboxGpuProofUnverified(
+  proof: SandboxGpuProofResult | null | undefined,
+): boolean {
+  return !proof || proof.status === "unverified";
+}
+
+// Render the proof-state suffix appended to the `Sandbox GPU: enabled` line so
+// the status reflects verified/unverified/failed CUDA usability instead of
+// reporting any configured GPU as healthy (#4231).
+export function sandboxGpuProofStatusSuffix(
+  proof: SandboxGpuProofResult | null | undefined,
+): string {
+  if (proof?.status === "verified") return ` ${G}(CUDA verified)${R}`;
+  if (proof?.status === "failed") {
+    const label = proof.label ? `: ${proof.label}` : "";
+    return ` ${RD}(last CUDA proof failed${label})${R}`;
+  }
+  return ` ${YW}(CUDA unverified)${R}`;
 }
 
 /**
@@ -183,10 +207,26 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     const sandboxGpu = sandboxGpuEnabled ? "enabled" : "disabled";
     const sandboxGpuMode = sb.sandboxGpuMode ? ` (${sb.sandboxGpuMode})` : "";
     const sandboxGpuDevice = sb.sandboxGpuDevice ? ` device=${sb.sandboxGpuDevice}` : "";
+    const sandboxGpuProofSuffix = sandboxGpuEnabled
+      ? sandboxGpuProofStatusSuffix(sb.sandboxGpuProof)
+      : "";
     const openshellDriver = sb.openshellDriver || "unknown";
     const openshellVersion = sb.openshellVersion || "unknown";
     console.log(`    Host GPU: ${hostGpu}`);
-    console.log(`    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}`);
+    console.log(
+      `    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}${sandboxGpuProofSuffix}`,
+    );
+    if (sandboxGpuEnabled && sb.sandboxGpuProof?.status === "failed") {
+      const detail = sb.sandboxGpuProof.detail;
+      if (detail) console.log(`      ${detail}`);
+      console.log(
+        "      CUDA failed a live proof. Recreate with corrected GPU device/group access, or rerun onboard with --no-gpu.",
+      );
+    } else if (sandboxGpuEnabled && sandboxGpuProofUnverified(sb.sandboxGpuProof)) {
+      console.log(
+        "      CUDA usability has not been proven. Rerun onboard to verify, or use --no-gpu for CPU.",
+      );
+    }
     console.log(`    OpenShell: ${openshellVersion} (${openshellDriver})`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
 

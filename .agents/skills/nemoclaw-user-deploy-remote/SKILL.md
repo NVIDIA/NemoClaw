@@ -4,9 +4,6 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Deploy NemoClaw to a Remote GPU Instance
 
 ## Gotchas
@@ -156,4 +153,4 @@ nemoclaw deploy <instance-name>
 
 - `nemoclaw-user-manage-sandboxes` — Set Up Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) to connect Telegram, Discord, or Slack through OpenShell-managed channel messaging
 - `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for sandbox monitoring tools
-- `nemoclaw-user-reference` — Commands (use the `nemoclaw-user-reference` skill) for the full `deploy` command reference
+- `nemoclaw-user-reference` — `nemoclaw deploy` (use the `nemoclaw-user-reference` skill) for the full `deploy` command reference

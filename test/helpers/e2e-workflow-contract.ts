@@ -29,6 +29,16 @@ export type NightlyWorkflow = {
 };
 
 export type RunnerWorkflow = {
+  on?: {
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown }>;
+    };
+  };
+  "true"?: {
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown }>;
+    };
+  };
   jobs: {
     run: {
       steps: WorkflowStep[];

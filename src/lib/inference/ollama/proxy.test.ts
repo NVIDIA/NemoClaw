@@ -66,12 +66,12 @@ describe("promptOllamaModel installed-model fit filter", () => {
       totalMemoryMB: 131_072,
       availableMemoryMB: 12_000,
     });
-    expect(result).toBe("qwen2.5:7b");
+    expect(result).toBe("qwen3.5:9b");
   });
 
   it("keeps a fitting installed model as the default", async () => {
     const setup = loadProxyWithMocks({
-      installed: ["qwen2.5:7b", "qwen3.6:35b"],
+      installed: ["qwen3.5:9b", "qwen3.6:35b"],
       promptValues: [""],
     });
     active = setup;
@@ -80,8 +80,8 @@ describe("promptOllamaModel installed-model fit filter", () => {
       totalMemoryMB: 131_072,
       availableMemoryMB: 12_000,
     });
-    // Only qwen2.5:7b fits; the menu offers only it, Enter selects it.
-    expect(result).toBe("qwen2.5:7b");
+    // Only qwen3.5:9b fits; the menu offers only it, Enter selects it.
+    expect(result).toBe("qwen3.5:9b");
   });
 
   it("respects unknown installed tags (not in the registry) even when nothing else fits", async () => {

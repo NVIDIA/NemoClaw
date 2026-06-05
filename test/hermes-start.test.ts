@@ -83,6 +83,78 @@ function runHermesPortValidation(opts: {
   }
 }
 
+function runHermesEnvSecretBoundary(opts: {
+  envFile?: string;
+  symlinkEnvFile?: boolean;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const envFile = path.join(hermesHome, ".env");
+  const target = path.join(tmpDir, "env-target");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  if (opts.symlinkEnvFile) {
+    fs.writeFileSync(target, opts.envFile ?? "DEVTEST_API_TOKEN=secret\n");
+    fs.symlinkSync(target, envFile);
+  } else if (opts.envFile !== undefined) {
+    fs.writeFileSync(envFile, opts.envFile);
+  }
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      "validate_hermes_env_secret_boundary",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-boundary-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
+      "validate_hermes_runtime_env_secret_boundary",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: {
+        HOME: tmpDir,
+        PATH: process.env.PATH ?? "",
+        ...envOverrides,
+      },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runTirithMarkerBootstrap(opts: {
   markerReason?: string;
   symlinkMarker?: boolean;
@@ -126,6 +198,66 @@ function runTirithMarkerBootstrap(opts: {
       markerIsSymlink: fs.existsSync(marker) && fs.lstatSync(marker).isSymbolicLink(),
       markerContent: fs.existsSync(marker) ? fs.readFileSync(marker, "utf-8") : "",
       targetContent: fs.existsSync(target) ? fs.readFileSync(target, "utf-8") : "",
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function extractTirithDispatchBlock(src: string, mode: "non-root" | "root"): string {
+  const nonRootStart = src.indexOf("# ── Non-root fallback");
+  const rootStart = src.indexOf("# ── Root path");
+  if (nonRootStart < 0 || rootStart < 0 || rootStart <= nonRootStart) {
+    throw new Error("Expected root and non-root dispatch blocks in agents/hermes/start.sh");
+  }
+  return mode === "non-root" ? src.slice(nonRootStart, rootStart) : src.slice(rootStart);
+}
+
+function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-dispatch-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const marker = path.join(hermesHome, ".tirith-install-failed");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  fs.writeFileSync(marker, "download_failed");
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "retry_tirith_marker_if_needed"),
+      mode === "root"
+        ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }'
+        : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
+      "verify_config_integrity_if_locked() { :; }",
+      "verify_config_integrity() { :; }",
+      "apply_shields_up_runtime_env() { :; }",
+      "validate_hermes_env_secret_boundary() { :; }",
+      "validate_hermes_runtime_env_secret_boundary() { :; }",
+      "refresh_hermes_provider_placeholders() { :; }",
+      "configure_messaging_channels() { :; }",
+      'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
+      "STEP_DOWN_PREFIX_SANDBOX=(env)",
+      "NEMOCLAW_CMD=(bash -c 'test ! -e \"$1/.tirith-install-failed\"' bash \"$HERMES_DIR\")",
+      extractTirithDispatchBlock(src, mode),
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      markerExists: fs.existsSync(marker),
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -394,6 +526,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
@@ -426,6 +560,103 @@ describe("agents/hermes/start.sh port validation", () => {
     expect(dashboardInternalOnApiPublic.stderr).toContain(
       "HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
+  });
+});
+
+describe("agents/hermes/start.sh env secret boundary", () => {
+  it("allows OpenShell resolver placeholders and Slack SDK aliases", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN='openshell:resolve:env:DISCORD_BOT_TOKEN'",
+        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        'SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"',
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        "EMPTY_TOKEN=",
+        "LEGACY_SECRET=[STRIPPED_BY_MIGRATION]",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects raw secret-shaped values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesEnvSecretBoundary({
+      envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("raw secret-shaped values");
+    expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
+    expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("rejects bare API-named raw values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesEnvSecretBoundary({
+      envFile: `INTERNAL_API=${rawToken}\n`,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("INTERNAL_API (line 1)");
+    expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("rejects credential-shaped rewrite sentinels in Hermes .env", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE\n",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("OPENAI_API_KEY (line 1)");
+    expect(result.stderr).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+  });
+
+  it("rejects symlinked Hermes .env files", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n",
+      symlinkEnvFile: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("is a symlink");
+  });
+
+  it("allows gateway token, nonsecret config names, and resolver placeholders in process env", () => {
+    const result = runHermesRuntimeEnvSecretBoundary({
+      API_SERVER_HOST: "127.0.0.1",
+      API_SERVER_PORT: "18642",
+      EMPTY_TOKEN: "",
+      GPG_KEY: "public-build-key-fingerprint",
+      LEGACY_SECRET: "[STRIPPED_BY_MIGRATION]",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_PROVIDER_KEY: "custom",
+      OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects raw secret-shaped process env values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesRuntimeEnvSecretBoundary({
+      DEVTEST_API_TOKEN: rawToken,
+      NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "raw-refresh-token",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment");
+    expect(result.stderr).toContain("DEVTEST_API_TOKEN");
+    expect(result.stderr).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN");
+    expect(result.stderr).not.toContain(rawToken);
+    expect(result.stderr).not.toContain("raw-refresh-token");
   });
 });
 
@@ -694,6 +925,18 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
+  it("removes retryable Tirith markers before explicit command dispatch", () => {
+    for (const mode of ["non-root", "root"] as const) {
+      const run = runTirithExplicitCommandDispatch(mode);
+
+      expect(run.result.status, `${mode}: ${run.result.stderr}`).toBe(0);
+      expect(run.markerExists, mode).toBe(false);
+      expect(run.result.stderr).toContain(
+        "download_failed marker present; letting Hermes runtime fallback retry Tirith",
+      );
+    }
+  });
+
   it("removes a retryable download_failed marker so Hermes runtime fallback can retry", () => {
     const run = runTirithMarkerBootstrap({ markerReason: "download_failed" });
 

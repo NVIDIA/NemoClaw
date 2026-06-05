@@ -14,7 +14,6 @@ import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
-  DEFAULT_VLLM_MODEL,
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
@@ -29,7 +28,7 @@ export interface VllmProfile {
   name: string;            // human label, e.g. "DGX Spark"
   image: string;           // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
-  // because Spark/Station can host a 27B model, but generic discrete-GPU
+  // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
   // cards.
   defaultModel: VllmModelDef;
@@ -49,10 +48,10 @@ export interface VllmProfile {
   loadTimeoutSec: number;
 }
 
-// vllm 0.21.1rc1.dev323+g1fc2cee50
-const UPSTREAM_VLLM_IMAGE =
-  "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712";
-const NGC_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.03.post1-py3";
+const VLLM_IMAGES = {
+  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+} as const;
 
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
@@ -63,6 +62,12 @@ function nemotronNanoModel(): VllmModelDef {
 function qwen35bNvfp4Model(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
   if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
+  return match;
+}
+
+function deepseekV4FlashModel(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
   return match;
 }
 
@@ -114,7 +119,7 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: UPSTREAM_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
@@ -133,8 +138,8 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: NGC_VLLM_IMAGE,
-  defaultModel: DEFAULT_VLLM_MODEL,
+  image: VLLM_IMAGES.ngc2605Post1,
+  defaultModel: deepseekV4FlashModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -163,7 +168,7 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: NGC_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -467,8 +472,8 @@ export async function installVllm(
 ): Promise<{ ok: boolean }> {
   // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
   // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
-  // Qwen3.6-35B-A3B NVFP4 checkpoint.
+  // Nemotron-Nano-4B for VRAM headroom; Station to DeepSeek V4 Flash; Spark
+  // to the Qwen3.6-35B-A3B NVFP4 checkpoint.
   // Validate gated-model access (HF_TOKEN required for models like
   // DeepSeek-R1 Distill 70B) before touching docker so the user does not
   // burn a multi-minute pull on a 401.

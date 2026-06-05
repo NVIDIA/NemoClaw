@@ -3,16 +3,34 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface CustomPolicyEntry {
   name: string;
   content: string;
   sourcePath?: string;
   appliedAt?: string;
+}
+
+// Outcome of the last live sandbox GPU proof run during onboarding/recovery.
+// `status` separates a configured-but-unverified GPU from one whose CUDA
+// usability was actually proven (`verified`) or actively failed a live proof
+// (`failed`, e.g. Jetson `/dev/nvmap` permission errors). Persisted so
+// `nemoclaw <sandbox> status` can report proof state instead of treating any
+// configured GPU as healthy (#4231).
+export type SandboxGpuProofStatus = "verified" | "unverified" | "failed";
+
+export interface SandboxGpuProofResult {
+  status: SandboxGpuProofStatus;
+  // True only when a CUDA-usability proof (cuInit via libcuda) actually passed.
+  cudaVerified: boolean;
+  // Label of the last proof that determined `status`.
+  label?: string | null;
+  // Redacted, truncated diagnostic captured when the proof failed.
+  detail?: string | null;
+  at: string;
 }
 
 export interface SandboxEntry {
@@ -26,6 +44,7 @@ export interface SandboxEntry {
   sandboxGpuEnabled?: boolean;
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
+  sandboxGpuProof?: SandboxGpuProofResult | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];
@@ -218,6 +237,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
+      sandboxGpuProof: entry.sandboxGpuProof ?? null,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],

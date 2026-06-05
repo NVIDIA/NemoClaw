@@ -87,7 +87,8 @@ yaml_stub.safe_load = lambda *_args, **_kwargs: {}
 sys.modules.setdefault("yaml", yaml_stub)
 
 os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER"] = "1"
-os.environ["TOOL_GATEWAY_USER_TOKEN"] = "broker-token"
+os.environ["NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"] = "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN"
+os.environ["TOOL_GATEWAY_USER_TOKEN"] = "raw-legacy-token"
 os.environ["FAL_QUEUE_GATEWAY_URL"] = "http://host.openshell.internal:11436/fal-queue"
 os.environ["FIRECRAWL_GATEWAY_URL"] = "http://host.openshell.internal:11436/firecrawl"
 os.environ["OPENAI_AUDIO_GATEWAY_URL"] = "http://host.openshell.internal:11436/openai-audio"
@@ -204,10 +205,12 @@ print(json.dumps(result))
     expect(result.managed_enabled).toBe(true);
     expect(result.web_enabled).toBe(true);
     expect(result.web_url).toBe("http://host.openshell.internal:11436/firecrawl");
-    expect(result.web_token).toBe("broker-token");
+    expect(result.web_token).toBe(
+      "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+    );
     expect(result.audio_key).toBe("");
     expect(result.stt_config).toEqual([
-      "broker-token",
+      "openshell:resolve:env:NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
       "http://host.openshell.internal:11436/openai-audio/v1",
     ]);
     expect(result.fal_status_url).toBe(
@@ -326,6 +329,63 @@ print(json.dumps(result))
     expect(result.class_patch_unknown).toBe(
       'send_message: "to telegram: should not normalize without context"',
     );
+  });
+
+  it("preserves instance-method strip_think_blocks binding", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    def __init__(self):
+        self.calls = 0
+
+    def _strip_think_blocks(self, content):
+        self.calls += 1
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+
+patched = plugin._install_messaging_response_patch()
+plugin._set_current_messaging_platform("telegram")
+agent = AIAgent()
+normalized = agent._strip_think_blocks(
+    'send_message: "to telegram: Hello from an instance method."'
+)
+plain = agent._strip_think_blocks("plain response")
+
+print(json.dumps({
+    "patched": patched,
+    "normalized": normalized,
+    "plain": plain,
+    "calls": agent.calls,
+}))
+`);
+
+    const result = JSON.parse(output) as {
+      patched: boolean;
+      normalized: string;
+      plain: string;
+      calls: number;
+    };
+
+    expect(result.patched).toBe(true);
+    expect(result.normalized).toBe("Hello from an instance method.");
+    expect(result.plain).toBe("plain response");
+    expect(result.calls).toBe(2);
   });
 
   it("anchors the strip_think_blocks patch via _pre_llm_call gateway hook", () => {
