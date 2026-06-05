@@ -48,6 +48,22 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
     expect(out).not.toContain('Environment="OLLAMA_CONTEXT_LENGTH=4096"');
   });
 
+  it("preserves unrelated variables sharing an Environment line with managed Ollama settings", () => {
+    const existing = [
+      "[Service]",
+      'Environment="OLLAMA_CONTEXT_LENGTH=4096" "OLLAMA_ORIGINS=http://127.0.0.1" "HTTPS_PROXY=http://proxy.local"',
+      "",
+    ].join("\n");
+    const out = mergeOllamaLoopbackSystemdOverride(existing);
+    expect(out).toContain(
+      'Environment="OLLAMA_ORIGINS=http://127.0.0.1" "HTTPS_PROXY=http://proxy.local"',
+    );
+    expect(out).toContain(
+      `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`,
+    );
+    expect(out).not.toContain('Environment="OLLAMA_CONTEXT_LENGTH=4096"');
+  });
+
   it("keeps commented-out OLLAMA_CONTEXT_LENGTH lines verbatim", () => {
     const existing = [
       "[Service]",

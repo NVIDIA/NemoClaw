@@ -2,21 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export type OllamaProbeFailureTrackerOptions = {
+  excludeAfterFailures?: number;
   maxFailuresSameModel?: number;
   maxFailuresTotal?: number;
 };
 
+const DEFAULT_EXCLUDE_AFTER_FAILURES = 1;
 const DEFAULT_MAX_FAILURES_SAME_MODEL = 2;
 const DEFAULT_MAX_FAILURES_TOTAL = 3;
 
 export class OllamaProbeFailureTracker {
+  private readonly excludeAfterFailures: number;
   private readonly maxFailuresSameModel: number;
   private readonly maxFailuresTotal: number;
   private readonly failureCounts = new Map<string, number>();
-  private readonly excludedAfterRepeatFail = new Set<string>();
+  private readonly excludedModelTags = new Set<string>();
   private totalProbeFailures = 0;
 
   constructor(options: OllamaProbeFailureTrackerOptions = {}) {
+    this.excludeAfterFailures = options.excludeAfterFailures ?? DEFAULT_EXCLUDE_AFTER_FAILURES;
     this.maxFailuresSameModel = options.maxFailuresSameModel ?? DEFAULT_MAX_FAILURES_SAME_MODEL;
     this.maxFailuresTotal = options.maxFailuresTotal ?? DEFAULT_MAX_FAILURES_TOTAL;
   }
@@ -25,18 +29,18 @@ export class OllamaProbeFailureTracker {
     const sameModelFailures = this.getFailureCount(tag) + 1;
     this.failureCounts.set(tag, sameModelFailures);
     this.totalProbeFailures += 1;
-    if (sameModelFailures >= this.maxFailuresSameModel) {
-      this.excludedAfterRepeatFail.add(tag);
+    if (sameModelFailures >= this.excludeAfterFailures) {
+      this.excludedModelTags.add(tag);
     }
     return this.limitReached(tag);
   }
 
   shouldExclude(tag: string): boolean {
-    return this.excludedAfterRepeatFail.has(tag);
+    return this.excludedModelTags.has(tag);
   }
 
   excludedModels(): ReadonlySet<string> {
-    return this.excludedAfterRepeatFail;
+    return this.excludedModelTags;
   }
 
   getTotalFailures(): number {
@@ -65,7 +69,7 @@ export class OllamaProbeFailureTracker {
 
   reset(): void {
     this.failureCounts.clear();
-    this.excludedAfterRepeatFail.clear();
+    this.excludedModelTags.clear();
     this.totalProbeFailures = 0;
   }
 }

@@ -192,6 +192,57 @@ export function ensureManagedOllamaLoopbackSystemdOverride(
   return ensureOllamaLoopbackSystemdOverride({ ...options, enableService: true });
 }
 
+function splitSystemdEnvironmentTokens(value: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === "\\" && i + 1 < value.length) {
+      current += ch + value[i + 1];
+      i += 1;
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && (quote === null || quote === ch)) {
+      quote = quote === ch ? null : ch;
+      current += ch;
+      continue;
+    }
+    if (/\s/.test(ch) && quote === null) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function systemdEnvironmentTokenName(token: string): string | null {
+  const unquoted = token.replace(/^(["'])(.*)\1$/, "$2");
+  const match = unquoted.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+  return match ? match[1] : null;
+}
+
+function rewriteEnvironmentLineWithoutManagedAssignments(
+  line: string,
+  managedNames: ReadonlySet<string>,
+): string[] {
+  if (/^\s*[#;]/.test(line)) return [line];
+  const match = line.match(/^(\s*Environment\s*=\s*)(.*)$/);
+  if (!match) return [line];
+  const tokens = splitSystemdEnvironmentTokens(match[2]);
+  const kept = tokens.filter((token) => {
+    const name = systemdEnvironmentTokenName(token);
+    return !name || !managedNames.has(name);
+  });
+  if (kept.length === tokens.length) return [line];
+  return kept.length > 0 ? [`${match[1]}${kept.join(" ")}`] : [];
+}
+
 export function mergeOllamaLoopbackSystemdOverride(
   existingDropIn: string,
   options: { libraryOverride?: string | null } = {},
@@ -222,34 +273,26 @@ export function mergeOllamaLoopbackSystemdOverride(
     }
   }
 
-  // Strip any existing non-comment OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH
-  // assignments inside [Service] before re-appending. systemd's "last wins"
-  // semantics for repeated Environment= would usually pick the appended line,
-  // but legacy 0.0.0.0 drop-ins from older NemoClaw versions occasionally
-  // outlived the restart — removing the stale line makes the policy
-  // unambiguous. The OLLAMA_CONTEXT_LENGTH strip preserves user-supplied
-  // higher values only when they exceed the NemoClaw floor (parsed below).
-  const ollamaHostLine = (line: string): boolean =>
-    !/^\s*[#;]/.test(line) && /\bOLLAMA_HOST=/.test(line);
-  const ollamaLibraryLine = (line: string): boolean =>
-    Boolean(desiredLibraryLine) && !/^\s*[#;]/.test(line) && /\bOLLAMA_LLM_LIBRARY=/.test(line);
-  const ollamaContextLine = (line: string): boolean =>
-    !/^\s*[#;]/.test(line) && /\bOLLAMA_CONTEXT_LENGTH=/.test(line);
+  // Strip NemoClaw-managed assignments inside [Service] before re-appending.
+  // Preserve unrelated variables that share the same systemd Environment= line
+  // so operator-supplied daemon settings such as OLLAMA_ORIGINS survive repair.
+  const serviceBody = lines.slice(serviceStart + 1, serviceEnd);
+  const managedNames = new Set(["OLLAMA_HOST", "OLLAMA_CONTEXT_LENGTH"]);
+  if (desiredLibraryLine) managedNames.add("OLLAMA_LLM_LIBRARY");
   const parseContextValue = (line: string): number | null => {
     const m = line.match(/\bOLLAMA_CONTEXT_LENGTH=("?)(\d+)\1/);
     return m ? parseInt(m[2], 10) : null;
   };
-  const serviceBody = lines.slice(serviceStart + 1, serviceEnd);
   const existingHigherContext = serviceBody
-    .filter((line) => ollamaContextLine(line))
+    .filter((line) => !/^\s*[#;]/.test(line) && /\bOLLAMA_CONTEXT_LENGTH=/.test(line))
     .map(parseContextValue)
     .filter((v): v is number => v !== null && v > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW)
     .sort((a, b) => b - a)[0];
   const contextLine = existingHigherContext
     ? `Environment="OLLAMA_CONTEXT_LENGTH=${existingHigherContext}"`
     : desiredContextLine;
-  const filteredBody = serviceBody.filter(
-    (line) => !ollamaHostLine(line) && !ollamaLibraryLine(line) && !ollamaContextLine(line),
+  const filteredBody = serviceBody.flatMap((line) =>
+    rewriteEnvironmentLineWithoutManagedAssignments(line, managedNames),
   );
   const rebuilt = [
     ...lines.slice(0, serviceStart + 1),
