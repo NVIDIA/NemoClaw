@@ -4,22 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  MACHINE_SNAPSHOT_VERSION,
   createSession,
   filterSafeUpdates,
+  MACHINE_SNAPSHOT_VERSION,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../state/onboard-session";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
-import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import {
   MissingOnboardStateHandlerError,
   OnboardMachineTransitionLimitError,
-  runOnboardMachine,
   type OnboardStateHandlers,
+  runOnboardMachine,
 } from "./runner";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 
 interface RunnerContext {
   attempts: number;
@@ -51,6 +51,11 @@ function createRuntime(initialSession: Session = createSession()) {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (_stepName, message) =>
       updateSession((current) => {
@@ -58,6 +63,7 @@ function createRuntime(initialSession: Session = createSession()) {
         current.failure = sanitizeFailure({ step: _stepName, message, recordedAt: "now" });
         return current;
       }),
+    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -215,5 +221,26 @@ describe("runOnboardMachine", () => {
         maxTransitions: 5,
       }),
     ).rejects.toThrow(OnboardMachineTransitionLimitError);
+  });
+
+  it("uses the default transition limit for non-finite maxTransitions values", async () => {
+    for (const maxTransitions of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const runtime = createRuntime();
+
+      await expect(
+        runOnboardMachine({
+          context: { attempts: 0, visited: [] } as RunnerContext,
+          runtime,
+          handlers: {
+            init: () => advanceTo("preflight"),
+            preflight: () => advanceTo("gateway"),
+            gateway: () => advanceTo("provider_selection"),
+            provider_selection: () => advanceTo("inference"),
+            inference: () => retryTo("provider_selection"),
+          },
+          maxTransitions,
+        }),
+      ).rejects.toMatchObject({ maxTransitions: 100 });
+    }
   });
 });

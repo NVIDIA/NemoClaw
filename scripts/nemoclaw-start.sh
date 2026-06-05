@@ -211,9 +211,15 @@ mark_in_container_gateway() {
 }
 # A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
 # (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
-# absent. Both the root and non-root entrypoint paths gate gateway startup on
-# the same emptiness check further below.
-if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+# absent. Docker-driver sandboxes also leave it absent because OpenShell runs
+# the gateway as a host-side process outside this container's namespace. Both
+# the root and non-root entrypoint paths gate local gateway startup on the same
+# emptiness check further below.
+case ",${OPENSHELL_DRIVERS:-}," in
+  *,docker,*) _NEMOCLAW_DOCKER_DRIVER=1 ;;
+  *) _NEMOCLAW_DOCKER_DRIVER=0 ;;
+esac
+if [ ${#NEMOCLAW_CMD[@]} -eq 0 ] && [ "$_NEMOCLAW_DOCKER_DRIVER" != "1" ]; then
   mark_in_container_gateway
 fi
 
@@ -1725,9 +1731,31 @@ start_auto_pair() {
   fi
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
+import importlib.util
 import os
+import stat
 import subprocess
 import time
+
+APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
+
+
+def load_approval_policy(path):
+    helper_stat = os.stat(path)
+    mode = helper_stat.st_mode
+    if mode & (stat.S_IWGRP | stat.S_IWOTH):
+        raise RuntimeError('approval policy helper is writable by group or other')
+    if helper_stat.st_uid == os.geteuid() and mode & stat.S_IWUSR:
+        raise RuntimeError('approval policy helper is writable by the current user')
+    spec = importlib.util.spec_from_file_location('openclaw_device_approval_policy', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('approval policy helper could not be loaded')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.approval_request_decision, module.gateway_approval_env
+
+
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -1760,8 +1788,7 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # (the gateway stores connectParams.client.id verbatim). This allowlist
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
-ALLOWED_CLIENTS = {'openclaw-control-ui'}
-ALLOWED_MODES = {'webchat', 'cli'}
+# The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
@@ -1781,10 +1808,7 @@ def run(*args, strip_gateway_env=False):
     # the fast→slow transition and the 8h deadline check.
     env = None
     if strip_gateway_env:
-        env = os.environ.copy()
-        env.pop('OPENCLAW_GATEWAY_URL', None)
-        env.pop('OPENCLAW_GATEWAY_PORT', None)
-        env.pop('OPENCLAW_GATEWAY_TOKEN', None)
+        env = gateway_approval_env(os.environ)
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -1830,11 +1854,21 @@ while time.time() < DEADLINE:
             request_id = device.get('requestId')
             if not request_id or request_id in HANDLED:
                 continue
-            client_id = device.get('clientId', '')
-            client_mode = device.get('clientMode', '')
-            if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+            decision = approval_request_decision(device)
+            client_id = decision['client_id']
+            client_mode = decision['client_mode']
+            if decision['reason'] == 'unknown-client':
                 HANDLED.add(request_id)
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
+                continue
+            if decision['reason'] == 'malformed-scopes':
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected malformed scopes client={client_id} mode={client_mode}')
+                continue
+            if decision['reason'] == 'disallowed-scopes':
+                HANDLED.add(request_id)
+                scopes = decision['scopes']
+                print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
@@ -2081,6 +2115,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
     for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR OPENCLAW_WORKSPACE_DIR; do
@@ -2110,8 +2145,90 @@ openclaw() {
   # the approval command itself. Approval calls temporarily drop the gateway
   # URL/port/token; other commands keep the full gateway environment.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
-    return $?
+    _nemoclaw_approve_request_id="${3:-}"
+    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+    _nemoclaw_approve_before=""
+    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
+      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 - <<'PYAPPROVEBEFORE' 2>/dev/null || true
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+try:
+    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
+except Exception:
+    pending = {}
+if not isinstance(pending, dict):
+    pending = {}
+request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
+if request:
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": request.get("deviceId"),
+        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
+    }, sort_keys=True))
+PYAPPROVEBEFORE
+)"
+    fi
+    _nemoclaw_approve_errexit=0
+    case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
+    set +e
+    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    _nemoclaw_approve_rc=$?
+    if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
+    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
+      printf '%s\n' "$_nemoclaw_approve_output"
+      return 0
+    fi
+    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
+      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" python3 - <<'PYAPPROVEAFTER'; then
+import json
+import os
+from pathlib import Path
+
+request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
+root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
+try:
+    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
+except Exception:
+    before = {}
+
+def load(name):
+    try:
+        value = json.loads((root / name).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+def norm(value):
+    return str(value or "").strip()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+requested = {norm(scope) for scope in (before.get("scopes") or []) if norm(scope)}
+device_id = norm(before.get("deviceId"))
+pending = load("pending.json")
+paired = load("paired.json")
+still_pending = any(isinstance(item, dict) and item.get("requestId") == request_id for item in pending.values())
+paired_entry = paired.get(device_id) if device_id else None
+if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(scopes(paired_entry)):
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": device_id,
+        "approvedScopes": sorted(requested),
+        "compatibility": "openclaw-approve-applied-after-nonzero",
+    }, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+PYAPPROVEAFTER
+        return 0
+      fi
+    fi
+    printf '%s\n' "$_nemoclaw_approve_output"
+    return "$_nemoclaw_approve_rc"
   fi
   case "$1" in
     configure)

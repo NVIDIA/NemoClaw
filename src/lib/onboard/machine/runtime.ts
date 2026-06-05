@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonObject } from "../../core/json-types";
+import type { Session, SessionUpdates } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import type { Session, SessionUpdates, StepMutationOptions } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
@@ -25,8 +26,10 @@ export interface OnboardRuntimeDeps {
   updateSession(mutator: (session: Session) => Session | void): Session;
   markStepStarted(stepName: string, options?: StepMutationOptions): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates, options?: StepMutationOptions): Session;
+  markStepCompleteRecordOnly(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
+  markStepFailedRecordOnly(stepName: string, message?: string | null): Session;
   completeSession(updates?: SessionUpdates): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
@@ -64,8 +67,10 @@ function defaultDeps(): OnboardRuntimeDeps {
     updateSession: onboardSession.updateSession,
     markStepStarted: onboardSession.markStepStarted,
     markStepComplete: onboardSession.markStepComplete,
+    markStepCompleteRecordOnly: onboardSession.markStepCompleteRecordOnly,
     markStepSkipped: onboardSession.markStepSkipped,
     markStepFailed: onboardSession.markStepFailed,
+    markStepFailedRecordOnly: onboardSession.markStepFailedRecordOnly,
     completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
     emitEvent: emitOnboardMachineEvent,
@@ -127,6 +132,10 @@ export class OnboardRuntime {
     return this.deps.markStepComplete(stepName, updates, options);
   }
 
+  async markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
+    return this.deps.markStepCompleteRecordOnly(stepName, updates);
+  }
+
   async markStepSkipped(stepName: string): Promise<Session> {
     return this.deps.markStepSkipped(stepName);
   }
@@ -137,6 +146,10 @@ export class OnboardRuntime {
     options: StepMutationOptions = {},
   ): Promise<Session> {
     return this.deps.markStepFailed(stepName, message, options);
+  }
+
+  async markStepFailedRecordOnly(stepName: string, message: string | null = null): Promise<Session> {
+    return this.deps.markStepFailedRecordOnly(stepName, message);
   }
 
   async completeSession(updates: SessionUpdates = {}): Promise<Session> {
