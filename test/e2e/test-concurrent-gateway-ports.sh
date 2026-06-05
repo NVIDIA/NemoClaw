@@ -252,9 +252,23 @@ destroy_default_install_sandbox() {
   fi
 }
 
+gateway_name_for_port() {
+  local port="$1"
+  if [ "${port}" = "8080" ]; then
+    echo "nemoclaw"
+  else
+    echo "nemoclaw-${port}"
+  fi
+}
+
 sandbox_phase() {
   local name="$1"
-  openshell sandbox list 2>/dev/null \
+  local gateway="${2:-}"
+  local args=("sandbox" "list")
+  if [ -n "${gateway}" ]; then
+    args+=("-g" "${gateway}")
+  fi
+  openshell "${args[@]}" 2>/dev/null \
     | sed 's/\x1b\[[0-9;]*m//g' \
     | awk -v want="${name}" '$1 == want { print $NF; exit }'
 }
@@ -262,10 +276,11 @@ sandbox_phase() {
 verify_sandbox_alive() {
   local name="$1"
   local label="${2:-${name} alive}"
-  local retries="${3:-12}"
+  local gateway="${3:-}"
+  local retries="${4:-12}"
   local phase=""
   for _ in $(seq 1 "${retries}"); do
-    phase="$(sandbox_phase "${name}")"
+    phase="$(sandbox_phase "${name}" "${gateway}")"
     case "${phase}" in
       Ready | Running)
         pass "${label} (phase=${phase})"
@@ -291,8 +306,10 @@ section "Stage 0.5: destroy default sandbox created by install.sh (if any)"
 destroy_default_install_sandbox || exit 1
 
 section "Stage 1: onboard sandbox A on default gateway port (${GATEWAY_PORT_A})"
+GATEWAY_A_NAME="$(gateway_name_for_port "${GATEWAY_PORT_A}")"
+GATEWAY_B_NAME="$(gateway_name_for_port "${GATEWAY_PORT_B}")"
 onboard_sandbox "${SANDBOX_A}" "${GATEWAY_PORT_A}" || exit 1
-verify_sandbox_alive "${SANDBOX_A}" "Sandbox A reaches Ready/Running on default port"
+verify_sandbox_alive "${SANDBOX_A}" "Sandbox A reaches Ready/Running on default port" "${GATEWAY_A_NAME}"
 
 DASHBOARD_A="$(dashboard_port_from_list "${SANDBOX_A}")"
 if [ -n "${DASHBOARD_A}" ] && [ "${DASHBOARD_A}" = "${DASHBOARD_PORT_A}" ]; then
@@ -309,8 +326,8 @@ onboard_sandbox "${SANDBOX_B}" "${GATEWAY_PORT_B}" || {
 }
 
 section "Stage 3: assert both sandboxes coexist"
-verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's onboard (#4422 SIGKILL regression)"
-verify_sandbox_alive "${SANDBOX_B}" "Sandbox B reaches Ready/Running on per-port gateway"
+verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's onboard (#4422 SIGKILL regression)" "${GATEWAY_A_NAME}"
+verify_sandbox_alive "${SANDBOX_B}" "Sandbox B reaches Ready/Running on per-port gateway" "${GATEWAY_B_NAME}"
 
 DASHBOARD_B="$(dashboard_port_from_list "${SANDBOX_B}")"
 if [ -n "${DASHBOARD_B}" ] && [ "${DASHBOARD_B}" != "${DASHBOARD_A:-${DASHBOARD_PORT_A}}" ]; then
@@ -352,7 +369,7 @@ else
   fail "Sandbox B destroy timed out or failed"
   tail -100 "/tmp/${SANDBOX_B}-destroy.log" | sed 's/^/    /'
 fi
-verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's destroy"
+verify_sandbox_alive "${SANDBOX_A}" "Sandbox A still alive after B's destroy" "${GATEWAY_A_NAME}"
 
 section "Summary: PASS=${PASS} FAIL=${FAIL} TOTAL=${TOTAL}"
 if [ "${FAIL}" -gt 0 ]; then
