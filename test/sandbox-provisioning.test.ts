@@ -778,6 +778,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "openclaw_device_approval_policy.py"),
+      path.join(localLib, "clean_runtime_shell_env_shim.py"),
       path.join(localLib, "generate-openclaw-config.mts"),
       path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
@@ -812,12 +814,16 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const messagingPluginMode = (
         fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
       ).toString(8);
+      const approvalPolicyMode = (
+        fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
+      ).toString(8);
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
       expect(messagingPluginMode).toBe("755");
+      expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");
@@ -971,6 +977,38 @@ describe("Hermes sandbox provisioning", () => {
       const result = runHermesPathValidation([wrongBin]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("expected hermes");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const hermesWebDir = path.join(hermesRoot, "web");
+    const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
+    fs.mkdirSync(hermesWebDir, { recursive: true });
+    fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Published base images can lag Dockerfile.base",
+      "# Harden: remove unnecessary build tools",
+    ).replaceAll("/opt/hermes", hermesRoot);
+
+    try {
+      const { result, calls } = runLoggedDockerShell(command, tmp, [
+        'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
+      expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
+      expect(fs.existsSync(hermesWebDist)).toBe(true);
+      expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

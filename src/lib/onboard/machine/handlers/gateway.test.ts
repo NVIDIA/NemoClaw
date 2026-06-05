@@ -314,4 +314,22 @@ describe("handleGatewayState", () => {
       "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
     );
   });
+
+  it("does not retire a foreign-active Docker-driver gateway (concurrent instances)", async () => {
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      reconcileGatewayGpuReuseForGpuIntent: vi.fn(
+        () => "foreign-active" as GatewayReuseState,
+      ),
+    });
+
+    const result = await handleGatewayState(baseOptions(deps, "foreign-active"));
+
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.note).not.toHaveBeenCalledWith(
+      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
+    );
+    expect(calls.startGateway).toHaveBeenCalledOnce();
+    expect(result.gatewayReuseState).toBe("missing");
+  });
 });

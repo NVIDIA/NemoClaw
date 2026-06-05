@@ -29,10 +29,25 @@ import { envInt } from "./env";
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // Default consecutive Error-phase polls required before fast-fail. With a
-// 2-second poll interval this is ~10s of sustained Error, which absorbs the
-// transient Error reported during container recreation while still bailing
-// fast on a patched container that crashed on startup.
-const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 5;
+// 2-second poll interval this is ~30s of sustained Error, leaving headroom
+// for slower hosts (Docker Desktop on WSL2, DGX Spark cached re-onboard)
+// whose sandbox list cache divergence was observed at ~12s in the original
+// repro. Hosts that genuinely crashed on startup hit the rollback path in
+// applyDockerGpuPatch rather than waiting out the full window.
+//
+// Alternative considered: branching on Docker State.Status + Health.Status
+// to keep retrying when the patched container reports Status=running plus
+// Health=starting. Rejected because the patched container's Health depends
+// on the OpenShell supervisor script — the same signal this wait observes
+// via `openshell sandbox list` — so Docker Health is either redundant or
+// lags by several seconds. The debounce-plus-rollback path also guarantees
+// the user keeps the pre-patch CPU sandbox on reconnect failure, which a
+// Health-aware retry alone would not provide. If a future repro shows
+// Status=running + Health=starting genuinely failing reconnect after this
+// 30s window, switch to a Health-aware retry, but extract Docker health
+// probing into a separate observation channel first rather than overloading
+// this one.
+const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 15;
 
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";

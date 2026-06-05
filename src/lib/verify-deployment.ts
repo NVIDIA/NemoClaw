@@ -152,9 +152,11 @@ function probeGatewayInSandboxOnce(
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
 ): { reachable: boolean; httpCode: number; detail: string } {
+  const port = chain.gatewayPort ?? chain.port;
+  const endpoint = chain.gatewayHealthEndpoint ?? chain.healthEndpoint;
   const script =
     `curl -so /dev/null -w '%{http_code}' --max-time 3 ` +
-    `http://127.0.0.1:${chain.port}${chain.healthEndpoint} 2>/dev/null || echo 000`;
+    `http://127.0.0.1:${port}${endpoint} 2>/dev/null || echo 000`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
     return { reachable: false, httpCode: 0, detail: "sandbox unreachable (SSH failed)" };
@@ -230,7 +232,10 @@ function probeDashboardFromHostOnce(
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
 ): { reachable: boolean; detail: string } {
-  const code = deps.probeHostPort(chain.port, chain.healthEndpoint);
+  const code = deps.probeHostPort(
+    chain.port,
+    chain.dashboardHealthEndpoint ?? chain.healthEndpoint,
+  );
   if (GATEWAY_ALIVE_CODES.has(code)) {
     return { reachable: true, detail: `host probe HTTP ${code}` };
   }

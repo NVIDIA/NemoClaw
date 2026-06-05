@@ -3,6 +3,12 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import {
+  filterSetupPolicyPresetNamesForAgent,
+  filterSetupPolicyPresetsForAgent,
+  setupPolicyPresetAppliesToAgent,
+} from "./agent-policy-presets";
+import {
+  allHermesToolGatewayPolicyPresets,
   HERMES_TOOL_GATEWAY_PRESET_NAMES,
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
@@ -104,10 +110,14 @@ export function mergeRequiredSetupPolicyPresets(
     env?: NodeJS.ProcessEnv;
   } = {},
 ): string[] {
-  return mergeRequiredOpenclawOtelPolicyPresets(
+  const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(
+    policyPresets,
+    options.agent,
+  );
+  const mergedPresets = mergeRequiredOpenclawOtelPolicyPresets(
     mergeRequiredMessagingChannelPolicyPresets(
       mergeRequiredHermesToolGatewayPolicyPresets(
-        policyPresets,
+        agentFilteredPresets,
         options.hermesToolGateways,
         options.knownPresetNames,
       ),
@@ -120,6 +130,7 @@ export function mergeRequiredSetupPolicyPresets(
       env: options.env,
     },
   );
+  return filterSetupPolicyPresetNamesForAgent(mergedPresets, options.agent);
 }
 
 export function isStaleBuiltinBravePolicyPreset(
@@ -158,10 +169,12 @@ export function computeSetupPresetSuggestions(
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
+    .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
     .filter((name) => !isStaleBuiltinBravePolicyPreset(name, { webSearchConfig }))
     .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
     .filter((name) => !known || known.has(name));
   const add = (name: string) => {
+    if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
     if (!deps.policies.setupPolicyPresetSupported(name, supportOptions)) return;
     if (suggestions.includes(name)) return;
     if (known && !known.has(name)) return;
@@ -172,6 +185,9 @@ export function computeSetupPresetSuggestions(
   if (isOpenclawAgent(agent)) {
     add("openclaw-pricing");
     for (const preset of requiredOpenclawOtelPolicyPresets(agent, env)) add(preset);
+  }
+  if (tierName === "open" && typeof agent === "string" && agent.trim().toLowerCase() === "hermes") {
+    for (const preset of allHermesToolGatewayPolicyPresets()) add(preset);
   }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
@@ -202,8 +218,13 @@ export function preparePolicyPresetResumeSelection(
   const supportOptions = { webSearchSupported: options.webSearchSupported };
   const appliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
   const selectablePolicyPresets = [
-    ...deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
-    ...appliedPolicyPresets.map((name) => ({ name })),
+    ...filterSetupPolicyPresetsForAgent(
+      deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
+      options.agent,
+    ),
+    ...filterSetupPolicyPresetNamesForAgent(appliedPolicyPresets, options.agent).map((name) => ({
+      name,
+    })),
   ];
   const customPolicyPresetNames = new Set(
     deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
@@ -291,7 +312,10 @@ async function setupPoliciesWithSelectionInner(
   deps.step(8, 8, "Policy presets");
 
   const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const allPresets = deps.policies.listSetupPolicyPresets(sandboxName, supportOptions);
+  const allPresets = filterSetupPolicyPresetsForAgent(
+    deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
+    agent,
+  );
   const knownPresets = new Set(allPresets.map((preset) => preset.name));
   const customPresetNames = new Set(
     deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
@@ -299,7 +323,9 @@ async function setupPoliciesWithSelectionInner(
   const currentAppliedPresets = deps.policies.getAppliedPresets(sandboxName);
   const selectablePresets = [
     ...allPresets,
-    ...currentAppliedPresets.map((name) => ({ name })),
+    ...filterSetupPolicyPresetNamesForAgent(currentAppliedPresets, agent).map((name) => ({
+      name,
+    })),
   ];
   const applied = deps.policies.clampSetupPolicyPresetNames(
     currentAppliedPresets,
@@ -316,7 +342,7 @@ async function setupPoliciesWithSelectionInner(
   const pruneDisabledPresets = (presetNames: string[]) =>
     pruneDisabledMessagingPolicyPresets(presetNames, disabledChannels);
   const filterSupportedPresetNames = (presetNames: string[]) =>
-    presetNames.filter(
+    filterSetupPolicyPresetNamesForAgent(presetNames, agent).filter(
       (name) =>
         customPresetNames.has(name) ||
         deps.policies.setupPolicyPresetSupported(name, supportOptions),

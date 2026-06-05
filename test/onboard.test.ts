@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import {
+  isValidInferenceInputsOverride,
+  maybePromptForInferenceInputCapability,
+  shouldPromptForInferenceInputCapability,
+} from "../dist/lib/onboard/inference-input-capability.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -165,6 +170,21 @@ describe("onboard helpers", () => {
       expect(v).toContain("localhost");
       expect(v).toContain("127.0.0.1");
       expect(v).toContain("host.docker.internal");
+    }
+  });
+
+  it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {
+    const envArgs: string[] = [];
+    appendHostProxyEnvArgs(envArgs, { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" });
+    expect(envArgs).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
+  });
+
+  it("omits NEMOCLAW_MINIMAL_BOOTSTRAP when unset or not the literal '1' (#2598)", () => {
+    for (const value of [undefined, "", "0", "true", "yes"]) {
+      const envArgs: string[] = [];
+      const env: NodeJS.ProcessEnv = value === undefined ? {} : { NEMOCLAW_MINIMAL_BOOTSTRAP: value };
+      appendHostProxyEnvArgs(envArgs, env);
+      expect(envArgs.some((e) => e.startsWith("NEMOCLAW_MINIMAL_BOOTSTRAP="))).toBe(false);
     }
   });
 
@@ -503,6 +523,40 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_MODEL = previousModel;
       }
     }
+  });
+
+  it("prompts for input capability only on likely multimodal model names", () => {
+    expect(shouldPromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b")).toBe(
+      true,
+    );
+    expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
+    expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
+  });
+
+  it("accepts only supported inference input capability overrides", () => {
+    expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("image")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,image")).toBe(true);
+    expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,text")).toBe(false);
+    expect(isValidInferenceInputsOverride("image,image")).toBe(false);
+    expect(isValidInferenceInputsOverride("text, image")).toBe(false);
+    expect(isValidInferenceInputsOverride("audio")).toBe(false);
+  });
+
+  it("normalizes invalid inference input capability overrides when choosing text only", async () => {
+    const env = {
+      NEMOCLAW_INFERENCE_INPUTS: "audio",
+    } as NodeJS.ProcessEnv;
+
+    await maybePromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b", {
+      env,
+      isNonInteractive: () => false,
+      prompt: async () => "",
+    });
+
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text");
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
@@ -2629,7 +2683,7 @@ agentOnboard.createAgentSandbox = () => {
       "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
       "ARG NEMOCLAW_PROVIDER_KEY=custom",
       "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-      "ARG CHAT_UI_URL=http://127.0.0.1:8642",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
       "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
       "ARG NEMOCLAW_INFERENCE_API=openai-completions",
       "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
@@ -2663,7 +2717,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 8642 12345 running";
+  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2695,7 +2749,10 @@ const { createSandbox } = require(${onboardPath});
   const agent = {
     name: "hermes",
     displayName: "Hermes Agent",
-    forwardPort: 8642,
+    forwardPort: 18789,
+    forward_ports: [18789, 8642],
+    healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
+    dashboard: { kind: "ui", label: "Dashboard", path: "/", healthPath: "/api/status", auth: "session" },
     expectedVersion: "2026.4.23",
     policyAdditionsPath: null,
   };
@@ -2709,6 +2766,10 @@ const { createSandbox } = require(${onboardPath});
     [],
     null,
     agent,
+    null,
+    null,
+    null,
+    ["nous-web"],
   );
   console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
 })().catch((error) => {
@@ -2732,11 +2793,17 @@ const { createSandbox } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
+      commands: CommandEntry[];
       logs: string[];
       warnings: string[];
       baseResolutionCalls: unknown[];
     }>(result.stdout);
     assert.equal(payload.baseResolutionCalls.length, 0);
+    const createCommand = payload.commands.find((entry) => entry.command.includes("sandbox create"));
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
+    assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
       !payload.logs.some((line) => line.includes("Using sandbox base image")),
       "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",

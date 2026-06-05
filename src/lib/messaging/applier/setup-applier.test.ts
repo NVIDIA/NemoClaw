@@ -31,11 +31,15 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
+  const scopedValues = {
+    NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
+    ...values,
+  };
   const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
+    Object.keys(scopedValues).map((key) => [key, process.env[key]]),
   );
   try {
-    for (const [key, value] of Object.entries(values)) {
+    for (const [key, value] of Object.entries(scopedValues)) {
       if (value === undefined) {
         delete process.env[key];
       } else {
@@ -59,11 +63,16 @@ function planner(): MessagingWorkflowPlanner {
     createBuiltInChannelManifestRegistry(),
     createBuiltInMessagingHookRegistry({
       common: {
-        env: {},
         getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
         saveCredential: () => {},
         prompt: async () => "unused",
         log: () => {},
+      },
+      slack: {
+        validateCredentials: {
+          log: () => {},
+          validateCredentials: () => ({ ok: true }),
+        },
       },
       telegram: {
         fetch: async () => ({
@@ -79,8 +88,8 @@ function planner(): MessagingWorkflowPlanner {
       },
       wechat: {
         ilinkLogin: {
-          env: {},
           saveCredential: () => {},
+          log: () => {},
           runLogin: async () => ({
             kind: "timeout",
           }),
@@ -147,7 +156,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("lists hook requests by phase without executing hook implementations", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
 
     expect(MessagingSetupApplier.listHookRequests(plan, "enroll")).toEqual([
       expect.objectContaining({
@@ -156,6 +171,13 @@ describe("MessagingSetupApplier", () => {
         hookId: "wechat-host-qr",
         phase: "enroll",
         handler: "wechat.ilinkLogin",
+      }),
+      expect.objectContaining({
+        sandboxName: "demo",
+        channelId: "wechat",
+        hookId: "wechat-config-prompt",
+        phase: "enroll",
+        handler: "common.configPrompt",
       }),
     ]);
     expect(MessagingSetupApplier.listHookRequests(plan, "post-agent-install")).toEqual([
@@ -369,8 +391,14 @@ describe("MessagingSetupApplier", () => {
       "slack",
     ]);
     expect(
-      MessagingSetupApplier.listHookRequests(plan).map((request) => request.channelId),
-    ).toEqual(["slack"]);
+      MessagingSetupApplier.listHookRequests(plan).map(
+        (request) => `${request.channelId}:${request.hookId}`,
+      ),
+    ).toEqual([
+      "slack:slack-token-paste",
+      "slack:slack-config-prompt",
+      "slack:slack-credential-validation",
+    ]);
 
     const providerCalls: string[][] = [];
     const credentialResult = MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
@@ -427,6 +455,7 @@ describe("MessagingSetupApplier", () => {
   it("runs post-install hook implementations and writes their build-file outputs", async () => {
     const plan = await buildOnboardPlan(
       {
+        WECHAT_BOT_TOKEN: "wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
         WECHAT_BASE_URL: "https://ilinkai.wechat.example",
         WECHAT_USER_ID: "wechat-user",
@@ -434,33 +463,7 @@ describe("MessagingSetupApplier", () => {
       ["wechat"],
     );
     const registry = createBuiltInMessagingHookRegistry({
-      common: {
-        env: {},
-        getCredential: (key) => TEST_CREDENTIALS[key] ?? null,
-        saveCredential: () => {},
-        prompt: async () => "unused",
-        log: () => {},
-      },
-      telegram: {
-        fetch: async () => ({
-          ok: true,
-          status: 200,
-          async json() {
-            return { ok: true };
-          },
-          async text() {
-            return "";
-          },
-        }),
-      },
       wechat: {
-        ilinkLogin: {
-          env: {},
-          saveCredential: () => {},
-          runLogin: async () => ({
-            kind: "timeout",
-          }),
-        },
         seedOpenClawAccount: {
           now: () => "2026-01-01T00:00:00.000Z",
         },
@@ -543,7 +546,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("rejects prototype-polluting build-file merge keys", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
     const files: Record<string, string> = {
       "/sandbox/.openclaw/openclaw.json": "{}",
     };
@@ -654,7 +663,13 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("rejects unsafe build-file hook output paths and modes", async () => {
-    const plan = await buildOnboardPlan({ WECHAT_ACCOUNT_ID: "wechat-account" }, ["wechat"]);
+    const plan = await buildOnboardPlan(
+      {
+        WECHAT_BOT_TOKEN: "wechat-token",
+        WECHAT_ACCOUNT_ID: "wechat-account",
+      },
+      ["wechat"],
+    );
     const runOpenshell: MessagingOpenShellRunner = (args, options) => {
       if (args.includes("cat") && options?.input === undefined) {
         return { status: 0, stdout: "{}" };

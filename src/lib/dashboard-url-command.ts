@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> dashboard-url` -- print the authenticated OpenClaw
- * dashboard URL. This keeps the first-run UX from teaching users to handle
- * the raw gateway token directly.
+ * `nemoclaw <name> dashboard-url` -- print the browser-facing dashboard URL.
+ * OpenClaw sandboxes still receive an authenticated token fragment, while
+ * session-auth agent dashboards can return the plain URL.
  */
 
 import { DASHBOARD_PORT } from "./core/ports";
 import type { SandboxEntry } from "./state/registry";
+
+type DashboardAuth = "url_token" | "session" | "none";
 
 export interface DashboardUrlCommandDeps {
   /** Pull gateway.auth.token from the sandbox config (host-side helper). */
@@ -17,6 +19,8 @@ export interface DashboardUrlCommandDeps {
   getSandbox?: (sandboxName: string) => Pick<SandboxEntry, "agent" | "dashboardPort"> | null;
   /** Resolve the browser-facing dashboard base URL for this host, when known. */
   getAccessUrl?: (port: number) => string | null;
+  /** Resolve a registered agent's dashboard auth contract. */
+  getAgentDashboardAuth?: (agentName: string) => DashboardAuth | null;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
@@ -67,6 +71,29 @@ export function buildDashboardUrl(
   return `${normalizedBaseUrl}#token=${encodeURIComponent(token)}`;
 }
 
+function buildPlainDashboardUrl(
+  port = DASHBOARD_PORT,
+  baseUrl = `http://127.0.0.1:${port}/`,
+): string {
+  return baseUrl.trim().endsWith("/") ? baseUrl.trim() : `${baseUrl.trim()}/`;
+}
+
+function resolveAgentDashboardAuth(
+  agentName: string | null,
+  deps: Pick<DashboardUrlCommandDeps, "getAgentDashboardAuth">,
+): DashboardAuth | null {
+  if (!agentName || agentName === "openclaw") return "url_token";
+  if (deps.getAgentDashboardAuth) {
+    return deps.getAgentDashboardAuth(agentName);
+  }
+  try {
+    const { loadAgent } = require("./agent/defs") as typeof import("./agent/defs");
+    return loadAgent(agentName).dashboard.auth;
+  } catch {
+    return null;
+  }
+}
+
 export function runDashboardUrlCommand(
   sandboxName: string,
   options: DashboardUrlCommandOptions,
@@ -85,10 +112,23 @@ export function runDashboardUrlCommand(
   }
 
   const agent = sandbox?.agent ?? null;
-  if (agent && agent !== "openclaw") {
+  const dashboardAuth = resolveAgentDashboardAuth(agent, deps);
+  if (agent && agent !== "openclaw" && !dashboardAuth) {
     dashboardUrlFail(
-      `  dashboard-url is not applicable for sandbox '${sandboxName}': it uses the '${agent}' agent, which does not expose an OpenClaw dashboard URL.`,
+      `  Could not resolve dashboard metadata for agent '${agent}' in sandbox '${sandboxName}'.`,
     );
+  }
+  if (dashboardAuth === "session" || dashboardAuth === "none") {
+    const port = resolveDashboardPort(sandbox);
+    const accessUrl = deps.getAccessUrl?.(port) ?? null;
+    const url = buildPlainDashboardUrl(port, accessUrl ?? undefined);
+    if (options.quiet) {
+      log(url);
+      return;
+    }
+    log("  Dashboard URL:");
+    log(`  ${url}`);
+    return;
   }
 
   let token: string | null;

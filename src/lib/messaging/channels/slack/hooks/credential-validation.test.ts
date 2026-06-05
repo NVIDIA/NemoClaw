@@ -5,22 +5,20 @@ import fs from "node:fs";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ProbeResult } from "./types";
-import { KNOWN_CHANNELS } from "../sandbox/channels";
+import type { CurlProbeResult } from "../../../../adapters/http/probe";
 
-vi.mock("../adapters/http/probe", () => ({
+vi.mock("../../../../adapters/http/probe", () => ({
   runCurlProbe: vi.fn(),
 }));
 
-import { runCurlProbe } from "../adapters/http/probe";
+import { runCurlProbe } from "../../../../adapters/http/probe";
 import {
-  filterSlackSelectionByValidation,
   validateSlackAppToken,
   validateSlackBotToken,
   validateSlackCredentials,
-} from "./slack-validation";
+} from "./credential-validation";
 
-function probe(body: string, overrides: Partial<ProbeResult> = {}): ProbeResult {
+function probe(body: string, overrides: Partial<CurlProbeResult> = {}): CurlProbeResult {
   return {
     ok: true,
     httpStatus: 200,
@@ -189,46 +187,4 @@ describe("Slack token validation", () => {
     if (!result.ok) expect(result.message).not.toContain(token);
   });
 
-  it("drops Slack selections when live validation is indeterminate", () => {
-    process.env.SLACK_BOT_TOKEN = "xoxb-timeout-bot";
-    process.env.SLACK_APP_TOKEN = "xapp-timeout-app";
-    vi.mocked(runCurlProbe).mockReturnValue(
-      probe("", {
-        ok: false,
-        httpStatus: 0,
-        curlStatus: 28,
-        stderr: "operation timed out",
-        message: "curl failed (exit 28): operation timed out",
-      }),
-    );
-    const warnings: string[] = [];
-
-    const result = filterSlackSelectionByValidation(
-      ["telegram", "slack"],
-      [KNOWN_CHANNELS.slack],
-      (message) => warnings.push(message),
-    );
-
-    expect(result).toEqual(["telegram"]);
-    expect(warnings.join("\n")).toContain("Slack integration will be disabled");
-    expect(warnings.join("\n")).not.toContain("xoxb-timeout-bot");
-  });
-
-  it("keeps Slack selected in explicit skip mode without probing Slack", () => {
-    process.env.SLACK_BOT_TOKEN = "xoxb-offline-bot";
-    process.env.SLACK_APP_TOKEN = "xapp-offline-app";
-    process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
-    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":false,"error":"invalid_auth"}'));
-    const warnings: string[] = [];
-
-    const result = filterSlackSelectionByValidation(
-      ["telegram", "slack"],
-      [KNOWN_CHANNELS.slack],
-      (message) => warnings.push(message),
-    );
-
-    expect(result).toEqual(["telegram", "slack"]);
-    expect(vi.mocked(runCurlProbe)).not.toHaveBeenCalled();
-    expect(warnings.join("\n")).toContain("Live Slack API validation skipped");
-  });
 });

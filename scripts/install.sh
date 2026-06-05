@@ -27,7 +27,9 @@ _global_cleanup() {
 }
 trap _global_cleanup EXIT
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_INSTALLER_SOURCE="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "${_INSTALLER_SOURCE}")" && pwd)"
+_INSTALLER_SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${_INSTALLER_SOURCE}")"
 
 resolve_repo_root() {
   local base="${NEMOCLAW_REPO_ROOT:-$SCRIPT_DIR}"
@@ -2275,7 +2277,7 @@ ensure_docker() {
     if installer_non_interactive \
       && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
       && command -v sg >/dev/null 2>&1; then
-      local self="${BASH_SOURCE[0]:-$0}"
+      local self="${NEMOCLAW_INSTALLER_STAGED:-${_INSTALLER_SCRIPT_PATH:-${BASH_SOURCE[0]:-$0}}}"
       if [ -n "$self" ] && [ -f "$self" ]; then
         info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
         export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
