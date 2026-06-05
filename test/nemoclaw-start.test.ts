@@ -2934,6 +2934,52 @@ describe("seed_default_workspace_templates (#3240)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("skips seeding when NEMOCLAW_MINIMAL_BOOTSTRAP=1 (#2598)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-minimal-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"), {
+        env: { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
+      expect(result.stderr).toContain("skipping default workspace template seed");
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still seeds when NEMOCLAW_MINIMAL_BOOTSTRAP is not '1' (#2598)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-noopt-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"), {
+        env: { NEMOCLAW_MINIMAL_BOOTSTRAP: "0" },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("skipping default workspace template seed");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Slack secrets-on-disk tripwire (#2085)", () => {

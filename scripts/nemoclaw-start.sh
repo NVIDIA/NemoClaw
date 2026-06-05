@@ -2746,6 +2746,12 @@ seed_default_workspace_templates() {
   local templates_dir="${2:-}"
   local config_file="${3:-/sandbox/.openclaw/openclaw.json}"
 
+  # #2598: opt-out for users who want minimum system-prompt overhead.
+  if [ "${NEMOCLAW_MINIMAL_BOOTSTRAP:-}" = "1" ]; then
+    echo "[setup] NEMOCLAW_MINIMAL_BOOTSTRAP=1; skipping default workspace template seed" >&2
+    return 0
+  fi
+
   if [ ! -f "$config_file" ]; then
     return 0
   fi
