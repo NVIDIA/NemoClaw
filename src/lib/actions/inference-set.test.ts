@@ -284,6 +284,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "openai/gpt-5.4-mini",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
       temperature: 0.2,
     });
     expect(config.models).toEqual({
@@ -317,6 +318,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "claude-sonnet-4-6",
       provider: "custom",
       base_url: "https://inference.local",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
       api_mode: "anthropic_messages",
     });
   });
@@ -337,6 +339,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "nvidia/nemotron-3-super-120b-a12b",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
   });
 
@@ -360,6 +363,7 @@ describe("patchHermesInferenceConfig", () => {
       default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
   });
 });
@@ -485,6 +489,7 @@ describe("runInferenceSet", () => {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
         base_url: "https://inference.local/v1",
+        api_key: "sk-OPENSHELL-PROXY-REWRITE",
       },
       terminal: { backend: "local" },
     });
@@ -687,6 +692,7 @@ describe("runInferenceSet", () => {
       default: "claude-sonnet-proxy",
       provider: "custom",
       base_url: "https://inference.local",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
       api_mode: "anthropic_messages",
     });
     expect(deps.getSession()).toMatchObject({
@@ -741,6 +747,7 @@ describe("runInferenceSet", () => {
       default: "anthropic.claude-sonnet-4-6-20260101-v1:0",
       provider: "custom",
       base_url: "https://inference.local/v1",
+      api_key: "sk-OPENSHELL-PROXY-REWRITE",
     });
     expect(result).toMatchObject({
       providerKey: "inference",

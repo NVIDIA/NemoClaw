@@ -46,6 +46,8 @@ export interface InferenceSetResult {
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
 
+const HERMES_PROXY_API_KEY_PLACEHOLDER = "sk-OPENSHELL-PROXY-REWRITE";
+
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -272,6 +274,7 @@ export function patchHermesInferenceConfig(
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
   modelConfig.provider = "custom";
+  modelConfig.api_key = HERMES_PROXY_API_KEY_PLACEHOLDER;
   const apiMode = hermesApiMode(route.inferenceApi);
   if (apiMode) {
     modelConfig.api_mode = apiMode;
