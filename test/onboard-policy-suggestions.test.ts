@@ -32,6 +32,14 @@ const {
     env?: NodeJS.ProcessEnv;
   }) => string[];
 };
+const {
+  filterSetupPolicyPresetsForAgent,
+} = require("../dist/lib/onboard/agent-policy-presets") as {
+  filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
+    presets: T[],
+    agent?: string | null,
+  ) => T[];
+};
 
 describe("onboard policy preset suggestions", () => {
   const known = [
@@ -299,6 +307,38 @@ describe("onboard policy preset suggestions", () => {
     expect(openclawOpen).toContain("openclaw-pricing");
     expect(openclawOpen).toContain("weather");
     expect(openclawOpen).toContain("public-reference");
+  });
+
+  it("keeps agent-specific policy presets out of the opposite agent selector", () => {
+    const allPresets = [
+      { name: "weather" },
+      { name: "openclaw-pricing" },
+      { name: "openclaw-diagnostics-otel-local" },
+      { name: "nous-web" },
+      { name: "nous-image" },
+    ];
+
+    expect(filterSetupPolicyPresetsForAgent(allPresets, "hermes").map((p) => p.name)).toEqual([
+      "weather",
+      "nous-web",
+      "nous-image",
+    ]);
+    expect(filterSetupPolicyPresetsForAgent(allPresets, "openclaw").map((p) => p.name)).toEqual([
+      "weather",
+      "openclaw-pricing",
+      "openclaw-diagnostics-otel-local",
+    ]);
+  });
+
+  it("does not add explicitly requested Hermes Nous presets to OpenClaw suggestions", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      agent: "openclaw",
+      hermesToolGateways: ["nous-web", "nous-code"],
+    });
+    expect(suggestions).not.toContain("nous-web");
+    expect(suggestions).not.toContain("nous-code");
   });
 
   it("forwards enabled messaging channels into tier suggestions", () => {
