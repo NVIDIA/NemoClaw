@@ -4801,6 +4801,7 @@ async function setupNim(
               console.error("  Local NVIDIA NIM base URL could not be determined.");
               process.exit(1);
             }
+            model = nim.adoptServedModelId(model);
             const nimValidationUrl = getLocalProviderValidationBaseUrl(provider) || endpointUrl;
             const validation = await validateOpenAiLikeSelection(
               "Local NVIDIA NIM",
@@ -4814,10 +4815,8 @@ async function setupNim(
             if (!validation.ok) {
               continue selectionLoop;
             }
-            preferredInferenceApi = validation.api;
-            // NIM uses vLLM internally — same tool-call-parser limitation
-            // applies to /v1/responses. Force chat completions.
-            if (preferredInferenceApi !== "openai-completions") {
+            // NIM (vLLM) mishandles the /v1/responses developer role; force chat completions.
+            if (validation.api !== "openai-completions") {
               console.log(
                 "  ℹ Using chat completions API (tool-call-parser requires /v1/chat/completions)",
               );

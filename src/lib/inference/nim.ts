@@ -10,16 +10,19 @@ const {
   dockerForceRm,
   dockerLoginPasswordStdin,
   dockerLogs,
+  dockerManifestInspect,
   dockerPort,
   dockerPull,
   dockerRm,
   dockerRunDetached,
   dockerStop,
+  dockerTag,
 } = require("../adapters/docker");
 const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
+import { isSafeModelId } from "../validation";
 import {
   type Arm64WslDockerDesktopGpuProver,
   isDenylistedNvidiaGpuName,
@@ -29,7 +32,7 @@ import {
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
-export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 900;
+export const DEFAULT_NIM_HEALTH_TIMEOUT_SECONDS = 1200;
 
 export interface NimModel {
   name: string;
@@ -360,6 +363,51 @@ export function canRunNimWithMemory(totalMemoryMB: number): boolean {
   return nimImages.models.some((m: NimModel) => m.minGpuMemoryMB <= totalMemoryMB);
 }
 
+// First model id from a NIM `/v1/models` body, or null if absent/unparseable.
+export function parseServedModelId(modelsJson: string): string | null {
+  try {
+    const doc = JSON.parse(modelsJson);
+    const data = Array.isArray(doc?.data) ? doc.data : [];
+    for (const entry of data) {
+      if (typeof entry?.id === "string" && entry.id.length > 0) return entry.id;
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
+// Model id a running local NIM actually serves; null if unreachable/empty.
+export function getServedModelId(port = VLLM_PORT): string | null {
+  const out = runCapture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "5",
+      `http://127.0.0.1:${Number(port)}/v1/models`,
+    ],
+    { ignoreError: true },
+  );
+  return out ? parseServedModelId(out) : null;
+}
+
+// Adopt the id NIM serves (from /v1/models) when it differs from the catalog
+// name and is safe; the catalog id otherwise 404s on validation. See #3885.
+export function adoptServedModelId(catalogModel: string | null, port = VLLM_PORT): string | null {
+  const served = getServedModelId(port);
+  if (!served || served === catalogModel) return catalogModel;
+  // /v1/models is local-controlled — refuse an unsafe id; don't echo it (log-injection).
+  if (!isSafeModelId(served)) {
+    console.error(`  NIM reported an invalid model id; keeping "${catalogModel}".`);
+    return catalogModel;
+  }
+  console.log(`  NIM serves "${served}" (catalog "${catalogModel}"); using served id.`);
+  return served;
+}
+
 export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // Try NVIDIA first — query name, total, and free VRAM in a single call so
   // the preflight line can show the GPU model alongside the memory size and
@@ -674,6 +722,90 @@ export function dockerLoginNgc(apiKey: string): boolean {
   return result.status === 0;
 }
 
+// Node's process.arch → OCI manifest "architecture" (x64 → amd64; others match).
+export function nodeArchToOci(arch: string): string {
+  if (arch === "x64") return "amd64";
+  return arch;
+}
+
+interface ManifestPlatform {
+  architecture?: string;
+  os?: string;
+}
+interface ManifestIndexEntry {
+  digest?: string;
+  platform?: ManifestPlatform;
+}
+interface ManifestIndexDoc {
+  manifests?: ManifestIndexEntry[];
+}
+
+// Linux image-manifest digest for `ociArch` from `docker manifest inspect` JSON,
+// or null if not a multi-arch index / no match. Arch+os match skips attestations.
+export function selectPlatformManifestDigest(
+  manifestJson: string,
+  ociArch: string,
+): string | null {
+  let doc: ManifestIndexDoc;
+  try {
+    doc = JSON.parse(manifestJson);
+  } catch {
+    return null;
+  }
+  const manifests = Array.isArray(doc?.manifests) ? doc.manifests : [];
+  for (const entry of manifests) {
+    if (
+      entry?.platform?.architecture === ociArch &&
+      entry?.platform?.os === "linux" &&
+      typeof entry.digest === "string" &&
+      entry.digest.length > 0
+    ) {
+      return entry.digest;
+    }
+  }
+  return null;
+}
+
+// Repository portion of an image ref, dropping `:tag`/`@digest` (port-safe).
+export function imageRepository(imageRef: string): string {
+  const lastSlash = imageRef.lastIndexOf("/");
+  const prefix = lastSlash === -1 ? "" : imageRef.slice(0, lastSlash + 1);
+  const lastSegment = lastSlash === -1 ? imageRef : imageRef.slice(lastSlash + 1);
+  const atIdx = lastSegment.indexOf("@");
+  if (atIdx !== -1) return prefix + lastSegment.slice(0, atIdx);
+  const colonIdx = lastSegment.indexOf(":");
+  if (colonIdx !== -1) return prefix + lastSegment.slice(0, colonIdx);
+  return imageRef;
+}
+
+// Pull `image` avoiding the NIM-on-NGC break: docker's containerd store fetches
+// the index's buildkit attestation manifest, which nvcr.io rejects ("Incorrect
+// Repository Format") after pulling all layers. Pull the host-arch manifest by
+// digest instead (no index walk); plain pull when not a resolvable index. #3885.
+function pullImageResolvingPlatform(image: string): void {
+  let manifestJson = "";
+  try {
+    manifestJson = dockerManifestInspect(image, { ignoreError: true }) || "";
+  } catch {
+    manifestJson = "";
+  }
+  const digest = manifestJson
+    ? selectPlatformManifestDigest(manifestJson, nodeArchToOci(process.arch))
+    : null;
+  if (!digest) {
+    // No resolvable multi-arch index — plain tag pull. On Docker 29.x this can
+    // re-hit the NGC attestation failure (#3885); surface the path taken.
+    console.log(`  No platform manifest resolved; pulling ${image} by tag.`);
+    dockerPull(image);
+    return;
+  }
+  const digestRef = `${imageRepository(image)}@${digest}`;
+  console.log(`  Resolved ${nodeArchToOci(process.arch)} manifest: ${digestRef}`);
+  dockerPull(digestRef);
+  // Tag back to the friendly ref so the run path starts the container by `image`.
+  dockerTag(digestRef, image);
+}
+
 export function pullNimImage(model: string): string {
   const image = getImageForModel(model);
   if (!image) {
@@ -681,7 +813,7 @@ export function pullNimImage(model: string): string {
     process.exit(1);
   }
   console.log(`  Pulling NIM image: ${image}`);
-  dockerPull(image);
+  pullImageResolvingPlatform(image);
   return image;
 }
 
@@ -780,7 +912,7 @@ export function waitForNimHealth(
     }
     // Short-circuit if the container has already exited — typically NGC auth
     // failure or OOM during model load. Without this, the wizard polls the
-    // full timeout (default 900s) against a dead container. See #3333.
+    // full timeout (default 1200s) against a dead container. See #3333.
     if (container) {
       const state = dockerContainerInspectFormat("{{.State.Status}}", container, {
         ignoreError: true,
