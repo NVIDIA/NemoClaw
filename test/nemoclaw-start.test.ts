@@ -3483,6 +3483,50 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
   });
 
+  it("mirrors every canonical channel envKey from the TypeScript parser as an extension prefix", () => {
+    // Behavioural parity guard: the in-container parser hardcodes its
+    // canonical-prefix allowlist, so a future channel addition in
+    // src/lib/sandbox/channels.ts must show up in scripts/nemoclaw-start.sh
+    // for the runtime side to keep accepting the same per-profile keys.
+    // For each TypeScript-derived canonical envKey, plant a `<KEY>_PARITY`
+    // extension and assert that the bash refresh accepts and revision-
+    // collapses it. Drift in either direction (new channel added but bash
+    // not updated, or bash list shrunk) breaks one of the two assertions.
+    const distPath = path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "extra-placeholder-keys.js");
+    const { canonicalPlaceholderKeys } = require(distPath);
+    const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
+    expect(canonicalKeys.length).toBeGreaterThan(0);
+
+    for (const canonical of canonicalKeys) {
+      const extension = `${canonical}_PARITY`;
+      const scoped = `openshell:resolve:env:v77_${extension}`;
+      const run = runRefresh(
+        {
+          channels: {
+            telegram: {
+              accounts: {
+                parity: { botToken: `openshell:resolve:env:${extension}` },
+              },
+            },
+          },
+        },
+        {
+          NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: extension,
+          [extension]: scoped,
+        },
+      );
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(
+        run.result.stderr,
+        `bash refresh refused canonical extension '${extension}' — parity drift with src/lib/onboard/extra-placeholder-keys.ts`,
+      ).not.toContain(
+        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`,
+      );
+      expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
+    }
+  });
+
   it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {
     // 33 fillers in the list, all extending TELEGRAM_BOT_TOKEN_, all valid
     // canonical extensions. The cap should accept the first 32 (indices
