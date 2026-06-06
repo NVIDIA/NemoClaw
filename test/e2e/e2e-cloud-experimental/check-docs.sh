@@ -691,9 +691,11 @@ extract_targets() {
       next;
     }
 
-    while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
-    while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
-    while ($visible =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
+    my $scan = $visible;
+    $scan =~ s/`[^`]*`//g;
+    while ($scan =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
     END {
       die "malformed HTML comment\n" if $in_comment;
     }
@@ -966,6 +968,13 @@ site_source_ref_exists() {
   return 1
 }
 
+has_markdown_extension() {
+  case "$1" in
+    *.md | *.mdx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 check_local_ref() {
   local md_path="$1" line_no="$2" target="$3"
   local stripped
@@ -991,6 +1000,10 @@ check_local_ref() {
     fern_route_exists "$stripped"
     _fern_rc=$?
     set -e
+    if [[ "$_fern_rc" -eq 0 ]] && has_markdown_extension "$stripped"; then
+      echo "check-docs: [links] route-style link should omit .md/.mdx extension in $md_path:$line_no -> $target" >&2
+      return 1
+    fi
     if [[ "$_fern_rc" -eq 0 ]]; then
       return 0
     elif [[ "$_fern_rc" -eq 3 ]]; then
@@ -1003,18 +1016,22 @@ check_local_ref() {
     return 1
   fi
 
-  if source_ref_exists "$(dirname "$md_path")" "$stripped"; then
-    return 0
-  fi
   local _fern_relative_rc
   set +e
   fern_relative_ref_exists "$md_path" "$stripped"
   _fern_relative_rc=$?
   set -e
+  if [[ "$_fern_relative_rc" -eq 0 ]] && has_markdown_extension "$stripped"; then
+    echo "check-docs: [links] route-style link should omit .md/.mdx extension in $md_path:$line_no -> $target" >&2
+    return 1
+  fi
   if [[ "$_fern_relative_rc" -eq 0 ]]; then
     return 0
   elif [[ "$_fern_relative_rc" -eq 3 ]]; then
     return 1
+  fi
+  if source_ref_exists "$(dirname "$md_path")" "$stripped"; then
+    return 0
   fi
   echo "check-docs: [links] broken local link in $md_path:$line_no -> $target" >&2
   return 1

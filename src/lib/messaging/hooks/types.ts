@@ -17,6 +17,7 @@ export type MessagingHookInputMap = Readonly<Record<string, MessagingSerializabl
 /** Minimal runner context needed to execute one hook for one channel. */
 export interface MessagingHookRunContext {
   readonly channelId: MessagingChannelId;
+  readonly isInteractive?: boolean;
   readonly inputs?: MessagingHookInputMap;
 }
 

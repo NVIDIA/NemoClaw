@@ -72,19 +72,16 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
+    expect(hermes.forwardPort).toBe(18789);
+    expect(hermes.forward_ports).toEqual([18789, 8642]);
     expect(hermes.dashboard).toEqual({
-      kind: "api",
-      label: "OpenAI-compatible API",
-      path: "/v1",
-    });
-    expect(hermes.dashboardUi).toEqual({
-      label: "Web dashboard",
-      port: 9119,
+      kind: "ui",
+      label: "Dashboard",
       path: "/",
-      enableEnv: "NEMOCLAW_HERMES_DASHBOARD",
-      portEnv: "NEMOCLAW_HERMES_DASHBOARD_PORT",
-      tuiEnv: "NEMOCLAW_HERMES_DASHBOARD_TUI",
+      healthPath: "/api/status",
+      auth: "session",
     });
+    expect(hermes.dashboardUi).toBeNull();
     expect(hermes.messagingPlatforms).toEqual([
       "telegram",
       "discord",
@@ -149,6 +146,38 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/health_probe\.port/);
+  });
+
+  it("rejects invalid dashboard auth values in manifests", () => {
+    const agentName = `invalid-dashboard-auth-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Dashboard Auth",
+        "dashboard:",
+        "  kind: ui",
+        "  auth: bearer",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/dashboard\.auth/);
+  });
+
+  it("rejects invalid dashboard health path values in manifests", () => {
+    const agentName = `invalid-dashboard-health-path-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Dashboard Health Path",
+        "dashboard:",
+        "  kind: ui",
+        "  health_path: api/status",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/dashboard\.health_path/);
   });
 
   it("rejects invalid dashboard_ui.port values in manifests", () => {

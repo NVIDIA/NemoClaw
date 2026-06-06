@@ -130,7 +130,7 @@ describe("handleSandboxState", () => {
     const result = await handleSandboxState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", { provider: "provider", model: "model" });
-    expect(calls.setupMessaging).toHaveBeenCalledWith(null, null);
+    expect(calls.setupMessaging).toHaveBeenCalledWith(null, ["telegram"], "my-assistant");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.createSandbox).toHaveBeenCalledWith(
       { type: "nvidia" },
@@ -151,6 +151,13 @@ describe("handleSandboxState", () => {
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
     expect(calls.complete).toHaveBeenCalledWith("sandbox", expect.objectContaining({ sandboxName: "my-assistant" }));
     expect(result).toMatchObject({ sandboxName: "my-assistant", selectedMessagingChannels: ["telegram"], webSearchSupported: true });
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "openclaw",
+      transitionKind: "branch",
+      updates: undefined,
+      metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
+    });
   });
 
   it("reuses a completed ready sandbox on resume", async () => {
@@ -295,11 +302,17 @@ describe("handleSandboxState", () => {
   });
 
   it("uses recorded messaging channels on non-interactive resume", async () => {
-    const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume: vi.fn(() => ["discord"]) });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["discord"]);
+    const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume });
 
     const result = await handleSandboxState({ ...baseOptions(deps), resume: true });
 
     expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(getRecordedMessagingChannelsForResume).toHaveBeenCalledWith(
+      true,
+      expect.any(Object),
+      "my-assistant",
+    );
     expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");
     expect(result.selectedMessagingChannels).toEqual(["discord"]);
   });

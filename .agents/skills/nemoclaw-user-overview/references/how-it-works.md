@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Architecture Overview
 
 import { AgentCli, AgentOnly } from "../_components/AgentGuide";
@@ -67,6 +65,7 @@ NemoClaw is split into integration pieces on the host and in the sandbox image:
 
 - The _plugin_ is a TypeScript package that runs with OpenClaw inside the sandbox.
   It registers the managed inference provider metadata, the `/nemoclaw` slash command, and runtime context hooks.
+  Runtime context is prepended as system guidance, so sandbox and policy instructions stay active without appearing in the visible chat transcript.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -113,6 +112,7 @@ The sandbox starts with a default policy that controls network egress, filesyste
 | Inference | Reroutes model API calls to controlled backends. | Hot-reloadable at runtime. |
 
 When the agent tries to reach an unlisted host, OpenShell blocks the request and surfaces it in the TUI for operator approval. Approved endpoints persist for the current session but are not saved to the baseline policy file.
+NemoClaw's runtime context tells supported agents to try allowed network and filesystem actions first, then report whether a failure came from policy denial, DNS, timeout, TLS, or filesystem access.
 
 ## Next Steps
 
@@ -128,7 +128,7 @@ When the agent tries to reach an unlisted host, OpenShell blocks the request and
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- Read [Ecosystem](ecosystem-hermes.md) for stack-level relationships and NemoClaw versus OpenShell-only paths.
+- Read [Ecosystem](ecosystem.md) for stack-level relationships and NemoClaw versus OpenShell-only paths.
 - Follow Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) to launch your first sandbox.
 - Refer to the Architecture (use the `nemoclaw-user-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
 - Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for detailed provider configuration.

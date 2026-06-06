@@ -224,6 +224,7 @@ console.log = () => {};
       "npm",
       "openclaw-pricing",
       "pypi",
+      "weather",
     ]);
   });
 
@@ -307,6 +308,7 @@ console.log = () => {};
       "npm",
       "openclaw-pricing",
       "pypi",
+      "weather",
     ]);
   });
 

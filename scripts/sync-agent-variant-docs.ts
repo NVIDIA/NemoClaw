@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
@@ -17,6 +17,10 @@ type AgentVariant = (typeof agentVariants)[number];
 type RenderedFile = {
   path: string;
   contents: string;
+};
+type RenderTarget = {
+  sourcePath: string;
+  variant: AgentVariant;
 };
 type RenderAgentVariantOptions = {
   outputPath?: string;
@@ -118,6 +122,7 @@ function updateFrontmatter(frontmatter: string): string {
     "keywords",
     '["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
   );
+  next = upsertFrontmatterLine(next, "exclude-from-skills-gen", "true");
   return next;
 }
 
@@ -127,6 +132,14 @@ function replaceFrontmatterLine(frontmatter: string, key: string, value: string)
     throw new Error(`commands.mdx frontmatter is missing '${key}'`);
   }
   return frontmatter.replace(pattern, `${key}: ${value}`);
+}
+
+function upsertFrontmatterLine(frontmatter: string, key: string, value: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}:.*$`, "m");
+  if (pattern.test(frontmatter)) {
+    return frontmatter.replace(pattern, `${key}: ${value}`);
+  }
+  return frontmatter.replace(/\n---\n$/, `\n${key}: ${value}\n---\n`);
 }
 
 function stripAgentOnlyBlocks(body: string): string {
@@ -172,31 +185,55 @@ export function renderAgentVariantPage(
 }
 
 function renderGeneratedAgentVariantPages(): RenderedFile[] {
-  return findAgentVariantSourcePaths().flatMap((sourceFilePath) => {
+  return findAgentVariantTargets().map(({ sourcePath, variant }) => {
+    const sourceFilePath = path.join(docsRoot, sourcePath);
     const source = readFileSync(sourceFilePath, "utf8");
     const basename = path.basename(sourceFilePath, ".mdx");
     const relativeSourceDirectory = path.relative(docsRoot, path.dirname(sourceFilePath));
-    return agentVariants.map((variant) => {
-      const outputPath = path.join(
-        generatedDocsRoot,
-        relativeSourceDirectory,
-        `${basename}.${variant}.generated.mdx`,
-      );
-      return {
-        path: outputPath,
-        contents: renderAgentVariantPage(source, variant, {
-          outputPath,
-          sourcePath: sourceFilePath,
-        }),
-      };
-    });
+    const outputPath = path.join(
+      generatedDocsRoot,
+      relativeSourceDirectory,
+      `${basename}.${variant}.generated.mdx`,
+    );
+    return {
+      path: outputPath,
+      contents: renderAgentVariantPage(source, variant, {
+        outputPath,
+        sourcePath: sourceFilePath,
+      }),
+    };
   });
 }
 
-function findAgentVariantSourcePaths(): string[] {
+function findAgentVariantTargets(): RenderTarget[] {
   const sharedSources = findSharedNavigationSourcePaths();
   assertNoUnsharedPlaceholders(sharedSources);
-  return [...sharedSources].sort().map((sourcePath) => path.join(docsRoot, sourcePath));
+  return findGeneratedNavigationTargets().sort((left, right) => {
+    const sourceOrder = left.sourcePath.localeCompare(right.sourcePath);
+    return sourceOrder === 0 ? left.variant.localeCompare(right.variant) : sourceOrder;
+  });
+}
+
+function findGeneratedNavigationTargets(): RenderTarget[] {
+  const docsIndex = parse(readFileSync(path.join(docsRoot, "index.yml"), "utf8")) as DocsIndex;
+  const userGuide = docsIndex.navigation?.find((item) => Array.isArray(item.variants));
+  if (!userGuide?.variants) {
+    throw new Error("docs/index.yml must define navigation variants");
+  }
+  return userGuide.variants.flatMap((variant) => {
+    if (variant.slug !== "openclaw" && variant.slug !== "hermes") return [];
+    return collectGeneratedTargets(variant.layout ?? [], variant.slug);
+  });
+}
+
+function collectGeneratedTargets(nodes: NavigationNode[], variant: AgentVariant): RenderTarget[] {
+  return nodes.flatMap((node): RenderTarget[] => {
+    const sourcePath = normalizeGeneratedNavigationSourcePath(node.path);
+    const current = sourcePath ? [{ sourcePath, variant }] : [];
+    return node.contents
+      ? [...current, ...collectGeneratedTargets(node.contents, variant)]
+      : current;
+  });
 }
 
 function findSharedNavigationSourcePaths(): Set<string> {
@@ -229,14 +266,18 @@ function collectSourcePaths(nodes: NavigationNode[]): Set<string> {
 
 function normalizeNavigationSourcePath(navPath: string | undefined): string | null {
   if (!navPath) return null;
+  const sourcePath =
+    normalizeGeneratedNavigationSourcePath(navPath) ?? normalizeLegacyVariantSource(navPath);
+  if (!sourcePath.endsWith(".mdx") || sourcePath === "index.mdx") return null;
+  return sourcePath;
+}
+
+function normalizeGeneratedNavigationSourcePath(navPath: string | undefined): string | null {
+  if (!navPath) return null;
   const generatedMatch = navPath.match(
     /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/,
   );
-  const sourcePath = generatedMatch?.[1]
-    ? `${generatedMatch[1]}.mdx`
-    : normalizeLegacyVariantSource(navPath);
-  if (!sourcePath.endsWith(".mdx") || sourcePath === "index.mdx") return null;
-  return sourcePath;
+  return generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : null;
 }
 
 function normalizeLegacyVariantSource(navPath: string): string {
@@ -338,6 +379,7 @@ function rewriteRelativeLinkTarget(
 }
 
 function writeGeneratedFiles(files: RenderedFile[]): void {
+  pruneStaleGeneratedFiles(new Set(files.map((file) => file.path)));
   for (const file of files) {
     if (readOptionalFile(file.path) === file.contents) {
       console.log(`${path.relative(repoRoot, file.path)} is already up to date`);
@@ -347,6 +389,30 @@ function writeGeneratedFiles(files: RenderedFile[]): void {
     writeFileSync(file.path, file.contents);
     console.log(`Wrote ${path.relative(repoRoot, file.path)}`);
   }
+}
+
+function pruneStaleGeneratedFiles(expectedPaths: Set<string>): void {
+  for (const filePath of listGeneratedFiles(generatedDocsRoot)) {
+    if (expectedPaths.has(filePath)) continue;
+    rmSync(filePath);
+    console.log(`Removed ${path.relative(repoRoot, filePath)}`);
+  }
+}
+
+function listGeneratedFiles(directory: string): string[] {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  return entries.flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return listGeneratedFiles(entryPath);
+    return entry.isFile() && entry.name.endsWith(".generated.mdx") ? [entryPath] : [];
+  });
 }
 
 function transformNemoclawCliInvocations(body: string): string {

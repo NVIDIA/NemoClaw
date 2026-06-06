@@ -589,17 +589,17 @@ describe("local inference helpers", () => {
     expect(
       parseOllamaTags(
         JSON.stringify({
-          models: [{ name: "nemotron-3-nano:30b" }, { name: "qwen2.5:7b" }],
+          models: [{ name: "nemotron-3-nano:30b" }, { name: "qwen3.5:9b" }],
         }),
       ),
-    ).toEqual(["nemotron-3-nano:30b", "qwen2.5:7b"]);
+    ).toEqual(["nemotron-3-nano:30b", "qwen3.5:9b"]);
   });
 
   it("returns no tags for malformed Ollama API output", () => {
     expect(parseOllamaTags("{not-json")).toEqual([]);
     expect(parseOllamaTags(JSON.stringify({ models: null }))).toEqual([]);
-    expect(parseOllamaTags(JSON.stringify({ models: [{}, { name: "qwen2.5:7b" }] }))).toEqual([
-      "qwen2.5:7b",
+    expect(parseOllamaTags(JSON.stringify({ models: [{}, { name: "qwen3.5:9b" }] }))).toEqual([
+      "qwen3.5:9b",
     ]);
   });
 
@@ -608,11 +608,11 @@ describe("local inference helpers", () => {
     const mockCapture = () => {
       call += 1;
       if (call === 1) {
-        return JSON.stringify({ models: [{ name: "qwen2.5:7b" }] });
+        return JSON.stringify({ models: [{ name: "qwen3.5:9b" }] });
       }
       return "";
     };
-    expect(getOllamaModelOptions(mockCapture)).toEqual(["qwen2.5:7b"]);
+    expect(getOllamaModelOptions(mockCapture)).toEqual(["qwen3.5:9b"]);
   });
 
   it("returns no installed ollama models when list output is empty", () => {
@@ -630,23 +630,23 @@ describe("local inference helpers", () => {
   });
 
   it("falls back to bootstrap model options when no Ollama models are installed", () => {
-    expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen2.5:7b"]);
+    expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen3.5:9b"]);
     // Below every registry entry's required memory: small only.
     expect(
       getBootstrapOllamaModelOptions({
         type: "nvidia",
         totalMemoryMB: 10_000,
       }),
-    ).toEqual(["qwen2.5:7b"]);
+    ).toEqual(["qwen3.5:9b"]);
     // Comfortably above every registry entry's required memory: all options.
     expect(
       getBootstrapOllamaModelOptions({
         type: "nvidia",
         totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB,
       }),
-    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    ).toEqual(["qwen3.5:9b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
     expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 10_000 }, () => "")).toBe(
-      "qwen2.5:7b",
+      "qwen3.5:9b",
     );
     expect(
       getDefaultOllamaModel(
@@ -667,13 +667,13 @@ describe("local inference helpers", () => {
         totalMemoryMB: 131_072,
         availableMemoryMB: 12_000,
       }),
-    ).toEqual(["qwen2.5:7b"]);
+    ).toEqual(["qwen3.5:9b"]);
     expect(
       getDefaultOllamaModel(
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
         () => "",
       ),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
   });
 
   it("filters installed-model selection by memory fit", async () => {
@@ -681,10 +681,10 @@ describe("local inference helpers", () => {
     // Even though nemotron-3-nano:30b is installed, it does not fit a host
     // with only 12 GiB available — the selector must downgrade to a fitting
     // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
-    const installed = () => "qwen2.5:7b  abc  4 GB  now\nnemotron-3-nano:30b  def  19 GB  now";
+    const installed = () => "qwen3.5:9b  abc  7 GB  now\nnemotron-3-nano:30b  def  19 GB  now";
     expect(
       gdom({ type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }, installed),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
   });
 
   it("resolveNonInteractiveOllamaModel respects unknown tags and downgrades known oversize ones", async () => {
@@ -702,7 +702,7 @@ describe("local inference helpers", () => {
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 12_000 },
         log,
       ),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
     expect(messages.some((m) => m.includes("qwen3.6:35b"))).toBe(true);
 
     // Unknown tag → respected as-is.
@@ -745,7 +745,7 @@ describe("local inference helpers", () => {
       { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
       log,
     );
-    expect(result).toBe("qwen2.5:7b");
+    expect(result).toBe("qwen3.5:9b");
     expect(messages.some((m) => m.includes("qwen3.6:35b"))).toBe(true);
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
 
@@ -759,7 +759,7 @@ describe("local inference helpers", () => {
         log,
         () => "",
       ),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);
   });
 
@@ -769,7 +769,7 @@ describe("local inference helpers", () => {
         type: "apple",
         totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB,
       }),
-    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    ).toEqual(["qwen3.5:9b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
     expect(
       getDefaultOllamaModel(
         { type: "apple", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB },
@@ -786,22 +786,22 @@ describe("local inference helpers", () => {
     // unspecified.
     expect(
       getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB }),
-    ).toEqual(["qwen2.5:7b"]);
+    ).toEqual(["qwen3.5:9b"]);
     expect(
       getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB }, () => ""),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
     expect(
       getBootstrapOllamaModelOptions({
         type: "generic",
         totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB * 4,
       }),
-    ).toEqual(["qwen2.5:7b"]);
+    ).toEqual(["qwen3.5:9b"]);
     expect(
       getDefaultOllamaModel(
         { type: "generic", totalMemoryMB: LARGE_OLLAMA_FIT_MEMORY_MB * 4 },
         () => "",
       ),
-    ).toBe("qwen2.5:7b");
+    ).toBe("qwen3.5:9b");
   });
 
   it("builds a background warmup command for ollama models", () => {
@@ -813,9 +813,9 @@ describe("local inference helpers", () => {
   });
 
   it("supports custom probe and warmup tuning", () => {
-    const warmup = getOllamaWarmupCommand("qwen2.5:7b", "30m");
+    const warmup = getOllamaWarmupCommand("qwen3.5:9b", "30m");
     expect(warmup[2]).toMatch(/"keep_alive":"30m"/);
-    const probe1 = getOllamaProbeCommand("qwen2.5:7b", 30, "5m");
+    const probe1 = getOllamaProbeCommand("qwen3.5:9b", 30, "5m");
     expect(probe1).toContain("--max-time");
     expect(probe1).toContain("30");
     const payload1 = probe1[probe1.length - 1];
@@ -960,7 +960,7 @@ describe("local inference helpers", () => {
     expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
   });
 
-  it("does not retry on non-Spark hosts when first probe returns empty", () => {
+  it("does not retry on any host when probe fails fast (connection refused, not a timeout)", () => {
     let callCount = 0;
     const captureEx = () => { callCount++; return { stdout: "", exitCode: 7, timedOut: false }; };
     const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);

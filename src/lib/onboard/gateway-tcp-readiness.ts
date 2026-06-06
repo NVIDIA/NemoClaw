@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Host-level TCP readiness probe for the OpenShell Docker-driver gateway.
+ * Host-level TCP readiness probe for the standalone OpenShell Docker-driver gateway.
  *
  * Plain TCP connect to the local gateway endpoint — semantic-free, just asks
  * "is anyone listening?". Used by `startDockerDriverGateway` in `onboard.ts`
@@ -21,8 +21,10 @@
  *
  * There is a peer module `gateway-http-readiness.ts` (introduced by #3312)
  * that exposes `isGatewayHttpReady` — a stronger HTTP-level probe used on
- * the K3s path. It cannot be reused on the Docker-driver path because the
- * two gateway types expose different HTTP routes for the root path:
+ * the K3s path — and `isDockerDriverGatewayHttpReady`, the package-managed
+ * Docker-driver handoff probe for the gRPC health endpoint. The root-path
+ * probe cannot be reused on the Docker-driver path because the two gateway
+ * types expose different HTTP routes for the root path:
  *
  *   - K3s gateway answers `GET /` with 200/401 via a dispatcher catch-all.
  *   - Docker-driver gateway returns 404 for `GET /`; only routes under

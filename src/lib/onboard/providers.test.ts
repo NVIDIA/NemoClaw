@@ -168,6 +168,71 @@ describe("onboard provider helpers", () => {
     expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
   });
 
+  it("omits --credential from the update args when the env value is empty", () => {
+    const commands: string[] = [];
+    const result = upsertProvider(
+      "nvidia-prod",
+      "openai",
+      "NVIDIA_API_KEY",
+      "https://integrate.api.nvidia.com/v1",
+      {},
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toMatch(/provider get/);
+    expect(commands[1]).toMatch(/^provider update nvidia-prod /);
+    // OpenShell CLI rejects `--credential KEY` when the host env is empty;
+    // dropping the flag turns the call into a no-op merge that succeeds.
+    expect(commands[1]).not.toMatch(/--credential/);
+    expect(commands[1]).toMatch(/OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+  });
+
+  it("keeps --credential on the create path even when env is empty", () => {
+    // create cannot omit credentials — OpenShell rejects empty credential
+    // maps on creation. The caller is responsible for staging a value.
+    const commands: string[] = [];
+    upsertProvider(
+      "fresh-provider",
+      "generic",
+      "FRESH_TOKEN",
+      null,
+      {},
+      (command) => {
+        commands.push(command.join(" "));
+        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatch(/^provider create --name fresh-provider /);
+    expect(commands[1]).toMatch(/--credential FRESH_TOKEN/);
+  });
+
+  it("keeps --credential on the update path when a value is staged in env", () => {
+    const commands: string[] = [];
+    upsertProvider(
+      "nvidia-prod",
+      "openai",
+      "NVIDIA_API_KEY",
+      null,
+      { NVIDIA_API_KEY: "nvapi-staged" },
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toMatch(/^provider update nvidia-prod /);
+    expect(commands[1]).toMatch(/--credential NVIDIA_API_KEY/);
+  });
+
   it("returns redacted error details when create or update fails", () => {
     const result = upsertProvider("bad-provider", "generic", "SOME_KEY", null, {}, (command) => {
       if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };

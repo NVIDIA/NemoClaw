@@ -457,14 +457,12 @@ export async function ensureLiveSandboxOrExit(
   if (lookup.state === "identity_drift") {
     console.error("  Gateway SSH identity changed after restart — clearing stale host keys...");
     const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
-    if (fs.existsSync(knownHostsPath)) {
-      try {
-        const kh = fs.readFileSync(knownHostsPath, "utf8");
-        const cleaned = pruneKnownHostsEntries(kh);
-        if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
-      } catch {
-        /* best-effort cleanup */
-      }
+    try {
+      const kh = fs.readFileSync(knownHostsPath, "utf8");
+      const cleaned = pruneKnownHostsEntries(kh);
+      if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+    } catch {
+      /* best-effort cleanup */
     }
     const retry = await getReconciledSandboxGatewayState(sandboxName);
     if (retry.state === "present") {

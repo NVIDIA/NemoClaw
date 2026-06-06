@@ -18,8 +18,7 @@ describe("vllm model registry", () => {
   });
 
   it("exposes a global DEFAULT_VLLM_MODEL for callers that need a baseline", () => {
-    // The platform-specific default is chosen by the profile (Spark/Station
-    // use Qwen, generic Linux uses Nemotron-Nano-4B); this constant only
+    // Platform-specific defaults are chosen by profiles; this constant only
     // documents the registry's first entry.
     expect(DEFAULT_VLLM_MODEL.envValue).toBe("qwen3.6-27b");
   });
@@ -37,6 +36,18 @@ describe("vllm model registry", () => {
     expect(
       selectVllmModelFromEnv({
         NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+      } as NodeJS.ProcessEnv),
+    ).toEqual(deepseek);
+  });
+
+  it("registers DeepSeek V4 Flash as a managed-vLLM override", () => {
+    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
+    expect(deepseek!.maxModelLen).toBe(1048576);
+    expect(
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
       } as NodeJS.ProcessEnv),
     ).toEqual(deepseek);
   });
@@ -100,6 +111,41 @@ describe("vllm model registry", () => {
     expect(cmd).not.toContain("--reasoning-parser qwen3");
   });
 
+  it("builds the DeepSeek V4 Flash serve command with inherited one-GPU defaults", () => {
+    const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+    const cmd = buildVllmServeCommand(deepseek!);
+    expect(cmd).toContain("vllm serve deepseek-ai/DeepSeek-V4-Flash");
+    expect(cmd).toContain("--tensor-parallel-size 1");
+    expect(cmd).toContain("--pipeline-parallel-size 1");
+    expect(cmd).toContain("--data-parallel-size 1");
+    expect(cmd).toContain("--port 8000");
+    expect(cmd).toContain("--kv-cache-dtype fp8");
+    expect(cmd).toContain("--trust-remote-code");
+    expect(cmd).toContain("--block-size 256");
+    expect(cmd).toContain("--enable-prefix-caching");
+    expect(cmd).toContain("--gpu-memory-utilization 0.92");
+    expect(cmd).toContain(
+      `--compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+    );
+    expect(cmd).toContain("--attention_config.use_fp4_indexer_cache True");
+    expect(cmd).toContain("--tokenizer-mode deepseek_v4");
+    expect(cmd).toContain("--tool-call-parser deepseek_v4");
+    expect(cmd).toContain("--enable-auto-tool-choice");
+    expect(cmd).toContain("--reasoning-parser deepseek_v4");
+    expect(cmd).toContain("--no-disable-hybrid-kv-cache-manager");
+    expect(cmd).toContain("--disable-uvicorn-access-log");
+    expect(cmd).toContain("--max-cudagraph-capture-size 128");
+    expect(cmd).toContain(
+      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+    );
+    expect(cmd).toContain("--max-model-len 1048576");
+    expect(cmd).toContain("--max-num-batched-tokens 8192");
+    expect(cmd).toContain("--max-num-seqs 16");
+    expect(cmd).toContain("--prefix-cache-retention-interval auto");
+    expect(cmd).toContain("pip install vllm[fastsafetensors]");
+    expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
+  });
+
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     expect(qwen35b).toBeDefined();
@@ -127,12 +173,12 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--enable-auto-tool-choice");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     expect(cmd).toContain("--reasoning-parser qwen3");
-    expect(cmd).toContain("--max-model-len 65536");
+    expect(cmd).toContain("--max-model-len 131072");
     expect(cmd).toContain(
       `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
     );
-    // Shared defaults are kept: 0.7 utilization and the single-node parallel
-    // flags (harmless on Spark), not a model-specific 0.85 override.
+    // Single-node parallel flags stay shared; 0.7 utilization stays
+    // model-specific, not a stale 0.85 override.
     expect(cmd).toContain("--gpu-memory-utilization 0.7");
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");

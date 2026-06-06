@@ -135,7 +135,7 @@ describe("modelFitsAvailableMemory", () => {
 
   it("returns true when a known model fits", () => {
     expect(
-      modelFitsAvailableMemory("qwen2.5:7b", {
+      modelFitsAvailableMemory("qwen3.5:9b", {
         type: "nvidia",
         totalMemoryMB: 131_072,
         availableMemoryMB: 12_000,
@@ -176,5 +176,67 @@ describe("OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES", () => {
     expect(
       fittableOllamaModelTags({ type: "apple", totalMemoryMB: 131_072, availableMemoryMB: 12_000 }),
     ).toEqual([SMALLEST_OLLAMA_MODEL_TAG]);
+  });
+});
+
+describe("L4-class dGPU bootstrap fit (23 GB VRAM)", () => {
+  // NVIDIA L4 reports ~23034 MiB. The 30B-class entry's `requiredMemoryMB`
+  // budget must leave enough headroom for KV cache + activations that L4
+  // is excluded from the fittable list — otherwise the wizard offers a
+  // model the runner spills GPU→CPU on, with cold-load timing past the
+  // probe window and dead-looping the model selection menu.
+  const l4Gpu = { type: "nvidia", totalMemoryMB: 23_034, availableMemoryMB: 21_800 };
+
+  it("excludes the 30B-class compute-intensive entry on L4", () => {
+    const tags = fittableOllamaModelTags(l4Gpu);
+    expect(tags).toContain(SMALLEST_OLLAMA_MODEL_TAG);
+    expect(tags).not.toContain("nemotron-3-nano:30b");
+    expect(tags).not.toContain("qwen3.6:35b");
+  });
+
+  it("returns the smallest tag as the largest-fittable default on L4", () => {
+    expect(largestFittableOllamaModelTag(l4Gpu)).toBe(SMALLEST_OLLAMA_MODEL_TAG);
+  });
+
+  it("rejects modelFitsAvailableMemory for the 30B-class entry on L4", () => {
+    expect(modelFitsAvailableMemory("nemotron-3-nano:30b", l4Gpu)).toBe(false);
+    expect(modelFitsAvailableMemory("qwen3.5:9b", l4Gpu)).toBe(true);
+  });
+});
+
+describe("compute-constrained iGPU filter", () => {
+  // Jetson-class integrated GPUs advertise unified memory that easily covers
+  // a 30B-class model's `requiredMemoryMB`, but token-generation throughput
+  // is too low to clear agent-loop timeouts. `computeConstrained` excludes
+  // `computeIntensive` registry entries regardless of available memory.
+  const jetsonGpu = {
+    type: "nvidia",
+    totalMemoryMB: 65_536,
+    availableMemoryMB: 60_000,
+    computeConstrained: true,
+  };
+
+  it("drops compute-intensive entries even when memory ostensibly fits", () => {
+    const tags = fittableOllamaModelTags(jetsonGpu);
+    expect(tags).toEqual([SMALLEST_OLLAMA_MODEL_TAG]);
+  });
+
+  it("modelFitsAvailableMemory returns false for compute-intensive tags on iGPU", () => {
+    expect(modelFitsAvailableMemory("nemotron-3-nano:30b", jetsonGpu)).toBe(false);
+    expect(modelFitsAvailableMemory("qwen3.6:35b", jetsonGpu)).toBe(false);
+  });
+
+  it("does not gate the smallest entry on iGPU", () => {
+    expect(modelFitsAvailableMemory("qwen3.5:9b", jetsonGpu)).toBe(true);
+  });
+
+  it("dGPU hosts with the same memory are not gated", () => {
+    const dGpu = {
+      type: "nvidia",
+      totalMemoryMB: 65_536,
+      availableMemoryMB: 60_000,
+    };
+    expect(modelFitsAvailableMemory("nemotron-3-nano:30b", dGpu)).toBe(true);
+    expect(fittableOllamaModelTags(dGpu)).toContain("nemotron-3-nano:30b");
   });
 });

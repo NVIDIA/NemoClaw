@@ -46,53 +46,6 @@ describe("onboard messaging config", () => {
     });
   });
 
-  it("uses Telegram allowlist aliases when the canonical env key is absent", () => {
-    const warn = vi.fn();
-
-    expect(
-      collectMessagingBuildConfig({
-        channels: [{ name: "telegram", userIdEnvKey: "TELEGRAM_ALLOWED_IDS" }],
-        activeChannelNames: new Set(["telegram"]),
-        enabledTokenEnvKeys: new Set(),
-        env: {
-          TELEGRAM_AUTHORIZED_CHAT_IDS: "8388960805, 8388960806",
-        },
-        discordSnowflakeRe: DISCORD_SNOWFLAKE_RE,
-        warn,
-      }),
-    ).toEqual({
-      messagingAllowedIds: {
-        telegram: ["8388960805", "8388960806"],
-      },
-      discordGuilds: {},
-      slackConfig: {},
-    });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("TELEGRAM_AUTHORIZED_CHAT_IDS is treated as TELEGRAM_ALLOWED_IDS"),
-    );
-  });
-
-  it("prefers TELEGRAM_ALLOWED_IDS over Telegram aliases", () => {
-    expect(
-      collectMessagingBuildConfig({
-        channels: [{ name: "telegram", userIdEnvKey: "TELEGRAM_ALLOWED_IDS" }],
-        activeChannelNames: new Set(["telegram"]),
-        enabledTokenEnvKeys: new Set(),
-        env: {
-          TELEGRAM_ALLOWED_IDS: "canonical",
-          TELEGRAM_CHAT_ID: "alias",
-        },
-        discordSnowflakeRe: DISCORD_SNOWFLAKE_RE,
-      }),
-    ).toEqual({
-      messagingAllowedIds: {
-        telegram: ["canonical"],
-      },
-      discordGuilds: {},
-      slackConfig: {},
-    });
-  });
-
   it("collects Discord guild config and warns on malformed IDs", () => {
     const warn = vi.fn();
 

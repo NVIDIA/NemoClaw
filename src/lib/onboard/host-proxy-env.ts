@@ -29,6 +29,21 @@ export function appendHostProxyEnvArgs(
     }
   }
 
+  // #2598: NEMOCLAW_MINIMAL_BOOTSTRAP is a host-side opt-in flag (set to
+  // "1") that the sandbox's nemoclaw-start.sh:seed_default_workspace_templates
+  // reads to skip default workspace template seeding for new/pristine
+  // workspaces (does NOT delete files already present), knocking ~3k tokens
+  // off OpenClaw's per-turn bootstrap context injection. Partial #2598
+  // mitigation: addresses the project-context contribution from NemoClaw's
+  // seeded templates; the remaining OpenClaw framework/non-project context
+  // is tracked upstream. Bundled here with the proxy propagation because
+  // both are env vars forwarded from the host into `openshell sandbox
+  // create -- env ... nemoclaw-start`, and the top-level onboard.ts
+  // entrypoint is line-budget-constrained per codebase-growth-guardrails.
+  if (env.NEMOCLAW_MINIMAL_BOOTSTRAP === "1") {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_MINIMAL_BOOTSTRAP", "1"));
+  }
+
   const hasProxy =
     proxyEnv.HTTP_PROXY || proxyEnv.HTTPS_PROXY || proxyEnv.http_proxy || proxyEnv.https_proxy;
   if (!hasProxy) return;

@@ -43,6 +43,11 @@ describe("uninstall run plan", () => {
         env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         fs: {
           lstatSync: (() => ({ isFile: () => false, isSymbolicLink: () => true })) as never,
+          openSync: (() => {
+            const error = new Error("symlink") as NodeJS.ErrnoException;
+            error.code = "ELOOP";
+            throw error;
+          }) as never,
         },
       },
     );

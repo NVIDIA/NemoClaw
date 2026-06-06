@@ -6,14 +6,6 @@ import { listChannels } from "./sandbox/channels";
 export type MessagingChannelConfig = Record<string, string>;
 
 const channels = listChannels();
-const CONFIG_ALIASES: Record<string, readonly string[]> = {
-  TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
-};
-const aliasToCanonicalKey = new Map<string, string>(
-  Object.entries(CONFIG_ALIASES).flatMap(([canonical, aliases]) =>
-    aliases.map((alias) => [alias, canonical] as const),
-  ),
-);
 const requireMentionKeys = new Set(
   channels
     .map((channel) => channel.requireMentionEnvKey)
@@ -48,14 +40,13 @@ function normalizeValue(value: unknown): string | null {
 }
 
 export function getCanonicalMessagingChannelConfigKey(key: string): string | null {
-  if (knownConfigKeys.has(key)) return key;
-  return aliasToCanonicalKey.get(key) ?? null;
+  return knownConfigKeys.has(key) ? key : null;
 }
 
 export function getMessagingChannelConfigEnvKeys(key: string): readonly string[] {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return [];
-  return [canonical, ...(CONFIG_ALIASES[canonical] ?? [])];
+  return [canonical];
 }
 
 export function normalizeMessagingChannelConfigValue(
