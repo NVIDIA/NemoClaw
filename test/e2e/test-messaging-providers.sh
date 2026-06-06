@@ -487,9 +487,11 @@ export WHATSAPP_SESSION_SECRET="$WHATSAPP_SESSION_SECRET_DECOY"
 #      before any provider row is built; the raw value must never reach
 #      the sandbox provider gateway.
 EXTRAS_TELEGRAM_AGENT_A_TOKEN="test-fake-telegram-token-agent-a-e2e"
+EXTRAS_TELEGRAM_AGENT_B_TOKEN="test-fake-telegram-token-agent-b-e2e"
 EXTRAS_GITHUB_DECOY="test-fake-host-secret-that-must-not-leak"
-export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN"
+export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_B TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN"
 export TELEGRAM_BOT_TOKEN_AGENT_A="$EXTRAS_TELEGRAM_AGENT_A_TOKEN"
+export TELEGRAM_BOT_TOKEN_AGENT_B="$EXTRAS_TELEGRAM_AGENT_B_TOKEN"
 unset TELEGRAM_BOT_TOKEN_AGENT_MISSING
 export GITHUB_TOKEN="$EXTRAS_GITHUB_DECOY"
 
@@ -1318,7 +1320,10 @@ fi
 #   - the NEMOCLAW_EXTRA_PLACEHOLDER_KEYS env arg itself reaches the
 #     container so the in-container revision-collapse refresh sees the
 #     same list the host-side parser produced
-# Ref: NVIDIA/NemoClaw#4785
+#   - two independent extension keys resolve to two distinct placeholders
+#     (the per-Hermes-profile property the feature exists to enable; the
+#     Hermes-side `.env` substitution is operator-driven and therefore not
+#     observable from an OpenClaw E2E)
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2c: Extra placeholder keys — per-profile credential injection"
 
@@ -1347,18 +1352,34 @@ else
   pass "X3: GITHUB_TOKEN refused by the parser; no provider row registered"
 fi
 
-# X4: Sandbox env exposes the canonical resolve placeholder for the
-# extension key, never the raw operator-supplied token value.
+# X4a: Sandbox env exposes the canonical resolve placeholder for the
+# first extension key, never the raw operator-supplied token value.
 sandbox_extra_env=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_A" 2>/dev/null || true)
 if [ -z "$sandbox_extra_env" ]; then
-  fail "X4: TELEGRAM_BOT_TOKEN_AGENT_A is unset inside the sandbox; placeholder injection failed"
+  fail "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is unset inside the sandbox; placeholder injection failed"
 elif echo "$sandbox_extra_env" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
-  fail "X4: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_A env"
+  fail "X4a: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_A env"
 elif echo "$sandbox_extra_env" | grep -q "^openshell:resolve:env:"; then
-  pass "X4: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is the canonical resolve placeholder"
+  pass "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is the canonical resolve placeholder"
   info "  placeholder: ${sandbox_extra_env:0:40}..."
 else
-  fail "X4: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is neither the placeholder nor empty: ${sandbox_extra_env:0:80}"
+  fail "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is neither the placeholder nor empty: ${sandbox_extra_env:0:80}"
+fi
+
+# X4b: A second extension key resolves to its own distinct placeholder, so
+# two Hermes profiles consuming `${TELEGRAM_BOT_TOKEN_AGENT_A}` and
+# `${TELEGRAM_BOT_TOKEN_AGENT_B}` get isolated credentials at L7 egress.
+sandbox_extra_env_b=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_B" 2>/dev/null || true)
+if [ -z "$sandbox_extra_env_b" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is unset inside the sandbox; placeholder injection failed for the second extension key"
+elif echo "$sandbox_extra_env_b" | grep -qF "$EXTRAS_TELEGRAM_AGENT_B_TOKEN"; then
+  fail "X4b: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_B env"
+elif [ "$sandbox_extra_env_b" = "$sandbox_extra_env" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_A and TELEGRAM_BOT_TOKEN_AGENT_B resolve to the same placeholder; per-key isolation broken"
+elif echo "$sandbox_extra_env_b" | grep -q "^openshell:resolve:env:"; then
+  pass "X4b: Two extension keys resolve to distinct canonical placeholders"
+else
+  fail "X4b: Sandbox TELEGRAM_BOT_TOKEN_AGENT_B is neither the placeholder nor empty: ${sandbox_extra_env_b:0:80}"
 fi
 
 # X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach the

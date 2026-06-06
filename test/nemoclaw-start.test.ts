@@ -3414,15 +3414,34 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).not.toContain("ghp-host-secret-would-leak");
     expect(run.result.stderr).not.toContain("aws-host-secret-would-leak");
     expect(run.result.stderr).not.toContain("npm-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("ghp-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("aws-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("npm-host-secret-would-leak");
     expect(JSON.stringify(run.config)).not.toContain("ghp-host-secret-would-leak");
     expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
   });
 
   it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {
-    const tokens = Array.from({ length: 35 }, (_, i) => `TELEGRAM_BOT_TOKEN_E2E_${i}`);
+    // 33 fillers in the list, all extending TELEGRAM_BOT_TOKEN_, all valid
+    // canonical extensions. The cap should accept the first 32 (indices
+    // 0..31) and reject the 33rd entry (index 32, named ..._FILLER_32),
+    // which is also the beyondCap placeholder we plant in openclaw.json.
+    const tokens = Array.from({ length: 33 }, (_, i) => `TELEGRAM_BOT_TOKEN_FILLER_${i}`);
+    const beyondCap = tokens[32];
+    const beyondCapScoped = `openshell:resolve:env:v42_${beyondCap}`;
     const env: Record<string, string> = {
-      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
       NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: tokens.join(" "),
+      // Stage a revision-scoped placeholder ONLY for the beyondCap entry.
+      // If the cap is a no-op, the python heredoc would iterate beyondCap
+      // and collapse the canonical placeholder in openclaw.json to the
+      // v42_-scoped form. With the cap working, beyondCap stays out of
+      // the keys list, so the rewrite never runs.
+      [beyondCap]: beyondCapScoped,
+      // Deliberately leave TELEGRAM_BOT_TOKEN / DISCORD_BOT_TOKEN / etc.
+      // unset so no canonical replacement is added; that sidesteps the
+      // python heredoc's substring-match path which would otherwise let a
+      // shorter canonical replacement bleed into beyondCap regardless of
+      // the cap state.
     };
     const run = runRefresh(
       {
@@ -3431,6 +3450,9 @@ describe("provider placeholder refresh (#4251)", () => {
             accounts: {
               default: {
                 botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+              beyondCap: {
+                botToken: `openshell:resolve:env:${beyondCap}`,
               },
             },
           },
@@ -3443,6 +3465,15 @@ describe("provider placeholder refresh (#4251)", () => {
     expect(run.result.stderr).toContain(
       "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: capped at 32 entries; ignoring remainder",
     );
+    // The beyondCap key must not be processed by the python heredoc, so the
+    // beyondCap canonical placeholder must stay unchanged on disk.
+    expect(run.config.channels.telegram.accounts.beyondCap.botToken).toBe(
+      `openshell:resolve:env:${beyondCap}`,
+    );
+    expect(run.result.stderr).not.toContain(
+      `Refreshed provider placeholders from OpenShell runtime env: ${beyondCap}`,
+    );
+    expect(run.result.stdout).not.toContain(beyondCapScoped);
   });
 });
 
