@@ -266,7 +266,7 @@ function validateCurlProbeArgs(
       continue;
     }
     if (!arg.startsWith("-")) {
-      throw new Error(`curl probe received unexpected positional argument before URL: ${arg}`);
+      throw new Error("curl probe received unexpected positional argument before URL");
     }
     throw new Error(`curl probe option is not allowed: ${option}`);
   }
