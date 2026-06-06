@@ -39,6 +39,7 @@ jobs:
               - '!docs/**'
 
   checks:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -46,7 +47,27 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run basic checks
+        if: needs.changes.outputs.code == 'true'
         uses: ./.github/actions/basic-checks
+
+      - name: Setup Node.js for docs-only checks
+        if: needs.changes.outputs.code != 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install docs-only check dependencies
+        if: needs.changes.outputs.code != 'true'
+        run: npm install --ignore-scripts
+
+      - name: Fetch base commit for docs-only checks
+        if: needs.changes.outputs.code != 'true'
+        run: git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+
+      - name: Run docs-only hook checks
+        if: needs.changes.outputs.code != 'true'
+        run: npx prek run --from-ref "${{ github.event.pull_request.base.sha }}" --to-ref HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
