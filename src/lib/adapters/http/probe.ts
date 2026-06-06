@@ -135,6 +135,10 @@ const CURL_OPTIONS_THAT_READ_FILES = new Set([
   "--netrc-file",
   "--upload-file",
   "-T",
+  "--cert",
+  "--key",
+  "--proxy-cert",
+  "--proxy-key",
 ]);
 const CURL_OPTIONS_THAT_READ_IMPLICIT_FILES = new Set(["--netrc", "--netrc-optional"]);
 const CURL_DATA_OPTIONS = new Set([
@@ -148,7 +152,8 @@ const CURL_DATA_OPTIONS = new Set([
   "-d",
   "-F",
 ]);
-const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F"]);
+const CURL_HEADER_OPTIONS = new Set(["--header", "--proxy-header", "-H"]);
+const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H"]);
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -186,6 +191,10 @@ function curlValueReadsFromFile(option: string, value: string): boolean {
   return false;
 }
 
+function curlHeaderValueReadsFromFile(value: string): boolean {
+  return value.startsWith("@") && value !== "@-";
+}
+
 function normalizeCurlConfigPath(value: string, opts: CurlProbeOptions): string {
   if (value.trim() === "") throw new Error("curl probe config path is required");
   if (value.includes("\0")) throw new Error("curl probe config path must not contain NUL bytes");
@@ -220,6 +229,14 @@ function validateCurlProbeArgs(
       const value = inlineValue ?? args[index + 1] ?? "";
       if (!isTrustedCurlConfigPath(value, opts)) {
         throw new Error(`curl probe config file is not trusted: ${option}`);
+      }
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
+    if (CURL_HEADER_OPTIONS.has(option)) {
+      const value = inlineValue ?? args[index + 1] ?? "";
+      if (curlHeaderValueReadsFromFile(value)) {
+        throw new Error(`curl probe option must not read headers from a file: ${option}`);
       }
       if (inlineValue === undefined) index += 1;
       continue;

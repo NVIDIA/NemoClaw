@@ -246,6 +246,10 @@ describe("http-probe helpers", () => {
     ["--data-urlencode", ["--data-urlencode", "payload@/etc/passwd"]],
     ["-K", ["-K/etc/passwd"]],
     ["-b", ["-b/etc/passwd"]],
+    ["--cert", ["--cert", "/tmp/client.pem"]],
+    ["--key", ["--key=/tmp/client.key"]],
+    ["--proxy-cert", ["--proxy-cert", "/tmp/proxy.pem"]],
+    ["--proxy-key", ["--proxy-key=/tmp/proxy.key"]],
   ])("rejects file-reading curl option %s before spawning", (_label, args) => {
     let spawned = false;
     const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
@@ -257,6 +261,45 @@ describe("http-probe helpers", () => {
 
     expect(spawned).toBe(false);
     expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["-H", ["-H", "@/etc/passwd"]],
+    ["-H inline", ["-H@/etc/passwd"]],
+    ["--header", ["--header=@/etc/passwd"]],
+  ])("rejects file-backed curl header option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must not read headers from a file");
+  });
+
+  it("applies file-read validation to streaming probe wrappers", () => {
+    let spawned = false;
+    const spawnSyncImpl = () => {
+      spawned = true;
+      throw new Error("should not spawn");
+    };
+
+    const chat = runChatCompletionsStreamingProbe(
+      ["-sS", "--header", "@/etc/passwd", "https://example.test/v1/chat/completions"],
+      { spawnSyncImpl },
+    );
+    const responses = runStreamingEventProbe(
+      ["-sS", "--cert", "/tmp/client.pem", "https://example.test/v1/responses"],
+      { spawnSyncImpl },
+    );
+
+    expect(spawned).toBe(false);
+    expect(chat.ok).toBe(false);
+    expect(responses.ok).toBe(false);
   });
 
   it("allows explicit trusted curl config files", () => {
