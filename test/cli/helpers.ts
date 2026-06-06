@@ -106,7 +106,7 @@ export function runWithEnv(
   timeout: number = execTimeout(),
 ): CliRunResult {
   try {
-    const out = execSync(`node "${CLI}" ${args}`, {
+    const out = execSync(`${JSON.stringify(process.execPath)} "${CLI}" ${args}`, {
       encoding: "utf-8",
       stdio: "pipe",
       timeout,
@@ -146,6 +146,8 @@ export type SandboxEntry = {
   agentVersion?: string | null;
 };
 
+export type SandboxOverrides = Partial<SandboxEntry> & Record<string, unknown>;
+
 export function writeRecordingCommand(
   binDir: string,
   command: string,
@@ -165,8 +167,8 @@ export function writeRecordingCommand(
 
 export function writeSandboxRegistry(
   home: string,
-  sandboxNameOrOverrides: string | Partial<SandboxEntry> = "alpha",
-  sandboxOverridesArg: Partial<SandboxEntry> = {},
+  sandboxNameOrOverrides: string | SandboxOverrides = "alpha",
+  sandboxOverridesArg: SandboxOverrides = {},
 ): void {
   const sandboxName =
     typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";

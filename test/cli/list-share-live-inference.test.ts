@@ -8,6 +8,47 @@ import path from "node:path";
 
 import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
+function createShareTestEnv(prefix: string): Record<string, string> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home);
+
+  const writeStub = (command: string, lines: string[]): void => {
+    fs.writeFileSync(path.join(localBin, command), ["#!/usr/bin/env bash", ...lines].join("\n"), {
+      mode: 0o755,
+    });
+  };
+
+  writeStub("mountpoint", ["exit 1"]);
+  writeStub("mount", ["exit 0"]);
+  writeStub("sshfs", ["echo 'stub sshfs failed' >&2", "exit 1"]);
+  writeStub("openshell", [
+    'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+    "  echo 'Sandbox: alpha'",
+    "  echo 'Phase: Ready'",
+    "  exit 0",
+    "fi",
+    'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then',
+    "  exit 0",
+    "fi",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+    "  exit 0",
+    "fi",
+    'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
+    "  echo 'Host openshell-alpha'",
+    "  echo '  HostName 127.0.0.1'",
+    "  exit 0",
+    "fi",
+    "exit 0",
+  ]);
+
+  return {
+    HOME: home,
+    PATH: `${localBin}:${process.env.PATH || ""}`,
+  };
+}
+
 describe("list shows live gateway inference", () => {
   it("shows live gateway inference for the default sandbox (#2369)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
@@ -370,10 +411,9 @@ describe("list shows live gateway inference", () => {
   );
 
   it("share with no subcommand prints usage help", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-"));
-    writeSandboxRegistry(home);
+    const env = createShareTestEnv("nemoclaw-cli-share-");
 
-    const r = runWithEnv("alpha share", { HOME: home });
+    const r = runWithEnv("alpha share", env);
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
@@ -383,10 +423,9 @@ describe("list shows live gateway inference", () => {
   });
 
   it("share help uses native oclif usage", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-help-"));
-    writeSandboxRegistry(home);
+    const env = createShareTestEnv("nemoclaw-cli-share-help-");
 
-    const parent = runWithEnv("alpha share --help", { HOME: home });
+    const parent = runWithEnv("alpha share --help", env);
     expect(parent.code).toBe(0);
     expect(parent.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
 
@@ -395,17 +434,16 @@ describe("list shows live gateway inference", () => {
       ["unmount", "share unmount <name> [local-mount-point]"],
       ["status", "share status <name> [local-mount-point]"],
     ]) {
-      const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
+      const result = runWithEnv(`alpha share ${subcommand} --help`, env);
       expect(result.code).toBe(0);
       expect(result.out).toContain(`$ nemoclaw sandbox ${usage}`);
     }
   });
 
   it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
-    writeSandboxRegistry(home);
+    const env = createShareTestEnv("nemoclaw-cli-share-action-");
 
-    const r = runWithEnv("alpha share mount", { HOME: home });
+    const r = runWithEnv("alpha share mount", env);
 
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
     expect(r.code).not.toBe(0);
@@ -413,10 +451,9 @@ describe("list shows live gateway inference", () => {
   });
 
   it("unknown share subcommands fail before action dispatch", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-unknown-"));
-    writeSandboxRegistry(home);
+    const env = createShareTestEnv("nemoclaw-cli-share-unknown-");
 
-    const r = runWithEnv("alpha share bogus 2>&1", { HOME: home });
+    const r = runWithEnv("alpha share bogus 2>&1", env);
 
     expect(r.code).not.toBe(0);
     expect(r.out).toMatch(/Unexpected argument:|Command .*not found/);

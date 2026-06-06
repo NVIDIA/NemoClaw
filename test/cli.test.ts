@@ -35,7 +35,6 @@ import {
   writeRecordingCommand,
   writeSandboxRegistry,
 } from "./cli/helpers";
-import type { SandboxEntry } from "./cli/helpers";
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
@@ -757,7 +756,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -817,7 +816,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -871,7 +870,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -965,7 +964,7 @@ describe("CLI dispatch", () => {
         model: "gpt-4o-mini",
         openshellDriver: "docker",
         dashboardPort,
-      } as unknown as Partial<SandboxEntry>);
+      });
 
       fs.writeFileSync(
         path.join(localBin, "docker"),
@@ -1052,7 +1051,7 @@ describe("CLI dispatch", () => {
       sandboxGpuDevice: "0",
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "docker"),
       [
@@ -1135,7 +1134,7 @@ describe("CLI dispatch", () => {
     writeSandboxRegistry(home, "alpha", {
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -1397,7 +1396,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1451,7 +1450,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1531,7 +1530,7 @@ describe("CLI dispatch", () => {
         model: "gpt-4o-mini",
         openshellDriver: "docker",
         dashboardPort,
-      } as unknown as Partial<SandboxEntry>);
+      });
 
       fs.writeFileSync(
         path.join(localBin, "docker"),
@@ -1599,7 +1598,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
