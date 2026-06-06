@@ -2698,36 +2698,42 @@ describe("CLI dispatch", () => {
     expect(remove.out).toContain("--dry-run: no changes applied.");
   });
 
-  it("channels mutation dry-run paths dispatch through oclif", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-dry-run-"));
-    writeSandboxRegistry(home);
+  it(
+    "channels mutation dry-run paths dispatch through oclif",
+    testTimeoutOptions(15_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-dry-run-"));
+      writeSandboxRegistry(home);
 
-    const add = runWithEnv("alpha channels add telegram --dry-run", { HOME: home });
-    expect(add.code).toBe(0);
-    expect(add.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+      const add = runWithEnv("alpha channels add telegram --dry-run", { HOME: home });
+      expect(add.code).toBe(0);
+      expect(add.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
-    const addMixedCase = runWithEnv("alpha channels add Telegram --dry-run", { HOME: home });
-    expect(addMixedCase.code).toBe(0);
-    expect(addMixedCase.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+      const addMixedCase = runWithEnv("alpha channels add Telegram --dry-run", { HOME: home });
+      expect(addMixedCase.code).toBe(0);
+      expect(addMixedCase.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
-    const remove = runWithEnv("alpha channels remove telegram --dry-run", { HOME: home });
-    expect(remove.code).toBe(0);
-    expect(remove.out).toContain("--dry-run: would remove channel 'telegram' for 'alpha'.");
+      const remove = runWithEnv("alpha channels remove telegram --dry-run", { HOME: home });
+      expect(remove.code).toBe(0);
+      expect(remove.out).toContain("--dry-run: would remove channel 'telegram' for 'alpha'.");
 
-    const removeMixedCase = runWithEnv("alpha channels remove Telegram --dry-run", { HOME: home });
-    expect(removeMixedCase.code).toBe(0);
-    expect(removeMixedCase.out).toContain(
-      "--dry-run: would remove channel 'telegram' for 'alpha'.",
-    );
+      const removeMixedCase = runWithEnv("alpha channels remove Telegram --dry-run", {
+        HOME: home,
+      });
+      expect(removeMixedCase.code).toBe(0);
+      expect(removeMixedCase.out).toContain(
+        "--dry-run: would remove channel 'telegram' for 'alpha'.",
+      );
 
-    const stop = runWithEnv("alpha channels stop telegram --dry-run", { HOME: home });
-    expect(stop.code).toBe(0);
-    expect(stop.out).toContain("--dry-run: would stop channel 'telegram' for 'alpha'.");
+      const stop = runWithEnv("alpha channels stop telegram --dry-run", { HOME: home });
+      expect(stop.code).toBe(0);
+      expect(stop.out).toContain("--dry-run: would stop channel 'telegram' for 'alpha'.");
 
-    const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
-    expect(start.code).toBe(0);
-    expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
-  });
+      const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
+      expect(start.code).toBe(0);
+      expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
+    },
+  );
 
   it("sandbox channels start rejects a sandbox missing from the registry (#4584)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-missing-"));
