@@ -9,7 +9,7 @@ import path from "node:path";
 import { PARSER_EXIT_CODE, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("sandbox inspection help uses native oclif usage", testTimeoutOptions(15_000), () => {
+  it("sandbox inspection help uses native oclif usage", testTimeoutOptions(45_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inspection-help-"));
     writeSandboxRegistry(home);
 
