@@ -23,9 +23,28 @@ export interface ExtraPlaceholderKeysResult {
   readonly warnings: readonly string[];
 }
 
+export function canonicalPlaceholderKeys(): Set<string> {
+  const channels = listChannels();
+  return new Set<string>(
+    channels.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
+  );
+}
+
+function findExtendedCanonicalPrefix(
+  candidate: string,
+  canonicalKeys: ReadonlySet<string>,
+): string | null {
+  for (const canon of canonicalKeys) {
+    if (candidate.length > canon.length + 1 && candidate.startsWith(`${canon}_`)) {
+      return canon;
+    }
+  }
+  return null;
+}
+
 export function parseExtraPlaceholderKeys(
   raw: string | undefined | null,
-  reservedKeys: ReadonlySet<string> = new Set(),
+  canonicalKeys: ReadonlySet<string> = new Set(),
 ): ExtraPlaceholderKeysResult {
   if (!raw || !raw.trim()) {
     return { keys: [], warnings: [] };
@@ -41,9 +60,15 @@ export function parseExtraPlaceholderKeys(
       );
       continue;
     }
-    if (reservedKeys.has(candidate)) {
+    if (canonicalKeys.has(candidate)) {
       warnings.push(
         `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — collides with a canonical channel envKey`,
+      );
+      continue;
+    }
+    if (!findExtendedCanonicalPrefix(candidate, canonicalKeys)) {
+      warnings.push(
+        `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${candidate}" — must extend a canonical channel envKey (e.g. TELEGRAM_BOT_TOKEN_AGENT_A); arbitrary host secrets such as GITHUB_TOKEN are refused so they cannot leak into the sandbox provider gateway`,
       );
       continue;
     }
@@ -64,17 +89,6 @@ export function extraPlaceholderProviderSlug(envKey: string): string {
   return envKey.toLowerCase().replace(/_/g, "-");
 }
 
-export function reservedPlaceholderKeysFromChannels(): Set<string> {
-  const channels = listChannels();
-  const reserved = new Set<string>(
-    channels.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
-  );
-  // Reserve the control env itself so an operator who accidentally lists it
-  // does not register a "provider" whose token is the comma-joined key list.
-  reserved.add(EXTRA_PLACEHOLDER_KEYS_ENV);
-  return reserved;
-}
-
 export function registerExtraPlaceholderProviders(
   sandboxName: string,
   messagingTokenDefs: MessagingTokenDefShape[],
@@ -82,7 +96,7 @@ export function registerExtraPlaceholderProviders(
 ): string[] {
   const parsed = parseExtraPlaceholderKeys(
     process.env[EXTRA_PLACEHOLDER_KEYS_ENV],
-    reservedPlaceholderKeysFromChannels(),
+    canonicalPlaceholderKeys(),
   );
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
