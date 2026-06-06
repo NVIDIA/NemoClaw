@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runWithEnv, testTimeoutOptions } from "./cli/helpers";
+import { runWithEnv, testTimeoutOptions } from "./helpers";
 
 describe("CLI dispatch", () => {
   it("preserves the gateway runtime by default when the last sandbox is destroyed (#2166)", () => {
