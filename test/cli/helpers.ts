@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -79,6 +79,57 @@ export function readCliErrorOutput(error: CliErrorShape | string | null | undefi
   };
 }
 
+function splitCliArgs(args: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  let tokenStarted = false;
+
+  for (const char of args.trim()) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      tokenStarted = true;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      tokenStarted = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      tokenStarted = true;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      tokenStarted = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (tokenStarted) {
+        tokens.push(current);
+        current = "";
+        tokenStarted = false;
+      }
+      continue;
+    }
+    current += char;
+    tokenStarted = true;
+  }
+
+  if (escaped) current += "\\";
+  if (quote) throw new Error(`Unterminated quote in test CLI args: ${args}`);
+  if (tokenStarted) tokens.push(current);
+  return tokens;
+}
+
 export function normalizeChildExit(code: number | null, signal: NodeJS.Signals | null): number | null {
   if (code !== null) return code;
   if (signal === "SIGTERM") return 143;
@@ -105,30 +156,29 @@ export function runWithEnv(
   env: Record<string, string | undefined> = {},
   timeout: number = execTimeout(),
 ): CliRunResult {
-  try {
-    const out = execSync(`${JSON.stringify(process.execPath)} "${CLI}" ${args}`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-      timeout,
-      env: {
-        ...process.env,
-        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
-        NEMOCLAW_HEALTH_POLL_COUNT: "1",
-        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-        ...env,
-      },
-    });
-    return { code: 0, out };
-  } catch (err) {
-    if (isCliErrorCandidate(err)) {
-      return readCliErrorOutput({
-        status: typeof err.status === "number" ? err.status : undefined,
-        stdout: readBufferOrStringProperty(err, "stdout"),
-        stderr: readBufferOrStringProperty(err, "stderr"),
-      });
-    }
-    return readCliErrorOutput(String(err));
+  const parsedArgs = splitCliArgs(args);
+  const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
+  const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
+  const result = spawnSync(process.execPath, [CLI, ...cliArgs], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+    env: {
+      ...process.env,
+      HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      ...env,
+    },
+  });
+  const stdout = result.stdout || "";
+  const stderr = result.stderr || "";
+  const errorOutput = result.error ? String(result.error) : "";
+  const code = typeof result.status === "number" ? result.status : 1;
+  if (code === 0) {
+    return { code, out: mergeStderrOnSuccess ? `${stdout}${stderr}` : stdout };
   }
+  return { code, out: `${stdout}${stderr}${errorOutput}` };
 }
 
 export function readRecordedArgs(markerFile: string): string[] {
