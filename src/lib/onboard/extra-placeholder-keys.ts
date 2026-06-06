@@ -66,9 +66,13 @@ export function extraPlaceholderProviderSlug(envKey: string): string {
 
 export function reservedPlaceholderKeysFromChannels(): Set<string> {
   const channels = listChannels();
-  return new Set<string>(
+  const reserved = new Set<string>(
     channels.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
   );
+  // Reserve the control env itself so an operator who accidentally lists it
+  // does not register a "provider" whose token is the comma-joined key list.
+  reserved.add(EXTRA_PLACEHOLDER_KEYS_ENV);
+  return reserved;
 }
 
 export function registerExtraPlaceholderProviders(

@@ -45,6 +45,23 @@ describe("parseExtraPlaceholderKeys", () => {
     );
   });
 
+  it("rejects the control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS when supplied as an entry", () => {
+    // An operator who lists the control env itself must not register a generic
+    // provider whose token would resolve to the raw key-list string. The
+    // canonical reserved set produced by reservedPlaceholderKeysFromChannels()
+    // already adds this name; the parser-level rejection here makes the
+    // contract explicit and the warning observable.
+    const reserved = new Set<string>([EXTRA_PLACEHOLDER_KEYS_ENV]);
+    const result = parseExtraPlaceholderKeys(
+      `${EXTRA_PLACEHOLDER_KEYS_ENV} VALID_EXTRA`,
+      reserved,
+    );
+    expect(result.keys).toEqual(["VALID_EXTRA"]);
+    expect(result.warnings).toContain(
+      `${EXTRA_PLACEHOLDER_KEYS_ENV}: ignoring "${EXTRA_PLACEHOLDER_KEYS_ENV}" — collides with a canonical channel envKey`,
+    );
+  });
+
   it("rejects tokens that collide with the reserved canonical channel envKeys", () => {
     const reserved = new Set([
       "TELEGRAM_BOT_TOKEN",
