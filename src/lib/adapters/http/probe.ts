@@ -153,7 +153,10 @@ const CURL_DATA_OPTIONS = new Set([
   "-F",
 ]);
 const CURL_HEADER_OPTIONS = new Set(["--header", "--proxy-header", "-H"]);
-const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H"]);
+const CURL_SAFE_FLAG_OPTIONS = new Set(["-s", "-S", "-sS", "-sf", "--compressed", "--get"]);
+const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
+const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
+const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -218,6 +221,9 @@ function validateCurlProbeArgs(
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const { option, inlineValue } = splitCurlOptionArg(arg);
+    if (CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS.has(option)) {
+      throw new Error(`curl probe option is not allowed because it creates multiple transfers: ${option}`);
+    }
     if (CURL_OPTIONS_THAT_READ_IMPLICIT_FILES.has(option)) {
       throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
     }
@@ -250,7 +256,19 @@ function validateCurlProbeArgs(
         throw new Error(`curl probe option must not read request data from a file: ${option}`);
       }
       if (inlineValue === undefined) index += 1;
+      continue;
     }
+    if (CURL_SAFE_VALUE_OPTIONS.has(option)) {
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
+    if (CURL_SAFE_FLAG_OPTIONS.has(option)) {
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      throw new Error(`curl probe received unexpected positional argument before URL: ${arg}`);
+    }
+    throw new Error(`curl probe option is not allowed: ${option}`);
   }
   return { args, url };
 }
