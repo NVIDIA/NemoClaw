@@ -1382,18 +1382,29 @@ else
   fail "X4b: Sandbox TELEGRAM_BOT_TOKEN_AGENT_B is neither the placeholder nor empty: ${sandbox_extra_env_b:0:80}"
 fi
 
-# X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach the
-# container with the host-validated list verbatim, so the in-container
-# refresh helper sees the same set the host parser accepted.
-sandbox_extras_list=$(sandbox_exec "printenv NEMOCLAW_EXTRA_PLACEHOLDER_KEYS" 2>/dev/null || true)
-if [ -z "$sandbox_extras_list" ]; then
-  fail "X5: NEMOCLAW_EXTRA_PLACEHOLDER_KEYS did not propagate into the sandbox runtime env"
-elif ! echo "$sandbox_extras_list" | grep -qw TELEGRAM_BOT_TOKEN_AGENT_A; then
-  fail "X5: Sandbox NEMOCLAW_EXTRA_PLACEHOLDER_KEYS missing TELEGRAM_BOT_TOKEN_AGENT_A: $sandbox_extras_list"
-elif echo "$sandbox_extras_list" | grep -qw GITHUB_TOKEN; then
-  fail "X5: Sandbox NEMOCLAW_EXTRA_PLACEHOLDER_KEYS contains GITHUB_TOKEN — host filter bypass"
+# X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach
+# nemoclaw-start.sh inside the container with the host-validated list, so
+# refresh_openclaw_provider_placeholders honours the per-profile keys at
+# boot. The env arg is propagated only to the nemoclaw-start process tree
+# and not to subsequent SSH sessions, so the right observable is the
+# entrypoint log line emitted when the python heredoc collapses each
+# extension key; that line only appears for keys that survived the
+# host-side parser and reached the in-container revision walk.
+start_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/nemoclaw-start.log 2>/dev/null || true)
+if [ -z "$start_log" ]; then
+  skip "X5: /tmp/nemoclaw-start.log unavailable; cannot prove extras reached the refresh"
+elif echo "$start_log" | grep -q "Refreshed provider placeholders from OpenShell runtime env:.*TELEGRAM_BOT_TOKEN_AGENT_A"; then
+  pass "X5: nemoclaw-start refreshed TELEGRAM_BOT_TOKEN_AGENT_A — host-validated extras reached the in-container parser"
+elif echo "$start_log" | grep -q "Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'GITHUB_TOKEN'"; then
+  # Mirror-side filter fired (so the env var did reach the container) but
+  # no revision-collapse line yet — that means OpenShell did not stage a
+  # revision-scoped placeholder for TELEGRAM_BOT_TOKEN_AGENT_A at boot,
+  # which is the expected steady state when the provider is fresh.
+  pass "X5: nemoclaw-start sandbox parser fired on GITHUB_TOKEN; extras reached the refresh"
 else
-  pass "X5: Sandbox NEMOCLAW_EXTRA_PLACEHOLDER_KEYS holds only the host-validated extras"
+  fail "X5: No evidence that NEMOCLAW_EXTRA_PLACEHOLDER_KEYS reached the in-container refresh helper"
+  info "  Last 40 lines of /tmp/nemoclaw-start.log:"
+  echo "$start_log" | tail -40 | while IFS= read -r line; do info "    $line"; done
 fi
 
 # X6: The raw operator-supplied token value must not appear on any

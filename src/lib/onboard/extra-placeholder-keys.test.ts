@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -158,6 +160,41 @@ describe("canonicalPlaceholderKeys", () => {
     expect(canonical.has(EXTRA_PLACEHOLDER_KEYS_ENV)).toBe(false);
     expect(canonical.has("GITHUB_TOKEN")).toBe(false);
     expect(canonical.has("AWS_SECRET_ACCESS_KEY")).toBe(false);
+  });
+
+  it("matches the canonical lists baked into scripts/nemoclaw-start.sh", () => {
+    // Parity guard: the host parser derives canonical keys from
+    // `listChannels()` plus `BRAVE_API_KEY_ENV`; the in-container refresh
+    // helper hardcodes the same list as a defence-in-depth allowlist.
+    // Drift between the two sides silently changes the security policy,
+    // so anchor the two surfaces against the TypeScript canonical set.
+    const script = fs.readFileSync(
+      path.resolve(__dirname, "..", "..", "..", "scripts", "nemoclaw-start.sh"),
+      "utf-8",
+    );
+    const canonical = canonicalPlaceholderKeys();
+
+    const prefixMatch = script.match(
+      /for _canon_prefix in ([A-Z_ ]+); do[^\n]*\n[^\n]*case "\$extra_token"/,
+    );
+    expect(prefixMatch, "extras canonical-prefix loop missing from nemoclaw-start.sh").not.toBeNull();
+    const bashPrefixes = (prefixMatch?.[1] ?? "")
+      .trim()
+      .split(/\s+/)
+      .filter((token) => token.endsWith("_"))
+      .map((token) => token.replace(/_$/, ""));
+    expect(new Set(bashPrefixes)).toEqual(canonical);
+
+    const caseMatch = script.match(
+      /case "\$extra_token" in\s*\n\s*''(?:\s*\|\s*[A-Z_]+)+\)/,
+    );
+    expect(caseMatch, "extras canonical-collision case block missing").not.toBeNull();
+    const bashReserved = (caseMatch?.[0] ?? "")
+      .split("|")
+      .slice(1)
+      .map((entry) => entry.replace(/[^A-Z_]/g, ""))
+      .filter((entry) => entry.length > 0);
+    expect(new Set(bashReserved)).toEqual(canonical);
   });
 });
 

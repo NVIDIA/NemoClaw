@@ -1205,12 +1205,27 @@ with open(config_file, encoding="utf-8") as f:
 
 refreshed = set()
 
+# Match each canonical placeholder only as an exact token. The OpenShell
+# placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
+# so the negative-lookahead ensures replacing TELEGRAM_BOT_TOKEN does not
+# also mutate TELEGRAM_BOT_TOKEN_AGENT_A; sort longest-first so two keys
+# sharing a strict prefix still match the more specific one when both
+# replacements happen to apply to the same exact-token position (the
+# lookahead already guarantees disjoint matches in practice, but keeping
+# longest-first preserves the determinism the tests rely on).
+replacement_patterns = [
+    (re.compile(re.escape(old) + r"(?![A-Za-z0-9_])"), key, new)
+    for old, (key, new) in sorted(replacements.items(), key=lambda kv: -len(kv[0]))
+]
+
+
 def rewrite(value):
     if isinstance(value, str):
-        for old, (key, new) in replacements.items():
-            if old in value:
-                value = value.replace(old, new)
+        for pattern, key, new in replacement_patterns:
+            updated, count = pattern.subn(new, value)
+            if count:
                 refreshed.add(key)
+                value = updated
         return value
     if isinstance(value, list):
         return [rewrite(item) for item in value]

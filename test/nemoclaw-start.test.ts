@@ -3321,6 +3321,68 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
+  it("does not let canonical TELEGRAM_BOT_TOKEN rewrite the suffixed extra placeholder", () => {
+    // Pre-fix bug: the python rewrite did `if old in value: value.replace(old, new)`,
+    // so the canonical replacement for `openshell:resolve:env:TELEGRAM_BOT_TOKEN`
+    // greedily rewrote the prefix of `openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A`,
+    // routing the per-profile placeholder to the wrong canonical revision and
+    // making rotation of an extra key unsafe. The grammar-aware regex now
+    // matches each placeholder as an exact token only.
+    const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const extraScoped = "openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+              agentA: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: canonicalScoped,
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+        TELEGRAM_BOT_TOKEN_AGENT_A: extraScoped,
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(canonicalScoped);
+    expect(run.config.channels.telegram.accounts.agentA.botToken).toBe(extraScoped);
+  });
+
+  it("leaves the suffixed extra placeholder unchanged when only the canonical revision is set", () => {
+    // Companion to the canonical-vs-extra collision test: when the operator
+    // staged a revision for TELEGRAM_BOT_TOKEN but not for the extra key,
+    // the extra placeholder must stay on its canonical form rather than be
+    // partially rewritten by the prefix replacement.
+    const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+              agentA: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: canonicalScoped,
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(canonicalScoped);
+    expect(run.config.channels.telegram.accounts.agentA.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A",
+    );
+  });
+
   it("rejects malformed and canonical-collision NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries without faulting", () => {
     const run = runRefresh(
       {
