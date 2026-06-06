@@ -2934,9 +2934,8 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  if (braveWebSearchEnabled) {
-    messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
-  }
+  if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
+  const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
   const previousProviderCredentialHashes =
     registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
@@ -3559,6 +3558,7 @@ async function createSandbox(
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
+  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(envArgs, extraPlaceholderKeys, formatEnvAssignment);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
