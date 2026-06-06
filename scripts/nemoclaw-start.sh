@@ -1119,26 +1119,52 @@ refresh_openclaw_provider_placeholders() {
   # openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A back to the canonical
   # form. The host-side onboard parser at
   # src/lib/onboard/extra-placeholder-keys.ts already filters by an identical
-  # regex and rejects canonical-channel collisions; this loop re-validates
-  # because the env var travels through one extra hop and a sandbox operator
-  # could clobber it independently.
+  # regex, rejects canonical-channel collisions, and requires every entry to
+  # extend a canonical channel envKey with a non-empty `_<suffix>`; this loop
+  # mirrors all three checks because the env var travels through one extra hop
+  # and a sandbox operator could clobber it independently. Keeping both
+  # parsers symmetrical means a host-side restriction (refusing GITHUB_TOKEN,
+  # NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be bypassed by
+  # mutating the runtime env after sandbox boot.
   local extra_token
   local _extra_raw="${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}"
   # Normalize commas to whitespace so callers can pass either form,
   # matching the host-side parseExtraPlaceholderKeys contract.
   _extra_raw="${_extra_raw//,/ }"
+  local _extras_accepted=0
+  local _canon_prefix
+  local _accepted_this_token
   for extra_token in $_extra_raw; do
     case "$extra_token" in
       '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
         continue
         ;;
     esac
-    if printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
-      keys="$keys $extra_token"
-    else
+    if ! printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
       printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must match /^[A-Z][A-Z0-9_]{0,127}\$/\n" \
         "$extra_token" >&2
+      continue
     fi
+    _accepted_this_token=0
+    for _canon_prefix in TELEGRAM_BOT_TOKEN_ DISCORD_BOT_TOKEN_ SLACK_BOT_TOKEN_ SLACK_APP_TOKEN_ WECHAT_BOT_TOKEN_ BRAVE_API_KEY_; do
+      case "$extra_token" in
+        "${_canon_prefix}"?*)
+          _accepted_this_token=1
+          break
+          ;;
+      esac
+    done
+    if [ "$_accepted_this_token" -ne 1 ]; then
+      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>\n" \
+        "$extra_token" >&2
+      continue
+    fi
+    if [ "$_extras_accepted" -ge 32 ]; then
+      printf "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: capped at 32 entries; ignoring remainder\n" >&2
+      break
+    fi
+    keys="$keys $extra_token"
+    _extras_accepted=$((_extras_accepted + 1))
   done
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then

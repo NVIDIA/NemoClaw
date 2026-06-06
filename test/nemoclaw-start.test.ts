@@ -3337,7 +3337,7 @@ describe("provider placeholder refresh (#4251)", () => {
       {
         TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
         NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
-          "telegram_bot_token 9NUM_START Path$Bad TELEGRAM_BOT_TOKEN VALID_EXTRA",
+          "telegram_bot_token 9NUM_START Path$Bad TELEGRAM_BOT_TOKEN TELEGRAM_BOT_TOKEN_VALID",
       },
     );
 
@@ -3358,6 +3358,90 @@ describe("provider placeholder refresh (#4251)", () => {
     // The canonical-key revision-collapse still runs end-to-end.
     expect(run.config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+    );
+  });
+
+  it("refuses arbitrary host secret names that do not extend a canonical channel envKey inside the sandbox", () => {
+    // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
+    // inside a running sandbox after the host-side parser already filtered it,
+    // the container-side refresh helper must mirror the host's canonical-prefix
+    // restriction so a noncanonical name such as GITHUB_TOKEN never reaches the
+    // python placeholder walker.
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "GITHUB_TOKEN AWS_SECRET_ACCESS_KEY NPM_TOKEN KUBECONFIG NEMOCLAW_EXTRA_PLACEHOLDER_KEYS TELEGRAM_BOT_TOKEN_KEPT",
+        // Stage host secrets that would leak if the bash refresh ever
+        // accepted their names. The assertion below confirms none of these
+        // values appear in any output produced by the python heredoc.
+        GITHUB_TOKEN: "ghp-host-secret-would-leak",
+        AWS_SECRET_ACCESS_KEY: "aws-host-secret-would-leak",
+        NPM_TOKEN: "npm-host-secret-would-leak",
+        KUBECONFIG: "/host/path/would-leak",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    for (const blocked of [
+      "GITHUB_TOKEN",
+      "AWS_SECRET_ACCESS_KEY",
+      "NPM_TOKEN",
+      "KUBECONFIG",
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+    ]) {
+      expect(run.result.stderr).toContain(
+        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${blocked}' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>`,
+      );
+    }
+    expect(run.result.stderr).not.toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'TELEGRAM_BOT_TOKEN_KEPT'",
+    );
+    // None of the staged host secret values should reach any stdout/stderr
+    // line the python heredoc emits, because their names were rejected before
+    // the heredoc ran.
+    expect(run.result.stderr).not.toContain("ghp-host-secret-would-leak");
+    expect(run.result.stderr).not.toContain("aws-host-secret-would-leak");
+    expect(run.result.stderr).not.toContain("npm-host-secret-would-leak");
+    expect(JSON.stringify(run.config)).not.toContain("ghp-host-secret-would-leak");
+    expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
+  });
+
+  it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {
+    const tokens = Array.from({ length: 35 }, (_, i) => `TELEGRAM_BOT_TOKEN_E2E_${i}`);
+    const env: Record<string, string> = {
+      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: tokens.join(" "),
+    };
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      env,
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: capped at 32 entries; ignoring remainder",
     );
   });
 });

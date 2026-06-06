@@ -73,14 +73,14 @@ export function parseExtraPlaceholderKeys(
       continue;
     }
     if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    keys.push(candidate);
     if (keys.length >= EXTRA_PLACEHOLDER_KEYS_MAX) {
       warnings.push(
         `${EXTRA_PLACEHOLDER_KEYS_ENV}: capped at ${EXTRA_PLACEHOLDER_KEYS_MAX} entries; remaining tokens ignored`,
       );
       break;
     }
+    seen.add(candidate);
+    keys.push(candidate);
   }
   return { keys, warnings };
 }
@@ -100,7 +100,12 @@ export function registerExtraPlaceholderProviders(
   );
   for (const warning of parsed.warnings) log(warning);
   for (const envKey of parsed.keys) {
-    const token = normalizeCredentialValue(process.env[envKey]) || getCredential(envKey);
+    // Match the brave-search precedence in src/lib/onboard.ts: the credential
+    // store wins so a same-named host env var cannot override an out-of-process
+    // credential that the operator has staged through `nemoclaw credentials
+    // set`. Collapse the empty-string result from normalizeCredentialValue to
+    // null so callers see one unambiguous "missing" sentinel.
+    const token = getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
     messagingTokenDefs.push({
       name: `${sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
       envKey,
