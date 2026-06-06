@@ -198,6 +198,18 @@ function curlHeaderValueReadsFromFile(value: string): boolean {
   return value.startsWith("@") && value !== "@-";
 }
 
+function getCurlOptionValue(
+  args: string[],
+  index: number,
+  option: string,
+  inlineValue: string | undefined,
+): string {
+  if (inlineValue !== undefined) return inlineValue;
+  const value = args[index + 1];
+  if (value === undefined) throw new Error(`curl probe option requires a value: ${option}`);
+  return value;
+}
+
 function normalizeCurlConfigPath(value: string, opts: CurlProbeOptions): string {
   if (value.trim() === "") throw new Error("curl probe config path is required");
   if (value.includes("\0")) throw new Error("curl probe config path must not contain NUL bytes");
@@ -228,11 +240,12 @@ function validateCurlProbeArgs(
       throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
     }
     if (CURL_OPTIONS_THAT_READ_FILES.has(option)) {
+      getCurlOptionValue(args, index, option, inlineValue);
       if (inlineValue === undefined) index += 1;
       throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
     }
     if (CURL_CONFIG_OPTIONS.has(option)) {
-      const value = inlineValue ?? args[index + 1] ?? "";
+      const value = getCurlOptionValue(args, index, option, inlineValue);
       if (!isTrustedCurlConfigPath(value, opts)) {
         throw new Error(`curl probe config file is not trusted: ${option}`);
       }
@@ -240,7 +253,7 @@ function validateCurlProbeArgs(
       continue;
     }
     if (CURL_HEADER_OPTIONS.has(option)) {
-      const value = inlineValue ?? args[index + 1] ?? "";
+      const value = getCurlOptionValue(args, index, option, inlineValue);
       if (curlHeaderValueReadsFromFile(value)) {
         throw new Error(`curl probe option must not read headers from a file: ${option}`);
       }
@@ -251,7 +264,7 @@ function validateCurlProbeArgs(
       throw new Error("curl probe URLs must be passed as the final argv entry");
     }
     if (CURL_DATA_OPTIONS.has(option)) {
-      const value = inlineValue ?? args[index + 1] ?? "";
+      const value = getCurlOptionValue(args, index, option, inlineValue);
       if (curlValueReadsFromFile(option, value)) {
         throw new Error(`curl probe option must not read request data from a file: ${option}`);
       }
@@ -259,6 +272,7 @@ function validateCurlProbeArgs(
       continue;
     }
     if (CURL_SAFE_VALUE_OPTIONS.has(option)) {
+      getCurlOptionValue(args, index, option, inlineValue);
       if (inlineValue === undefined) index += 1;
       continue;
     }

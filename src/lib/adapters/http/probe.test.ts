@@ -318,6 +318,24 @@ describe("http-probe helpers", () => {
     expect(result.ok).toBe(false);
   });
 
+  it.each([
+    ["--data", ["--data"]],
+    ["-H", ["-H"]],
+    ["--max-time", ["--max-time"]],
+    ["--config", ["--config"]],
+  ])("rejects missing value for curl option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
   it("allows explicit trusted curl config files", () => {
     const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
     let spawnedArgs: readonly string[] = [];
