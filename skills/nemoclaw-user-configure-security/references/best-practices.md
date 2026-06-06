@@ -425,10 +425,10 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 
 | Aspect | Detail |
 |---|---|
-| Default | The watcher approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat`. All other clients are rejected and logged. |
-| What you can change | This is not a user-facing knob. The allowlist is defined in the entrypoint script. |
+| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat` or `cli`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. All other clients or scopes are rejected and logged. |
+| What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
-| Recommendation | No action needed. The entrypoint handles this automatically. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+| Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -436,6 +436,8 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
 Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
 NemoClaw still keeps provider credentials in OpenShell and routes model traffic through `inference.local`.
+Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
+Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.
 
 </AgentOnly>
 
@@ -460,7 +462,7 @@ The scanner intercepts Write, Edit, and similar tool calls targeting memory and 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Three classifiers, all enforced through `isMemoryPath()`: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
+| What it covers | Three path classifiers, all enforced through `isMemoryPath()`, plus credential-shaped text such as provider API keys, OpenAI project keys with `sk-proj-` prefixes, and Slack app-level `xapp-` tokens. The path classifiers are: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |

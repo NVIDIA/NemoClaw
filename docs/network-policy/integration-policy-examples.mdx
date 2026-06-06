@@ -59,9 +59,11 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | OpenClaw model-pricing reference fetch | `openclaw-pricing` |
 | npm and Yarn packages | `npm` |
 | Microsoft 365, Outlook, and Graph API | `outlook` |
+| Public reference APIs | `public-reference` |
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
+| Weather and geocoding APIs | `weather` |
 | WeChat (personal) iLink Bot API (experimental) | `wechat` |
 | WhatsApp Web messaging (experimental) | `whatsapp` |
 
@@ -241,6 +243,25 @@ $$nemoclaw my-assistant policy-add brave --yes
 ```
 
 The Brave Search API key is still configured separately during onboarding or through the web search setup flow.
+
+## Weather and Public Reference Lookups
+
+Use the `weather` preset when the agent needs read-only weather or geocoding lookups.
+The Balanced and Open tiers include it by default.
+The preset covers Open-Meteo, geocoding, and National Weather Service endpoints without enabling messaging or productivity APIs.
+
+```bash
+$$nemoclaw my-assistant policy-add weather --dry-run
+$$nemoclaw my-assistant policy-add weather --yes
+```
+
+Use the `public-reference` preset when the agent needs read-only public-reference APIs, such as Wikipedia, Wikidata, Wikimedia Commons, Nominatim, or country metadata.
+The Open tier includes this preset by default.
+
+```bash
+$$nemoclaw my-assistant policy-add public-reference --dry-run
+$$nemoclaw my-assistant policy-add public-reference --yes
+```
 
 ## Package and Model Tooling
 

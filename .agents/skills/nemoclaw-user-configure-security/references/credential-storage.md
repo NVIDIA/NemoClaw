@@ -13,6 +13,9 @@ The sandbox-side OpenClaw gateway token is generated at container startup and is
 </AgentOnly>
 <AgentOnly variant="hermes">
 Hermes API credentials and provider credentials are managed through the same OpenShell provider boundary; generated Hermes runtime files are recreated during rebuilds.
+Those files should contain resolver placeholders, not live provider credentials.
+For managed tools and messaging, NemoClaw keeps host-side auth in OpenShell providers or host brokers and writes placeholder values into `/sandbox/.hermes/config.yaml`, `/sandbox/.hermes/.env`, and process environment entries visible to the sandbox.
+Hermes startup rejects raw secret-shaped values in those sandbox-visible surfaces.
 </AgentOnly>
 
 ## Where Credentials Live

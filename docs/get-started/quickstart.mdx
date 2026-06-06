@@ -75,7 +75,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
-Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, and local-inference presets.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, local-inference, and read-only weather presets.
 On DGX Spark, express install uses `my-spark-assistant` as the sandbox name unless `NEMOCLAW_SANDBOX_NAME` is already set.
 On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
@@ -187,7 +187,7 @@ Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabl
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
 Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
-The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, read-only weather lookups, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
 The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.

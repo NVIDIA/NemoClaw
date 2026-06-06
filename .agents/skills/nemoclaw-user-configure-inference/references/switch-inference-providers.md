@@ -20,7 +20,7 @@ For OpenClaw, it updates `agents.defaults.model.primary` and the matching provid
 <AgentOnly variant="hermes">
 Use `nemoclaw inference set` with the provider and model that match the upstream you want to use.
 The command updates the OpenShell inference route and synchronizes the running agent config.
-For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, and `model.provider: custom`) without rebuilding or restarting Hermes.
+For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) without rebuilding or restarting Hermes.
 Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
 Under `nemoclaw`, pass `--sandbox <name>` when you have registered more than one Hermes sandbox.
 </AgentOnly>
@@ -76,6 +76,16 @@ nemoclaw inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
 </AgentOnly>
+
+### API Family Sync
+
+Before patching the in-sandbox config, NemoClaw resolves the target route's API family: OpenAI chat completions, Anthropic Messages, or OpenAI Responses.
+For OpenClaw, `inference set` syncs the provider API family and primary model reference into the running config.
+For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
+Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
+
+Amazon Bedrock Runtime routes created through `compatible-anthropic-endpoint` are the exception.
+When you switch within the same Bedrock Runtime compatible provider, NemoClaw keeps the route OpenAI-compatible and does not set Hermes to Anthropic Messages mode.
 
 #### Switching from Responses API to Chat Completions
 
@@ -148,6 +158,8 @@ NemoClaw ignores invalid values and bakes the default into the image.
 For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
+During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name looks multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
+Non-interactive onboarding uses the environment value or the default `text` setting.
 
 ```bash
 export NEMOCLAW_CONTEXT_WINDOW=65536

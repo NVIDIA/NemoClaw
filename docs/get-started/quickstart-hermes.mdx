@@ -70,6 +70,9 @@ Choose the inference provider that matches where you want Hermes model traffic t
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the [Inference Options](../inference/inference-options) page.
 The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+If you authenticate Hermes through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, or managed code execution.
+Those choices add the matching Hermes policy presets to the sandbox.
+API-key mode is inference-only and does not enable managed tool gateways.
 
 After provider and model selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
@@ -102,6 +105,8 @@ When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle co
 Hermes exposes its built-in browser dashboard on port `18789`.
 NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients.
 NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
+Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
+If you need to recover the Hermes dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned install paths.
 Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only if you want Hermes' optional in-browser TUI tab.
 
 ```text

@@ -178,6 +178,12 @@ NEMOCLAW_PROVIDER=ollama \
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
 If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
 Unknown or custom tags (any value the bootstrap registry has not seen) are still passed through; the Ollama runner validates the choice itself.
+In interactive onboarding, registry-known installed tags that do not fit current GPU memory are filtered out of the installed-model menu.
+If none of the installed registry-known tags fit, NemoClaw shows the starter-model choices and warns when even the smallest bootstrap tag may not fit.
+After a selected model fails validation, NemoClaw excludes that tag from the next installed-model menu so pressing Enter cannot select the same failing model repeatedly.
+When Ollama reports a loaded-model context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw raises the baked `contextWindow` to `16384` so the agent prompt and tool definitions fit better than the stock daemon default.
+If the initial Ollama validation probe times out during a cold load, NemoClaw retries once with a 300-second probe budget.
+This applies beyond DGX Spark, including tight-VRAM dGPU hosts where warm-up can spill from GPU to CPU.
 
 `--yes` (or `NEMOCLAW_YES=1`) authorizes the Ollama model download without an interactive confirmation prompt.
 Under `--non-interactive`, include `--yes` (or `NEMOCLAW_YES=1`) to authorize the download.
