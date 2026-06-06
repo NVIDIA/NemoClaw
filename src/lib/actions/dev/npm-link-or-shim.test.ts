@@ -66,8 +66,11 @@ describe("runNpmLinkOrShim", () => {
     const shim = fs.readFileSync(shimPath, "utf-8");
     expect(shim).toContain(DEV_SHIM_MARKER);
     expect(shim).toContain(`exec "${binPath}" "$@"`);
-    expect(errors.join("\n")).toContain("npm link failed");
-    expect(errors.join("\n")).toContain("Created user-local shim");
+    const logOutput = errors.join("\n");
+    expect(logOutput).toContain("npm link failed");
+    expect(logOutput).toContain("Created user-local shim at ~/.local/bin/nemoclaw");
+    expect(logOutput).not.toContain(homeDir);
+    expect(logOutput).not.toContain(repoDir);
   });
 
   it("refuses to overwrite a foreign shim", () => {
@@ -117,7 +120,10 @@ describe("runNpmLinkOrShim", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(errors.join("\n")).toContain("shim creation failed");
+    const logOutput = errors.join("\n");
+    expect(logOutput).toContain("shim creation failed");
+    expect(logOutput).toContain("~/.local/bin");
+    expect(logOutput).not.toContain(homeDir);
     expect(fs.readFileSync(path.join(homeDir, ".local"), "utf-8")).toBe("not-a-directory\n");
   });
 });

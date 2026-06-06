@@ -12,7 +12,7 @@ import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { isShieldsDown } from "../../shields";
+import * as shields from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -323,6 +323,15 @@ function probeGatewayRunning(sandboxName?: string): boolean {
   return result.status === 0 && String(result.stdout || "").trim() === "true";
 }
 
+function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
+  const isShieldsDown = shields.isShieldsDown;
+  if (typeof isShieldsDown !== "function") {
+    console.error("  Cannot verify shields state. Refusing to create snapshot.");
+    return false;
+  }
+  return isShieldsDown(sandboxName);
+}
+
 export async function runSandboxSnapshot(
   sandboxName: string,
   request: SnapshotRequest = { kind: "help" },
@@ -339,7 +348,7 @@ export async function runSandboxSnapshot(
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
       }
-      if (!isShieldsDown(sandboxName)) {
+      if (!isSnapshotCreationAllowedByShields(sandboxName)) {
         console.error("  Cannot create snapshot while shields are up.");
         console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
         snapshotExit(1);

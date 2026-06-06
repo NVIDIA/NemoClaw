@@ -2789,7 +2789,11 @@ NODE
     openclaw_pkg_roots+=("/usr/local/lib/node_modules/openclaw")
     if openclaw_bin="$(command -v openclaw 2>/dev/null)"; then
       openclaw_real="$(readlink -f "$openclaw_bin" 2>/dev/null || printf '%s\n' "$openclaw_bin")"
-      openclaw_pkg="$(cd "$(dirname "$openclaw_real")/.." 2>/dev/null && pwd -P || true)"
+      openclaw_pkg="$(
+        if cd "$(dirname "$openclaw_real")/.." 2>/dev/null; then
+          pwd -P
+        fi
+      )"
       if [ -n "$openclaw_pkg" ]; then
         openclaw_pkg_roots+=("$openclaw_pkg")
       fi

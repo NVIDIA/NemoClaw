@@ -95,6 +95,8 @@ export function runNpmLinkOrShim(
   const home = env.HOME || os.homedir();
   const shimDir = path.join(home, ".local", "bin");
   const shimPath = path.join(shimDir, "nemoclaw");
+  const shimDirDisplay = "~/.local/bin";
+  const shimPathDisplay = "~/.local/bin/nemoclaw";
 
   const logError = deps.logError ?? ((message: string) => console.error(message));
   const exists = deps.exists ?? ((filePath: string) => fs.existsSync(filePath));
@@ -145,7 +147,7 @@ export function runNpmLinkOrShim(
   if (exists(shimPath)) {
     const classification = classifyDevShim(safeRead(readFile, shimPath));
     if (classification === "foreign") {
-      logError(`[nemoclaw] ${shimPath} already exists and is not managed by NemoClaw; not overwriting.`);
+      logError(`[nemoclaw] ${shimPathDisplay} already exists and is not managed by NemoClaw; not overwriting.`);
       logError("[nemoclaw] Move it aside and re-run 'npm install' to install the dev shim.");
       return { shimPath, status: 1 };
     }
@@ -160,21 +162,22 @@ export function runNpmLinkOrShim(
     rename(shimTmp, shimPath);
     shimTmp = null;
   } catch (error) {
-    logError(`[nemoclaw] shim creation failed: ${error instanceof Error ? error.message : String(error)}`);
+    const reason = error instanceof Error && "code" in error && typeof error.code === "string" ? ` (${error.code})` : "";
+    logError(`[nemoclaw] shim creation failed${reason}; check permissions for ${shimDirDisplay}`);
     return { shimPath, status: 1 };
   } finally {
     if (shimTmp) unlink(shimTmp);
   }
 
   if (!isExecutable(shimPath)) {
-    logError(`[nemoclaw] shim creation failed: ${shimPath} is not executable after write`);
+    logError(`[nemoclaw] shim creation failed: ${shimPathDisplay} is not executable after write`);
     return { shimPath, status: 1 };
   }
 
-  logError(`[nemoclaw] Created user-local shim at ${shimPath} -> ${binPath}`);
+  logError(`[nemoclaw] Created user-local shim at ${shimPathDisplay}`);
   if (!pathContainsDirectory(env.PATH, shimDir)) {
-    logError(`[nemoclaw] ${shimDir} is not on PATH. Add it to your shell profile, e.g.:`);
-    logError(`[nemoclaw]   echo 'export PATH="${shimDir}:$PATH"' >> ~/.bashrc`);
+    logError(`[nemoclaw] ${shimDirDisplay} is not on PATH. Add it to your shell profile, e.g.:`);
+    logError('[nemoclaw]   echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc');
   }
   return { shimPath, status: 0 };
 }
