@@ -3,409 +3,38 @@
 
 import { describe, it, expect } from "vitest";
 import { execSync, spawn, spawnSync } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
 
-import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts";
-
-const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
-const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
-const PARSER_EXIT_CODE = 2;
-
-function readOpenClawExpectedVersion(): string {
-  const manifestPath = path.join(
-    import.meta.dirname,
-    "..",
-    "agents",
-    "openclaw",
-    "manifest.yaml",
-  );
-  const manifest = parseYaml(fs.readFileSync(manifestPath, "utf8")) as {
-    expected_version?: unknown;
-  };
-  if (typeof manifest.expected_version === "string" && manifest.expected_version.trim()) {
-    return manifest.expected_version;
-  }
-  throw new Error("agents/openclaw/manifest.yaml is missing expected_version");
-}
-
-const OPENCLAW_EXPECTED_VERSION = readOpenClawExpectedVersion();
-
-type CliRunResult = {
-  code: number;
-  out: string;
-};
-
-type CliErrorShape = {
-  status?: number;
-  stdout?: string | Buffer;
-  stderr?: string | Buffer;
-};
-
-type CliErrorCandidate = {
-  status?: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
-};
-
-function isCliErrorCandidate(value: unknown): value is CliErrorCandidate {
-  return typeof value === "object" && value !== null;
-}
-
-function readBufferOrStringProperty(
-  value: CliErrorCandidate,
-  key: "stdout" | "stderr",
-): string | Buffer | undefined {
-  const property = value[key];
-  return typeof property === "string" || Buffer.isBuffer(property) ? property : undefined;
-}
-
-function toText(value: string | Buffer | undefined): string {
-  return typeof value === "string" ? value : Buffer.isBuffer(value) ? value.toString("utf8") : "";
-}
-
-function readCliErrorOutput(error: CliErrorShape | string | null | undefined): CliRunResult {
-  if (!error || typeof error === "string") {
-    return { code: 1, out: String(error || "") };
-  }
-  return {
-    code: typeof error.status === "number" ? error.status : 1,
-    out: `${toText(error.stdout)}${toText(error.stderr)}`,
-  };
-}
-
-function normalizeChildExit(code: number | null, signal: NodeJS.Signals | null): number | null {
-  if (code !== null) return code;
-  if (signal === "SIGTERM") return 143;
-  if (signal === "SIGINT") return 130;
-  return null;
-}
-
-function waitForChildExit(child: ChildProcess): Promise<number | null> {
-  return new Promise((resolve) => {
-    child.once("exit", (code, signal) => resolve(normalizeChildExit(code, signal)));
-  });
-}
-
-function isChildRunning(child: ChildProcess): boolean {
-  return child.exitCode === null && child.signalCode === null;
-}
-
-function run(args: string): CliRunResult {
-  return runWithEnv(args);
-}
-
-function runWithEnv(
-  args: string,
-  env: Record<string, string | undefined> = {},
-  timeout: number = execTimeout(),
-): CliRunResult {
-  try {
-    const out = execSync(`node "${CLI}" ${args}`, {
-      encoding: "utf-8",
-      stdio: "pipe",
-      timeout,
-      env: {
-        ...process.env,
-        HOME: "/tmp/nemoclaw-cli-test-" + Date.now(),
-        NEMOCLAW_HEALTH_POLL_COUNT: "1",
-        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
-        ...env,
-      },
-    });
-    return { code: 0, out };
-  } catch (err) {
-    if (isCliErrorCandidate(err)) {
-      return readCliErrorOutput({
-        status: typeof err.status === "number" ? err.status : undefined,
-        stdout: readBufferOrStringProperty(err, "stdout"),
-        stderr: readBufferOrStringProperty(err, "stderr"),
-      });
-    }
-    return readCliErrorOutput(String(err));
-  }
-}
-
-function readRecordedArgs(markerFile: string): string[] {
-  return fs.readFileSync(markerFile, "utf8").trim().split(/\s+/);
-}
-
-type SandboxEntry = {
-  name: string;
-  model: string;
-  provider: string;
-  gpuEnabled: boolean;
-  policies: string[];
-  agent?: string;
-  openshellDriver?: string | null;
-  agentVersion?: string | null;
-};
-
-function writeRecordingCommand(
-  binDir: string,
-  command: string,
-  markerFile: string,
-  exitCode: number,
-): void {
-  fs.writeFileSync(
-    path.join(binDir, command),
-    [
-      "#!/usr/bin/env bash",
-      `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
-      `exit ${exitCode}`,
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-}
-
-function writeSandboxRegistry(
-  home: string,
-  sandboxNameOrOverrides: string | Partial<SandboxEntry> = "alpha",
-  sandboxOverridesArg: Partial<SandboxEntry> = {},
-): void {
-  const sandboxName =
-    typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";
-  const sandboxOverrides =
-    typeof sandboxNameOrOverrides === "string" ? sandboxOverridesArg : sandboxNameOrOverrides;
-  const registryDir = path.join(home, ".nemoclaw");
-  fs.mkdirSync(registryDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(registryDir, "sandboxes.json"),
-    JSON.stringify({
-      sandboxes: {
-        [sandboxName]: {
-          name: sandboxName,
-          model: "test-model",
-          provider: "nvidia-prod",
-          gpuEnabled: false,
-          policies: [],
-          ...sandboxOverrides,
-        },
-      },
-      defaultSandbox: sandboxName,
-    }),
-    { mode: 0o600 },
-  );
-}
-
-// Several sandbox commands (status, connect, logs, policy-list) now preflight
-// `docker info` to classify a Docker daemon outage (#4428). Tests that should
-// exercise the normal (Docker-up) path must stub a healthy `docker info` so
-// they stay hermetic regardless of whether the host/CI runner has a running
-// Docker daemon.
-function writeHealthyDockerStub(localBin: string): void {
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    ["#!/usr/bin/env bash", 'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi', "exit 0"].join(
-      "\n",
-    ),
-    { mode: 0o755 },
-  );
-}
-
-const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
-const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
-
-function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
-  const markerFile = path.join(home, "logs-calls");
-  fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home);
-  fs.writeFileSync(
-    path.join(localBin, "openshell"),
-    [
-      "#!/usr/bin/env bash",
-      `marker_file=${JSON.stringify(markerFile)}`,
-      'printf \'%s\\n\' "$*" >> "$marker_file"',
-      ...openshellLines,
-      'if [ "$1" = "settings" ]; then',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "sandbox" ]; then',
-      `  echo ${JSON.stringify(FAKE_OPENCLAW_LOG_LINE)}`,
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "logs" ]; then',
-      `  echo ${JSON.stringify(FAKE_OPENSHELL_LOG_LINE)}`,
-      "  exit 0",
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  // `logs` now preflights the Docker daemon (#4428); stub a healthy daemon.
-  writeHealthyDockerStub(localBin);
-
-  return {
-    home,
-    localBin,
-    markerFile,
-    readCalls: () =>
-      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [],
-    runLogs: (args = "alpha logs", env: Record<string, string | undefined> = {}) =>
-      runWithEnv(args, {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-        ...env,
-      }),
-  };
-}
-
-function createDoctorTestSetup(prefix: string, openshellLines: string[], sandboxName = "alpha") {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
-  const markerFile = path.join(home, "doctor-calls");
-  fs.mkdirSync(localBin, { recursive: true });
-  writeSandboxRegistry(home, sandboxName);
-
-  fs.writeFileSync(
-    path.join(localBin, "openshell"),
-    [
-      "#!/usr/bin/env bash",
-      `marker_file=${JSON.stringify(markerFile)}`,
-      'printf \'%s\\n\' "$*" >> "$marker_file"',
-      ...openshellLines,
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
-      'if [ "$1" = "inspect" ]; then printf "true\\tnone\\topenshell:test\\n"; exit 0; fi',
-      'if [ "$1" = "port" ]; then echo "0.0.0.0:8080"; exit 0; fi',
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(path.join(localBin, "curl"), ["#!/usr/bin/env bash", "exit 7"].join("\n"), {
-    mode: 0o755,
-  });
-
-  return {
-    home,
-    localBin,
-    readCalls: () =>
-      fs.existsSync(markerFile) ? fs.readFileSync(markerFile, "utf8").trim().split(/\n/) : [],
-    runDoctor: (args = `${sandboxName} doctor --json`) =>
-      runWithEnv(
-        args,
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-        },
-        30000,
-      ),
-  };
-}
-
-function createCloudflaredServiceDir(prefix: string): { sandboxName: string; serviceDir: string } {
-  const suffix = [
-    process.pid.toString(36),
-    Date.now().toString(36),
-    Math.random().toString(36).slice(2, 10),
-  ].join("-");
-  const sandboxName = `${prefix}${suffix}`;
-  const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
-  fs.rmSync(serviceDir, { recursive: true, force: true });
-  fs.mkdirSync(serviceDir, { recursive: true });
-  return { sandboxName, serviceDir };
-}
-
-function createDebugCommandTestEnv(
-  prefix: string,
-  options: { extraSandboxNames?: string[] } = {},
-): Record<string, string> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const localBin = path.join(home, "bin");
-  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
-  fs.mkdirSync(localBin, { recursive: true });
-  // Register the env-sourced sandbox plus any extra names supplied via the
-  // --sandbox flag so the validation gate accepts them.
-  writeSandboxRegistry(home, sandboxName);
-  if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
-    const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
-    const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
-      sandboxes: Record<string, unknown>;
-      defaultSandbox?: string | null;
-    };
-    for (const extra of options.extraSandboxNames) {
-      current.sandboxes[extra] = {
-        name: extra,
-        model: "test-model",
-        provider: "nvidia-prod",
-        gpuEnabled: false,
-        policies: [],
-      };
-    }
-    fs.writeFileSync(registryPath, JSON.stringify(current), { mode: 0o600 });
-  }
-  const registeredNames = [sandboxName, ...(options.extraSandboxNames ?? [])];
-  const listLines = ["NAME", ...registeredNames.map((name) => `${name}      Ready`)];
-  fs.writeFileSync(
-    path.join(localBin, "openshell"),
-    [
-      "#!/bin/sh",
-      'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      ...listLines.map((line) => `  echo ${JSON.stringify(line)}`),
-      "  exit 0",
-      "fi",
-      "echo 'openshell ok'",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
-    mode: 0o755,
-  });
-  fs.writeFileSync(
-    path.join(localBin, "dmesg"),
-    ["#!/bin/sh", "echo 'nemoclaw test kernel message'", "exit 0"].join("\n"),
-    { mode: 0o755 },
-  );
-  return {
-    HOME: home,
-    NEMOCLAW_HOME: path.join(home, ".nemoclaw"),
-    NEMOCLAW_SANDBOX: sandboxName,
-    PATH: `${localBin}:${process.env.PATH || ""}`,
-  };
-}
-
-function writeHostAliasDockerStub(
-  localBin: string,
-  dockerLog: string,
-  hostAliases: { ip: string; hostnames: string[] }[],
-  { gatewayRunning = true }: { gatewayRunning?: boolean } = {},
-): void {
-  const resource = JSON.stringify({
-    metadata: { resourceVersion: "123" },
-    spec: { podTemplate: { spec: { hostAliases } } },
-  });
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      gatewayRunning ? '  printf "%s\\n" "openshell-cluster-nemoclaw"' : "  :",
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^get$"; then',
-      `  printf "%s\\n" ${JSON.stringify(resource)}`,
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-}
+import {
+  CLI,
+  FAKE_OPENCLAW_LOG_LINE,
+  FAKE_OPENSHELL_LOG_LINE,
+  HERMES_CLI,
+  OPENCLAW_EXPECTED_VERSION,
+  PARSER_EXIT_CODE,
+  createCloudflaredServiceDir,
+  createDebugCommandTestEnv,
+  createDoctorTestSetup,
+  createLogsTestSetup,
+  execTimeout,
+  isChildRunning,
+  isCliErrorCandidate,
+  readBufferOrStringProperty,
+  readCliErrorOutput,
+  readRecordedArgs,
+  run,
+  runWithEnv,
+  testTimeout,
+  testTimeoutOptions,
+  waitForChildExit,
+  writeHealthyDockerStub,
+  writeHostAliasDockerStub,
+  writeRecordingCommand,
+  writeSandboxRegistry,
+} from "./cli/helpers";
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
@@ -567,7 +196,10 @@ describe("CLI dispatch", () => {
         encoding: "utf-8",
         stdio: "pipe",
         timeout: execTimeout(),
-        env: { ...process.env, HOME: `/tmp/nemoclaw-cli-test-${Date.now()}` },
+        env: {
+          ...process.env,
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
+        },
       });
     } catch (err) {
       const result = readCliErrorOutput(
@@ -755,7 +387,7 @@ describe("CLI dispatch", () => {
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
       },
     });
     expect(out).toContain("$ nemohermes list [--json]");
@@ -769,7 +401,7 @@ describe("CLI dispatch", () => {
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: `/tmp/nemoclaw-cli-test-${Date.now()}`,
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
       },
     });
     expect(out).toContain("$ nemohermes inference set --provider <provider> --model <model>");
@@ -1124,7 +756,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1184,7 +816,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1238,7 +870,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1332,7 +964,7 @@ describe("CLI dispatch", () => {
         model: "gpt-4o-mini",
         openshellDriver: "docker",
         dashboardPort,
-      } as unknown as Partial<SandboxEntry>);
+      });
 
       fs.writeFileSync(
         path.join(localBin, "docker"),
@@ -1419,7 +1051,7 @@ describe("CLI dispatch", () => {
       sandboxGpuDevice: "0",
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "docker"),
       [
@@ -1502,7 +1134,7 @@ describe("CLI dispatch", () => {
     writeSandboxRegistry(home, "alpha", {
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -1764,7 +1396,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1818,7 +1450,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "docker",
-    } as unknown as Partial<SandboxEntry>);
+    });
 
     fs.writeFileSync(
       path.join(localBin, "docker"),
@@ -1898,7 +1530,7 @@ describe("CLI dispatch", () => {
         model: "gpt-4o-mini",
         openshellDriver: "docker",
         dashboardPort,
-      } as unknown as Partial<SandboxEntry>);
+      });
 
       fs.writeFileSync(
         path.join(localBin, "docker"),
@@ -1966,7 +1598,7 @@ describe("CLI dispatch", () => {
       provider: "openai-api",
       model: "gpt-4o-mini",
       openshellDriver: "vm",
-    } as unknown as Partial<SandboxEntry>);
+    });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -3066,36 +2698,42 @@ describe("CLI dispatch", () => {
     expect(remove.out).toContain("--dry-run: no changes applied.");
   });
 
-  it("channels mutation dry-run paths dispatch through oclif", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-dry-run-"));
-    writeSandboxRegistry(home);
+  it(
+    "channels mutation dry-run paths dispatch through oclif",
+    testTimeoutOptions(15_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-dry-run-"));
+      writeSandboxRegistry(home);
 
-    const add = runWithEnv("alpha channels add telegram --dry-run", { HOME: home });
-    expect(add.code).toBe(0);
-    expect(add.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+      const add = runWithEnv("alpha channels add telegram --dry-run", { HOME: home });
+      expect(add.code).toBe(0);
+      expect(add.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
-    const addMixedCase = runWithEnv("alpha channels add Telegram --dry-run", { HOME: home });
-    expect(addMixedCase.code).toBe(0);
-    expect(addMixedCase.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+      const addMixedCase = runWithEnv("alpha channels add Telegram --dry-run", { HOME: home });
+      expect(addMixedCase.code).toBe(0);
+      expect(addMixedCase.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
-    const remove = runWithEnv("alpha channels remove telegram --dry-run", { HOME: home });
-    expect(remove.code).toBe(0);
-    expect(remove.out).toContain("--dry-run: would remove channel 'telegram' for 'alpha'.");
+      const remove = runWithEnv("alpha channels remove telegram --dry-run", { HOME: home });
+      expect(remove.code).toBe(0);
+      expect(remove.out).toContain("--dry-run: would remove channel 'telegram' for 'alpha'.");
 
-    const removeMixedCase = runWithEnv("alpha channels remove Telegram --dry-run", { HOME: home });
-    expect(removeMixedCase.code).toBe(0);
-    expect(removeMixedCase.out).toContain(
-      "--dry-run: would remove channel 'telegram' for 'alpha'.",
-    );
+      const removeMixedCase = runWithEnv("alpha channels remove Telegram --dry-run", {
+        HOME: home,
+      });
+      expect(removeMixedCase.code).toBe(0);
+      expect(removeMixedCase.out).toContain(
+        "--dry-run: would remove channel 'telegram' for 'alpha'.",
+      );
 
-    const stop = runWithEnv("alpha channels stop telegram --dry-run", { HOME: home });
-    expect(stop.code).toBe(0);
-    expect(stop.out).toContain("--dry-run: would stop channel 'telegram' for 'alpha'.");
+      const stop = runWithEnv("alpha channels stop telegram --dry-run", { HOME: home });
+      expect(stop.code).toBe(0);
+      expect(stop.out).toContain("--dry-run: would stop channel 'telegram' for 'alpha'.");
 
-    const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
-    expect(start.code).toBe(0);
-    expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
-  });
+      const start = runWithEnv("alpha channels start telegram --dry-run", { HOME: home });
+      expect(start.code).toBe(0);
+      expect(start.out).toContain("Channel 'telegram' is already enabled for 'alpha'. Nothing to do.");
+    },
+  );
 
   it("sandbox channels start rejects a sandbox missing from the registry (#4584)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-missing-"));
@@ -7298,626 +6936,5 @@ describe("CLI dispatch", () => {
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
     expect(saved.sandboxes.alpha).toBeDefined();
     expect(saved.defaultSandbox).toBe("alpha");
-  });
-});
-
-describe("Docker daemon outage classification (#4428)", () => {
-  // Build a fake runtime where OpenShell still reports a present sandbox in a
-  // non-ready phase (the reporter's case: cached/transitional state) while the
-  // Docker daemon is down. `dockerInfoOk` flips between the outage repro and
-  // the genuine-startup-failure control case.
-  function setupDockerOutageEnv(
-    prefix: string,
-    {
-      dockerInfoOk,
-      phase = "Provisioning",
-      driver = "docker",
-    }: { dockerInfoOk: boolean; phase?: string; driver?: string },
-  ): { home: string; localBin: string; env: Record<string, string> } {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-    const localBin = path.join(home, "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    // The Docker-outage reclassification only applies to Docker-driver
-    // sandboxes (#4428); record the driver so the gate matches.
-    writeSandboxRegistry(home, "v053-baseline", {
-      policies: ["npm"],
-      openshellDriver: driver,
-    } as unknown as Partial<SandboxEntry>);
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
-        `  printf "Name: v053-baseline\\nPhase: ${phase}\\nPolicy:\\n"`,
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        `  printf "NAME             STATUS\\nv053-baseline    ${phase}\\n"`,
-        "  exit 0",
-        "fi",
-        // policy get fails so getGatewayPresets() returns null (gateway not
-        // queryable), exercising the policy-list reclassification branch.
-        'if [ "$1" = "policy" ] && [ "$2" = "get" ]; then exit 1; fi',
-        'if [ "$1" = "status" ]; then printf "Gateway: nemoclaw\\nStatus: Connected\\n"; exit 0; fi',
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then echo "Gateway: nemoclaw"; exit 0; fi',
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then exit 1; fi',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const dockerInfoBody = dockerInfoOk
-      ? 'echo "24.0.0"; exit 0'
-      : 'echo "Cannot connect to the Docker daemon" >&2; exit 1';
-    fs.writeFileSync(
-      path.join(localBin, "docker"),
-      [
-        "#!/usr/bin/env bash",
-        `if [ "$1" = "info" ]; then ${dockerInfoBody}; fi`,
-        // ps lists nothing so the classifier never claims a running container.
-        'if [ "$1" = "ps" ]; then exit 0; fi',
-        dockerInfoOk ? "exit 0" : "exit 1",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(path.join(localBin, "sleep"), ["#!/usr/bin/env bash", "exit 0"].join("\n"), {
-      mode: 0o755,
-    });
-    return {
-      home,
-      localBin,
-      env: { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
-    };
-  }
-
-  const DOCKER_DOWN_HEADER = "docker_unreachable";
-  const DOCKER_DOWN_HINT = "Start the Docker daemon";
-
-  it("status names the Docker outage instead of stuck-phase rebuild guidance", () => {
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-down-", {
-      dockerInfoOk: false,
-    });
-    try {
-      const r = runWithEnv("v053-baseline status", env);
-      expect(r.code).toBe(1);
-      expect(r.out).toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain("Docker daemon is not reachable");
-      expect(r.out).toContain(DOCKER_DOWN_HINT);
-      // Must NOT steer the user toward rebuild for a transient daemon outage.
-      expect(r.out).not.toContain("is stuck in 'Provisioning' phase");
-      expect(r.out).not.toMatch(/rebuild --yes/);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("status keeps stuck-phase rebuild guidance when Docker is reachable", () => {
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-up-", {
-      dockerInfoOk: true,
-    });
-    try {
-      const r = runWithEnv("v053-baseline status", env);
-      // Genuine startup failure: Docker is fine, sandbox is wedged Provisioning.
-      expect(r.out).toContain("is stuck in 'Provisioning' phase");
-      expect(r.out).toContain("rebuild --yes");
-      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("status keeps a terminal phase failure visible even when Docker is down", () => {
-    // A settled Failed phase is a real sandbox failure; the Docker-outage
-    // reclassification must not mask it (#4428 review).
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-status-failed-down-", {
-      dockerInfoOk: false,
-      phase: "Failed",
-    });
-    try {
-      const r = runWithEnv("v053-baseline status", env);
-      expect(r.out).toContain("is stuck in 'Failed' phase");
-      expect(r.out).toContain("rebuild --yes");
-      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it(
-    "connect fails fast with Docker outage guidance instead of waiting out the readiness timeout",
-    () => {
-      const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-connect-down-", {
-        dockerInfoOk: false,
-      });
-      try {
-        const startedAt = Date.now();
-        // A large connect timeout would be burned entirely pre-fix; the fast
-        // path must return well before it.
-        const r = runWithEnv("v053-baseline connect", { ...env, NEMOCLAW_CONNECT_TIMEOUT: "120" });
-        const elapsedMs = Date.now() - startedAt;
-        expect(r.code).toBe(1);
-        expect(r.out).toContain(DOCKER_DOWN_HEADER);
-        expect(r.out).toContain(DOCKER_DOWN_HINT);
-        expect(r.out).not.toContain("Waiting for sandbox");
-        expect(r.out).not.toContain("Timed out after");
-        expect(elapsedMs).toBeLessThan(30_000);
-      } finally {
-        fs.rmSync(home, { recursive: true, force: true });
-      }
-    },
-    testTimeout(40_000),
-  );
-
-  it("connect --probe-only also surfaces the Docker outage instead of an opaque probe failure", () => {
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-probe-down-", {
-      dockerInfoOk: false,
-    });
-    try {
-      const r = runWithEnv("v053-baseline connect --probe-only", env);
-      expect(r.code).toBe(1);
-      expect(r.out).toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain(DOCKER_DOWN_HINT);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("logs names the Docker outage as the unavailable runtime layer", () => {
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-logs-down-", {
-      dockerInfoOk: false,
-    });
-    try {
-      const r = runWithEnv("v053-baseline logs", env);
-      expect(r.code).toBe(1);
-      expect(r.out).toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain(DOCKER_DOWN_HINT);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("policy-list reports the Docker outage instead of a local-state-only warning", () => {
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-policy-down-", {
-      dockerInfoOk: false,
-    });
-    try {
-      const r = runWithEnv("v053-baseline policy-list", env);
-      expect(r.out).toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain(DOCKER_DOWN_HINT);
-      expect(r.out).not.toContain("Could not query gateway — showing local state only");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  it("does not misclassify a non-Docker (vm) driver sandbox as a Docker outage", () => {
-    // A failing local `docker info` is normal for vm/kubernetes drivers; status
-    // must fall through to the existing stuck-phase guidance, not the
-    // Docker-outage block (#4428 review).
-    const { home, env } = setupDockerOutageEnv("nemoclaw-cli-4428-vm-down-", {
-      dockerInfoOk: false,
-      driver: "vm",
-    });
-    try {
-      const r = runWithEnv("v053-baseline status", env);
-      expect(r.out).not.toContain(DOCKER_DOWN_HEADER);
-      expect(r.out).toContain("is stuck in 'Provisioning' phase");
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("list shows live gateway inference", () => {
-  it("shows live gateway inference for the default sandbox (#2369)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-live-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          test: {
-            name: "test",
-            model: "configured-model",
-            provider: "configured-provider",
-            gpuEnabled: true,
-            policies: ["pypi", "npm"],
-          },
-        },
-        defaultSandbox: "test",
-      }),
-      { mode: 0o600 },
-    );
-    // Stub openshell: inference get returns a different live provider/model
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  echo 'Gateway inference:'",
-        "  echo '  Provider: nvidia-prod'",
-        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
-        "  echo '  Version: 1'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    // Live gateway values render on the default sandbox's main row.
-    expect(r.out).toContain(
-      "agent: openclaw  model: nvidia/nemotron-3-super-120b-a12b  provider: nvidia-prod  sandbox GPU  policies: pypi, npm",
-    );
-    // The stale (stored) row must not appear.
-    expect(r.out).not.toContain(
-      "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
-    );
-    // Onboarded values appear in an explicit live-gateway drift annotation.
-    expect(r.out).toContain(
-      "(live OpenShell gateway differs from onboarded: model=configured-model, provider=configured-provider)",
-    );
-  });
-
-  it("falls back to registry values when openshell inference get fails", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-fallback-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          test: {
-            name: "test",
-            model: "llama3.2:1b",
-            provider: "ollama-local",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "test",
-      }),
-      { mode: 0o600 },
-    );
-    // Stub openshell: inference get fails
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  exit 1",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("llama3.2:1b");
-    expect(r.out).toContain("ollama-local");
-  });
-
-  it("lists registered sandboxes when runtime inference probing is degraded", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-list-runtime-degraded-"));
-    const localBin = path.join(home, "bin");
-    const markerFile = path.join(home, "openshell-calls");
-    fs.mkdirSync(localBin, { recursive: true });
-    writeSandboxRegistry(home, {
-      model: "configured-model",
-      provider: "nvidia-prod",
-      gpuEnabled: false,
-      policies: ["pypi"],
-    });
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
-        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
-        "  echo 'Error: client error (Connect)' >&2",
-        "  exit 1",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const r = runWithEnv("list", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Sandboxes:");
-    expect(r.out).toContain("alpha *");
-    expect(r.out).toContain("model: configured-model");
-    expect(r.out).toContain("provider: nvidia-prod");
-    expect(fs.readFileSync(markerFile, "utf8")).toContain("inference get");
-  });
-
-  // ── Issue #1904: sandbox not upgraded after NemoClaw upgrade ───
-  // Original report: user upgrades NemoClaw from v0.0.11→v0.0.15 via
-  // curl|bash. Existing sandbox still runs old OpenClaw (2026.3.11)
-  // because Docker cached the stale :latest image. upgrade-sandboxes
-  // --check should detect the version mismatch and report it.
-
-  it(
-    "upgrade-sandboxes --check detects a stale sandbox after NemoClaw upgrade (#1904)",
-    testTimeoutOptions(),
-    () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-sandboxes-"));
-      const localBin = path.join(home, "bin");
-      const nemoclawDir = path.join(home, ".nemoclaw");
-      fs.mkdirSync(localBin, { recursive: true });
-      fs.mkdirSync(nemoclawDir, { recursive: true });
-
-      // Registry with a sandbox that has an old agentVersion (the pre-upgrade state)
-      fs.writeFileSync(
-        path.join(nemoclawDir, "sandboxes.json"),
-        JSON.stringify({
-          sandboxes: {
-            "my-agent": {
-              name: "my-agent",
-              model: "nvidia/nemotron-3-super-120b-a12b",
-              provider: "nvidia-prod",
-              gpuEnabled: false,
-              policies: [],
-              agentVersion: "2026.3.11",
-            },
-          },
-          defaultSandbox: "my-agent",
-        }),
-        { mode: 0o600 },
-      );
-
-      // Fake openshell that reports the sandbox as running
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          '  echo "my-agent   Running   openclaw"',
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Sandbox: my-agent'",
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Host openshell-my-agent'",
-          "  echo '  HostName 127.0.0.1'",
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "--version" ]; then',
-          '  echo "openshell 0.0.24"',
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        path.join(localBin, "ssh"),
-        ["#!/usr/bin/env bash", "echo 'OpenClaw 2026.3.11 (old)'", "exit 0"].join("\n"),
-        { mode: 0o755 },
-      );
-
-      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
-
-      expect(r.code).toBe(0);
-      // Should report the stale sandbox with version info
-      expect(r.out).toContain("my-agent");
-      expect(r.out).toContain("2026.3.11");
-      expect(r.out).toMatch(/stale|need upgrading/i);
-    },
-  );
-
-  it(
-    "upgrade-sandboxes --check reports all-current when no sandboxes are stale (#1904)",
-    testTimeoutOptions(),
-    () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-current-"));
-      const localBin = path.join(home, "bin");
-      const nemoclawDir = path.join(home, ".nemoclaw");
-      fs.mkdirSync(localBin, { recursive: true });
-      fs.mkdirSync(nemoclawDir, { recursive: true });
-
-      // Registry with a sandbox at the current version — should NOT be stale
-      fs.writeFileSync(
-        path.join(nemoclawDir, "sandboxes.json"),
-        JSON.stringify({
-          sandboxes: {
-            "my-agent": {
-              name: "my-agent",
-              model: "nvidia/nemotron-3-super-120b-a12b",
-              provider: "nvidia-prod",
-              gpuEnabled: false,
-              policies: [],
-              agentVersion: "9999.12.31",
-            },
-          },
-          defaultSandbox: "my-agent",
-        }),
-        { mode: 0o600 },
-      );
-
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          '  echo "my-agent   Running   openclaw"',
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Sandbox: my-agent'",
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Host openshell-my-agent'",
-          "  echo '  HostName 127.0.0.1'",
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "--version" ]; then',
-          '  echo "openshell 0.0.24"',
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        path.join(localBin, "ssh"),
-        ["#!/usr/bin/env bash", "echo 'OpenClaw 9999.12.31 (new)'", "exit 0"].join("\n"),
-        { mode: 0o755 },
-      );
-
-      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
-
-      expect(r.code).toBe(0);
-      expect(r.out).toContain("up to date");
-    },
-  );
-
-  it(
-    "upgrade-sandboxes --check probes running sandboxes before trusting cached metadata (#4429)",
-    testTimeoutOptions(),
-    () => {
-      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-probe-"));
-      const localBin = path.join(home, "bin");
-      const nemoclawDir = path.join(home, ".nemoclaw");
-      fs.mkdirSync(localBin, { recursive: true });
-      fs.mkdirSync(nemoclawDir, { recursive: true });
-
-      fs.writeFileSync(
-        path.join(nemoclawDir, "sandboxes.json"),
-        JSON.stringify({
-          sandboxes: {
-            "my-agent": {
-              name: "my-agent",
-              model: "nvidia/nemotron-3-super-120b-a12b",
-              provider: "nvidia-prod",
-              gpuEnabled: false,
-              policies: [],
-              agentVersion: "2026.5.18",
-            },
-          },
-          defaultSandbox: "my-agent",
-        }),
-        { mode: 0o600 },
-      );
-
-      fs.writeFileSync(
-        path.join(localBin, "openshell"),
-        [
-          "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-          '  echo "my-agent   Running   openclaw"',
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Sandbox: my-agent'",
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
-          "  echo 'Host openshell-my-agent'",
-          "  echo '  HostName 127.0.0.1'",
-          "  exit 0",
-          "fi",
-          "exit 0",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        path.join(localBin, "ssh"),
-        ["#!/usr/bin/env bash", "echo 'OpenClaw 2026.3.11 (old)'", "exit 0"].join("\n"),
-        { mode: 0o755 },
-      );
-
-      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      });
-
-      expect(r.code).toBe(0);
-      expect(r.out).toContain("my-agent");
-      expect(r.out).toContain("2026.3.11");
-      expect(r.out).toMatch(/stale|need upgrading/i);
-      expect(r.out).not.toContain("All sandboxes are up to date.");
-    },
-  );
-
-  it("share with no subcommand prints usage help", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-"));
-    writeSandboxRegistry(home);
-
-    const r = runWithEnv("alpha share", { HOME: home });
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
-    expect(r.out).toContain("mount");
-    expect(r.out).toContain("unmount");
-    expect(r.out).toContain("status");
-  });
-
-  it("share help uses native oclif usage", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-help-"));
-    writeSandboxRegistry(home);
-
-    const parent = runWithEnv("alpha share --help", { HOME: home });
-    expect(parent.code).toBe(0);
-    expect(parent.out).toContain("$ nemoclaw sandbox share <mount|unmount|status> <name>");
-
-    for (const [subcommand, usage] of [
-      ["mount", "share mount <name> [sandbox-path] [local-mount-point]"],
-      ["unmount", "share unmount <name> [local-mount-point]"],
-      ["status", "share status <name> [local-mount-point]"],
-    ]) {
-      const result = runWithEnv(`alpha share ${subcommand} --help`, { HOME: home });
-      expect(result.code).toBe(0);
-      expect(result.out).toContain(`$ nemoclaw sandbox ${usage}`);
-    }
-  });
-
-  it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-action-"));
-    writeSandboxRegistry(home);
-
-    const r = runWithEnv("alpha share mount", { HOME: home });
-
-    // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
-    expect(r.code).not.toBe(0);
-    expect(r.out).not.toContain("Unknown action");
-  });
-
-  it("unknown share subcommands fail before action dispatch", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-share-unknown-"));
-    writeSandboxRegistry(home);
-
-    const r = runWithEnv("alpha share bogus 2>&1", { HOME: home });
-
-    expect(r.code).not.toBe(0);
-    expect(r.out).toMatch(/Unexpected argument:|Command .*not found/);
   });
 });

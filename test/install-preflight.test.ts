@@ -1544,6 +1544,10 @@ fi`,
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
+if [ "$1" = "info" ] && [ "$2" = "--format" ]; then
+  echo '{"ServerVersion":"5.0.0","Name":"Podman Engine","CDISpecDirs":[]}'
+  exit 0
+fi
 if [ "$1" = "info" ]; then
   echo "Podman Engine"
   exit 0
@@ -1551,7 +1555,6 @@ fi
 exit 0
 `,
     );
-
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
