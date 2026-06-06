@@ -168,7 +168,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install
+
+      - name: Build TypeScript plugin
+        run: cd nemoclaw && npm run build
 
       - name: Run CLI coverage
         run: |
