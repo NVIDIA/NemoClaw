@@ -238,6 +238,52 @@ describe("http-probe helpers", () => {
     expect(result.ok).toBe(false);
     expect(result.message).toContain("must not read request data from a file");
   });
+
+  it.each([
+    ["--upload-file", ["--upload-file", "/etc/passwd"]],
+    ["-T", ["-T/etc/passwd"]],
+    ["--netrc", ["--netrc"]],
+    ["--data-urlencode", ["--data-urlencode", "payload@/etc/passwd"]],
+    ["-K", ["-K/etc/passwd"]],
+    ["-b", ["-b/etc/passwd"]],
+  ])("rejects file-reading curl option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows explicit trusted curl config files", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    let spawnedArgs: readonly string[] = [];
+    const result = runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+      trustedConfigFiles: [configPath],
+      spawnSyncImpl: (_command, args) => {
+        spawnedArgs = args;
+        const outputPath = args[args.indexOf("-o") + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, "{}");
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(spawnedArgs).toContain(configPath);
+  });
 });
 
 describe("runChatCompletionsStreamingProbe", () => {

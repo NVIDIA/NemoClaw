@@ -58,11 +58,14 @@ export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): S
   const fstatSync = deps.fstatSync ?? fs.fstatSync;
   const readFileSync = deps.readFileSync ?? fs.readFileSync;
   const closeSync = deps.closeSync ?? fs.closeSync;
+  const noFollowFlag =
+    typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
+  if (noFollowFlag === undefined) {
+    return classifyShimPathByMetadata(shimPath, lstatSync);
+  }
+  const nonblockFlag = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
   try {
-    const fd = openSync(
-      shimPath,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
-    );
+    const fd = openSync(shimPath, fs.constants.O_RDONLY | noFollowFlag | nonblockFlag);
     try {
       const fdStat = fstatSync(fd);
       return classifyNemoclawShim({

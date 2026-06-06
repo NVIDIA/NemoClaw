@@ -22,6 +22,8 @@ export interface CurlProbeOptions {
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   timeoutMs?: number;
+  /** Absolute or cwd-relative curl config files created by trusted NemoClaw callers. */
+  trustedConfigFiles?: readonly string[];
   spawnSyncImpl?: (
     command: string,
     args: readonly string[],
@@ -126,17 +128,27 @@ function sanitizeCurlUrl(value: string): string {
   }
 }
 
-const CURL_OPTIONS_THAT_READ_FILES = new Set(["--config", "-K", "--cookie", "-b", "--netrc-file"]);
+const CURL_CONFIG_OPTIONS = new Set(["--config", "-K"]);
+const CURL_OPTIONS_THAT_READ_FILES = new Set([
+  "--cookie",
+  "-b",
+  "--netrc-file",
+  "--upload-file",
+  "-T",
+]);
+const CURL_OPTIONS_THAT_READ_IMPLICIT_FILES = new Set(["--netrc", "--netrc-optional"]);
 const CURL_DATA_OPTIONS = new Set([
   "--data",
   "--data-raw",
   "--data-binary",
   "--data-ascii",
+  "--data-urlencode",
   "--json",
   "--form",
   "-d",
   "-F",
 ]);
+const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F"]);
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -152,32 +164,72 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
   return url.toString();
 }
 
-function curlValueReadsFromFile(value: string): boolean {
-  return (value.startsWith("@") && value !== "@-") || /(^|=)@[^-]/.test(value);
+function splitCurlOptionArg(arg: string): { option: string; inlineValue?: string } {
+  if (arg.startsWith("--")) {
+    const [option, inlineValue] = arg.includes("=")
+      ? arg.split(/=(.*)/s, 2)
+      : [arg, undefined];
+    return { option, inlineValue };
+  }
+  for (const option of CURL_SHORT_OPTIONS_WITH_VALUES) {
+    if (arg.startsWith(option) && arg.length > option.length) {
+      return { option, inlineValue: arg.slice(option.length) };
+    }
+  }
+  return { option: arg };
 }
 
-function validateCurlProbeArgs(argv: string[]): { args: string[]; url: string } {
+function curlValueReadsFromFile(option: string, value: string): boolean {
+  if ((value.startsWith("@") && value !== "@-") || /(^|=)@[^-]/.test(value)) return true;
+  if (option === "--data-urlencode" && /^[^=]+@[^-]/.test(value)) return true;
+  if ((option === "--form" || option === "-F") && /(^|=)<[^-]/.test(value)) return true;
+  return false;
+}
+
+function normalizeCurlConfigPath(value: string, opts: CurlProbeOptions): string {
+  if (value.trim() === "") throw new Error("curl probe config path is required");
+  if (value.includes("\0")) throw new Error("curl probe config path must not contain NUL bytes");
+  return path.resolve(opts.cwd ?? ROOT, value);
+}
+
+function isTrustedCurlConfigPath(value: string, opts: CurlProbeOptions): boolean {
+  if (!opts.trustedConfigFiles?.length) return false;
+  const candidate = normalizeCurlConfigPath(value, opts);
+  return opts.trustedConfigFiles
+    .map((trustedPath) => normalizeCurlConfigPath(trustedPath, opts))
+    .includes(candidate);
+}
+
+function validateCurlProbeArgs(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): { args: string[]; url: string } {
   const args = [...argv];
   const url = normalizeHttpProbeUrl(args.pop());
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    const [option, inlineValue] = arg.includes("=") ? arg.split(/=(.*)/s, 2) : [arg, undefined];
-    if (CURL_OPTIONS_THAT_READ_FILES.has(option)) {
+    const { option, inlineValue } = splitCurlOptionArg(arg);
+    if (CURL_OPTIONS_THAT_READ_IMPLICIT_FILES.has(option)) {
       throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
+    }
+    if (CURL_OPTIONS_THAT_READ_FILES.has(option)) {
+      if (inlineValue === undefined) index += 1;
+      throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);
+    }
+    if (CURL_CONFIG_OPTIONS.has(option)) {
+      const value = inlineValue ?? args[index + 1] ?? "";
+      if (!isTrustedCurlConfigPath(value, opts)) {
+        throw new Error(`curl probe config file is not trusted: ${option}`);
+      }
+      if (inlineValue === undefined) index += 1;
+      continue;
     }
     if (arg === "--url" || arg.startsWith("--url=")) {
       throw new Error("curl probe URLs must be passed as the final argv entry");
     }
-    if ((arg.startsWith("-d") || arg.startsWith("-F")) && arg.length > 2 && !arg.startsWith("--")) {
-      const value = arg.slice(2);
-      if (curlValueReadsFromFile(value)) {
-        throw new Error(`curl probe option must not read request data from a file: ${arg.slice(0, 2)}`);
-      }
-      continue;
-    }
     if (CURL_DATA_OPTIONS.has(option)) {
       const value = inlineValue ?? args[index + 1] ?? "";
-      if (curlValueReadsFromFile(value)) {
+      if (curlValueReadsFromFile(option, value)) {
         throw new Error(`curl probe option must not read request data from a file: ${option}`);
       }
       if (inlineValue === undefined) index += 1;
@@ -197,7 +249,7 @@ function buildCurlProbeSpawnArgs(
   const outputArgs =
     mode === "json" ? ["-o", bodyFile, "-w", "%{http_code}"] : ["-N", "-o", bodyFile];
   const statusArgs = mode === "chat-stream" ? ["-w", "%{http_code}"] : [];
-  // lgtm[js/file-access-to-http] URL/argv are validated before this helper; file-reading curl options are rejected.
+  // lgtm[js/file-access-to-http] URL/argv are validated; file-backed config paths must be explicitly trusted.
   return [...args, ...outputArgs, ...statusArgs, url];
 }
 
@@ -287,7 +339,7 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
 function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-curl-probe", ".json");
   try {
-    const { args, url } = validateCurlProbeArgs(argv);
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "json");
@@ -396,7 +448,7 @@ function runChatCompletionsStreamingProbeImpl(
 ): CurlProbeResult {
   const bodyFile = secureTempFile("nemoclaw-chat-streaming-probe", ".sse");
   try {
-    const { args, url } = validateCurlProbeArgs(argv);
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "chat-stream");
@@ -517,7 +569,7 @@ function runStreamingEventProbeImpl(
 ): StreamingProbeResult {
   const bodyFile = secureTempFile("nemoclaw-streaming-probe", ".sse");
   try {
-    const { args, url } = validateCurlProbeArgs(argv);
+    const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "event-stream");

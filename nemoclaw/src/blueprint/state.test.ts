@@ -176,10 +176,12 @@ describe("blueprint/state", () => {
       expect(loaded.lastRunId).toBeNull();
     });
 
-    it("does nothing when no file exists", () => {
+    it("creates blank state when no file exists", () => {
       expect(() => {
         clearState();
       }).not.toThrow();
+      expect(store.has(STATE_PATH)).toBe(true);
+      expect(JSON.parse(store.get(STATE_PATH) || "{}").lastAction).toBeNull();
     });
   });
 });

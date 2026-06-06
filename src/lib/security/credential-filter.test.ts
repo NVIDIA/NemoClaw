@@ -135,7 +135,13 @@ describe("sanitizeConfigFile", () => {
     const targetPath = join(tmpDir, "target.json");
     const linkPath = join(tmpDir, "openclaw.json");
     writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret" }));
-    symlinkSync(targetPath, linkPath);
+    try {
+      symlinkSync(targetPath, linkPath);
+    } catch (error) {
+      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
+      if (code === "EPERM" || code === "EACCES") return;
+      throw error;
+    }
 
     sanitizeConfigFile(linkPath);
 

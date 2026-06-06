@@ -12,10 +12,10 @@
 
 import { randomUUID } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   constants,
   fstatSync,
+  lstatSync,
   openSync,
   readFileSync,
   renameSync,
@@ -30,7 +30,12 @@ function parseJson<T>(text: string): T {
 function readRegularFileNoFollow(filePath: string): string | null {
   let fd: number;
   try {
-    fd = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    if (typeof constants.O_NOFOLLOW !== "number") {
+      const stat = lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) return null;
+    }
+    const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    fd = openSync(filePath, constants.O_RDONLY | noFollowFlag);
   } catch {
     return null;
   }
@@ -46,7 +51,6 @@ function writeFileAtomically(filePath: string, contents: string): void {
   const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
   writeFileSync(tmpPath, contents, { mode: 0o600 });
   renameSync(tmpPath, filePath);
-  chmodSync(filePath, 0o600);
 }
 
 /**
