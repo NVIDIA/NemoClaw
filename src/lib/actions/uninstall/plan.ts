@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 
 import { defaultUninstallPaths } from "../../domain/uninstall/paths";
-import { buildUninstallPlan, type UninstallPlan, type UninstallPlanOptions } from "../../domain/uninstall/plan";
+import {
+  buildUninstallPlan,
+  type UninstallPlan,
+  type UninstallPlanOptions,
+} from "../../domain/uninstall/plan";
 import { classifyNemoclawShim, type ShimClassification } from "../../domain/uninstall/shims";
 
 export interface FileSystemDeps {
@@ -20,6 +25,33 @@ export interface HostUninstallPlanOptions extends Omit<UninstallPlanOptions, "sh
   fs?: FileSystemDeps;
 }
 
+function errnoCode(error: unknown): string | undefined {
+  return error && typeof error === "object" ? (error as { code?: string }).code : undefined;
+}
+
+function classifyShimPathByMetadata(
+  shimPath: string,
+  lstatSync: typeof fs.lstatSync,
+): ShimClassification {
+  try {
+    const stat = lstatSync(shimPath);
+    return classifyNemoclawShim({
+      exists: true,
+      isFile: stat.isFile(),
+      isSymlink: stat.isSymbolicLink(),
+    });
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") {
+      return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false });
+    }
+    throw error;
+  }
+}
+
+function resolveUninstallHome(envHome: string | undefined): string {
+  return envHome || os.homedir();
+}
+
 export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): ShimClassification {
   const lstatSync = deps.lstatSync ?? fs.lstatSync;
   const openSync = deps.openSync ?? fs.openSync;
@@ -27,37 +59,43 @@ export function classifyShimPath(shimPath: string, deps: FileSystemDeps = {}): S
   const readFileSync = deps.readFileSync ?? fs.readFileSync;
   const closeSync = deps.closeSync ?? fs.closeSync;
   try {
-    const stat = lstatSync(shimPath);
-    const isFile = stat.isFile();
-    let contents: string | undefined;
-    if (isFile) {
-      const fd = openSync(shimPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        const fdStat = fstatSync(fd);
-        if (fdStat.isFile()) {
-          contents = String(readFileSync(fd, "utf-8"));
-        }
-      } finally {
-        closeSync(fd);
-      }
+    const fd = openSync(
+      shimPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+    try {
+      const fdStat = fstatSync(fd);
+      return classifyNemoclawShim({
+        contents: fdStat.isFile() ? String(readFileSync(fd, "utf-8")) : undefined,
+        exists: true,
+        isFile: fdStat.isFile(),
+        isSymlink: false,
+      });
+    } finally {
+      closeSync(fd);
     }
-    return classifyNemoclawShim({
-      contents,
-      exists: true,
-      isFile,
-      isSymlink: stat.isSymbolicLink(),
-    });
   } catch (error) {
-    const code = error && typeof error === "object" ? (error as { code?: string }).code : undefined;
+    const code = errnoCode(error);
     if (code === "ENOENT") {
       return classifyNemoclawShim({ exists: false, isFile: false, isSymlink: false });
+    }
+    if (
+      code === "ELOOP" ||
+      code === "EISDIR" ||
+      code === "EACCES" ||
+      code === "EPERM" ||
+      code === "ENXIO" ||
+      code === "ENODEV" ||
+      code === "ENOTSUP"
+    ) {
+      return classifyShimPathByMetadata(shimPath, lstatSync);
     }
     throw error;
   }
 }
 
 export function buildHostUninstallPlan(options: HostUninstallPlanOptions): UninstallPlan {
-  const home = options.env.HOME || "/tmp";
+  const home = resolveUninstallHome(options.env.HOME);
   const paths = defaultUninstallPaths({
     home,
     tmpDir: options.env.TMPDIR,

@@ -186,6 +186,21 @@ function validateCurlProbeArgs(argv: string[]): { args: string[]; url: string } 
   return { args, url };
 }
 
+type CurlProbeMode = "json" | "chat-stream" | "event-stream";
+
+function buildCurlProbeSpawnArgs(
+  args: string[],
+  url: string,
+  bodyFile: string,
+  mode: CurlProbeMode,
+): string[] {
+  const outputArgs =
+    mode === "json" ? ["-o", bodyFile, "-w", "%{http_code}"] : ["-N", "-o", bodyFile];
+  const statusArgs = mode === "chat-stream" ? ["-w", "%{http_code}"] : [];
+  // lgtm[js/file-access-to-http] URL/argv are validated before this helper; file-reading curl options are rejected.
+  return [...args, ...outputArgs, ...statusArgs, url];
+}
+
 function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Record<string, unknown> {
   const url = argv.at(-1) || "";
   const methodIndex = argv.findIndex((arg) => arg === "-X" || arg === "--request");
@@ -275,12 +290,11 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    // The URL is normalized to http(s) and curl argv is screened for options
-    // that make curl read local files into the outbound request.
-    // lgtm[js/file-access-to-http]
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "json");
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-o", bodyFile, "-w", "%{http_code}", url],
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -385,12 +399,11 @@ function runChatCompletionsStreamingProbeImpl(
     const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    // The URL is normalized to http(s) and curl argv is screened for options
-    // that make curl read local files into the outbound request.
-    // lgtm[js/file-access-to-http]
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "chat-stream");
     const result = spawnSyncImpl(
       "curl",
-      [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", url],
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
@@ -507,18 +520,21 @@ function runStreamingEventProbeImpl(
     const { args, url } = validateCurlProbeArgs(argv);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    // The URL is normalized to http(s) and curl argv is screened for options
-    // that make curl read local files into the outbound request.
-    // lgtm[js/file-access-to-http]
-    const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, url], {
-      cwd: opts.cwd ?? ROOT,
-      encoding: "utf8",
-      timeout,
-      env: {
-        ...process.env,
-        ...opts.env,
+    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "event-stream");
+    const result = spawnSyncImpl(
+      "curl",
+      // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
+      curlArgs,
+      {
+        cwd: opts.cwd ?? ROOT,
+        encoding: "utf8",
+        timeout,
+        env: {
+          ...process.env,
+          ...opts.env,
+        },
       },
-    });
+    );
 
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
 

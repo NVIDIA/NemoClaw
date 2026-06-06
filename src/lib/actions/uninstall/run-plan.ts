@@ -754,7 +754,7 @@ function executePlan(
 
 export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): { paths: UninstallPaths; plan: UninstallPlan } {
   const env = { ...process.env, ...(deps.env ?? {}) };
-  const home = env.HOME || os.tmpdir();
+  const home = env.HOME || os.homedir();
   const paths = defaultUninstallPaths({
     home,
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
