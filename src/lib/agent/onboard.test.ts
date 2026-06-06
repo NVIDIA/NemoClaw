@@ -17,7 +17,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     displayName: "Agent",
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
-    dashboard: { kind: "ui", label: "UI", path: "/" },
+    dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
@@ -49,7 +49,13 @@ const apiAgent = makeAgent({
   name: "hermes",
   displayName: "Hermes Agent",
   forwardPort: 8642,
-  dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1" },
+  dashboard: {
+    kind: "api",
+    label: "OpenAI-compatible API",
+    path: "/v1",
+    healthPath: "/health",
+    auth: "none",
+  },
   dashboardUi: {
     label: "Web dashboard",
     port: 9119,
@@ -64,7 +70,20 @@ const uiAgent = makeAgent({
   name: "ficticious-ui",
   displayName: "Ficticious",
   forwardPort: 19000,
-  dashboard: { kind: "ui", label: "UI", path: "/" },
+  dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
+});
+
+const sessionAuthUiAgent = makeAgent({
+  name: "hermes",
+  displayName: "Hermes Agent",
+  forwardPort: 18789,
+  dashboard: {
+    kind: "ui",
+    label: "Dashboard",
+    path: "/",
+    healthPath: "/api/status",
+    auth: "session",
+  },
 });
 
 // Regression fixture for issue #2078 — matches the text a user sees when
@@ -153,6 +172,20 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(output).toContain("Port 9119 must be forwarded before opening this URL.");
     expect(output).toContain("http://127.0.0.1:9119/");
     expect(output).not.toContain("http://127.0.0.1:1023/");
+  });
+
+  it("does not request an OpenClaw gateway token for session-authenticated dashboards", () => {
+    printDashboardUi("sandbox-z", null, sessionAuthUiAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain("Port 18789 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:18789/");
+    expect(output).not.toContain("gateway-token");
+    expect(noteSpy).not.toHaveBeenCalled();
   });
 
   it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {

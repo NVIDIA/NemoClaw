@@ -16,7 +16,7 @@ import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
-import { lockAgentConfig } from "./index";
+import * as shields from "./index";
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -40,6 +40,8 @@ interface TimerArgs {
   configDir?: string;
   processToken?: string;
 }
+
+type LockAgentConfig = typeof shields.lockAgentConfig;
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -115,6 +117,17 @@ function readTimerMarker(markerPath: string): UnknownRecord | null {
   } catch {
     return null;
   }
+}
+
+function resolveLockAgentConfig(): LockAgentConfig {
+  // The timer is a detached child process that must never mark shields up
+  // unless it can call the lock verifier. Guard the CommonJS export boundary
+  // so packaging/mock drift leaves shields down with an auditable warning.
+  const lockAgentConfig = shields.lockAgentConfig;
+  if (typeof lockAgentConfig !== "function") {
+    throw new Error("Shields lock helper is unavailable; cannot verify auto-restore lock state");
+  }
+  return lockAgentConfig;
 }
 
 function markerMatchesCurrentTimer(args: TimerArgs): boolean {
@@ -229,6 +242,7 @@ function runRestoreTimer(args: TimerArgs): void {
       }
       if (lockTarget) {
         try {
+          const lockAgentConfig = resolveLockAgentConfig();
           const lockResult = lockAgentConfig(args.sandboxName, lockTarget);
           lockedChattr = lockResult.chattrApplied;
           lockedHashes = lockResult.fileHashes;

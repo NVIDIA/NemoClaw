@@ -860,6 +860,20 @@ describe("regression guards", () => {
     });
   });
 
+  describe("OpenClaw runtime cache hardening", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+
+    it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const startSrc = fs.readFileSync(path.join(repoRoot, "scripts", "nemoclaw-start.sh"), "utf-8");
+
+      expect(baseSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(runtimeSrc).toContain("ENV JITI_FS_CACHE=false");
+      expect(startSrc).toContain('export JITI_FS_CACHE="false"');
+    });
+  });
+
   describe("sandbox ships tmux for the bundled tmux-session flow (#4513)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
 

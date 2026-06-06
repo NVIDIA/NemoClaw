@@ -88,6 +88,13 @@ describe("handleAgentSetupState", () => {
     expect(calls.skipped).toHaveBeenCalledWith("openclaw");
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(result.session?.steps.openclaw.status).toBe("skipped");
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "policies",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "agent_setup" },
+    });
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
@@ -108,6 +115,13 @@ describe("handleAgentSetupState", () => {
       expect.objectContaining({ sandboxName: "my-assistant", provider: "provider", model: "model" }),
     );
     expect(calls.skipped).toHaveBeenCalledWith("agent_setup");
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "policies",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "openclaw" },
+    });
     expect(result.session).toMatchObject({
       sandboxName: "my-assistant",
       provider: "provider",
@@ -143,6 +157,7 @@ describe("handleAgentSetupState", () => {
       }),
     );
     expect(calls.skipped).toHaveBeenCalledWith("agent_setup");
+    expect(result.stateResult).toMatchObject({ next: "policies", transitionKind: "advance" });
     expect(result.session).toMatchObject({
       sandboxName: "my-assistant",
       provider: "provider",

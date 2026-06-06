@@ -17,11 +17,13 @@ import {
   dockerContainerInspectFormat,
   dockerInfoFormat,
   dockerListVolumesByPrefix,
+  dockerManifestInspect,
   dockerPull,
-  dockerRename,
   dockerRemoveVolumesByPrefix,
+  dockerRename,
   dockerRmi,
   dockerRunDetached,
+  dockerTag,
 } from "./index";
 
 describe("docker helpers", () => {
@@ -128,6 +130,22 @@ describe("docker helpers", () => {
         { ignoreError: true },
       ],
     ]);
+  });
+
+  it("prefixes docker argv for manifest inspect and tag helpers (#3885)", () => {
+    runCaptureMock.mockReturnValue('{"manifests":[]}');
+
+    dockerManifestInspect("nvcr.io/nim/nvidia/x:latest", { ignoreError: true });
+    dockerTag("nvcr.io/nim/nvidia/x@sha256:abc", "nvcr.io/nim/nvidia/x:latest");
+
+    expect(runCaptureMock).toHaveBeenCalledWith(
+      ["docker", "manifest", "inspect", "nvcr.io/nim/nvidia/x:latest"],
+      { ignoreError: true },
+    );
+    expect(runMock).toHaveBeenCalledWith(
+      ["docker", "tag", "nvcr.io/nim/nvidia/x@sha256:abc", "nvcr.io/nim/nvidia/x:latest"],
+      {},
+    );
   });
 
   it("filters docker volume names by exact prefix", () => {

@@ -50,6 +50,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "qwen3.6-27b",
     maxModelLen: 262144,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -69,6 +71,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "deepseek-r1-distill-70b",
     maxModelLen: 32768,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -87,20 +91,61 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--load-format", "fastsafetensors"],
+    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
+    gated: false,
+  },
+  {
+    id: "deepseek-ai/DeepSeek-V4-Flash",
+    label: "DeepSeek V4 Flash",
+    envValue: "deepseek-v4-flash",
+    maxModelLen: 1048576,
+    modelArgs: [
+      "--kv-cache-dtype",
+      "fp8",
+      "--block-size",
+      "256",
+      "--enable-prefix-caching",
+      "--gpu-memory-utilization",
+      "0.92",
+      "--compilation-config",
+      `'{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+      "--attention_config.use_fp4_indexer_cache",
+      "True",
+      "--tokenizer-mode",
+      "deepseek_v4",
+      "--tool-call-parser",
+      "deepseek_v4",
+      "--enable-auto-tool-choice",
+      "--reasoning-parser",
+      "deepseek_v4",
+      "--no-disable-hybrid-kv-cache-manager",
+      "--disable-uvicorn-access-log",
+      "--max-cudagraph-capture-size",
+      "128",
+      "--speculative-config",
+      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      "--max-num-batched-tokens",
+      "8192",
+      "--max-num-seqs",
+      "16",
+      "--prefix-cache-retention-interval",
+      "auto",
+    ],
     gated: false,
   },
   {
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
     label: "Qwen3.6 35B-A3B NVFP4",
     envValue: "qwen3.6-35b-a3b-nvfp4",
-    maxModelLen: 65536,
+    maxModelLen: 131072,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
     // --data-parallel-size (all 1 — harmless on a single Spark node),
-    // --gpu-memory-utilization 0.7, --port 8000, and --trust-remote-code;
-    // --max-model-len comes from maxModelLen above.
+    // --port 8000, and --trust-remote-code; --max-model-len comes from
+    // maxModelLen above.
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--dtype",
       "auto",
       "--quantization",
@@ -226,8 +271,6 @@ export function preflightVllmModelEnv(
 }
 
 const SHARED_VLLM_ARGS: readonly string[] = [
-  "--gpu-memory-utilization",
-  "0.7",
   "--tensor-parallel-size",
   "1",
   "--pipeline-parallel-size",

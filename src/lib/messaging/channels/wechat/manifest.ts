@@ -8,6 +8,8 @@ export const wechatManifest = {
   id: "wechat",
   displayName: "WeChat",
   description: "WeChat (personal) bot messaging",
+  enrollmentHelp:
+    "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
   supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "host-qr",
@@ -53,6 +55,7 @@ export const wechatManifest = {
       prompt: {
         label: "WeChat User ID(s) (DM allowlist)",
         help: "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+        emptyValueMessage: "bot will require manual pairing",
       },
     },
   ],
@@ -135,6 +138,17 @@ export const wechatManifest = {
         },
       ],
       onFailure: "skip-channel",
+    },
+    {
+      id: "wechat-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
     },
     {
       id: "wechat-seed-openclaw-account",

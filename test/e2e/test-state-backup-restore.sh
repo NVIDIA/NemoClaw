@@ -52,7 +52,7 @@ fail() {
   echo -e "${RED}  FAIL${NC} $1 — $2" | tee -a "$LOG_FILE"
 }
 # Record a skipped test.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329 # Retained for manual triage paths not hit in every E2E run.
 skip() {
   ((SKIP += 1))
   ((TOTAL += 1))

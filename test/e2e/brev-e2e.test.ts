@@ -263,7 +263,7 @@ function sshEnv(
   cmd: string,
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
-  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen2.5:7b";
+  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
   const envParts = [
     `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,

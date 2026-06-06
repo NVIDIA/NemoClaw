@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const shieldsIndexMock = vi.hoisted(() => ({
+  lockAgentConfig: vi.fn() as unknown,
+}));
+
 const runMock = vi.fn(() => ({ status: 0 }));
 
 vi.mock("../runner", () => ({
@@ -34,7 +38,9 @@ vi.mock("../sandbox/config", () => ({
 }));
 
 vi.mock("./index", () => ({
-  lockAgentConfig: vi.fn(),
+  get lockAgentConfig() {
+    return shieldsIndexMock.lockAgentConfig;
+  },
 }));
 
 describe("shields timer authorization", () => {
@@ -43,6 +49,7 @@ describe("shields timer authorization", () => {
   beforeEach(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
+    shieldsIndexMock.lockAgentConfig = vi.fn();
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -279,6 +286,77 @@ describe("shields timer authorization", () => {
     expect(updatedState.chattrApplied).toBe(true);
     expect(updatedState.fileHashes).toEqual(sealedHashes);
     expect(updatedState.fileHashes[sensitiveHashPath]).toBeDefined();
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("leaves shields down and audits when the lock helper export is unavailable", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "alpha";
+    const configPath = "/sandbox/.openclaw/openclaw.json";
+    const configDir = "/sandbox/.openclaw";
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const stateFile = path.join(stateDir, `shields-${sandboxName}.json`);
+    const auditFile = path.join(stateDir, "shields-audit.jsonl");
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(stateFile, JSON.stringify({ shieldsDown: true }, null, 2));
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: "tok",
+      }),
+    );
+
+    const sandboxConfigModule = await import("../sandbox/config");
+    (sandboxConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
+      agentName: "openclaw",
+      configPath,
+      configDir,
+      sensitiveFiles: [],
+    });
+    shieldsIndexMock.lockAgentConfig = undefined;
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      "tok",
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    const auditEntries = fs.readFileSync(auditFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+
+    expect(exitCode).toBe(1);
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(updatedState.shieldsDown).toBe(true);
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_auto_restore_lock_warning",
+        sandbox: sandboxName,
+        warning: "Shields lock helper is unavailable; cannot verify auto-restore lock state",
+        lock_verified: false,
+      }),
+    );
+    expect(auditEntries).toContainEqual(
+      expect.objectContaining({
+        action: "shields_up_failed",
+        sandbox: sandboxName,
+        error: "Config re-lock verification failed — shields remain DOWN",
+      }),
+    );
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 });

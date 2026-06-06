@@ -677,14 +677,15 @@ if openshell --version >/dev/null 2>&1; then
 fi
 pass "Pre-cleanup complete"
 
-if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
-  && [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
-  && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
-  # This E2E normally uses fake tokens to exercise config plumbing, not the
-  # live Telegram API. Keep real-token runs on the onboard validation path.
-  # Remove once onboard has a hermetic fake Telegram API.
-  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  elif [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
+    && ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Host cannot reach api.telegram.org; skipping manifest Telegram reachability check"
+  fi
 fi
 if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
   && [ -z "${SLACK_BOT_TOKEN_REAL:-}" ] \

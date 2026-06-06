@@ -1,109 +1,131 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw E2E
+# NemoClaw E2E scenario framework
 
-End-to-end tests organized around **setup scenarios** rather than
-one-off shell scripts. A scenario declares *how you got to a working
-NemoClaw* (platform + install + runtime + onboarding); a scenario
-resolves to an **expected state** contract; once that state validates,
-one or more **suites** run functional assertions against it.
+NemoClaw's scenario E2E framework is currently a **hybrid** migration model.
+It combines typed scenario builders, product-facing setup manifests, YAML
+runtime metadata, and reusable shell suites while the older live E2E scripts
+continue to run in parallel.
 
-```text
-setup scenario → expected state → suite sequence
-```
+## Current sources of truth
 
-The durable framework inputs live in these places — read these first,
-they are short and deliberately not redundant with prose:
+Use the source that matches the task:
 
-- [`../nemoclaw_scenarios/scenarios.yaml`](../nemoclaw_scenarios/scenarios.yaml)
-  — YAML metadata for platforms, installs, runtimes, onboarding choices,
-  layered test plans, and legacy scenario aliases.
-- [`../nemoclaw_scenarios/expected-states.yaml`](../nemoclaw_scenarios/expected-states.yaml)
-  — reusable structural contracts (gateway health, sandbox status,
-  inference routing, etc.).
-- [`../validation_suites/suites.yaml`](../validation_suites/suites.yaml)
-  — ordered validation steps, each with a `requires_state` predicate.
-- [`../scenarios/`](../scenarios/)
-  — typed scenario builders, manifests, assertion groups, phase
-  orchestrators, and shared SUT-boundary clients used by scenario
-  framework tests and scenario-workflow planning.
+| Task | Current source |
+| --- | --- |
+| Scenario workflow fan-out and dry-run planning | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts`, and `test/e2e-scenario/scenarios/run.ts` |
+| Product-facing desired setup/onboarding state | `test/e2e-scenario/manifests/*.yaml` |
+| Shell runner scenario resolution and live scenario execution | `test/e2e-scenario/nemoclaw_scenarios/scenarios.yaml`, `expected-states.yaml`, and `validation_suites/suites.yaml` |
+| Reusable live suite assertions | `test/e2e-scenario/validation_suites/` |
+| Existing nightly and platform E2E coverage | legacy `test/e2e/test-*.sh` scripts and their workflows |
+
+The migration goal is to keep these surfaces aligned while progressively moving
+coverage into scenario contracts and suites. Do not add new legacy-style
+`test/e2e/test-*.sh` entrypoints unless there is a specific maintainer-approved
+reason.
 
 ## Layered scenario model
 
-The E2E source of truth is layered as base environment, onboarding profile,
-test plan, expected state, and post-onboard suites. Test plans can also declare
-onboarding assertions that run after install/onboard and before expected-state
-validation.
+The conceptual model is layered:
 
-Plan-only resolution accepts either an alias or a test plan ID:
-
-```bash
-bash test/e2e-scenario/runtime/run-scenario.sh ubuntu-repo-cloud-openclaw --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh ubuntu-repo-docker__cloud-nvidia-openclaw --plan-only
+```text
+base environment
+  → onboarding profile / manifest
+    → onboarding assertions
+      → expected state
+        → post-onboard suites
 ```
+
+The YAML shell runner expresses this through:
+
+- `base_scenarios`: platform + install + runtime
+- `onboarding_profiles`: user onboarding choices
+- `test_plans`: base + onboarding + expected state + suites
+- `setup_scenarios`: friendly aliases and compatibility metadata
+- `onboarding_assertions`: setup/onboarding checks that run before suites
+
+The typed scenario registry expresses the same intent as deterministic code and
+is used by the scenario workflow matrix and dry-run plan artifacts.
 
 ## How to run
 
 ```bash
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only       # resolve + print plan, no side effects
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run         # helpers short-circuit with trace
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --validate-only   # assume setup done; validate expected state
-bash test/e2e-scenario/runtime/run-scenario.sh <id>                   # full live run
-bash test/e2e-scenario/runtime/run-suites.sh <suite-id> [<suite-id>…]
-bash test/e2e-scenario/runtime/coverage-report.sh                     # Markdown matrix of scenario × suite
+# YAML/shell scenario runner
+bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
+bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
+bash test/e2e-scenario/runtime/run-scenario.sh <id> --validate-only
+bash test/e2e-scenario/runtime/run-scenario.sh <id>
+
+# Suite runner against an existing scenario context
+bash test/e2e-scenario/runtime/run-suites.sh <suite-id> [<suite-id>...]
+
+# Scenario metadata coverage report
+bash test/e2e-scenario/runtime/coverage-report.sh
+
+# Typed scenario registry / workflow dry-run path
+npx tsx test/e2e-scenario/scenarios/run.ts --list
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
 ```
 
-Override the runtime context dir with `E2E_CONTEXT_DIR=<path>` (default
-`.e2e/`, gitignored). The scenario runner and suites communicate only
-through `$E2E_CONTEXT_DIR/context.env` — suites do not rediscover
-setup state.
+Override the runtime context directory with `E2E_CONTEXT_DIR=<path>` (default
+`.e2e/`, gitignored). The shell scenario runner and suites communicate through
+`$E2E_CONTEXT_DIR/context.env`; suites should not rediscover setup state.
 
-## Where things live
+## Repository layout
 
 ```text
 test/e2e-scenario/
-  docs/                              # README.md, MIGRATION.md
-  scenarios/                         # typed builders, assertion groups, phase orchestration
-  manifests/                         # product-facing NemoClawInstance manifests
-  nemoclaw_scenarios/                # YAML scenario inputs + setup machinery
-    scenarios.yaml / expected-states.yaml
-    install/       # install dispatcher + one file per install profile
-    onboard/       # onboard dispatcher + one file per onboarding profile
-    fixtures/      # reusable stubs (fake-openai, fake-{telegram,discord,slack}, older-base-image)
-    helpers/       # scenario-side shell utilities (e.g. emit-context-from-plan.sh)
-  validation_suites/                 # suite definitions and outcome assertions
+  docs/                              # This guide and migration notes
+  manifests/                         # Product-facing NemoClawInstance desired state
+  scenarios/                         # Typed builders, registry, compiler, assertions, dry-run orchestration
+  nemoclaw_scenarios/                # YAML runtime metadata and setup helpers
+    scenarios.yaml
+    expected-states.yaml
+    install/
+    onboard/
+    fixtures/
+    helpers/
+  validation_suites/                 # Suite definitions and shell assertion steps
     suites.yaml
-    sandbox-exec.sh
-    assert/        # outcome assertions (inference, credentials, policy, messaging)
-    smoke/ inference/ hermes/ platform/ security/   # suite scripts grouped by concern
-  runtime/                           # entry points + cross-cutting shared libs
-    run-scenario.sh / run-suites.sh / coverage-report.sh
-    resolver/      # TypeScript: load, plan, validate, coverage (invoked via tsx)
-    lib/           # shared shell helpers: context, env, cleanup, logging, artifacts, sandbox-teardown
+    smoke/
+    inference/
+    messaging/
+    platform/
+    security/
+    sandbox/
+  runtime/                           # Shell runner, suite runner, resolver, coverage report, shared libs
+    run-scenario.sh
+    run-suites.sh
+    coverage-report.sh
+    resolver/
+    lib/
 ```
 
-The CI entry point is `.github/workflows/e2e-scenarios.yaml` (manual dispatch).
-Existing legacy workflows (`nightly-e2e.yaml`, `macos-e2e.yaml`,
-`wsl-e2e.yaml`, etc.) remain in place during the migration.
+## CI entry points
 
-Migration status is tracked outside the repository in the parent epic #3588,
-the active audit-coverage issues, and the pull requests that land each batch.
-Do not add per-script migration checklists, temporary coverage counts,
-workflow-level parity reports, or assertion-ledger gates to repo docs; use
-focused code review and the scenario coverage report to decide what to migrate
-next.
+- `.github/workflows/e2e-scenarios.yaml` runs typed scenario dry-runs for
+  manually selected scenario IDs.
+- `.github/workflows/e2e-scenarios-all.yaml` fans out typed scenario dry-runs
+  from the typed registry matrix.
+- Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
+  `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
+  `regression-e2e.yaml` still run legacy live E2E scripts during the migration.
+- `vitest.config.ts` contains the `e2e-scenario-framework` project for framework
+  and metadata tests.
 
-## How to add a scenario, state, or suite
+## Migration tracking
 
-Add-a-scenario, add-a-state, and add-a-suite are short edits to the
-three YAML files above, plus shell scripts under
-`nemoclaw_scenarios/install/`, `nemoclaw_scenarios/onboard/`,
-`validation_suites/assert/`, or `validation_suites/<category>/`. The
-schemas in
-[`../runtime/resolver/schema.ts`](../runtime/resolver/schema.ts)
-describe the required shape; `run-scenario.sh <id> --plan-only`
-validates your change without running anything destructive.
+Migration status is tracked outside the repository in GitHub issues and PRs,
+not in repo-local checklists. The parent architecture issue is #3588. Active
+audit-coverage work is tracked by the #4347–#4357 issue set, with focused
+follow-ups such as #4378 for specific drift fixes.
+
+The old workflow-level parity report has been removed. Use scenario framework
+tests, the coverage report, PR review, and the audit issues to decide what to
+migrate next.
 
 When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
 `FAIL: <id>` log line, and record migration evidence or follow-up state in the
