@@ -1114,6 +1114,29 @@ refresh_openclaw_provider_placeholders() {
 
   local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
 
+  # Append operator-registered extras from NEMOCLAW_EXTRA_PLACEHOLDER_KEYS so
+  # the revision-strip walk also collapses suffixed placeholders such as
+  # openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A back to the canonical
+  # form. The host-side onboard parser at
+  # src/lib/onboard/extra-placeholder-keys.ts already filters by an identical
+  # regex and rejects canonical-channel collisions; this loop re-validates
+  # because the env var travels through one extra hop and a sandbox operator
+  # could clobber it independently.
+  local extra_token
+  for extra_token in ${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}; do
+    case "$extra_token" in
+      '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
+        continue
+        ;;
+    esac
+    if printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
+      keys="$keys $extra_token"
+    else
+      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must match /^[A-Z][A-Z0-9_]{0,127}\$/\n" \
+        "$extra_token" >&2
+    fi
+  done
+
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
     return 1
