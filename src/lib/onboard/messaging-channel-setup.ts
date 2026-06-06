@@ -92,24 +92,26 @@ export async function setupMessagingChannels(
   const statusForChannel = (manifest: ChannelManifest): string =>
     hasManifestRequiredInputs(manifest) ? " (configured)" : "";
 
-  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
-    await promptMessagingChannelLineSelection(availableChannels, enabled, statusForChannel);
-  } else {
-    const linesAbovePrompt = availableChannels.length + 3;
-    let firstDraw = true;
-    const showList = () => {
-      if (!firstDraw) {
-        output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
-      }
-      firstDraw = false;
-      renderMessagingChannelList(output, availableChannels, enabled, statusForChannel);
-      output.write(
-        `  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `,
-      );
-    };
+  if (availableChannels.length > 0) {
+    if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+      await promptMessagingChannelLineSelection(availableChannels, enabled, statusForChannel);
+    } else {
+      const linesAbovePrompt = availableChannels.length + 3;
+      let firstDraw = true;
+      const showList = () => {
+        if (!firstDraw) {
+          output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
+        }
+        firstDraw = false;
+        renderMessagingChannelList(output, availableChannels, enabled, statusForChannel);
+        output.write(
+          `  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `,
+        );
+      };
 
-    showList();
-    await readMessagingChannelSelection(availableChannels, enabled, showList);
+      showList();
+      await readMessagingChannelSelection(availableChannels, enabled, showList);
+    }
   }
 
   const selected = Array.from(enabled);

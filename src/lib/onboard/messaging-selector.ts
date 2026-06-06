@@ -122,9 +122,9 @@ export async function promptMessagingChannelLineSelection<T extends MessagingCha
   statusForChannel: (channel: T) => string,
 ): Promise<void> {
   renderMessagingChannelList(process.stderr, availableChannels, enabled, statusForChannel);
-  console.error("  Enter comma-separated numbers/names, Enter for current selection, or 'none'.");
+  console.error("  Enter comma-separated numbers/IDs, Enter for current selection, or 'none'.");
 
-  const answer = (await promptMessagingSelectorLine("  Messaging channels: ")).trim();
+  const answer = (await promptMessagingSelectorLine("  Messaging channel numbers/IDs: ")).trim();
   if (!answer) return;
   if (/^(none|no|skip)$/i.test(answer)) {
     enabled.clear();
