@@ -60,7 +60,10 @@ export function withLocalNoProxy(env: Record<string, string>): void {
   if (!hasProxy) return;
   for (const key of ["NO_PROXY", "no_proxy"] as const) {
     const current = env[key] ?? "";
-    const parts = current.split(",").map((s) => s.trim()).filter(Boolean);
+    const parts = current
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
     let changed = false;
     for (const host of [
       "localhost",

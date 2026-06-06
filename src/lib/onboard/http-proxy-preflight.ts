@@ -31,7 +31,7 @@ export function warnIfHostProxyMissesLoopback(
   warn("    container-host aliases, and the managed inference hostname inference.local),");
   warn("    but any tool you run that respects HTTP_PROXY (curl, Node fetch, Python");
   warn("    requests) will still tunnel localhost traffic through your host proxy.");
-  warn("    To bypass loopback (see #2616) and the managed inference hostname:");
+  warn("    To bypass loopback and the managed inference hostname:");
   warn("      export NO_PROXY=localhost,127.0.0.1,inference.local");
   warn("      export no_proxy=localhost,127.0.0.1,inference.local");
   return true;
