@@ -16,6 +16,7 @@ export type WorkflowJob = {
 };
 
 export type WorkflowStep = {
+  id?: string;
   name?: string;
   if?: string;
   uses?: string;

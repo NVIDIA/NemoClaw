@@ -60,15 +60,15 @@ function nemotronNanoModel(): VllmModelDef {
   return match;
 }
 
-function qwen35bNvfp4Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
+function qwen27bFP8Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
   return match;
 }
 
-function deepseekV4FlashModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
-  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
+function qwen35bNvfp4Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
   return match;
 }
 
@@ -140,7 +140,7 @@ const SPARK_PROFILE: VllmProfile = {
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   image: VLLM_IMAGES.ngc2605Post1,
-  defaultModel: deepseekV4FlashModel(),
+  defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -483,8 +483,8 @@ export async function installVllm(
 ): Promise<{ ok: boolean }> {
   // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
   // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Station to DeepSeek V4 Flash; Spark
-  // to the Qwen3.6-35B-A3B NVFP4 checkpoint.
+  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
+  // Qwen3.6-35B-A3B NVFP4 checkpoint.
   // Validate gated-model access (HF_TOKEN required for models like
   // DeepSeek-R1 Distill 70B) before touching docker so the user does not
   // burn a multi-minute pull on a 401.
