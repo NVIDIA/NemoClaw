@@ -263,10 +263,21 @@ export function writeHealthyDockerStub(localBin: string): void {
 export const FAKE_OPENCLAW_LOG_LINE = "openclaw gateway log: policy checker ready";
 export const FAKE_OPENSHELL_LOG_LINE = "openshell audit log: DENIED example.com:443";
 
-export function createLogsTestSetup(prefix: string, openshellLines: string[] = []) {
+type LogsTestSetupOptions = {
+  gatewayStartedMarker?: string;
+};
+
+export function createLogsTestSetup(
+  prefix: string,
+  openshellLines: string[] = [],
+  options: LogsTestSetupOptions = {},
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const markerFile = path.join(home, "logs-calls");
+  const gatewayStartedLines = options.gatewayStartedMarker
+    ? [`  printf '%s\\n' ${JSON.stringify(options.gatewayStartedMarker)} >> "$marker_file"`]
+    : [];
   fs.mkdirSync(localBin, { recursive: true });
   writeSandboxRegistry(home);
   fs.writeFileSync(
@@ -280,6 +291,7 @@ export function createLogsTestSetup(prefix: string, openshellLines: string[] = [
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ]; then',
+      ...gatewayStartedLines,
       `  echo ${JSON.stringify(FAKE_OPENCLAW_LOG_LINE)}`,
       "  exit 0",
       "fi",

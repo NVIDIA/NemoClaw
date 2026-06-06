@@ -214,12 +214,19 @@ describe("CLI dispatch", () => {
   });
 
   it("starts OpenClaw logs before enabling audit logs for logs --follow", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-audit-slow-", [
-      'if [ "$1" = "settings" ]; then',
-      "  sleep 1",
-      "  exit 0",
-      "fi",
-    ]);
+    const gatewayStartedMarker = "gateway-started";
+    const auditCompleteMarker = "audit-enabled";
+    const setup = createLogsTestSetup(
+      "nemoclaw-cli-logs-follow-audit-slow-",
+      [
+        'if [ "$1" = "settings" ]; then',
+        "  sleep 1",
+        `  printf '%s\\n' ${JSON.stringify(auditCompleteMarker)} >> "$marker_file"`,
+        "  exit 0",
+        "fi",
+      ],
+      { gatewayStartedMarker },
+    );
 
     const start = Date.now();
     const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "2000" });
@@ -231,11 +238,13 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
     expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
     expect(calls).toContain("logs alpha -n 200 --source all --tail");
-    // Audit enable must complete before OpenShell logs start (both are synchronous
-    // relative to each other). We can't assert ordering vs the OpenClaw spawn
-    // because spawn() is async and marker-file write order is racy.
+    expect(calls).toContain(gatewayStartedMarker);
+    expect(calls).toContain(auditCompleteMarker);
+    const gatewayStartedIdx = calls.indexOf(gatewayStartedMarker);
     const auditIdx = calls.indexOf("settings set alpha --key ocsf_json_enabled --value true");
+    const auditCompleteIdx = calls.indexOf(auditCompleteMarker);
     const openshellIdx = calls.indexOf("logs alpha -n 200 --source all --tail");
+    expect(gatewayStartedIdx).toBeLessThan(auditCompleteIdx);
     expect(auditIdx).toBeLessThan(openshellIdx);
     expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
