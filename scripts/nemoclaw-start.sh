@@ -1123,7 +1123,11 @@ refresh_openclaw_provider_placeholders() {
   # because the env var travels through one extra hop and a sandbox operator
   # could clobber it independently.
   local extra_token
-  for extra_token in ${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}; do
+  local _extra_raw="${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}"
+  # Normalize commas to whitespace so callers can pass either form,
+  # matching the host-side parseExtraPlaceholderKeys contract.
+  _extra_raw="${_extra_raw//,/ }"
+  for extra_token in $_extra_raw; do
     case "$extra_token" in
       '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
         continue

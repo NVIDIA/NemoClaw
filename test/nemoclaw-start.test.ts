@@ -3260,6 +3260,40 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
+  it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", () => {
+    const scopedA = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
+    const scopedB = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_B";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              a: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+              b: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_B" },
+            },
+          },
+        },
+      },
+      {
+        // Comma- and whitespace-mixed input — the bash for-loop only splits on
+        // default IFS (whitespace), so without the comma->space normalization
+        // both keys would arrive concatenated as a single token and fail the
+        // regex check.
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
+        TELEGRAM_BOT_TOKEN_AGENT_A: scopedA,
+        TELEGRAM_BOT_TOKEN_AGENT_B: scopedB,
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.a.botToken).toBe(scopedA);
+    expect(run.config.channels.telegram.accounts.b.botToken).toBe(scopedB);
+    expect(run.result.stderr).toContain(
+      "Refreshed provider placeholders from OpenShell runtime env: TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
+    );
+  });
+
   it("revision-collapses NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries the same way as canonical keys", () => {
     const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
     const run = runRefresh(

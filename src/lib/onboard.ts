@@ -2934,30 +2934,8 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  if (braveWebSearchEnabled) {
-    messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
-  }
-  const extraPlaceholderKeysModule = require("./onboard/extra-placeholder-keys");
-  const reservedPlaceholderKeys = new Set<string>(
-    MESSAGING_CHANNELS.flatMap((c) => getChannelTokenKeys(c)).concat(webSearch.BRAVE_API_KEY_ENV),
-  );
-  const extraPlaceholderParse = extraPlaceholderKeysModule.parseExtraPlaceholderKeys(
-    process.env[extraPlaceholderKeysModule.EXTRA_PLACEHOLDER_KEYS_ENV],
-    reservedPlaceholderKeys,
-  );
-  for (const warning of extraPlaceholderParse.warnings) {
-    console.warn(`  ${warning}`);
-  }
-  const extraPlaceholderKeys: string[] = [...extraPlaceholderParse.keys];
-  for (const extraKey of extraPlaceholderKeys) {
-    const token = normalizeCredentialValue(process.env[extraKey]) || getCredential(extraKey);
-    messagingTokenDefs.push({
-      name: `${sandboxName}-extra-${extraPlaceholderKeysModule.extraPlaceholderProviderSlug(extraKey)}`,
-      envKey: extraKey,
-      token,
-      providerType: "generic",
-    });
-  }
+  if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
+  const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
   const previousProviderCredentialHashes =
     registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
@@ -3580,14 +3558,7 @@ async function createSandbox(
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
-  if (extraPlaceholderKeys.length > 0) {
-    envArgs.push(
-      formatEnvAssignment(
-        extraPlaceholderKeysModule.EXTRA_PLACEHOLDER_KEYS_ENV,
-        extraPlaceholderKeys.join(" "),
-      ),
-    );
-  }
+  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(envArgs, extraPlaceholderKeys, formatEnvAssignment);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
