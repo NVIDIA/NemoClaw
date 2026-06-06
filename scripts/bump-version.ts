@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import YAML from "yaml";
 
 type Options = {
@@ -336,7 +337,7 @@ function updateDocsVersionLinks(nextDocsPublicUrl: string): void {
   }
 }
 
-function rewriteDocsPublicUrls(
+export function rewriteDocsPublicUrls(
   content: string,
   nextDocsPublicUrl: string,
 ): { updated: string; count: number } {
@@ -637,7 +638,7 @@ function verifyDocsLinks(filePath: string, expectedDocsPublicUrl: string): void 
   }
 }
 
-function collectDocsVersionSegments(content: string): string[] {
+export function collectDocsVersionSegments(content: string): string[] {
   const segments: string[] = [];
   let cursor = 0;
   for (;;) {
@@ -715,4 +716,6 @@ function log(message: string): void {
   console.log(`[bump-version] ${message}`);
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
