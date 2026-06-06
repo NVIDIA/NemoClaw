@@ -26,12 +26,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         with:
-          predicate-quantifier: every
+          predicate-quantifier: some
           filters: |
             code:
               - '**'
@@ -46,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js for docs-only checks
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -73,6 +77,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -92,6 +98,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install --ignore-scripts
+
+      - name: Validate config schemas
+        run: npm run validate:configs
 
       - name: Run static hook checks
         run: |
@@ -122,6 +131,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -132,7 +143,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm install --ignore-scripts
-          cd nemoclaw && npm install
+          cd nemoclaw && npm install --ignore-scripts
 
       - name: Build TypeScript plugin
         run: cd nemoclaw && npm run build
@@ -160,6 +171,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -170,7 +183,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm install --ignore-scripts
-          cd nemoclaw && npm install
+          cd nemoclaw && npm install --ignore-scripts
 
       - name: Build TypeScript plugin
         run: cd nemoclaw && npm run build
@@ -199,6 +212,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -209,7 +224,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm install --ignore-scripts
-          cd nemoclaw && npm install
+          cd nemoclaw && npm install --ignore-scripts
 
       - name: Run plugin coverage
         run: |
@@ -230,6 +245,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
