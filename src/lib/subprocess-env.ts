@@ -62,7 +62,15 @@ export function withLocalNoProxy(env: Record<string, string>): void {
     const current = env[key] ?? "";
     const parts = current.split(",").map((s) => s.trim()).filter(Boolean);
     let changed = false;
-    for (const host of ["localhost", "127.0.0.1", "host.docker.internal", "::1", "0.0.0.0"]) {
+    for (const host of [
+      "localhost",
+      "127.0.0.1",
+      "host.docker.internal",
+      "host.containers.internal",
+      "::1",
+      "0.0.0.0",
+      "inference.local",
+    ]) {
       if (!parts.includes(host)) {
         parts.push(host);
         changed = true;

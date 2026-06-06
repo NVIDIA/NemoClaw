@@ -107,4 +107,15 @@ describe("warnIfHostProxyMissesLoopback (#2616)", () => {
     expect(fired).toBe(true);
     expect(lines.join("\n")).toContain("corp-proxy:3128");
   });
+
+  it("surfaces the managed inference hostname in the suggested NO_PROXY export", () => {
+    const lines: string[] = [];
+    warnIfHostProxyMissesLoopback({ http_proxy: "http://127.0.0.1:8118" }, (line) =>
+      lines.push(line),
+    );
+    const joined = lines.join("\n");
+    expect(joined).toContain("inference.local");
+    expect(joined).toContain("export NO_PROXY=localhost,127.0.0.1,inference.local");
+    expect(joined).toContain("export no_proxy=localhost,127.0.0.1,inference.local");
+  });
 });

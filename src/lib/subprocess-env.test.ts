@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withLocalNoProxy } from "../../dist/lib/subprocess-env";
 
-const LOCAL_NO_PROXY = "localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0";
+const LOCAL_NO_PROXY =
+  "localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local";
 
 describe("withLocalNoProxy", () => {
   it("does nothing when no proxy vars are present", () => {
@@ -62,8 +63,12 @@ describe("withLocalNoProxy", () => {
       no_proxy: "example.com,localhost",
     };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
-    expect(env.no_proxy).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+    expect(env.NO_PROXY).toBe(
+      "example.com,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+    );
+    expect(env.no_proxy).toBe(
+      "example.com,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+    );
   });
 
   it("does not duplicate entries when all local hosts are already present", () => {
@@ -86,6 +91,20 @@ describe("withLocalNoProxy", () => {
     withLocalNoProxy(env);
     expect(env.NO_PROXY).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
     expect(env.no_proxy).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
+  });
+
+  it("bypasses the host proxy for the managed inference hostname when HTTP_PROXY is set", () => {
+    const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY?.split(",")).toContain("inference.local");
+    expect(env.no_proxy?.split(",")).toContain("inference.local");
+  });
+
+  it("bypasses the host proxy for the rootless container host alias when HTTPS_PROXY is set", () => {
+    const env: Record<string, string> = { HTTPS_PROXY: "http://127.0.0.1:8118" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY?.split(",")).toContain("host.containers.internal");
+    expect(env.no_proxy?.split(",")).toContain("host.containers.internal");
   });
 });
 
