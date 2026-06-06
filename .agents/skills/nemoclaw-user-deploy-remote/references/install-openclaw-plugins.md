@@ -13,6 +13,8 @@ The supported NemoClaw path for OpenClaw plugins is to bake the plugin into a cu
 
 Put the Dockerfile and everything it needs to `COPY` in one directory.
 `nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as the Docker build context.
+Add a `.dockerignore` next to the Dockerfile to exclude local caches, generated artifacts, model files, or other paths that are not needed by the image build.
+NemoClaw still applies its own secret-safety exclusions for credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` negates them.
 
 ```text
 my-plugin-sandbox/
@@ -67,6 +69,7 @@ These are the most common places where plugin installation gets mixed up with ot
 
 - Do not use `nemoclaw <sandbox> skill install` for OpenClaw plugins. That command only installs `SKILL.md` agent skills.
 - Do not put a Dockerfile in a broad directory such as `/tmp` unless you intend to send that whole directory as the Docker build context.
+- Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Keep plugin dependencies in the build stage or plugin directory; avoid copying
   unrelated host files into the sandbox image.
 

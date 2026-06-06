@@ -260,7 +260,7 @@ openclaw tui
 
 ## References
 
-- **Load [references/quickstart-hermes.md](references/quickstart-hermes.md)** when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell. Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes API endpoint.
+- **Load [references/quickstart-hermes.md](references/quickstart-hermes.md)** when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell. Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes dashboard and API endpoint.
 - **Load [references/prerequisites.md](references/prerequisites.md)** when verifying prerequisites before installation. Lists the hardware, software, and container runtime requirements for running NemoClaw.
 - **Load [references/windows-preparation.md](references/windows-preparation.md)** when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error. Covers Windows-only preparation steps required before the Quickstart.
 
