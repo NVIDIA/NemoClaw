@@ -35,7 +35,21 @@ const CURL_DATA_OPTIONS = new Set([
   "-F",
 ]);
 const CURL_HEADER_OPTIONS = new Set(["--header", "--proxy-header", "-H"]);
-const CURL_SAFE_FLAG_OPTIONS = new Set(["-s", "-S", "-sS", "-sf", "--compressed", "--get"]);
+const CURL_SAFE_FLAG_OPTIONS = new Set([
+  "-s",
+  "-S",
+  "-sS",
+  "-sf",
+  "-f",
+  "-L",
+  "-sfL",
+  "--fail",
+  "--silent",
+  "--show-error",
+  "--location",
+  "--compressed",
+  "--get",
+]);
 const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
@@ -167,6 +181,14 @@ export function validateCurlProbeArgs(
     throw new Error(`curl probe option is not allowed: ${option}`);
   }
   return { args, url };
+}
+
+export function buildValidatedCurlCommandArgs(
+  argv: string[],
+  opts: CurlProbeArgOptions = {},
+): string[] {
+  const { args, url } = validateCurlProbeArgs(argv, opts);
+  return [...args, url];
 }
 
 export type CurlProbeMode = "json" | "chat-stream" | "event-stream";

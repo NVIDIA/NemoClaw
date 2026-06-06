@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -354,7 +355,7 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderHealthEndpoint(provider);
-  return endpoint ? ["curl", "-sf", endpoint] : null;
+  return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
 }
 
 export function getLocalProviderLabel(provider: string): string | null {
@@ -807,12 +808,14 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const tagsOutput = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -946,12 +949,23 @@ export function getOllamaProbeCommand(
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
+  buildValidatedCurlCommandArgs([
+    "-sS",
+    "--max-time",
+    String(timeoutSeconds),
+    "-H",
+    "Content-Type: application/json",
+    "-d",
+    payload,
+    endpoint,
+  ]);
   return [
     "curl",
     "-sS",
     "--max-time",
     String(timeoutSeconds),
-    `http://${host}:${OLLAMA_PORT}/api/generate`,
+    endpoint,
     "-H",
     "Content-Type: application/json",
     "-d",

@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
@@ -320,7 +321,7 @@ function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
   const endpoint = `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
   const result = captureHostCommand(
     "curl",
-    ["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint],
+    buildValidatedCurlCommandArgs(["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint]),
     6000,
   );
   const required = currentProvider === "ollama-local";

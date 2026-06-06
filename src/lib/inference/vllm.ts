@@ -10,6 +10,7 @@ import {
   dockerPullWithProgressWatchdog,
   dockerSpawn,
 } from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
@@ -371,7 +372,17 @@ function vllmModelsEndpoint(): string {
 
 function vllmEndpointReady(): boolean {
   const response = runCapture(
-    ["curl", "-sf", "--connect-timeout", "2", "--max-time", "5", vllmModelsEndpoint()],
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        vllmModelsEndpoint(),
+      ]),
+    ],
     { ignoreError: true },
   ).trim();
   if (!response) return false;
