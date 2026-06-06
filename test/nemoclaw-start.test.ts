@@ -3260,6 +3260,49 @@ describe("provider placeholder refresh (#4251)", () => {
     );
   });
 
+  it("emits the deterministic accepted-extras breadcrumb so e2e harnesses can prove env-arg propagation", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+            },
+          },
+        },
+      },
+      {
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toMatch(
+      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted 2 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B/,
+    );
+  });
+
+  it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+            },
+          },
+        },
+      },
+      {},
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain(
+      "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted",
+    );
+  });
+
   it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", () => {
     const scopedA = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
     const scopedB = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_B";

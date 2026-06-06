@@ -1166,6 +1166,16 @@ refresh_openclaw_provider_placeholders() {
     keys="$keys $extra_token"
     _extras_accepted=$((_extras_accepted + 1))
   done
+  if [ "$_extras_accepted" -gt 0 ]; then
+    # Deterministic breadcrumb so e2e harnesses can prove the host-validated
+    # extras list reached the in-container refresh helper even when no
+    # revision-scoped placeholder has been staged yet (which is the steady
+    # state for a fresh provider attach). Stripping the canonical baseline
+    # prefix here keeps the log line about extras only.
+    local _accepted_extras="${keys#TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY }"
+    printf '[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted %d entry(ies): %s\n' \
+      "$_extras_accepted" "$_accepted_extras" >&2
+  fi
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2

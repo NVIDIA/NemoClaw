@@ -1383,30 +1383,28 @@ else
 fi
 
 # X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach the
-# nemoclaw-start.sh process tree inside the container so the
+# nemoclaw-start.sh process inside the container so the
 # refresh_openclaw_provider_placeholders helper sees the per-profile keys
-# at boot. The env arg is delivered through `openshell sandbox create --
-# env KEY=VAL nemoclaw-start`, so it lives on the init process's
-# environment block but not on SSH-spawned login shells. Read /proc/1/environ
-# directly to assert the propagation without depending on the python
-# heredoc actually firing a revision-collapse line.
-sandbox_init_env=$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c "tr '\0' '\n' < /proc/1/environ 2>/dev/null || true" 2>/dev/null || true)
-if [ -z "$sandbox_init_env" ]; then
-  skip "X5: /proc/1/environ unreadable from openshell sandbox exec; cannot prove extras propagated"
+# at boot. Grep the entrypoint log for the deterministic breadcrumb the
+# refresh helper emits whenever at least one extension key survives the
+# in-container parser — that line only fires after the env arg propagated
+# AND the canonical-prefix mirror accepted the entry.
+start_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/nemoclaw-start.log 2>/dev/null || true)
+if [ -z "$start_log" ]; then
+  fail "X5: /tmp/nemoclaw-start.log unavailable; cannot prove extras reached the in-container refresh helper"
 else
-  init_extras=$(printf '%s\n' "$sandbox_init_env" | grep -E "^NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=" || true)
-  if [ -z "$init_extras" ]; then
-    fail "X5: NEMOCLAW_EXTRA_PLACEHOLDER_KEYS missing from the sandbox init process environment"
-    info "  init env keys present (first 30):"
-    printf '%s\n' "$sandbox_init_env" | cut -d= -f1 | head -30 | while IFS= read -r line; do info "    $line"; done
-  elif ! echo "$init_extras" | grep -qw TELEGRAM_BOT_TOKEN_AGENT_A; then
-    fail "X5: sandbox init NEMOCLAW_EXTRA_PLACEHOLDER_KEYS missing the host-accepted extension key: ${init_extras#NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=}"
-  elif echo "$init_extras" | grep -qw GITHUB_TOKEN; then
-    fail "X5: sandbox init NEMOCLAW_EXTRA_PLACEHOLDER_KEYS contains GITHUB_TOKEN — host filter bypass"
+  extras_breadcrumb=$(echo "$start_log" | grep -E "^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted [0-9]+ entry\(ies\):" | tail -1 || true)
+  if [ -z "$extras_breadcrumb" ]; then
+    fail "X5: nemoclaw-start did not log an accepted-extras breadcrumb; env arg did not propagate or canonical-prefix mirror rejected it"
+    info "  Last 40 lines of /tmp/nemoclaw-start.log:"
+    echo "$start_log" | tail -40 | while IFS= read -r line; do info "    $line"; done
+  elif ! echo "$extras_breadcrumb" | grep -qw TELEGRAM_BOT_TOKEN_AGENT_A; then
+    fail "X5: accepted-extras breadcrumb missing TELEGRAM_BOT_TOKEN_AGENT_A: $extras_breadcrumb"
+  elif echo "$extras_breadcrumb" | grep -qw GITHUB_TOKEN; then
+    fail "X5: accepted-extras breadcrumb contains GITHUB_TOKEN — host filter bypass"
   else
-    pass "X5: sandbox init env carries NEMOCLAW_EXTRA_PLACEHOLDER_KEYS with only the host-validated extras"
-    info "  ${init_extras:0:120}"
+    pass "X5: nemoclaw-start accepted-extras breadcrumb proves NEMOCLAW_EXTRA_PLACEHOLDER_KEYS reached the in-container parser"
+    info "  ${extras_breadcrumb:0:160}"
   fi
 fi
 
