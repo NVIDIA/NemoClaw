@@ -17,6 +17,13 @@ import {
   toMessagingAgentId,
 } from "../messaging";
 import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
+import {
+  promptMessagingChannelLineSelection,
+  readMessagingChannelSelection,
+  renderMessagingChannelList,
+  type MessagingSelectorInput,
+  type MessagingSelectorOutput,
+} from "./messaging-selector";
 
 export interface SetupSelectedMessagingChannelsOptions {
   readonly agent?: { readonly name?: string } | null;
@@ -80,31 +87,32 @@ export async function setupMessagingChannels(
   }
 
   const enabled = new Set(seedFromState(true));
-  const output = process.stderr;
-  const linesAbovePrompt = availableChannels.length + 3;
-  let firstDraw = true;
-  const showList = () => {
-    if (!firstDraw) {
-      output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
-    }
-    firstDraw = false;
-    output.write("\n");
-    output.write("  Available messaging channels:\n");
-    availableChannels.forEach((manifest, i) => {
-      const marker = enabled.has(manifest.id) ? "●" : "○";
-      const status = hasManifestRequiredInputs(manifest) ? " (configured)" : "";
-      output.write(
-        `    [${i + 1}] ${marker} ${manifest.id} — ${
-          manifest.description ?? manifest.displayName
-        }${status}\n`,
-      );
-    });
-    output.write("\n");
-    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done: `);
-  };
+  const input = process.stdin as MessagingSelectorInput;
+  const output = process.stderr as MessagingSelectorOutput;
+  const statusForChannel = (manifest: ChannelManifest): string =>
+    hasManifestRequiredInputs(manifest) ? " (configured)" : "";
 
-  showList();
-  await readMessagingChannelSelection(availableChannels, enabled, showList);
+  if (availableChannels.length > 0) {
+    if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+      await promptMessagingChannelLineSelection(availableChannels, enabled, statusForChannel);
+    } else {
+      const linesAbovePrompt = availableChannels.length + 3;
+      let firstDraw = true;
+      const showList = () => {
+        if (!firstDraw) {
+          output.write(`\r\x1b[${linesAbovePrompt}A\x1b[J`);
+        }
+        firstDraw = false;
+        renderMessagingChannelList(output, availableChannels, enabled, statusForChannel);
+        output.write(
+          `  Press 1-${availableChannels.length} to toggle, Enter when done (none selected skips): `,
+        );
+      };
+
+      showList();
+      await readMessagingChannelSelection(availableChannels, enabled, showList);
+    }
+  }
 
   const selected = Array.from(enabled);
   if (selected.length === 0) {
@@ -186,80 +194,6 @@ export async function setupSelectedMessagingChannels(
   }
 
   return plan;
-}
-
-function readMessagingChannelSelection(
-  availableChannels: readonly ChannelManifest[],
-  enabled: Set<string>,
-  showList: () => void,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const input = process.stdin;
-    const output = process.stderr;
-    let rawModeEnabled = false;
-    let finished = false;
-
-    function cleanup() {
-      input.removeListener("data", onData);
-      if (rawModeEnabled && typeof input.setRawMode === "function") {
-        input.setRawMode(false);
-      }
-      if (typeof input.pause === "function") {
-        input.pause();
-      }
-      if (typeof input.unref === "function") {
-        input.unref();
-      }
-    }
-
-    function finish(): void {
-      if (finished) return;
-      finished = true;
-      cleanup();
-      output.write("\n");
-      resolve();
-    }
-
-    function onData(chunk: Buffer | string): void {
-      const text = chunk.toString("utf8");
-      for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (ch === "\u0003") {
-          cleanup();
-          reject(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-          process.kill(process.pid, "SIGINT");
-          return;
-        }
-        if (ch === "\r" || ch === "\n") {
-          finish();
-          return;
-        }
-        const num = parseInt(ch, 10);
-        if (num >= 1 && num <= availableChannels.length) {
-          const channel = availableChannels[num - 1];
-          if (enabled.has(channel.id)) {
-            enabled.delete(channel.id);
-          } else {
-            enabled.add(channel.id);
-          }
-          showList();
-        }
-      }
-    }
-
-    if (typeof input.ref === "function") {
-      input.ref();
-    }
-    input.setEncoding("utf8");
-    if (typeof input.resume === "function") {
-      input.resume();
-    }
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(true);
-      rawModeEnabled = true;
-    }
-    input.on("data", onData);
-  });
 }
 
 function uniqueSelectedChannels(
