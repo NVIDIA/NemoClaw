@@ -46,6 +46,12 @@ if (!curlOk && process.env.CI === "true") {
   );
 }
 
+// Boundary: this E2E proves that the env produced by `buildSubprocessEnv()`
+// causes a host-side `curl` to reach `inference.local` directly when
+// HTTP_PROXY is set, exercising the seed list `withLocalNoProxy()` injects.
+// The full sandbox path on macOS + Colima (where OpenShell's L7 proxy
+// chains through the host HTTP_PROXY and must bypass for `inference.local`)
+// requires a macOS + Colima runner and is not covered here.
 describe("inference.local is reachable directly when host HTTP_PROXY is set", () => {
   const saved: Record<string, string | undefined> = {};
   let server: http.Server;
