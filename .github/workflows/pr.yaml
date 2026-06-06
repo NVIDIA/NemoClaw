@@ -194,6 +194,9 @@ jobs:
           npm run build:cli
           npx tsx scripts/check-dist-sourcemaps.ts dist
           npx vitest run --project cli \
+            --reporter=github-actions \
+            --reporter=json \
+            --outputFile.json=coverage/cli/vitest-results.json \
             --coverage \
             --coverage.reporter=text-summary \
             --coverage.reporter=json-summary \
@@ -203,6 +206,15 @@ jobs:
             --coverage.exclude="test/**/*.js" \
             --coverage.exclude="test/**/*.ts"
           npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
+
+      - name: Upload CLI Vitest timing report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-vitest-results
+          path: coverage/cli/vitest-results.json
+          if-no-files-found: warn
+          retention-days: 14
 
   plugin-tests:
     needs: changes

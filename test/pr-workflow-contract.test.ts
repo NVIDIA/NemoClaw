@@ -125,11 +125,29 @@ describe("pull request workflow contract", () => {
     expect(buildRuns).toContain("npx tsc -p jsconfig.json");
     expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
     expect(cliTestRun).toContain("npx vitest run --project cli");
+    expect(cliTestRun).toContain("--reporter=github-actions");
+    expect(cliTestRun).toContain("--reporter=json");
+    expect(cliTestRun).toContain(
+      "--outputFile.json=coverage/cli/vitest-results.json",
+    );
     expect(cliTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
     expect(pluginTestRun).toContain("npx vitest run --project plugin");
     expect(pluginTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
     expect(staticRuns).toContain("npm run source-shape:check");
     expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");
+  });
+
+  it("uploads CLI Vitest JSON results for timing analysis", () => {
+    const uploadStep = workflow.jobs["cli-tests"].steps?.find(
+      (step) => step.name === "Upload CLI Vitest timing report",
+    );
+
+    expect(uploadStep?.if).toBe("always()");
+    expect(uploadStep?.uses).toContain("actions/upload-artifact@");
+    expect(uploadStep?.with?.name).toBe("cli-vitest-results");
+    expect(uploadStep?.with?.path).toBe("coverage/cli/vitest-results.json");
+    expect(uploadStep?.with?.["if-no-files-found"]).toBe("warn");
+    expect(uploadStep?.with?.["retention-days"]).toBe(14);
   });
 
   it("keeps the final checks job as the branch-protection aggregate", () => {
