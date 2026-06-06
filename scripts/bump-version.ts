@@ -67,6 +67,8 @@ const FILES_TO_STAGE = [
   INSTALL_SH,
   ...VERSIONED_DOC_LINK_FILES,
 ];
+const DOCS_PUBLIC_URL_PREFIX = "https://docs.nvidia.com/nemoclaw/";
+const DOCS_URL_SEGMENT_DELIMITERS = new Set(["/", "?", "#", ")", "]", '"', "'", "`", "<", ">"]);
 
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
@@ -326,25 +328,58 @@ function updateInstallScriptDefaultVersion(previousVersion: string, nextVersion:
 function updateDocsVersionLinks(nextDocsPublicUrl: string): void {
   for (const filePath of VERSIONED_DOC_LINK_FILES) {
     const current = readText(filePath);
-    const updated = current.replaceAll(
-      /https:\/\/docs\.nvidia\.com\/nemoclaw\/(?:latest|[0-9]+\.[0-9]+\.[0-9]+)\//g,
-      `${nextDocsPublicUrl}/`,
-    );
-    if (updated === current) {
+    const { updated, count } = rewriteDocsPublicUrls(current, nextDocsPublicUrl);
+    if (count === 0) {
       throw new Error(`No docs.nvidia.com/nemoclaw links found in ${relative(filePath)}`);
     }
     writeFileSync(filePath, updated, "utf8");
-    replaceAnyDocsUrl(filePath, nextDocsPublicUrl);
   }
 }
 
-function replaceAnyDocsUrl(filePath: string, nextDocsPublicUrl: string): void {
-  const current = readText(filePath);
-  const updated = current.replaceAll(
-    /https:\/\/docs\.nvidia\.com\/nemoclaw\/(?:latest|[0-9]+\.[0-9]+\.[0-9]+)/g,
-    nextDocsPublicUrl,
-  );
-  writeFileSync(filePath, updated, "utf8");
+function rewriteDocsPublicUrls(
+  content: string,
+  nextDocsPublicUrl: string,
+): { updated: string; count: number } {
+  let cursor = 0;
+  let count = 0;
+  let updated = "";
+
+  for (;;) {
+    const start = content.indexOf(DOCS_PUBLIC_URL_PREFIX, cursor);
+    if (start === -1) {
+      updated += content.slice(cursor);
+      break;
+    }
+
+    const segmentStart = start + DOCS_PUBLIC_URL_PREFIX.length;
+    const segmentEnd = findDocsUrlSegmentEnd(content, segmentStart);
+    const segment = content.slice(segmentStart, segmentEnd);
+
+    updated += content.slice(cursor, start);
+    if (isDocsVersionSegment(segment)) {
+      updated += nextDocsPublicUrl;
+      count += 1;
+    } else {
+      updated += content.slice(start, segmentEnd);
+    }
+    cursor = segmentEnd;
+  }
+
+  return { updated, count };
+}
+
+function findDocsUrlSegmentEnd(content: string, start: number): number {
+  let index = start;
+  while (index < content.length) {
+    const char = content[index];
+    if (DOCS_URL_SEGMENT_DELIMITERS.has(char) || /\s/.test(char)) break;
+    index += 1;
+  }
+  return index;
+}
+
+function isDocsVersionSegment(segment: string): boolean {
+  return segment === "latest" || /^[0-9]+\.[0-9]+\.[0-9]+$/.test(segment);
 }
 
 function updateInstallAndUninstallDocs(nextDocsVersion: string): void {
@@ -586,22 +621,33 @@ function requireContains(filePath: string, text: string): void {
 
 function verifyDocsLinks(filePath: string, expectedDocsPublicUrl: string): void {
   const content = readText(filePath);
-  const matches = Array.from(
-    content.matchAll(/https:\/\/docs\.nvidia\.com\/nemoclaw\/([^/]+)\//g),
-    (match) => match[1],
-  );
+  const segments = collectDocsVersionSegments(content);
 
-  if (matches.length === 0) {
+  if (segments.length === 0) {
     throw new Error(`Expected at least one docs.nvidia.com/nemoclaw link in ${relative(filePath)}`);
   }
 
-  const expectedSegment = expectedDocsPublicUrl.replace("https://docs.nvidia.com/nemoclaw/", "");
-  for (const segment of matches) {
+  const expectedSegment = expectedDocsPublicUrl.slice(DOCS_PUBLIC_URL_PREFIX.length);
+  for (const segment of segments) {
     if (segment !== expectedSegment) {
       throw new Error(
         `Found unexpected docs version segment '${segment}' in ${relative(filePath)}; expected '${expectedSegment}'`,
       );
     }
+  }
+}
+
+function collectDocsVersionSegments(content: string): string[] {
+  const segments: string[] = [];
+  let cursor = 0;
+  for (;;) {
+    const start = content.indexOf(DOCS_PUBLIC_URL_PREFIX, cursor);
+    if (start === -1) return segments;
+    const segmentStart = start + DOCS_PUBLIC_URL_PREFIX.length;
+    const segmentEnd = findDocsUrlSegmentEnd(content, segmentStart);
+    const segment = content.slice(segmentStart, segmentEnd);
+    if (segment) segments.push(segment);
+    cursor = segmentEnd;
   }
 }
 
