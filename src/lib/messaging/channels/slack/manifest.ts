@@ -18,6 +18,8 @@ export const slackManifest = {
       kind: "secret",
       required: true,
       envKey: "SLACK_BOT_TOKEN",
+      formatPattern: "^xoxb-[A-Za-z0-9_-]+$",
+      formatHint: "Slack bot tokens start with 'xoxb-' (e.g. xoxb-<workspace>-<bot>-<redacted>).",
       prompt: {
         label: "Slack Bot Token",
         help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
@@ -29,6 +31,8 @@ export const slackManifest = {
       kind: "secret",
       required: true,
       envKey: "SLACK_APP_TOKEN",
+      formatPattern: "^xapp-[A-Za-z0-9_-]+$",
+      formatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
@@ -44,6 +48,19 @@ export const slackManifest = {
       prompt: {
         label: "Slack Member IDs (comma-separated allowlist)",
         help: "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
+        emptyValueMessage: "bot will require manual pairing",
+      },
+    },
+    {
+      id: "allowedChannels",
+      kind: "config",
+      required: false,
+      envKey: "SLACK_ALLOWED_CHANNELS",
+      statePath: "slackConfig.allowedChannels",
+      prompt: {
+        label: "Slack Channel IDs (comma-separated allowlist)",
+        help: "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+        emptyValueMessage: "channel @mentions stay unrestricted by channel ID",
       },
     },
   ],
@@ -101,11 +118,16 @@ export const slackManifest = {
   state: {
     persist: {
       allowedIds: ["allowedUsers"],
+      slackConfig: ["allowedChannels"],
     },
     rebuildHydration: [
       {
         statePath: "allowedIds.slack",
         env: "SLACK_ALLOWED_USERS",
+      },
+      {
+        statePath: "slackConfig.allowedChannels",
+        env: "SLACK_ALLOWED_CHANNELS",
       },
     ],
   },
@@ -126,6 +148,28 @@ export const slackManifest = {
           required: true,
         },
       ],
+      onFailure: "skip-channel",
+    },
+    {
+      id: "slack-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "allowedUsers",
+          kind: "config",
+        },
+        {
+          id: "allowedChannels",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "slack-credential-validation",
+      phase: "reachability-check",
+      handler: "slack.validateCredentials",
+      inputs: ["botToken", "appToken"],
       onFailure: "skip-channel",
     },
   ],

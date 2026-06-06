@@ -57,6 +57,14 @@ const {
   applyStateDirLockMode,
   preflightStateDirLock,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
+const {
+  inspectMutableConfigPerms: inspectMutableConfigPermsCore,
+  repairMutableConfigPerms: repairMutableConfigPermsCore,
+}: typeof import("./mutable-config-perms") = require("./mutable-config-perms");
+type MutableConfigPermsInspection =
+  import("./mutable-config-perms").MutableConfigPermsInspection;
+type MutableConfigRepairResult =
+  import("./mutable-config-perms").MutableConfigRepairResult;
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -349,6 +357,172 @@ function stateDirLockExec(sandboxName: string) {
   };
 }
 
+const CONFIG_UNLOCK_NOFOLLOW_SCRIPT = String.raw`
+import errno
+import fcntl
+import grp
+import os
+import pwd
+import stat
+import struct
+import sys
+
+FS_IMMUTABLE_FL = 0x00000010
+FS_IOC_GETFLAGS = 0x80086601
+FS_IOC_SETFLAGS = 0x40086602
+
+def die(message):
+    sys.stderr.write(message + "\n")
+    raise SystemExit(1)
+
+def resolve_user_group(owner):
+    user, group = owner.split(":", 1)
+    uid = int(user) if user.isdigit() else pwd.getpwnam(user).pw_uid
+    gid = int(group) if group.isdigit() else grp.getgrnam(group).gr_gid
+    return uid, gid
+
+def open_checked(path, want_dir, dir_fd=None):
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if want_dir:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    else:
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags, dir_fd=dir_fd)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            die("refusing symlink path: " + path)
+        die("open failed for %s: %s" % (path, exc))
+    mode = os.fstat(fd).st_mode
+    if want_dir and not stat.S_ISDIR(mode):
+        os.close(fd)
+        die("not a directory: " + path)
+    if not want_dir and not stat.S_ISREG(mode):
+        os.close(fd)
+        die("not a regular file: " + path)
+    return fd
+
+def clear_immutable(fd):
+    try:
+        buf = bytearray(4)
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, buf, True)
+        flags = struct.unpack("I", buf)[0]
+        if flags & FS_IMMUTABLE_FL:
+            fcntl.ioctl(fd, FS_IOC_SETFLAGS, struct.pack("I", flags & ~FS_IMMUTABLE_FL))
+    except OSError:
+        # Best effort: fchown/fchmod and later lsattr verification surface failures.
+        pass
+
+def config_child_name(config_dir, path):
+    normalized_dir = os.path.normpath(config_dir)
+    normalized_path = os.path.normpath(path)
+    if os.path.dirname(normalized_path) != normalized_dir:
+        die("refusing config path outside config dir: " + path)
+    name = os.path.basename(normalized_path)
+    if name in ("", ".", ".."):
+        die("refusing invalid config path: " + path)
+    return name
+
+file_mode = int(sys.argv[1], 8)
+dir_mode = int(sys.argv[2], 8)
+uid, gid = resolve_user_group(sys.argv[3])
+config_dir = os.path.normpath(sys.argv[4])
+files = sys.argv[5:]
+
+parent_dir = os.path.dirname(config_dir)
+config_name = os.path.basename(config_dir)
+if parent_dir == "" or config_name in ("", ".", ".."):
+    die("refusing invalid config dir: " + config_dir)
+
+parent_fd = open_checked(parent_dir, True)
+parent_stat = os.fstat(parent_fd)
+dir_fd = None
+dir_stat = None
+unlock_ok = False
+body_error = None
+restore_errors = []
+try:
+    # Freeze the parent first. /sandbox is normally sandbox-owned, so otherwise
+    # the agent could rename the config directory itself between fd operations.
+    clear_immutable(parent_fd)
+    os.fchown(parent_fd, 0, 0)
+    os.fchmod(parent_fd, 0o755)
+
+    dir_fd = open_checked(config_name, True, dir_fd=parent_fd)
+    dir_stat = os.fstat(dir_fd)
+    clear_immutable(dir_fd)
+    os.fchown(dir_fd, 0, 0)
+    os.fchmod(dir_fd, 0o700)
+
+    for path in files:
+        name = config_child_name(config_dir, path)
+        fd = open_checked(name, False, dir_fd=dir_fd)
+        try:
+            clear_immutable(fd)
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, file_mode)
+        finally:
+            os.close(fd)
+
+    # Verify before reopening the directory for sandbox writes.
+    for path in files:
+        name = config_child_name(config_dir, path)
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if stat.S_ISLNK(st.st_mode):
+            die("refusing symlink path after unlock: " + path)
+        if not stat.S_ISREG(st.st_mode):
+            die("not a regular file after unlock: " + path)
+        if stat.S_IMODE(st.st_mode) != file_mode:
+            die("mode mismatch after unlock for %s: %o" % (path, stat.S_IMODE(st.st_mode)))
+        if st.st_uid != uid or st.st_gid != gid:
+            die("owner mismatch after unlock for " + path)
+    unlock_ok = True
+except BaseException as exc:
+    body_error = exc
+finally:
+    if dir_fd is not None:
+        try:
+            if unlock_ok:
+                os.fchown(dir_fd, uid, gid)
+                os.fchmod(dir_fd, dir_mode)
+            elif dir_stat is not None:
+                os.fchown(dir_fd, dir_stat.st_uid, dir_stat.st_gid)
+                os.fchmod(dir_fd, stat.S_IMODE(dir_stat.st_mode))
+        except OSError as exc:
+            restore_errors.append(str(exc))
+        os.close(dir_fd)
+    try:
+        os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
+        os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
+    except OSError as exc:
+        restore_errors.append(str(exc))
+    os.close(parent_fd)
+
+if restore_errors:
+    die("config path restore failed: " + "; ".join(restore_errors))
+if body_error is not None:
+    raise body_error
+`;
+
+function unlockConfigPathsNoSymlinkFollow(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  fileMode: string,
+  dirMode: string,
+  filesToUnlock: string[],
+): void {
+  privilegedSandboxExec(sandboxName, [
+    "python3",
+    "-c",
+    CONFIG_UNLOCK_NOFOLLOW_SCRIPT,
+    fileMode,
+    dirMode,
+    "sandbox:sandbox",
+    target.configDir,
+    ...filesToUnlock,
+  ]);
+}
+
 function legacyDataDirFor(configDir: string): string {
   return `${configDir}-data`;
 }
@@ -416,37 +590,13 @@ function unlockAgentConfig(
   // the gateway UID cannot remove sandbox-owned config files.
   const fileMode = target.agentName === "hermes" ? "640" : "660";
   const dirMode = target.agentName === "hermes" ? "3770" : "2770";
-  for (const f of filesToUnlock) {
-    try {
-      privilegedSandboxExec(sandboxName, ["chattr", "-i", f]);
-    } catch {
-      errors.push(`chattr -i ${f}`);
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", f]);
-    } catch {
-      errors.push(`chown ${f}`);
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", fileMode, f]);
-    } catch {
-      errors.push(`chmod ${fileMode} ${f}`);
-    }
-  }
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "chown",
-      "sandbox:sandbox",
-      target.configDir,
-    ]);
-  } catch {
-    errors.push("chown config dir");
-  }
-  try {
-    privilegedSandboxExec(sandboxName, ["chmod", dirMode, target.configDir]);
-  } catch {
-    errors.push(`chmod ${dirMode} config dir`);
-  }
+  unlockConfigPathsNoSymlinkFollow(
+    sandboxName,
+    target,
+    fileMode,
+    dirMode,
+    filesToUnlock,
+  );
 
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
@@ -521,6 +671,41 @@ function unlockAgentConfig(
   if (issues.length > 0) {
     throw new Error(`Config not unlocked: ${issues.join(", ")}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Mutable-config permission repair / diagnostics (#4538)
+//
+// Sandbox-bound wrappers around the pure contract logic in
+// ./mutable-config-perms.ts. See that module for the full rationale: in short,
+// `openclaw doctor --fix` tightens NemoClaw's mutable config tree (setgid +
+// group-writable 2770/660) back to single-user 700/600, which blocks the
+// gateway UID from persisting config edits. These detect the drift and restore
+// the contract without weakening an active shields-up lock.
+// ---------------------------------------------------------------------------
+
+function inspectMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigPermsInspection {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return inspectMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    (p) => privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
+  );
+}
+
+function repairMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigRepairResult {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return repairMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    () => unlockAgentConfig(sandboxName, target),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1502,16 +1687,18 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
 // ---------------------------------------------------------------------------
 
 export {
-  shieldsDown,
-  shieldsUp,
-  shieldsStatus,
-  isShieldsDown,
-  getShieldsPosture,
-  killTimer,
-  deriveShieldsMode,
-  parseDuration,
-  lockAgentConfig,
-  unlockAgentConfig,
-  MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
+  deriveShieldsMode,
+  getShieldsPosture,
+  inspectMutableConfigPerms,
+  isShieldsDown,
+  killTimer,
+  lockAgentConfig,
+  MAX_TIMEOUT_SECONDS,
+  parseDuration,
+  repairMutableConfigPerms,
+  shieldsDown,
+  shieldsStatus,
+  shieldsUp,
+  unlockAgentConfig,
 };

@@ -9,9 +9,11 @@ import { isMemoryPath, scanForSecrets } from "./secret-scanner.js";
 const FAKE = {
   nvidia: "nvapi-" + "abcdefghijklmnopqrstuvwxyz",
   openai: "sk-" + "abc123def456ghi789jkl012mno",
+  openaiProject: "sk-proj-" + "abc123_def456-ghi789_jkl012-mno345",
   github: "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn",
   aws: "AKIA" + "IOSFODNN7EXAMPLE",
   slack: "xoxb-" + "123456789-abcdefghij",
+  slackApp: "xapp-" + "1-A0000-12345-abcdef",
   npm: "npm_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn",
   pemRsa: "-----BEGIN RSA " + "PRIVATE KEY-----\nMIIEpA...",
   pemOpenssh: "-----BEGIN OPENSSH " + "PRIVATE KEY-----\nb3Blbn...",
@@ -40,6 +42,12 @@ describe("scanForSecrets", () => {
       expect(matches[0].pattern).toBe("OpenAI API key");
     });
 
+    it("OpenAI project API key", () => {
+      const matches = scanForSecrets(`export OPENAI_API_KEY=${FAKE.openaiProject}`);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].pattern).toBe("OpenAI API key");
+    });
+
     it("GitHub personal access token", () => {
       const matches = scanForSecrets(`token: ${FAKE.github}`);
       expect(matches).toHaveLength(1);
@@ -54,6 +62,12 @@ describe("scanForSecrets", () => {
 
     it("Slack bot token", () => {
       const matches = scanForSecrets(`SLACK_TOKEN=${FAKE.slack}`);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].pattern).toBe("Slack token");
+    });
+
+    it("Slack app token", () => {
+      const matches = scanForSecrets(`SLACK_APP_TOKEN=${FAKE.slackApp}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Slack token");
     });

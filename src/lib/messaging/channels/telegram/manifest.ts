@@ -8,6 +8,10 @@ export const telegramManifest = {
   id: "telegram",
   displayName: "Telegram",
   description: "Telegram bot messaging",
+  enrollmentNotes: [
+    "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
+    "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
+  ],
   supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "token-paste",
@@ -32,6 +36,7 @@ export const telegramManifest = {
       prompt: {
         label: "Telegram User ID (for DM access)",
         help: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
+        emptyValueMessage: "bot will require manual pairing",
       },
     },
     {
@@ -146,11 +151,37 @@ export const telegramManifest = {
       onFailure: "skip-channel",
     },
     {
-      id: "telegram-reachability",
+      id: "telegram-allowlist-aliases",
+      phase: "enroll",
+      handler: "telegram.allowlistAliases",
+      outputs: [
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "telegram-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "requireMention",
+          kind: "config",
+        },
+        {
+          id: "allowedIds",
+          kind: "config",
+        },
+      ],
+    },
+    {
+      id: "telegram-get-me-reachability",
       phase: "reachability-check",
       handler: "telegram.getMeReachability",
       inputs: ["botToken"],
-      onFailure: "abort",
+      onFailure: "skip-channel",
     },
   ],
 } as const satisfies ChannelManifest;

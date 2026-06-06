@@ -47,6 +47,12 @@ The common failure mode is:
 This is different from a network or policy block.
 `nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while tool dispatch still fails inside the conversation.
 
+### Nemotron Managed Inference
+
+For the `nvidia/nemotron-3-super-120b-a12b` managed inference route on `inference.local`, NemoClaw disables OpenClaw's native code-based tool search surface.
+That route otherwise tends to generate invalid JavaScript for the `tool_search_code` helper, which creates `[tools] tool_search_code failed` noise even when normal turns succeed.
+The agent still uses the structured tool-calling surface that the model handles correctly.
+
 ## Recommended Fix
 
 For persistent NemoClaw use, start vLLM with auto tool choice and the parser that matches your model family, then rerun onboarding and select **Local vLLM [experimental]** or **Other OpenAI-compatible endpoint**.

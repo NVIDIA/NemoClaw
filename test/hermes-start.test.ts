@@ -47,6 +47,86 @@ function extractRuntimeShellEnvBlock(src: string): string {
   return src.slice(start, end).trimEnd();
 }
 
+function extractDashboardPortBootstrap(src: string): string {
+  const start = src.indexOf('NEMOCLAW_CMD=("$@")');
+  const end = src.indexOf('\nHERMES="$(command -v hermes)"', start);
+  if (start < 0 || end < 0) {
+    throw new Error("Expected Hermes dashboard port bootstrap block in agents/hermes/start.sh");
+  }
+  return src.slice(start, end).trimEnd();
+}
+
+function runHermesDashboardPortBootstrap(env: Record<string, string | undefined> = {}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-bootstrap-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "set --",
+      extractDashboardPortBootstrap(src),
+      'printf "CHAT_UI_URL=%s\\n" "${CHAT_UI_URL:-}"',
+      'printf "DASHBOARD_PUBLIC_PORT=%s\\n" "$DASHBOARD_PUBLIC_PORT"',
+      'printf "DASHBOARD_INTERNAL_PORT=%s\\n" "$DASHBOARD_INTERNAL_PORT"',
+      'printf "PUBLIC_PORT=%s\\n" "$PUBLIC_PORT"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const childEnv = { ...process.env };
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) {
+        delete childEnv[key];
+      } else {
+        childEnv[key] = value;
+      }
+    }
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: childEnv,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesDashboardArgs(tuiValue?: string) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-args-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "truthy_env"),
+      extractShellFunctionFromSource(src, "hermes_dashboard_tui_enabled"),
+      extractShellFunctionFromSource(src, "build_hermes_dashboard_args"),
+      "DASHBOARD_INTERNAL_PORT=19119",
+      tuiValue === undefined
+        ? 'HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-0}"'
+        : `HERMES_DASHBOARD_TUI=${shellQuote(tuiValue)}`,
+      "build_hermes_dashboard_args",
+      'printf "%s\\n" "${HERMES_DASHBOARD_ARGS[@]}"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runHermesPortValidation(opts: {
   publicPort?: number;
   internalPort?: number;
@@ -65,8 +145,8 @@ function runHermesPortValidation(opts: {
       extractShellFunctionFromSource(src, "validate_port_configuration"),
       `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
       `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
-      `HERMES_DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 9119}`,
-      `HERMES_DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
+      `DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 18789}`,
+      `DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
       "validate_port_configuration",
     ].join("\n"),
     { mode: 0o700 },
@@ -77,6 +157,78 @@ function runHermesPortValidation(opts: {
       encoding: "utf-8",
       timeout: 5000,
       env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesEnvSecretBoundary(opts: {
+  envFile?: string;
+  symlinkEnvFile?: boolean;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const envFile = path.join(hermesHome, ".env");
+  const target = path.join(tmpDir, "env-target");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  if (opts.symlinkEnvFile) {
+    fs.writeFileSync(target, opts.envFile ?? "DEVTEST_API_TOKEN=secret\n");
+    fs.symlinkSync(target, envFile);
+  } else if (opts.envFile !== undefined) {
+    fs.writeFileSync(envFile, opts.envFile);
+  }
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      "validate_hermes_env_secret_boundary",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-boundary-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
+      "validate_hermes_runtime_env_secret_boundary",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: {
+        HOME: tmpDir,
+        PATH: process.env.PATH ?? "",
+        ...envOverrides,
+      },
     });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -163,6 +315,8 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "verify_config_integrity_if_locked() { :; }",
       "verify_config_integrity() { :; }",
       "apply_shields_up_runtime_env() { :; }",
+      "validate_hermes_env_secret_boundary() { :; }",
+      "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
@@ -284,7 +438,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.orphanDashboardSocat) {
     writeFakeProcCmdline(procRoot, 789, [
       "socat",
-      "TCP-LISTEN:9119,bind=0.0.0.0,fork,reuseaddr",
+      "TCP-LISTEN:18789,bind=0.0.0.0,fork,reuseaddr",
       "TCP:127.0.0.1:19119",
     ]);
   }
@@ -314,8 +468,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       opts.lockedConfigRoot || opts.rootOwnedConfigRoot ? LOCKED_HERMES_CONFIG_STAT_MOCK : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
-      "HERMES_DASHBOARD_PUBLIC_PORT=9119",
-      "HERMES_DASHBOARD_INTERNAL_PORT=19119",
+      "DASHBOARD_PUBLIC_PORT=18789",
+      "DASHBOARD_INTERNAL_PORT=19119",
       "cleanup_stale_hermes_gateway_runtime",
     ].join("\n"),
     { mode: 0o700 },
@@ -452,6 +606,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
@@ -468,13 +624,51 @@ describe("agents/hermes/start.sh runtime shell env", () => {
 });
 
 describe("agents/hermes/start.sh port validation", () => {
+  it("derives the dashboard port from CHAT_UI_URL while preserving API port 8642", () => {
+    const run = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: "https://hermes.example.test:29443",
+      NEMOCLAW_DASHBOARD_PORT: undefined,
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("CHAT_UI_URL=https://hermes.example.test:29443");
+    expect(run.stdout).toContain("DASHBOARD_PUBLIC_PORT=29443");
+    expect(run.stdout).toContain("PUBLIC_PORT=8642");
+  });
+
+  it("rejects dashboard ports that collide with the API port during bootstrap", () => {
+    const fromChatUrl = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: "http://127.0.0.1:8642",
+      NEMOCLAW_DASHBOARD_PORT: undefined,
+    });
+    expect(fromChatUrl.status).toBe(1);
+    expect(fromChatUrl.stderr).toContain("reserved for the Hermes OpenAI-compatible API");
+
+    const invalidOverride = runHermesDashboardPortBootstrap({
+      CHAT_UI_URL: undefined,
+      NEMOCLAW_DASHBOARD_PORT: "not-a-port",
+    });
+    expect(invalidOverride.status).toBe(1);
+    expect(invalidOverride.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT");
+  });
+
+  it("keeps the in-browser Hermes TUI opt-in", () => {
+    const defaultArgs = runHermesDashboardArgs();
+    expect(defaultArgs.status).toBe(0);
+    expect(defaultArgs.stdout.split("\n")).not.toContain("--tui");
+
+    const optInArgs = runHermesDashboardArgs("1");
+    expect(optInArgs.status).toBe(0);
+    expect(optInArgs.stdout.split("\n")).toContain("--tui");
+  });
+
   it("rejects cross-collisions between API and dashboard ports", () => {
     const dashboardPublicOnApiInternal = runHermesPortValidation({
       dashboardPublicPort: 18642,
     });
     expect(dashboardPublicOnApiInternal.status).toBe(1);
     expect(dashboardPublicOnApiInternal.stderr).toContain(
-      "HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
+      "DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
     );
 
     const dashboardInternalOnApiPublic = runHermesPortValidation({
@@ -482,8 +676,105 @@ describe("agents/hermes/start.sh port validation", () => {
     });
     expect(dashboardInternalOnApiPublic.status).toBe(1);
     expect(dashboardInternalOnApiPublic.stderr).toContain(
-      "HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
+      "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
+  });
+});
+
+describe("agents/hermes/start.sh env secret boundary", () => {
+  it("allows OpenShell resolver placeholders and Slack SDK aliases", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN='openshell:resolve:env:DISCORD_BOT_TOKEN'",
+        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        'SLACK_APP_TOKEN="xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN"',
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        "EMPTY_TOKEN=",
+        "LEGACY_SECRET=[STRIPPED_BY_MIGRATION]",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects raw secret-shaped values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesEnvSecretBoundary({
+      envFile: `DEVTEST_API_TOKEN=${rawToken}\n`,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("raw secret-shaped values");
+    expect(result.stderr).toContain("DEVTEST_API_TOKEN (line 1)");
+    expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("rejects bare API-named raw values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesEnvSecretBoundary({
+      envFile: `INTERNAL_API=${rawToken}\n`,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("INTERNAL_API (line 1)");
+    expect(result.stderr).not.toContain(rawToken);
+  });
+
+  it("rejects credential-shaped rewrite sentinels in Hermes .env", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: "OPENAI_API_KEY=sk-OPENSHELL-PROXY-REWRITE\n",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("OPENAI_API_KEY (line 1)");
+    expect(result.stderr).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+  });
+
+  it("rejects symlinked Hermes .env files", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n",
+      symlinkEnvFile: true,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("is a symlink");
+  });
+
+  it("allows gateway token, nonsecret config names, and resolver placeholders in process env", () => {
+    const result = runHermesRuntimeEnvSecretBoundary({
+      API_SERVER_HOST: "127.0.0.1",
+      API_SERVER_PORT: "18642",
+      EMPTY_TOKEN: "",
+      GPG_KEY: "public-build-key-fingerprint",
+      LEGACY_SECRET: "[STRIPPED_BY_MIGRATION]",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_PROVIDER_KEY: "custom",
+      OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+      SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects raw secret-shaped process env values without printing the value", () => {
+    const rawToken = "SENTINEL_RAW_SECRET_VALUE";
+    const result = runHermesRuntimeEnvSecretBoundary({
+      DEVTEST_API_TOKEN: rawToken,
+      NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: "raw-refresh-token",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment");
+    expect(result.stderr).toContain("DEVTEST_API_TOKEN");
+    expect(result.stderr).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN");
+    expect(result.stderr).not.toContain(rawToken);
+    expect(result.stderr).not.toContain("raw-refresh-token");
   });
 });
 

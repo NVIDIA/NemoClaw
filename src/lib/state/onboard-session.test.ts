@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("../../../dist/lib/state/onboard-session");
@@ -142,6 +142,32 @@ describe("onboard session", () => {
     expect(loaded.failure.step).toBe("sandbox");
     expect(loaded.failure.message).toMatch(/Sandbox creation failed/);
     expect(loaded.machine.state).toBe("failed");
+  });
+
+  it("can record step boundaries without mutating the machine snapshot", () => {
+    const emitted: OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
+    session.saveSession(session.createSession());
+
+    session.markStepStarted("preflight", { updateMachine: false });
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.steps.preflight.status).toBe("in_progress");
+    expect(loaded.status).toBe("in_progress");
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+
+    session.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.steps.preflight.status).toBe("complete");
+    expect(loaded.sandboxName).toBe("my-assistant");
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+
+    session.markStepFailed("gateway", "Gateway failed", { updateMachine: false });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.steps.gateway.status).toBe("failed");
+    expect(loaded.status).toBe("in_progress");
+    expect(loaded.failure).toBeNull();
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+    expect(emitted.map((event) => event.type)).toEqual(["context.updated"]);
   });
 
   it("persists a compact machine snapshot across step boundaries", () => {
@@ -854,8 +880,8 @@ describe("onboard session", () => {
     //      ORIGINAL stale lock (dead PID 999999), isProcessAlive
     //      returns false, and acquireOnboardLock enters the stale-
     //      cleanup path calling unlinkIfInodeMatches.
-    //    - stat #2 (inside unlinkIfInodeMatches): BEFORE the actual
-    //      stat, swap the file for a fresh claim. stat #2 then sees
+    //    - stat #1 (inside unlinkIfInodeMatches): BEFORE the actual
+    //      stat, swap the file for a fresh claim. stat #1 then sees
     //      a different inode → must skip the unlink.
     //
     //    CodeRabbit correctly flagged the original test: swapping on
@@ -865,10 +891,10 @@ describe("onboard session", () => {
     const originalStatSync = fs.statSync;
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
       statCallCount += 1;
-      // Just before stat #2 (inside unlinkIfInodeMatches), simulate
+      // Just before stat #1 (inside unlinkIfInodeMatches), simulate
       // the race: a concurrent fast process unlinks the stale lock
-      // and writes a fresh claim. stat #2 then sees a new inode.
-      if (statCallCount === 2) {
+      // and writes a fresh claim. stat #1 then sees a new inode.
+      if (statCallCount === 1) {
         // Write the fresh claim to a temp file first, then rename over
         // the stale lock. This guarantees a different inode even on
         // tmpfs/overlayfs which can reuse inodes after unlink+recreate.
@@ -888,9 +914,9 @@ describe("onboard session", () => {
     });
 
     try {
-      // The acquire call will see EEXIST (stale lock present), stat it,
-      // then the swap happens, then the second stat (inside the cleanup
-      // helper) sees a different inode → must NOT unlink.
+      // The acquire call will see EEXIST (stale lock present), read it
+      // through a pinned descriptor, then the stat inside the cleanup
+      // helper sees a different inode → must NOT unlink.
       const result = session.acquireOnboardLock("nemoclaw onboard --resume");
       // The fresh lock that the simulated concurrent process wrote
       // should still be on disk after acquireOnboardLock returns.
@@ -950,7 +976,7 @@ describe("onboard session", () => {
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
       if (args[0] === session.LOCK_FILE) {
         statCallCount += 1;
-        if (statCallCount === 3) {
+        if (statCallCount === 1) {
           const tmpClaim = session.LOCK_FILE + ".race-tmp";
           fs.writeFileSync(
             tmpClaim,

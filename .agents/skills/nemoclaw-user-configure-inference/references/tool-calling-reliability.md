@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Tool-Calling Reliability for Local Inference
 
 Local inference is useful for privacy, cost control, and offline development, but tool-calling agents place stricter demands on the model server than simple chat.
@@ -39,6 +37,12 @@ The common failure mode is:
 
 This is different from a network or policy block.
 `nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while tool dispatch still fails inside the conversation.
+
+### Nemotron Managed Inference
+
+For the `nvidia/nemotron-3-super-120b-a12b` managed inference route on `inference.local`, NemoClaw disables OpenClaw's native code-based tool search surface.
+That route otherwise tends to generate invalid JavaScript for the `tool_search_code` helper, which creates `[tools] tool_search_code failed` noise even when normal turns succeed.
+The agent still uses the structured tool-calling surface that the model handles correctly.
 
 ## Recommended Fix
 
