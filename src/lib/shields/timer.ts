@@ -120,6 +120,9 @@ function readTimerMarker(markerPath: string): UnknownRecord | null {
 }
 
 function resolveLockAgentConfig(): LockAgentConfig {
+  // The timer is a detached child process that must never mark shields up
+  // unless it can call the lock verifier. Guard the CommonJS export boundary
+  // so packaging/mock drift leaves shields down with an auditable warning.
   const lockAgentConfig = shields.lockAgentConfig;
   if (typeof lockAgentConfig !== "function") {
     throw new Error("Shields lock helper is unavailable; cannot verify auto-restore lock state");

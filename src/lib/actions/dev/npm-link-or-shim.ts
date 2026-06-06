@@ -61,9 +61,30 @@ function defaultCommandPath(command: string, env: NodeJS.ProcessEnv): string | n
   return result.status === 0 && resolved ? resolved : null;
 }
 
-function formatNpmLinkFailure(output: string): string[] {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function redactKnownPath(value: string, rawPath: string, replacement: string): string {
+  if (!rawPath) return value;
+  return value.replace(new RegExp(escapeRegExp(rawPath), "g"), replacement);
+}
+
+function sanitizeNpmLinkOutput(output: string, paths: { home: string; repoRoot: string }): string {
+  let sanitized = output;
+  sanitized = redactKnownPath(sanitized, paths.repoRoot, "<repo-root>");
+  sanitized = redactKnownPath(sanitized, paths.home, "~");
+  sanitized = sanitized.replace(
+    /\b(([A-Z0-9_-]*(?:api[_-]?key|token|secret|password)[A-Z0-9_-]*)\s*[:=]\s*)([^\s'"`]+)/gi,
+    "$1[REDACTED]",
+  );
+  sanitized = sanitized.replace(/\b(Bearer\s+)([^\s'"`]+)/gi, "$1[REDACTED]");
+  return sanitized;
+}
+
+function formatNpmLinkFailure(output: string, paths: { home: string; repoRoot: string }): string[] {
   const lines = ["[nemoclaw] npm link failed; falling back to user-local shim."];
-  for (const line of output.split(/\r?\n/).filter(Boolean)) {
+  for (const line of sanitizeNpmLinkOutput(output, paths).split(/\r?\n/).filter(Boolean)) {
     lines.push(`[nemoclaw]   ${line}`);
   }
   return lines;
@@ -135,7 +156,7 @@ export function runNpmLinkOrShim(
   const linkResult = run("npm", ["link"], { cwd: repoRoot, env: installEnv });
   if (linkResult.status === 0) return { status: 0 };
 
-  for (const line of formatNpmLinkFailure(`${linkResult.stdout}${linkResult.stderr}`)) logError(line);
+  for (const line of formatNpmLinkFailure(`${linkResult.stdout}${linkResult.stderr}`, { home, repoRoot })) logError(line);
 
   const nodePath = findNodePath(installEnv, { commandPath, isExecutable });
   if (!nodePath) {

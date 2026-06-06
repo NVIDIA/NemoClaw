@@ -324,6 +324,9 @@ function probeGatewayRunning(sandboxName?: string): boolean {
 }
 
 function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
+  // Snapshot creation is a shields/policy boundary. If a packaged or mocked
+  // CommonJS interop surface ever omits the helper, fail closed before any
+  // backup side effect instead of throwing an ambiguous TypeError.
   const isShieldsDown = shields.isShieldsDown;
   if (typeof isShieldsDown !== "function") {
     console.error("  Cannot verify shields state. Refusing to create snapshot.");
