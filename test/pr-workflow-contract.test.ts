@@ -13,6 +13,10 @@ type PullRequestWorkflow = {
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string[] }>;
 };
 
+type CodebaseGrowthGuardrailsWorkflow = {
+  jobs: Record<string, WorkflowJob>;
+};
+
 function stepRuns(job: WorkflowJob): string[] {
   return (job.steps ?? []).flatMap((step) => (step.run ? [step.run] : []));
 }
@@ -116,6 +120,7 @@ describe("pull request workflow contract", () => {
       "test-cli",
       "test-plugin",
       "source-shape-test-budget",
+      "test-file-size-budget",
       "test-skills-yaml",
     ]) {
       expect(staticPrekRun).toContain(`--skip ${skippedHook}`);
@@ -134,7 +139,26 @@ describe("pull request workflow contract", () => {
     expect(pluginTestRun).toContain("npx vitest run --project plugin");
     expect(pluginTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
     expect(staticRuns).toContain("npm run source-shape:check");
+    expect(staticRuns).toContain("npm run test-size:check");
     expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");
+  });
+
+  it("keeps the trusted test-size guard closed around budget policy changes", () => {
+    const growthGuardrails = readYaml<CodebaseGrowthGuardrailsWorkflow>(
+      ".github/workflows/codebase-growth-guardrails.yaml",
+    );
+    const guardRun = stepRuns(growthGuardrails.jobs["codebase-growth-guardrails"]).join(
+      "\n",
+    );
+
+    expect(guardRun).toContain("HEAD_REPO");
+    expect(guardRun).toContain("HEAD_SHA");
+    expect(guardRun).not.toContain(".raw_url");
+    expect(guardRun).toContain("previous_filename");
+    expect(guardRun).toContain("budgetChanged");
+    expect(guardRun).toContain(
+      "has a legacy budget but no matching test file at the PR head",
+    );
   });
 
   it("uploads CLI Vitest JSON results for timing analysis", () => {

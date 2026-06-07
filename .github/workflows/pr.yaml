@@ -112,10 +112,14 @@ jobs:
             --skip test-cli \
             --skip test-plugin \
             --skip source-shape-test-budget \
+            --skip test-file-size-budget \
             --skip test-skills-yaml
 
       - name: Run source-shape budget
         run: npm run source-shape:check
+
+      - name: Run test file size budget
+        run: npm run test-size:check
 
       - name: Run skills YAML tests
         run: npx vitest run test/skills-frontmatter.test.ts
