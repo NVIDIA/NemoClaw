@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 // Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
 // the generic state handler. Matches normalizeSandboxAgentName: trim,
@@ -64,6 +65,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         disabledChannels: string[] | null | undefined;
         enabledChannels: string[];
         hermesToolGateways: string[];
+        agent?: string | null;
         webSearchConfig: WebSearchConfig | null;
         webSearchSupported: boolean;
       },
@@ -106,6 +108,7 @@ export interface PoliciesStateResult {
   session: Session | null;
   recordedMessagingChannels: string[];
   appliedPolicyPresets: string[];
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handlePoliciesState<Agent, WebSearchConfig>({
@@ -151,6 +154,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     disabledChannels: activeSandbox?.disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
+    agent: normalizeAgentName((agent as { name?: string } | null)?.name),
     webSearchConfig,
     webSearchSupported,
   });
@@ -239,5 +243,12 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     );
   }
 
-  return { session, recordedMessagingChannels, appliedPolicyPresets };
+  return {
+    session,
+    recordedMessagingChannels,
+    appliedPolicyPresets,
+    stateResult: advanceTo("finalizing", {
+      metadata: { state: "policies", policyPresets: appliedPolicyPresets },
+    }),
+  };
 }

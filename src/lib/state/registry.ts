@@ -3,16 +3,35 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface CustomPolicyEntry {
   name: string;
   content: string;
   sourcePath?: string;
   appliedAt?: string;
+}
+
+// Outcome of the last live sandbox GPU proof run during onboarding/recovery.
+// `status` separates a configured-but-unverified GPU from one whose CUDA
+// usability was actually proven (`verified`) or actively failed a live proof
+// (`failed`, e.g. Jetson `/dev/nvmap` permission errors). Persisted so
+// `nemoclaw <sandbox> status` can report proof state instead of treating any
+// configured GPU as healthy (#4231).
+export type SandboxGpuProofStatus = "verified" | "unverified" | "failed";
+
+export interface SandboxGpuProofResult {
+  status: SandboxGpuProofStatus;
+  // True only when a CUDA-usability proof (cuInit via libcuda) actually passed.
+  cudaVerified: boolean;
+  // Label of the last proof that determined `status`.
+  label?: string | null;
+  // Redacted, truncated diagnostic captured when the proof failed.
+  detail?: string | null;
+  at: string;
 }
 
 export interface SandboxEntry {
@@ -26,6 +45,7 @@ export interface SandboxEntry {
   sandboxGpuEnabled?: boolean;
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
+  sandboxGpuProof?: SandboxGpuProofResult | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];
@@ -43,6 +63,7 @@ export interface SandboxEntry {
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
+  messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -56,6 +77,11 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+}
+
+export interface SandboxMessagingState {
+  schemaVersion: 1;
+  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -218,6 +244,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
+      sandboxGpuProof: entry.sandboxGpuProof ?? null,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
@@ -236,6 +263,7 @@ export function registerSandbox(entry: SandboxEntry): void {
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
           ? { ...entry.messagingChannelConfig }
           : undefined,
+      messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
@@ -257,6 +285,16 @@ export function registerSandbox(entry: SandboxEntry): void {
     }
     save(data);
   });
+}
+
+function cloneSandboxMessagingState(
+  messaging: SandboxMessagingState | undefined,
+): SandboxMessagingState | undefined {
+  if (!messaging || messaging.schemaVersion !== 1) return undefined;
+  return {
+    schemaVersion: 1,
+    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
+  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {

@@ -10,6 +10,7 @@ import os from "os";
 import path from "path";
 
 import { dockerBuild, dockerImageInspect } from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
@@ -428,7 +429,15 @@ export async function handleAgentSetup(
     const probe = agent.healthProbe;
     if (probe?.url) {
       const result = runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-sf", "--max-time", "3", probe.url],
+        [
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "curl",
+          ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
+        ],
         { ignoreError: true },
       );
       if (isHealthProbeOk(result)) {
@@ -468,7 +477,15 @@ export async function handleAgentSetup(
     let healthy = false;
     for (let i = 0; i < maxAttempts; i++) {
       const result = runCaptureOpenshell(
-        ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-sf", "--max-time", "3", probe.url],
+        [
+          "sandbox",
+          "exec",
+          "-n",
+          sandboxName,
+          "--",
+          "curl",
+          ...buildValidatedCurlCommandArgs(["-sf", "--max-time", "3", probe.url]),
+        ],
         { ignoreError: true },
       );
       if (isHealthProbeOk(result)) {
@@ -537,7 +554,7 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
-  const { kind, label, path } = agent.dashboard;
+  const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
 
   if (kind === "api") {
@@ -552,6 +569,15 @@ export function printDashboardUi(
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
+    return;
+  }
+
+  if (auth !== "url_token") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, info.port)) {
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
     return;
   }
 

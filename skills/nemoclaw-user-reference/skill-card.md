@@ -1,5 +1,5 @@
 ## Description: <br>
-Describes the NemoClaw plugin and blueprint architecture and how they orchestrate the OpenClaw sandbox. <br>
+Describes the NemoClaw integration layer and blueprint architecture and how they orchestrate compatible agent sandboxes. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and operators who need to understand NemoClaw architecture, look up CLI commands, configure network policies, or troubleshoot sandbox issues. <br>
+Developers and engineers managing sandboxed AI agents use this skill to look up NemoClaw architecture, CLI commands, network policies, and troubleshooting guidance. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -21,19 +21,25 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Architecture Details](references/architecture.md) <br>
 - [CLI Selection Guide](references/cli-selection-guide.md) <br>
-- [NemoClaw CLI Commands Reference](references/commands.md) <br>
+- [CLI Commands Reference](references/commands.md) <br>
 - [Network Policies](references/network-policies.md) <br>
 - [Troubleshooting](references/troubleshooting.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
+**Output Type(s):** [Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
+## Evaluation Agents Used: <br>
+- `claude-code` <br>
+- `codex` <br>
+
+
+
 ## Evaluation Tasks: <br>
-NVSkills-Eval 3-tier evaluation with external profile. Tier 1 static validation (9 checks, 14 findings). Tier 2 deduplication analysis (2 checks, 2 findings). Tier 3 live agent evaluation not available in this report. <br>
+Evaluated against 1 evaluation task with 2 attempts per task in the astra-sandbox environment using NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,7 +49,25 @@ Reported benchmark dimensions: <br>
 - Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
 - Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
 
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
+- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
+- `accuracy`: Grades final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
+- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
+- `token_efficiency`: Compares token usage with and without the skill. <br>
 
+
+
+## Evaluation Results: <br>
+| Dimension | Num | `claude-code` | `codex` |
+|---|---:|---:|---:|
+| Security | 2 | 100% (+0%) | 100% (+0%) |
+| Correctness | 2 | 100% (+62%) | 92% (+50%) |
+| Discoverability | 2 | 100% (+38%) | 76% (+22%) |
+| Effectiveness | 2 | 93% (+59%) | 91% (+54%) |
+| Efficiency | 2 | 88% (+32%) | 67% (+24%) |
 
 ## Skill Version(s): <br>
 0.1.0 (source: package.json) <br>

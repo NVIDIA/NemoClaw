@@ -12,6 +12,7 @@ on:
     types: [opened, reopened, synchronize, ready_for_review]
 
 permissions:
+  contents: read
   pull-requests: read
 
 jobs:
@@ -105,3 +106,140 @@ jobs:
           in the top-level onboard entrypoint.
           EOF
           exit 1
+
+      - name: Require changed test files to stay within size budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const BUDGET_FILE = "ci/test-file-size-budget.json";
+          const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
+          const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$/;
+          const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
+          const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
+          const violations = [];
+
+          function countLines(text) {
+            return text === "" ? 0 : (text.match(/\r\n|\r|\n/g)?.length ?? 0) + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
+          }
+
+          function parseBudget(text, label) {
+            const budget = JSON.parse(text);
+            const legacyMaxLines = budget.legacyMaxLines ?? {};
+            if (!Number.isInteger(budget.defaultMaxLines) || budget.defaultMaxLines <= 0) {
+              throw new Error(`${label} must define positive integer defaultMaxLines`);
+            }
+            if (typeof legacyMaxLines !== "object" || legacyMaxLines === null || Array.isArray(legacyMaxLines)) {
+              throw new Error(`${label} legacyMaxLines must be an object`);
+            }
+            for (const [file, maxLines] of Object.entries(legacyMaxLines)) {
+              if (!Number.isInteger(maxLines) || maxLines <= 0) {
+                throw new Error(`${label} has invalid legacy budget for ${file}: ${maxLines}`);
+              }
+            }
+            return { defaultMaxLines: budget.defaultMaxLines, legacyMaxLines };
+          }
+
+          async function getJson(url) {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            return response.json();
+          }
+
+          async function getPullFiles() {
+            const files = [];
+            for (let page = 1; ; page += 1) {
+              const batch = await getJson(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}`);
+              files.push(...batch);
+              if (batch.length < 100) return files;
+            }
+          }
+
+          async function getContent(repo, ref, file) {
+            const encodedPath = file.split("/").map(encodeURIComponent).join("/");
+            const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+            const response = await fetch(url, { headers });
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            const body = await response.json();
+            if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
+              throw new Error(`Could not decode file contents for ${file}`);
+            }
+            return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+          }
+
+          async function checkLegacyFile(file, maxLines, headBudget) {
+            const text = await getContent(HEAD_REPO, HEAD_SHA, file);
+            if (text === null) {
+              violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
+              return;
+            }
+            const lines = countLines(text);
+            if (lines > maxLines) violations.push(`${file} has ${lines} line(s), above its legacy budget ${maxLines}`);
+            if (lines < maxLines) {
+              violations.push(`${file}: ${lines} line(s) < ${maxLines} legacy budget; lower the budget entry`);
+            }
+          }
+
+          async function validateBudget(baseBudget, headBudget, baseWasFallback) {
+            if (baseWasFallback) return;
+            if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
+              violations.push(`defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`);
+            }
+            for (const [file, baseMax] of Object.entries(baseBudget.legacyMaxLines)) {
+              const headMax = headBudget.legacyMaxLines[file];
+              const text = headMax === undefined ? await getContent(HEAD_REPO, HEAD_SHA, file) : null;
+              if (headMax > baseMax) violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
+              if (headMax === undefined && text !== null && countLines(text) > headBudget.defaultMaxLines) {
+                violations.push(`${file} removed its legacy budget while still exceeding defaultMaxLines`);
+              }
+            }
+            for (const [file, headMax] of Object.entries(headBudget.legacyMaxLines)) {
+              if (baseBudget.legacyMaxLines[file] === undefined && headMax > headBudget.defaultMaxLines) {
+                violations.push(`${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`);
+              }
+              await checkLegacyFile(file, headMax, headBudget);
+            }
+          }
+
+          async function main() {
+            const files = await getPullFiles();
+            const baseText = await getContent(REPO, BASE_SHA, BUDGET_FILE);
+            const baseWasFallback = baseText === null;
+            const budgetChanged = files.some(({ filename, previous_filename }) => filename === BUDGET_FILE || previous_filename === BUDGET_FILE);
+            const headText = budgetChanged ? await getContent(HEAD_REPO, HEAD_SHA, BUDGET_FILE) : baseText;
+            if (budgetChanged && headText === null) throw new Error(`${BUDGET_FILE} must remain present and parseable at the PR head`);
+
+            const baseBudget = parseBudget(baseText ?? FALLBACK_BUDGET, "base budget");
+            const headBudget = parseBudget(headText ?? FALLBACK_BUDGET, "head budget");
+            const changedTests = files.filter(({ filename, status }) => status !== "removed" && TEST_FILE_RE.test(filename));
+
+            await validateBudget(baseBudget, headBudget, baseWasFallback);
+            for (const { filename } of changedTests) {
+              const text = await getContent(HEAD_REPO, HEAD_SHA, filename);
+              if (text === null) throw new Error(`Changed test file ${filename} was not found at the PR head`);
+              const lines = countLines(text);
+              const maxLines = headBudget.legacyMaxLines[filename] ?? headBudget.defaultMaxLines;
+              if (lines > maxLines) violations.push(`${filename}: ${lines} line(s) > ${maxLines}`);
+            }
+
+            if (violations.length > 0) {
+              console.error("FAIL: test size budget policy would be weakened or exceeded.");
+              for (const violation of violations) console.error(`- ${violation}`);
+              process.exit(1);
+            }
+            console.log(`PASS: test size budget policy is monotonic and ${changedTests.length} changed test file(s) are within budget.`);
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE

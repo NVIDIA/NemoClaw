@@ -32,6 +32,7 @@ export const discordManifest = {
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
         help: "Enable Developer Mode in Discord, then right-click your server and copy the Server ID.",
+        emptyValueMessage: "guild channels stay disabled",
       },
     },
     {
@@ -40,6 +41,7 @@ export const discordManifest = {
       required: false,
       envKey: "DISCORD_REQUIRE_MENTION",
       statePath: "discordGuilds.requireMention",
+      promptWhenInput: "serverId",
       validValues: ["0", "1"],
       prompt: {
         label: "Discord mention mode",
@@ -52,9 +54,11 @@ export const discordManifest = {
       required: false,
       envKey: "DISCORD_USER_ID",
       statePath: "discordGuilds.userIds",
+      promptWhenInput: "serverId",
       prompt: {
         label: "Discord User ID (optional guild allowlist)",
         help: "Optional: enable Developer Mode in Discord, then right-click your user/avatar and copy the User ID. Leave blank to allow any member of the configured server to message the bot.",
+        emptyValueMessage: "any member in the configured server can message the bot",
       },
     },
   ],
@@ -163,6 +167,25 @@ export const discordManifest = {
         },
       ],
       onFailure: "skip-channel",
+    },
+    {
+      id: "discord-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      outputs: [
+        {
+          id: "serverId",
+          kind: "config",
+        },
+        {
+          id: "requireMention",
+          kind: "config",
+        },
+        {
+          id: "userId",
+          kind: "config",
+        },
+      ],
     },
   ],
 } as const satisfies ChannelManifest;

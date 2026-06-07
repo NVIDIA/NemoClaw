@@ -55,7 +55,7 @@ graph LR
         end
     end
 
-    USER -->|"nemoclaw onboard<br/>nemoclaw connect"| NCLI
+    USER -->|"$$nemoclaw onboard<br/>$$nemoclaw connect"| NCLI
     USER -->|"Chat messages"| MSGAPI
 
     NCLI -->|"Orchestrates"| OSCLI
@@ -77,9 +77,13 @@ graph LR
 The logical diagram above shows how components relate.
 This section shows what actually runs where on the host.
 NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
-On Linux and Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
-The gateway normally runs as a host process; Linux hosts that need the gateway compatibility patch may run the same gateway binary inside a small container.
+On Linux, NemoClaw configures and restarts the package-managed OpenShell gateway user service when it is installed, then creates the sandbox as a Docker container.
+NemoClaw treats that service as authoritative only when `systemctl --user show openshell-gateway` reports a package/vendor unit path and an `openshell-gateway` `ExecStart`.
+Per-user units, partial units, and user-manager or bus outages do not take over gateway ownership; NemoClaw falls back to the standalone gateway process used by earlier installs.
+That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the package-managed handoff has direct nightly coverage.
+On Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
+When `OPENSHELL_DRIVERS` includes `docker`, NemoClaw treats the gateway as host-owned and does not write the in-container `/tmp/nemoclaw-gateway-local` marker that legacy in-container gateway paths use.
 Legacy non-Docker-driver installs still use the k3s-based gateway path; the diagram below shows the standard Docker-driver topology.
 
 ```mermaid
@@ -93,7 +97,7 @@ graph TB
 
     subgraph HOST["Host machine · Linux / Apple Silicon macOS / DGX Spark / DGX Station"]
         direction TB
-        CLI["nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
+        CLI["$$nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
         GW["OpenShell gateway<br/><small>host process by default<br/>credential store · lifecycle · L7 proxy</small>"]:::gateway
 
         subgraph DOCKER["Docker daemon"]
@@ -119,7 +123,7 @@ Layering from top to bottom:
 
 | Layer | Runs as | Role |
 |---|---|---|
-| Host CLI | Host process (`nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
+| Host CLI | Host process (`$$nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
 | OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
 | Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
 | Sandbox container | Docker container | Runs the selected compatible agent and NemoClaw integration under Landlock + seccomp + netns. |
@@ -143,8 +147,10 @@ The concrete files differ by agent because each runtime has its own plugin syste
 | Hermes | `agents/hermes/manifest.yaml`, `agents/hermes/plugin/plugin.yaml`, `agents/hermes/generate-config.ts`, `agents/hermes/config/`, and `agents/hermes/start.sh` | Declares the Hermes agent contract, installs the NemoClaw Hermes plugin, writes `/sandbox/.hermes/config.yaml` and `/sandbox/.hermes/.env`, and launches `hermes gateway run` behind the OpenShell proxy. |
 
 The OpenClaw integration is a thin TypeScript plugin that runs in-process with the OpenClaw gateway inside the sandbox.
-Before an OpenClaw turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+Before an OpenClaw turn starts, the plugin prepends a short system-context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+This guidance stays out of the visible chat transcript.
 When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
+The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
 The manifest declares Hermes' binary, health probe, config directory, state directories, messaging support, and OpenAI-compatible API endpoint.
@@ -166,7 +172,7 @@ nemoclaw-blueprint/
 ```
 
 Hermes keeps its agent-owned image, plugin, config, entrypoint, and policy additions under `agents/hermes/`.
-The default Hermes policy starts from `agents/hermes/policy-additions.yaml`, and the permissive variant used by `shields down` lives in `agents/hermes/policy-permissive.yaml`.
+The default Hermes policy starts from `agents/hermes/policy-additions.yaml`.
 
 The current blueprint runner implementation lives in the `nemoclaw/` TypeScript package:
 
@@ -206,7 +212,7 @@ runner still carries a pinned OpenShell Community OpenClaw image for legacy
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy for the selected agent profile.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
-- NemoClaw injects sandbox and policy context into agent turns when the selected agent supports runtime context hooks, so the agent can report policy blocks accurately.
+- NemoClaw injects sandbox and policy context into agent turns when the selected agent supports runtime context hooks, so the agent can attempt allowed actions and report policy blocks or infrastructure failures accurately.
 - The image exposes a Docker health check that probes the in-sandbox gateway, so container runtimes can report whether the agent service is responding.
 - The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
 
@@ -246,14 +252,14 @@ The following environment variables configure optional services and local access
 
 | Variable | Purpose |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `$$nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
 | `TELEGRAM_ALLOWED_IDS` | Comma-separated Telegram user or chat IDs for allowlists when onboarding applies channel restrictions. |
-| `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) you provide before `nemoclaw onboard`. Stored as an OpenShell provider; never passed directly to the sandbox. |
+| `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) you provide before `$$nemoclaw onboard`. Stored as an OpenShell provider; never passed directly to the sandbox. |
 | `SLACK_APP_TOKEN` | Slack app-level token (`xapp-...`) required for Socket Mode. Stored alongside `SLACK_BOT_TOKEN` during onboarding. |
 | `SLACK_ALLOWED_USERS` | Comma-separated Slack member IDs for DM and channel `@mention` user allowlisting. |
 | `SLACK_ALLOWED_CHANNELS` | Comma-separated Slack channel IDs where channel `@mention` events are enabled (e.g. `C012AB3CD,C987ZY6XW`). Baked into the sandbox image at build time. Combine with `SLACK_ALLOWED_USERS` to restrict both channel and member. |
 | `CHAT_UI_URL` | URL for the optional chat UI endpoint. |
 | `NEMOCLAW_DISABLE_DEVICE_AUTH` | Build-time-only toggle that disables gateway device pairing when set to `1` before the sandbox image is created. |
 
-For normal setup and reconfiguration, prefer `nemoclaw onboard` over editing these files by hand.
+For normal setup and reconfiguration, prefer `$$nemoclaw onboard` over editing these files by hand.
 Do not treat `NEMOCLAW_DISABLE_DEVICE_AUTH` as a runtime setting for an already-created sandbox.

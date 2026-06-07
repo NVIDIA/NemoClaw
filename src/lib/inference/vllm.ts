@@ -10,11 +10,11 @@ import {
   dockerPullWithProgressWatchdog,
   dockerSpawn,
 } from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
-  DEFAULT_VLLM_MODEL,
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
@@ -29,7 +29,7 @@ export interface VllmProfile {
   name: string;            // human label, e.g. "DGX Spark"
   image: string;           // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
-  // because Spark/Station can host a 27B model, but generic discrete-GPU
+  // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
   // cards.
   defaultModel: VllmModelDef;
@@ -49,14 +49,20 @@ export interface VllmProfile {
   loadTimeoutSec: number;
 }
 
-// vllm 0.21.1rc1.dev323+g1fc2cee50
-const UPSTREAM_VLLM_IMAGE =
-  "vllm/vllm-openai:nightly-1fc2cee50a09a094b9f2bbdfcb0ab0cadb536712";
-const NGC_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.03.post1-py3";
+const VLLM_IMAGES = {
+  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+} as const;
 
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
   if (!match) throw new Error("vllm-models registry is missing the nemotron-3-nano-4b entry");
+  return match;
+}
+
+function qwen27bFP8Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
   return match;
 }
 
@@ -114,7 +120,7 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: UPSTREAM_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
@@ -133,8 +139,8 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: NGC_VLLM_IMAGE,
-  defaultModel: DEFAULT_VLLM_MODEL,
+  image: VLLM_IMAGES.ngc2605Post1,
+  defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -163,7 +169,7 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: NGC_VLLM_IMAGE,
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -325,6 +331,23 @@ function downloadModel(
   });
 }
 
+// Build the `docker run` command for the long-lived vLLM inference container.
+// Exported for testing. `--restart unless-stopped` makes the container come
+// back after a host reboot or Docker daemon restart (#4886); without a restart
+// policy the container stays down after a reboot and `nemoclaw inference get`
+// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+export function buildVllmRunCommand(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runFlags: string,
+): string {
+  const extra = runFlags ? ` ${runFlags}` : "";
+  return (
+    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -346,9 +369,7 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
+  const cmd = buildVllmRunCommand(profile, model, flags);
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,
@@ -366,7 +387,17 @@ function vllmModelsEndpoint(): string {
 
 function vllmEndpointReady(): boolean {
   const response = runCapture(
-    ["curl", "-sf", "--connect-timeout", "2", "--max-time", "5", vllmModelsEndpoint()],
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        vllmModelsEndpoint(),
+      ]),
+    ],
     { ignoreError: true },
   ).trim();
   if (!response) return false;

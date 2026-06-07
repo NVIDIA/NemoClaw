@@ -16,18 +16,18 @@ import YAML from "yaml";
 
 import { isRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
-import { shellQuote, sshExec } from "./skill-remote";
 import type { SshContext, SshResult } from "./skill-remote";
+import { shellQuote, sshExec } from "./skill-remote";
 
 export { validateSkillName } from "./skill-name";
 export {
   checkExisting,
   type RemoveResult,
   removeSkill,
-  shellQuote,
-  sshExec,
   type SshContext,
   type SshResult,
+  shellQuote,
+  sshExec,
   verifyRemove,
 } from "./skill-remote";
 
@@ -242,6 +242,34 @@ export function postInstall(
   const runSsh = opts.sshExecImpl ?? sshExec;
 
   if (paths.isOpenClaw) {
+    // Mirror the uploaded skill into the agent's home dir
+    // ($HOME/.openclaw/skills/<name>). The skill is uploaded to the OpenClaw
+    // state dir (uploadDir), which `openclaw skills list` reads, but the agent
+    // loads skills from $HOME/.openclaw/skills at session start. On sandboxes
+    // where the agent's $HOME differs from the state dir these paths diverge,
+    // so without this mirror the skill is listed but never invoked (#4819).
+    // `skill remove` already deletes this mirror, so install must create it to
+    // stay symmetric. The copy is skipped when both paths resolve to the same
+    // directory (the common case where $HOME is the state dir's parent), so it
+    // is a safe no-op there.
+    if (paths.mirrorDir) {
+      const src = shellQuote(paths.uploadDir);
+      // mirrorDir contains $HOME, which must expand on the remote shell, so we
+      // use double quotes (not shellQuote). Safe because skill names are
+      // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
+      const dst = `"${paths.mirrorDir}"`;
+      const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
+      const mirrorResult = runSsh(
+        ctx,
+        `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
+      );
+      if (!mirrorResult || mirrorResult.status !== 0) {
+        messages.push(
+          `Warning: failed to mirror skill into ${paths.mirrorDir} (agent may not load it)`,
+        );
+      }
+    }
+
     // Clear sessions.json so OpenClaw re-discovers skills on the next
     // session even after an in-place skill update.
     if (paths.sessionFile && !opts.skipRefresh) {
@@ -258,10 +286,27 @@ export function postInstall(
 }
 
 /**
- * Verify the SKILL.md file exists on the sandbox at the expected path.
+ * Verify the SKILL.md file exists on the sandbox.
+ *
+ * For OpenClaw the home mirror ($HOME/.openclaw/skills/<name>) must also exist:
+ * that is the path the agent loads skills from at session start (#4819), so a
+ * successful upload whose mirror copy failed must NOT verify as installed —
+ * otherwise the CLI reports success while the skill stays invisible to the
+ * agent. This mirrors verifyRemove(), which already checks both paths.
  */
-export function verifyInstall(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
+export function verifyInstall(
+  ctx: SshContext,
+  paths: SkillPaths,
+  opts: { sshExecImpl?: typeof sshExec } = {},
+): boolean {
+  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    // mirrorDir contains $HOME, which must expand on the remote shell, so we
+    // use double quotes (not shellQuote) — safe because skill names are
+    // restricted to [A-Za-z0-9._-].
+    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
+  }
+  const runSsh = opts.sshExecImpl ?? sshExec;
+  const result = runSsh(ctx, `${checks.join(" && ")} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
 }

@@ -9,6 +9,7 @@
  * of re-implementing parsing or process-env state handling.
  */
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
 
 const { runCapture } = require("../runner");
@@ -37,6 +38,14 @@ export interface ApplyOllamaRuntimeContextWindowOptions {
 // Four million tokens is intentionally above today's practical local-model
 // context windows while still rejecting obviously broken daemon responses.
 export const MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW = 4_194_304;
+
+// Floor for auto-adopted runtime context windows. Ollama's stock daemon serves
+// `num_ctx=4096` until OLLAMA_CONTEXT_LENGTH is set host-side, which cannot fit
+// an agent base prompt + tool catalogue (~7.4 k tokens) plus a single user turn.
+// When the probed runtime length is below this floor and the user has not set
+// an explicit override, NemoClaw raises NEMOCLAW_CONTEXT_WINDOW to the floor so
+// downstream prompt budgeting reflects a workable window.
+export const MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW = 16_384;
 
 function normalizeOllamaModelName(value: unknown): string {
   return String(value || "").trim();
@@ -109,12 +118,14 @@ export function probeOllamaRuntimeModelStatus(
   const output = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/ps`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/ps`,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -205,10 +216,20 @@ export function applyOllamaRuntimeContextWindow(
     logger.warn(`  ⚠ ${runtimeStatus.contextLengthWarning}`);
   }
   if (runtimeStatus.loaded && runtimeStatus.contextLength) {
-    const value = String(runtimeStatus.contextLength);
+    const detected = runtimeStatus.contextLength;
+    const adopted = Math.max(detected, MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW);
+    const value = String(adopted);
     env.NEMOCLAW_CONTEXT_WINDOW = value;
     autoDetectedOllamaContextWindow = value;
-    logger.log(`  ✓ Using Ollama runtime context length: ${value} tokens`);
+    if (adopted > detected) {
+      logger.log(
+        `  ✓ Raising Ollama runtime context window to ${adopted} tokens ` +
+          `(daemon reported ${detected}, below the ${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}-token agent floor). ` +
+          `Set OLLAMA_CONTEXT_LENGTH host-side to raise the daemon default and silence this autoset.`,
+      );
+    } else {
+      logger.log(`  ✓ Using Ollama runtime context length: ${value} tokens`);
+    }
     return;
   }
 

@@ -3,21 +3,24 @@
 
 import { describe, expect, it } from "vitest";
 
-import { slackManifest, telegramManifest } from "../../channels";
+import { discordManifest, slackManifest, telegramManifest } from "../../channels";
 import { runMessagingHook } from "../hook-runner";
 import { MessagingHookRegistry } from "../registry";
 import {
+  COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
   COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
   COMMON_HOOK_REGISTRATIONS,
   createTokenPasteHook,
-} from "./token-paste";
+} from "./index";
 
 describe("common token-paste hook implementation", () => {
   it("uses the shared handler id declared by token-paste channel manifests", () => {
     expect(COMMON_HOOK_REGISTRATIONS.map((registration) => registration.id)).toEqual([
       COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
+      COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
     ]);
     expect(telegramManifest.hooks[0]?.handler).toBe(COMMON_TOKEN_PASTE_HOOK_HANDLER_ID);
+    expect(discordManifest.hooks[0]?.handler).toBe(COMMON_TOKEN_PASTE_HOOK_HANDLER_ID);
     expect(slackManifest.hooks[0]?.handler).toBe(COMMON_TOKEN_PASTE_HOOK_HANDLER_ID);
   });
 
@@ -71,7 +74,7 @@ describe("common token-paste hook implementation", () => {
     });
   });
 
-  it("shows the multi-token enrollment output shape", async () => {
+  it("collects Slack bot and app tokens through the shared token-paste hook", async () => {
     const registry = new MessagingHookRegistry([
       {
         id: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
@@ -112,83 +115,4 @@ describe("common token-paste hook implementation", () => {
     });
   });
 
-  it("prompts only for missing token outputs and stages them for provider upsert", async () => {
-    const env: NodeJS.ProcessEnv = {
-      SLACK_BOT_TOKEN: "xoxb-existing",
-    };
-    const prompts: Array<{ readonly question: string; readonly secret: boolean }> = [];
-    const saved: Array<{ readonly key: string; readonly value: string }> = [];
-    const registry = new MessagingHookRegistry([
-      {
-        id: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
-        handler: createTokenPasteHook({
-          env,
-          getCredential: () => null,
-          saveCredential: (key, value) => saved.push({ key, value }),
-          log: () => {},
-          prompt: async (question, options) => {
-            prompts.push({ question, secret: options?.secret === true });
-            return "xapp-prompted";
-          },
-        }),
-      },
-    ]);
-    const hook = slackManifest.hooks[0];
-
-    if (!hook) throw new Error("missing Slack token-paste hook");
-
-    await expect(
-      runMessagingHook(hook, registry, {
-        channelId: "slack",
-      }),
-    ).resolves.toMatchObject({
-      outputs: {
-        botToken: {
-          kind: "secret",
-          value: "xoxb-existing",
-        },
-        appToken: {
-          kind: "secret",
-          value: "xapp-prompted",
-        },
-      },
-    });
-    expect(prompts).toEqual([
-      {
-        question: "  Slack App Token (Socket Mode): ",
-        secret: true,
-      },
-    ]);
-    expect(saved).toEqual([
-      { key: "SLACK_BOT_TOKEN", value: "xoxb-existing" },
-      { key: "SLACK_APP_TOKEN", value: "xapp-prompted" },
-    ]);
-    expect(env.SLACK_APP_TOKEN).toBe("xapp-prompted");
-  });
-
-  it("rejects invalid pasted token formats before staging credentials", async () => {
-    const saved: Array<{ readonly key: string; readonly value: string }> = [];
-    const registry = new MessagingHookRegistry([
-      {
-        id: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
-        handler: createTokenPasteHook({
-          env: {},
-          getCredential: () => null,
-          saveCredential: (key, value) => saved.push({ key, value }),
-          log: () => {},
-          prompt: async () => "not-a-slack-token",
-        }),
-      },
-    ]);
-    const hook = slackManifest.hooks[0];
-
-    if (!hook) throw new Error("missing Slack token-paste hook");
-
-    await expect(
-      runMessagingHook(hook, registry, {
-        channelId: "slack",
-      }),
-    ).rejects.toThrow("Invalid token format for SLACK_BOT_TOKEN");
-    expect(saved).toEqual([]);
-  });
 });

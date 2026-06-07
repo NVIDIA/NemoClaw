@@ -56,6 +56,19 @@ target="$(json_field originMainCommit)"
 plan_hash="$(json_field planHash)"
 lkg_before="$(node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(data.lkgBefore?.peeledSha || data.lkgBefore?.objectSha || "")' "$PLAN_PATH")"
 
+remote_tag_commit_or_object() {
+  local remote_tag="$1"
+  local peeled=""
+  local object=""
+  peeled="$(git ls-remote --tags origin "refs/tags/${remote_tag}^{}" | awk '{print $1}')"
+  if [[ -n "$peeled" ]]; then
+    printf '%s' "$peeled"
+    return
+  fi
+  object="$(git ls-remote --tags origin "refs/tags/${remote_tag}" | awk '{print $1}')"
+  printf '%s' "$object"
+}
+
 deadline=$((SECONDS + TIMEOUT_SECS))
 latest_peeled=""
 semver_peeled=""
@@ -74,7 +87,7 @@ done
 [[ "$semver_peeled" == "$target" ]] || fail "$tag peeled to $semver_peeled, expected $target"
 [[ "$latest_peeled" == "$target" ]] || fail "latest peeled to $latest_peeled, expected $target"
 
-lkg_after="$(git ls-remote --tags origin 'refs/tags/lkg^{}' | awk '{print $1}')"
+lkg_after="$(remote_tag_commit_or_object lkg)"
 if [[ -n "$lkg_before" && "$lkg_after" != "$lkg_before" ]]; then
   fail "lkg changed from $lkg_before to $lkg_after"
 fi

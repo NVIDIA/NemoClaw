@@ -14,11 +14,12 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.4.24",
   "2026.5.18",
   "2026.5.22",
+  "2026.5.27",
 ] as const;
-const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.22";
+const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.27";
 const EXPECTED_OPENCLAW_INTEGRITY =
-  "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==";
-const REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE = [
+  "sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==";
+const REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE = [
   "async function fetchWithWebToolsNetworkGuard(params) {",
   "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
   "  const resolved = {",
@@ -31,7 +32,7 @@ const REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE = [
   "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
   "}",
 ].join("\n");
-const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
+const REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE = [
   "function shouldSkipPrivateNetworkChecks(hostname, policy) {",
   "  return isPrivateNetworkAllowedByPolicy(policy) || normalizeHostnameSet(policy?.allowedHostnames).has(hostname);",
   "}",
@@ -49,7 +50,7 @@ const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
   "}",
 ].join("\n");
 
-function loadReviewedOpenClaw20260522SsrfPolicyShape() {
+function loadReviewedOpenClaw20260527SsrfPolicyShape() {
   return new Function(`
 class SsrFBlockedError extends Error {}
 function normalizeHostname(value) {
@@ -74,7 +75,7 @@ function assertAllowedHostOrIpOrThrow(hostnameOrIp) {
     throw new SsrFBlockedError("blocked " + hostnameOrIp);
   }
 }
-${REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE}
+${REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE}
 return { shouldSkipPrivateNetworkChecks, resolveHostnamePolicyChecks };
   `)() as {
     shouldSkipPrivateNetworkChecks: (hostname: string, policy?: Record<string, unknown>) => boolean;
@@ -128,7 +129,7 @@ function readDockerfileOpenClawVersion(): string {
 function readDockerfileBaseOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE_BASE,
-    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_5_27_INTEGRITY=([^\s]+)/m,
     "OpenClaw base image integrity",
   );
 }
@@ -136,7 +137,7 @@ function readDockerfileBaseOpenClawIntegrity(): string {
 function readDockerfileOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_5_27_INTEGRITY=([^\s]+)/m,
     "OpenClaw runtime integrity",
   );
 }
@@ -187,12 +188,12 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_2026_5_22_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
+    `OPENCLAW_2026_5_27_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${currentVersion}\\n'; else return 127; fi; }`,
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_5_22_INTEGRITY";',
+    '    printf "%s\\n" "$OPENCLAW_2026_5_27_INTEGRITY";',
     "  fi",
     "}",
     'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "codex-acp" ]; then return 0; fi; builtin command "$@"; }',
@@ -247,7 +248,7 @@ function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
   endMarker: string,
-  version = "2026.5.22",
+  version = "2026.5.27",
 ) {
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
@@ -271,7 +272,7 @@ function runDockerfilePatchBlock(
   });
 }
 
-function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.22") {
+function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.27") {
   return runDockerfilePatchBlock(
     dist,
     tmp,
@@ -314,21 +315,21 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
-  it("anchors web_fetch host-gateway policy to the reviewed OpenClaw 2026.5.22 SSRF contract", () => {
-    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+  it("anchors web_fetch host-gateway policy to the reviewed OpenClaw 2026.5.27 SSRF contract", () => {
+    expect(REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE).toContain(
       "function fetchWithWebToolsNetworkGuard(params)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_WEB_FETCH_SHAPE).toContain(
       "withTrustedEnvProxyGuardedFetchMode(resolved)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE).toContain(
       "normalizeHostnameSet(policy?.allowedHostnames).has(hostname)",
     );
-    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE).toContain(
       "normalizeHostnameAllowlist(policy?.hostnameAllowlist)",
     );
 
-    const reviewed = loadReviewedOpenClaw20260522SsrfPolicyShape();
+    const reviewed = loadReviewedOpenClaw20260527SsrfPolicyShape();
     expect(
       reviewed.shouldSkipPrivateNetworkChecks("host.openshell.internal", {
         allowedHostnames: ["HOST.OPENSHELL.INTERNAL."],
@@ -357,7 +358,7 @@ describe("fetch-guard patch regression guard", () => {
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",
-      "# SECURITY: Clear any gateway auth token",
+      "# Release the offline lock",
     );
     const script = [
       "openclaw() {",

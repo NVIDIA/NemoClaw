@@ -234,13 +234,23 @@ function getRequestedModelHint(nonInteractive) {
  * @param {string} type - Provider type (e.g. "openai", "anthropic", "generic").
  * @param {string} credentialEnv - Credential environment variable name.
  * @param {string|null} baseUrl - Optional base URL for API-compatible endpoints.
+ * @param {{ includeCredential?: boolean }} [opts] - When `includeCredential` is
+ *   false, the `--credential` flag is omitted from the args. Used on the
+ *   `provider update` path when the host env does not carry the credential and
+ *   the gateway already holds it (no rotation needed). OpenShell's CLI rejects
+ *   `--credential KEY` when the local env var is empty, so passing the flag
+ *   would fail before reaching the gateway.
  * @returns {string[]} Argument array for runOpenshell().
  */
-function buildProviderArgs(action, name, type, credentialEnv, baseUrl) {
+function buildProviderArgs(action, name, type, credentialEnv, baseUrl, opts = {}) {
+  const { includeCredential = true } = opts;
   const args =
     action === "create"
-      ? ["provider", "create", "--name", name, "--type", type, "--credential", credentialEnv]
-      : ["provider", "update", name, "--credential", credentialEnv];
+      ? ["provider", "create", "--name", name, "--type", type]
+      : ["provider", "update", name];
+  if (includeCredential) {
+    args.push("--credential", credentialEnv);
+  }
   if (baseUrl && type === "openai") {
     args.push("--config", `OPENAI_BASE_URL=${baseUrl}`);
   } else if (baseUrl && type === "anthropic") {
@@ -303,7 +313,15 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";
-  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
+  // On the update path, the OpenShell CLI's `--credential KEY` form reads the
+  // value from the host env and aborts when empty. If the caller did not stage
+  // a credential value (rebuild after `channels add` with the original env
+  // unset), drop the flag so `provider update` becomes a no-op merge — the
+  // gateway already holds the secret.
+  const credentialValueAvailable =
+    !!credentialEnv && typeof env[credentialEnv] === "string" && env[credentialEnv].length > 0;
+  const includeCredential = action === "create" || credentialValueAvailable;
+  const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl, { includeCredential });
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const result = _runOpenshell(args, runOpts);
   if (result.status !== 0) {
