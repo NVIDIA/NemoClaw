@@ -17,6 +17,11 @@ export interface PolicyPresetEntry {
   [key: string]: unknown;
 }
 
+export interface ActiveSandboxPolicyState {
+  messagingChannels?: string[] | null;
+  disabledChannels?: string[] | null;
+}
+
 export interface PolicyResumeSelection {
   policyPresets: string[];
   recordedPolicyPresetsNeedReconcile: boolean;
@@ -30,13 +35,20 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   model: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  messagingPolicyPresets: string[];
+  selectedMessagingChannels: string[];
   webSearchConfig: WebSearchConfig | null;
   webSearchSupported: boolean;
   hermesToolGateways: string[];
   agent: Agent;
   deps: {
     loadSession(): Session | null;
+    getActiveSandbox(sandboxName: string): ActiveSandboxPolicyState | null | undefined;
+    mergePolicyMessagingChannels(
+      selectedMessagingChannels: string[],
+      recordedMessagingChannels: string[],
+      activeMessagingChannels: string[] | null | undefined,
+      disabledChannels: string[] | null | undefined,
+    ): string[];
     verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: string;
       provider: string;
@@ -50,7 +62,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       sandboxName: string,
       options: {
         recordedPolicyPresets: string[] | null;
-        messagingPolicyPresets?: string[] | null;
+        disabledChannels: string[] | null | undefined;
+        enabledChannels: string[];
         hermesToolGateways: string[];
         agent?: string | null;
         webSearchConfig: WebSearchConfig | null;
@@ -68,7 +81,8 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       sandboxName: string,
       options: {
         selectedPresets: string[] | null;
-        messagingPolicyPresets: string[];
+        enabledChannels: string[];
+        disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
         provider: string;
         agent?: string | null;
@@ -92,6 +106,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
 
 export interface PoliciesStateResult {
   session: Session | null;
+  recordedMessagingChannels: string[];
   appliedPolicyPresets: string[];
   stateResult: OnboardStateTransitionResult;
 }
@@ -103,7 +118,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   model,
   endpointUrl,
   credentialEnv,
-  messagingPolicyPresets,
+  selectedMessagingChannels,
   webSearchConfig,
   webSearchSupported,
   hermesToolGateways,
@@ -114,22 +129,30 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-
+  const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
+    ? latestSession.messagingChannels
+    : [];
+  const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const policyMessagingChannels = deps.mergePolicyMessagingChannels(
+    selectedMessagingChannels,
+    recordedMessagingChannels,
+    activeSandbox?.messagingChannels,
+    activeSandbox?.disabledChannels,
+  );
   deps.verifyCompatibleEndpointSandboxSmoke({
     sandboxName,
     provider,
     model,
     endpointUrl,
     credentialEnv,
-    // The smoke check only needs to know whether messaging channels are active;
-    // treat all plan presets as active-channel signals for the provider guard.
-    messagingChannels: messagingPolicyPresets,
+    messagingChannels: policyMessagingChannels,
     agent,
   });
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
     recordedPolicyPresets,
-    messagingPolicyPresets,
+    disabledChannels: activeSandbox?.disabledChannels,
+    enabledChannels: policyMessagingChannels,
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
     webSearchConfig,
@@ -182,7 +205,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       selectedPresets: Array.isArray(recordedPolicyPresets)
         ? recordedPolicyPresetsForSupport
         : null,
-      messagingPolicyPresets,
+      enabledChannels: policyMessagingChannels,
+      disabledChannels: activeSandbox?.disabledChannels,
       webSearchConfig,
       provider,
       // selectOnboardAgent returns null for the default OpenClaw path (no
@@ -221,6 +245,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
 
   return {
     session,
+    recordedMessagingChannels,
     appliedPolicyPresets,
     stateResult: advanceTo("finalizing", {
       metadata: { state: "policies", policyPresets: appliedPolicyPresets },

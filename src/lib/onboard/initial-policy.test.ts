@@ -175,11 +175,7 @@ network_policies:
   it("records an existing create-time preset without writing a temp policy", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  slack: {}\n");
 
-    expect(
-      prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
-        messagingPolicyPresets: ["slack"],
-      }),
-    ).toEqual({
+    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"])).toEqual({
       policyPath: basePolicyPath,
       appliedPresets: ["slack"],
     });
@@ -241,9 +237,7 @@ network_policies:
   it("merges missing create-time presets into a temporary policy", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
-    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
-      messagingPolicyPresets: ["slack"],
-    });
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"]);
 
     expect(prepared.policyPath).not.toBe(basePolicyPath);
     expect(prepared.appliedPresets).toEqual(["slack"]);
@@ -256,7 +250,6 @@ network_policies:
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 
     const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
-      messagingPolicyPresets: ["slack"],
       additionalPresets: ["nous-web"],
     });
 

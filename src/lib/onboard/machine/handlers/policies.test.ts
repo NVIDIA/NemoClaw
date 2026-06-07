@@ -13,6 +13,14 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
   let session = createSession();
   const calls = {
     load: vi.fn(() => session),
+    activeSandbox: vi.fn(() => ({ messagingChannels: ["telegram"], disabledChannels: null })),
+    mergeChannels: vi.fn(
+      (
+        selected: string[],
+        recorded: string[],
+        active: string[] | null | undefined,
+      ) => (selected.length > 0 ? selected : active ?? recorded),
+    ),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
@@ -40,6 +48,8 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
     calls,
     deps: {
       loadSession: calls.load,
+      getActiveSandbox: calls.activeSandbox,
+      mergePolicyMessagingChannels: calls.mergeChannels,
       verifyCompatibleEndpointSandboxSmoke: calls.smoke,
       preparePolicyPresetResumeSelection: calls.prepareResume,
       arePolicyPresetsApplied: calls.appliedCheck,
@@ -70,7 +80,7 @@ function baseOptions(
     model: "model",
     endpointUrl: "https://example.com/v1",
     credentialEnv: "NVIDIA_API_KEY",
-    messagingPolicyPresets: [],
+    selectedMessagingChannels: [],
     webSearchConfig: null,
     webSearchSupported: true,
     hermesToolGateways: [],
@@ -83,10 +93,7 @@ describe("handlePoliciesState", () => {
   it("runs compatible endpoint smoke before policy selection", async () => {
     const { deps, calls } = createDeps();
 
-    const result = await handlePoliciesState({
-      ...baseOptions(deps),
-      messagingPolicyPresets: ["slack"],
-    });
+    const result = await handlePoliciesState(baseOptions(deps));
 
     expect(calls.smoke).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
@@ -94,7 +101,7 @@ describe("handlePoliciesState", () => {
       model: "model",
       endpointUrl: "https://example.com/v1",
       credentialEnv: "NVIDIA_API_KEY",
-      messagingChannels: ["slack"],
+      messagingChannels: ["telegram"],
       agent: null,
     });
     expect(calls.startStep).toHaveBeenCalledWith("policies", {
@@ -107,7 +114,7 @@ describe("handlePoliciesState", () => {
       "my-assistant",
       expect.objectContaining({
         selectedPresets: null,
-        messagingPolicyPresets: ["slack"],
+        enabledChannels: ["telegram"],
         provider: "provider",
         webSearchSupported: true,
       }),
@@ -125,17 +132,18 @@ describe("handlePoliciesState", () => {
     });
   });
 
-  it("passes plan-derived messaging policy presets through to preparePolicyPresetResumeSelection", async () => {
-    const { deps, calls } = createDeps();
-
-    await handlePoliciesState({
-      ...baseOptions(deps),
-      messagingPolicyPresets: ["slack"],
+  it("uses recorded messaging channels when no active selection exists", async () => {
+    const session = createSession({ messagingChannels: ["slack"] });
+    const { deps, calls, setSession } = createDeps({
+      getActiveSandbox: vi.fn(() => ({ messagingChannels: null, disabledChannels: null })),
     });
+    setSession(session);
 
-    expect(calls.prepareResume).toHaveBeenCalledWith(
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
       "my-assistant",
-      expect.objectContaining({ messagingPolicyPresets: ["slack"] }),
+      expect.objectContaining({ enabledChannels: ["slack"] }),
     );
   });
 

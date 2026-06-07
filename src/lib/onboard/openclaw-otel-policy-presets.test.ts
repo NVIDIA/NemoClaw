@@ -3,9 +3,12 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../messaging/applier/policy-presets", () => ({
-  ALL_MESSAGING_POLICY_PRESET_NAMES: new Set(["slack"]),
+vi.mock("./messaging-policy-presets", () => ({
+  mergeRequiredMessagingChannelPolicyPresets: (presets: string[]) => presets,
+  requiredMessagingChannelPolicyPresets: () => [],
   pruneDisabledMessagingPolicyPresets: (presets: string[]) => presets,
+  mergeAppliedPolicyPresetsForDisabledMessagingCleanup: (presets: string[]) => presets,
+  hasDisabledMessagingPolicyPreset: () => false,
 }));
 
 vi.mock("./hermes-managed-tools", () => ({

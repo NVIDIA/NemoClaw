@@ -6,6 +6,7 @@ import path from "node:path";
 import YAML from "yaml";
 
 import * as policies from "../policy";
+import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
@@ -210,7 +211,6 @@ export function prepareInitialSandboxCreatePolicy(
     dockerGpuPatch?: boolean;
     additionalPresets?: string[];
     agentName?: string | null;
-    messagingPolicyPresets?: string[];
   } = {},
 ): InitialSandboxPolicy {
   const directGpuPolicy = options.directGpu
@@ -225,11 +225,13 @@ export function prepareInitialSandboxCreatePolicy(
       ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean)
       : undefined;
   const requestedCreateTimePresets = [
-    ...new Set([
-      ...(options.messagingPolicyPresets ?? []),
-      ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
-      ...(options.additionalPresets || []),
-    ]),
+    ...new Set(
+      [
+        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+        ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
+        ...(options.additionalPresets || []),
+      ],
+    ),
   ];
   const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
