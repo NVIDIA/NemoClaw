@@ -173,6 +173,34 @@ describe("onboard helpers", () => {
     }
   });
 
+  it("seeds inference.local and host.containers.internal into the sandbox-create NO_PROXY/no_proxy", () => {
+    // Boundary pin: appendHostProxyEnvArgs() forwards env into `openshell
+    // sandbox create -- env ...`, and OpenShell consults the seeded
+    // NO_PROXY at sandbox-create time when deciding whether to chain its
+    // L7 proxy through the host HTTP_PROXY for a given hostname. Both
+    // `inference.local` (OpenShell-managed inference) and
+    // `host.containers.internal` (rootless container host alias) must be
+    // emitted here so the L7 proxy never tunnels them through the host
+    // proxy. The complementary runtime exclusion (nemoclaw-start.sh sets a
+    // narrower NO_PROXY without inference.local once sandbox boots) is
+    // asserted in test/service-env.test.ts.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8118",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy should be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      const parts = (v ?? "").split("=")[1]?.split(",") ?? [];
+      expect(parts).toContain("inference.local");
+      expect(parts).toContain("host.containers.internal");
+    }
+  });
+
   it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {
     const envArgs: string[] = [];
     appendHostProxyEnvArgs(envArgs, { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" });
