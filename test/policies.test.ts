@@ -1045,24 +1045,19 @@ exit 1
     // `process.exit(1)` the matching `finally` does not run, so a temp dir
     // created before the exit gets orphaned in $TMPDIR. A mocked exit (which
     // throws) doesn't reproduce that — `finally` still runs and cleans up. To
-    // catch the real-world bug, snapshot $TMPDIR at the *moment* of exit:
+    // catch the real-world bug, spy on this process's mkdtempSync calls:
     // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
-    // should exist yet.
+    // should be requested.
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
-      const beforeCount = fs
-        .readdirSync(os.tmpdir())
-        .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
-      let countAtExit = -1;
+      const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
       const resolveSpy = vi
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
         .mockReturnValue(null);
+      const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-        countAtExit = fs
-          .readdirSync(os.tmpdir())
-          .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
         throw new Error("__test_exit__");
       }) as never);
 
@@ -1073,9 +1068,12 @@ exit 1
         expect(exitSpy).toHaveBeenCalledWith(1);
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
-        expect(countAtExit).toBe(beforeCount);
+        expect(
+          mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
+        ).toEqual([]);
       } finally {
         resolveSpy.mockRestore();
+        mkdtempSpy.mockRestore();
         errSpy.mockRestore();
         logSpy.mockRestore();
         exitSpy.mockRestore();

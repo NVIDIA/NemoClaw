@@ -12,7 +12,7 @@
     "test/onboard-messaging.test.ts": 2122,
     "test/onboard-selection.test.ts": 7757,
     "test/onboard.test.ts": 4887,
-    "test/policies.test.ts": 3147,
+    "test/policies.test.ts": 3145,
     "test/sandbox-connect-inference.test.ts": 1577
   }
 }
