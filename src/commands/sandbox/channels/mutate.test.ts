@@ -100,15 +100,13 @@ describe("channels mutation oclif commands", () => {
     expect(ChannelsStopCommand.flags).not.toHaveProperty("force");
   });
 
-  it("requires a channel before dispatch for every mutation command", async () => {
-    for (const command of [
-      ChannelsAddCommand,
-      ChannelsRemoveCommand,
-      ChannelsStartCommand,
-      ChannelsStopCommand,
-    ]) {
-      await expect(command.run(["alpha"], rootDir)).rejects.toThrow(/channel/i);
-    }
+  it.each([
+    ["add", ChannelsAddCommand],
+    ["remove", ChannelsRemoveCommand],
+    ["start", ChannelsStartCommand],
+    ["stop", ChannelsStopCommand],
+  ])("requires a channel before dispatch for channels %s", async (_action, command) => {
+    await expect(command.run(["alpha"], rootDir)).rejects.toThrow(/channel/i);
 
     expect(mocks.addSandboxChannel).not.toHaveBeenCalled();
     expect(mocks.removeSandboxChannel).not.toHaveBeenCalled();

@@ -6,7 +6,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { runWithEnv, writeHostAliasDockerStub, writeSandboxRegistry } from "./helpers";
+import {
+  runWithEnv,
+  testTimeoutOptions,
+  writeHostAliasDockerStub,
+  writeSandboxRegistry,
+} from "./helpers";
 
 function makeCliFixture(prefix: string) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -24,6 +29,23 @@ function makeCliFixture(prefix: string) {
 
 function writeDockerStub(localBin: string, lines: string[]): void {
   fs.writeFileSync(path.join(localBin, "docker"), lines.join("\n"), { mode: 0o755 });
+}
+
+function expectDockerProbeFailure(out: string): void {
+  expect(out).toContain(
+    "Could not verify the legacy OpenShell gateway container 'openshell-cluster-nemoclaw'.",
+  );
+  expect(out).toContain("Docker probe failed:");
+  expect(out).not.toContain(
+    "Host aliases require the legacy OpenShell gateway container 'openshell-cluster-nemoclaw' to be running.",
+  );
+}
+
+function expectNoLegacyGatewayExec(log: string[]): void {
+  expect(log[0]).toBe("ps");
+  expect(log).not.toContain("exec");
+  expect(log).not.toContain("kubectl");
+  expect(log).not.toContain("patch");
 }
 
 describe("CLI dispatch", () => {
@@ -236,5 +258,67 @@ describe("CLI dispatch", () => {
       path: "/metadata/resourceVersion",
       value: "124",
     });
+  });
+
+  it("classifies docker spawn ENOENT distinctly from a missing gateway", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-hosts-docker-enoent-"));
+    const emptyBin = path.join(home, "nodocker");
+    fs.mkdirSync(emptyBin, { recursive: true });
+    writeSandboxRegistry(home);
+
+    const list = runWithEnv("alpha hosts-list", { HOME: home, PATH: emptyBin });
+
+    expect(list.code).toBe(1);
+    expectDockerProbeFailure(list.out);
+    expect(list.out).toContain("could not launch");
+  });
+
+  it(
+    "classifies docker probe timeouts distinctly from a missing gateway",
+    testTimeoutOptions(60_000),
+    () => {
+      const { dockerLog, env, localBin } = makeCliFixture(
+        "nemoclaw-cli-hosts-docker-timeout-",
+      );
+      writeDockerStub(localBin, [
+        "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(dockerLog)}`,
+        'printf "%s\\n" "$@" >> "$log_file"',
+        'if [ "$1" = "ps" ]; then',
+        "  sleep 20",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ]);
+
+      const list = runWithEnv("alpha hosts-list", env, 45_000);
+
+      expect(list.code).toBe(1);
+      expectDockerProbeFailure(list.out);
+      const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+      expectNoLegacyGatewayExec(log);
+    },
+  );
+
+  it("classifies docker probe failures distinctly from a missing gateway", () => {
+    const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-docker-down-");
+    writeDockerStub(localBin, [
+      "#!/usr/bin/env bash",
+      `log_file=${JSON.stringify(dockerLog)}`,
+      'printf "%s\\n" "$@" >> "$log_file"',
+      'if [ "$1" = "ps" ]; then',
+      '  printf "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n" >&2',
+      "  exit 1",
+      "fi",
+      "exit 0",
+    ]);
+
+    const list = runWithEnv("alpha hosts-list", env);
+
+    expect(list.code).toBe(1);
+    expectDockerProbeFailure(list.out);
+    expect(list.out).toContain("docker info");
+    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expectNoLegacyGatewayExec(log);
   });
 });
