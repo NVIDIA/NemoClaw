@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
@@ -20,7 +19,6 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
-import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -31,6 +29,11 @@ import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { readCloudflaredState } from "../../tunnel/services";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
+import {
+  buildGatewayInspectFailureChecks,
+  type GatewayInspectOptions,
+} from "./doctor-gateway-fallback";
+import { captureHostCommand } from "./doctor-host-command";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
@@ -54,23 +57,6 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
-type CommandCapture = {
-  status: number;
-  stdout: string;
-  stderr: string;
-  error?: Error;
-};
-
-type GatewayInspectOptions = {
-  namedGatewayConnected?: boolean;
-};
-
-type LocalGatewayProbe = {
-  portListening: boolean;
-  processRunning: boolean;
-  unavailableTools: string[];
-};
-
 function pushInferenceHealthCheck(
   checks: DoctorCheck[],
   probe: ProviderHealthStatus,
@@ -91,35 +77,8 @@ function pushInferenceHealthCheck(
   });
 }
 
-function captureHostCommand(
-  command: string,
-  args: string[],
-  timeout = 5000,
-): CommandCapture {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    env: process.env,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  return {
-    status: result.status ?? (result.error ? 1 : 0),
-    stdout: String(result.stdout || ""),
-    stderr: String(result.stderr || ""),
-    error: result.error,
-  };
-}
-
 function oneLine(value = ""): string {
   return String(value).replace(/\s+/g, " ").trim();
-}
-
-function commandUnavailable(capture: CommandCapture): boolean {
-  const errorCode = (capture.error as NodeJS.ErrnoException | undefined)?.code;
-  if (errorCode === "ENOENT" || errorCode === "EACCES") return true;
-  const detail = `${capture.stderr}\n${capture.error?.message ?? ""}`.toLowerCase();
-  return detail.includes("command not found") || detail.includes("permission denied");
 }
 
 function doctorSummary(checks: DoctorCheck[]): {
@@ -205,84 +164,6 @@ function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   }
   console.log("");
   return doctorReportExitCode(report);
-}
-
-function probeLocalGatewayProcess(): LocalGatewayProbe {
-  const processCheck = captureHostCommand("pgrep", ["-f", HOST_GATEWAY_PGREP_PATTERN], 5000);
-  const portCheck = captureHostCommand("ss", ["-ltn", `( sport = :${GATEWAY_PORT} )`], 5000);
-  const pgrepUnavailable = commandUnavailable(processCheck);
-  const ssUnavailable = commandUnavailable(portCheck);
-  return {
-    processRunning:
-      !pgrepUnavailable && processCheck.status === 0 && processCheck.stdout.trim().length > 0,
-    portListening:
-      !ssUnavailable && portCheck.status === 0 && portCheck.stdout.includes(`:${GATEWAY_PORT}`),
-    unavailableTools: [
-      pgrepUnavailable ? "pgrep" : null,
-      ssUnavailable ? "ss" : null,
-    ].filter((tool): tool is string => tool !== null),
-  };
-}
-
-function buildGatewayInspectFailureChecks(
-  containerName: string,
-  options: GatewayInspectOptions,
-): DoctorCheck[] {
-  const checks: DoctorCheck[] = [];
-  const probe = probeLocalGatewayProcess();
-  if (probe.processRunning && probe.portListening) {
-    checks.push({
-      group: "Gateway",
-      label: "Local gateway process",
-      status: options.namedGatewayConnected ? "ok" : "info",
-      detail: options.namedGatewayConnected
-        ? `openshell-gateway is running, listening on port ${GATEWAY_PORT}, and verified by OpenShell`
-        : `openshell-gateway process and port ${GATEWAY_PORT} are present, but the named gateway is not verified`,
-      hint: options.namedGatewayConnected
-        ? undefined
-        : "check the OpenShell status result below before trusting the local gateway probe",
-    });
-    return checks;
-  }
-
-  if (options.namedGatewayConnected) {
-    if (probe.unavailableTools.length > 0) {
-      checks.push({
-        group: "Gateway",
-        label: "Local gateway probe",
-        status: "info",
-        detail: `local probe skipped (${probe.unavailableTools.join(", ")} unavailable); OpenShell reports the named gateway connected`,
-      });
-      return checks;
-    }
-
-    checks.push({
-      group: "Gateway",
-      label: "Legacy Docker container",
-      status: "info",
-      detail: `${containerName} not inspectable; OpenShell reports the named gateway connected`,
-    });
-    return checks;
-  }
-
-  if (probe.unavailableTools.length > 0) {
-    checks.push({
-      group: "Gateway",
-      label: "Local gateway probe",
-      status: "info",
-      detail: `skipped because ${probe.unavailableTools.join(", ")} unavailable`,
-      hint: "install procps/iproute2 or use the OpenShell status check below for gateway confirmation",
-    });
-  }
-
-  checks.push({
-    group: "Gateway",
-    label: "Docker container",
-    status: "fail",
-    detail: `${containerName} not found or not inspectable`,
-    hint: `run \`docker ps --filter name=${containerName}\``,
-  });
-  return checks;
 }
 
 function dockerInspectGateway(

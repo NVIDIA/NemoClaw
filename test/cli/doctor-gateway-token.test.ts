@@ -84,6 +84,7 @@ function writeHealthyCurlStub(setup: DoctorTestSetup): void {
   );
 }
 
+// parseJsonPrefix keeps assertions stable when JSON output is followed by extra CLI text.
 function parseJsonPrefix<T>(output: string): T {
   const end = output.lastIndexOf("\n}");
   return JSON.parse(end >= 0 ? output.slice(0, end + 2) : output) as T;
