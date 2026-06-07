@@ -131,9 +131,6 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, connect to it (e.g. `openshell sandbox connect <sandbox>`) and run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes. NemoClaw renders the OpenClaw QR in compact (scan-friendly) form and validates the gateway before pairing, so a gateway close (e.g. `1008`) is reported separately from the QR (issue #4522).",
     label: "WhatsApp",
     loginMethod: "in-sandbox-qr",
-    setupNotes: [
-      "After pairing, run `nemoclaw <sandbox> channels status --channel whatsapp` to confirm the bridge is delivering inbound messages — pairing alone does not guarantee inbound delivery (issue #4386).",
-    ],
   },
 };
 

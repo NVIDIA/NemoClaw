@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema.json",
+  "id": "nemotron-3-super-120b-managed-inference",
+  "agent": "openclaw",
+  "description": "Disables OpenClaw's native code-based tool search for nvidia/nemotron-3-super-120b-a12b on the NemoClaw managed inference.local route. The model emits invalid JavaScript for the tool_search_code surface (CommonJS require, openclaw.tools.search called with an object, bad describe/call ids), flooding successful runs with '[tools] tool_search_code failed' errors (#4780); routing it back to the structured tool-calling surface avoids the noise.",
+  "match": {
+    "modelIds": ["nvidia/nemotron-3-super-120b-a12b"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawTools": {
+      "toolSearch": false
+    }
+  }
+}

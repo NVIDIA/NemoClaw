@@ -58,11 +58,11 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const { capture, calls } = makeCapture([
       {
         match: /\/api\/tags/,
-        output: JSON.stringify({ models: [{ name: "qwen2.5:7b" }, { name: "gemma2:9b" }] }),
+        output: JSON.stringify({ models: [{ name: "qwen3.5:9b" }, { name: "gemma2:9b" }] }),
       },
     ]);
     const models = getOllamaModelOptions(capture);
-    expect(models).toEqual(["qwen2.5:7b", "gemma2:9b"]);
+    expect(models).toEqual(["qwen3.5:9b", "gemma2:9b"]);
     expect(calls.some((c) => c.argv.includes("list"))).toBe(false);
   });
 });

@@ -22,6 +22,28 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
+# Published base images can lag Dockerfile.base while local feature branches
+# still layer this final image on top. Invalid state: the selected base has
+# Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
+# dashboard bundle here too so `hermes dashboard` never tries to run npm from
+# the sandbox user account. Remove this fallback after all supported base image
+# tags are built from Dockerfile.base with HERMES_WEB_DIST prepopulated.
+RUN set -eu; \
+    hermes_web_dist=/opt/hermes/hermes_cli/web_dist; \
+    hermes_web_dir=/opt/hermes/web; \
+    if [ ! -d "$hermes_web_dist" ]; then \
+        if [ ! -f "$hermes_web_dir/package.json" ]; then \
+            echo "ERROR: Hermes dashboard source missing at $hermes_web_dir" >&2; \
+            exit 1; \
+        fi; \
+        npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
+        npm run build --prefix "$hermes_web_dir"; \
+        rm -rf "$hermes_web_dir/node_modules"; \
+    fi; \
+    test -d "$hermes_web_dist"
+
+ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+
 # Harden: remove unnecessary build tools and network probes
 RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
@@ -46,6 +68,7 @@ RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(cer
 # placeholder rewriting, hostname-based policy enforcement, and native
 # WebSocket credential rewrite at the egress boundary.
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
+ENV HERMES_TUI_DIR="/opt/hermes/ui-tui"
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
@@ -72,12 +95,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
+ARG NEMOCLAW_INFERENCE_API=openai-completions
 # CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
-# Hermes this URL points at the OpenAI-compatible API server (port 8642,
-# exposing /v1 and /health), NOT a browser chat UI. Callers authenticate
-# via a bearer token in the Authorization header. See
-# agents/hermes/manifest.yaml (dashboard.kind: api).
-ARG CHAT_UI_URL=http://127.0.0.1:8642
+# Hermes this URL points at the browser dashboard. The OpenAI-compatible
+# API remains exposed separately on port 8642.
+ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
@@ -99,6 +121,7 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
+    NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
@@ -299,7 +322,10 @@ RUN set -eu; \
     && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \

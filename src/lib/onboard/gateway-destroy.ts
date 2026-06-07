@@ -40,9 +40,18 @@ export function destroyGatewayWithVolumeCleanup({
   const lifecycleCommands = hasLifecycleCommands();
   const gatewayRemoved = dockerDriver
     ? removeDockerDriverGatewayRegistration()
-    : lifecycleCommands
-      ? runOpenshell(["gateway", "destroy", "-g", gatewayName], { ignoreError: true }).status === 0
-      : runOpenshell(["gateway", "remove", gatewayName], { ignoreError: true }).status === 0;
+    : (() => {
+        const removeResult = runOpenshell(["gateway", "remove", gatewayName], {
+          ignoreError: true,
+        });
+        if (removeResult.status === 0) return true;
+        // Pre-0.0.44 builds exposed `gateway destroy` instead of `gateway remove`.
+        if (!lifecycleCommands) return false;
+        return (
+          runOpenshell(["gateway", "destroy", "-g", gatewayName], { ignoreError: true })
+            .status === 0
+        );
+      })();
 
   if (gatewayRemoved) {
     clearRegistry();

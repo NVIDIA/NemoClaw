@@ -488,7 +488,7 @@ exit 98
     expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
     expect(output).toMatch(/NEMOCLAW_NO_EXPRESS=1/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
-    expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
+    expect(output).toContain("nvidia.com/nemoclaw.sh");
   });
 
   it("scripts/install.sh --help lists the full non-interactive provider set", () => {
@@ -1222,10 +1222,14 @@ fi`,
     systemctlScript,
     isWsl = false,
     runtime = "docker",
+    stale = false,
+    toolkitInstalled = true,
   }: {
     systemctlScript: string;
     isWsl?: boolean;
     runtime?: string;
+    stale?: boolean;
+    toolkitInstalled?: boolean;
   }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
     const fakeBin = path.join(tmp, "bin");
@@ -1246,7 +1250,11 @@ exports.assessHost = () => ({
   isWsl: ${isWsl ? "true" : "false"},
   notes: [],
   dockerCdiSpecDirs: [process.env.CDI_DIR],
-  cdiNvidiaGpuSpecMissing: !fs.existsSync(process.env.CDI_STATE),
+  cdiNvidiaGpuSpecMissing: ${stale ? "false" : "!fs.existsSync(process.env.CDI_STATE)"},
+  cdiNvidiaGpuSpecStale: ${stale ? "!fs.existsSync(process.env.CDI_STATE)" : "false"},
+  cdiNvidiaGpuSpecNeedsRepair: !fs.existsSync(process.env.CDI_STATE),
+  cdiNvidiaGpuSpecMismatch: process.env.CDI_STALE_FILE + " /dev/nvidia-uvm=498:0, live=499:0",
+  nvidiaContainerToolkitInstalled: ${toolkitInstalled ? "true" : "false"},
 });
 exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
@@ -1265,6 +1273,13 @@ exports.planHostRemediation = (host) =>
           title: "Generate NVIDIA CDI device specs",
           reason: "missing nvidia.com/gpu",
           commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+          blocking: true,
+        }]
+    : host.cdiNvidiaGpuSpecStale && !host.nvidiaContainerToolkitInstalled
+      ? [{
+          title: "Install NVIDIA Container Toolkit and refresh CDI device specs",
+          reason: "nvidia-container-toolkit missing",
+          commands: ["sudo apt-get install -y nvidia-container-toolkit"],
           blocking: true,
         }]
     : [];
@@ -1334,6 +1349,7 @@ run_installer_host_preflight
           SOURCE_ROOT: sourceRoot,
           CDI_DIR: cdiDir,
           CDI_STATE: cdiState,
+          CDI_STALE_FILE: path.join(cdiDir, "nvidia.yaml"),
           SUDO_LOG: sudoLog,
           SYSTEMCTL_LOG: systemctlLog,
         },
@@ -1383,6 +1399,59 @@ exit 99
     expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
   });
 
+  it("repairs stale NVIDIA CDI specs with the refresh service only", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "start" ]; then
+  touch "$CDI_STATE"
+fi
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(cdiStateExists).toBe(true);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/effective nvidia\.com\/gpu spec may be stale/);
+    expect(output).toMatch(/refreshed the service-managed NVIDIA CDI device spec/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(systemctlLog).toMatch(/^start nvidia-cdi-refresh\.service$/m);
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+    expect(sudoLog).not.toMatch(/mkdir -p/);
+    expect(sudoLog).not.toMatch(/rm -f/);
+  });
+
+  it("does not auto-repair stale NVIDIA CDI specs before toolkit installation", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        stale: true,
+        toolkitInstalled: false,
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(1);
+    expect(cdiStateExists).toBe(false);
+    expect(output).toMatch(/Host preflight found issues/);
+    expect(output).toMatch(/Install NVIDIA Container Toolkit and refresh CDI device specs/);
+    expect(output).not.toMatch(/Refreshing NVIDIA CDI device spec with NVIDIA's CDI refresh service/);
+    expect(systemctlLog).toBe("");
+    expect(sudoLog).toBe("");
+  });
+
   it("falls back to direct NVIDIA CDI generation when refresh service does not repair", () => {
     const { cdiDir, output, result, sudoLog, systemctlLog } =
       runNvidiaCdiInstallerRepairTest({
@@ -1394,7 +1463,7 @@ exit 1
       });
 
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/Refreshing NVIDIA CDI device spec/);
     expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
     expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);
@@ -1475,6 +1544,10 @@ fi`,
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
+if [ "$1" = "info" ] && [ "$2" = "--format" ]; then
+  echo '{"ServerVersion":"5.0.0","Name":"Podman Engine","CDISpecDirs":[]}'
+  exit 0
+fi
 if [ "$1" = "info" ]; then
   echo "Podman Engine"
   exit 0
@@ -1482,7 +1555,6 @@ fi
 exit 0
 `,
     );
-
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -2885,8 +2957,11 @@ describe("installer flag parsing", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_INSTALL_TAG/);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/default: lkg/);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NEMOCLAW_INSTALL_TAG/);
+    expect(output).toMatch(/default: lkg/);
+    expect(output).toMatch(/set this on bash or export it first/);
+    expect(output).toMatch(/curl .* \| NEMOCLAW_INSTALL_TAG=v0\.0\.56 bash/);
   });
 });
 
@@ -3698,6 +3773,52 @@ main() {
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/LOCAL_PAYLOAD_USED/);
   });
 
+  it("piped root installer fails clearly when the selected ref is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-missing-ref-"));
+    const fakeBin = path.join(tmp, "bin");
+    const gitLog = path.join(tmp, "git.log");
+    fs.mkdirSync(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "git"),
+      `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$GIT_LOG_PATH"
+if [ "$1" = "init" ]; then
+  target="\${@: -1}"
+  mkdir -p "$target"
+  exit 0
+fi
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "remote" ]; then exit 0; fi
+if [ "$1" = "fetch" ]; then
+  echo "fatal: couldn't find remote ref \${@: -1}" >&2
+  exit 128
+fi
+exit 0`,
+    );
+
+    const installerInput = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
+    const result = spawnSync("bash", [], {
+      cwd: tmp,
+      input: installerInput,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+        GIT_LOG_PATH: gitLog,
+        NEMOCLAW_INSTALL_TAG: "v9.9.9",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/Requested install ref 'v9\.9\.9' is not available/);
+    expect(output).toMatch(/Check NEMOCLAW_INSTALL_TAG\/NEMOCLAW_INSTALL_REF/);
+    expect(fs.readFileSync(gitLog, "utf-8")).toMatch(/fetch --quiet --depth 1 origin v9\.9\.9/);
+  });
+
   it("falls back to the legacy root installer when the selected ref only has the old scripts/install.sh wrapper", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-curl-pipe-legacy-ref-"));
     const legacyLog = path.join(tmp, "legacy.log");
@@ -4162,5 +4283,115 @@ sys.exit(exit_code)
     );
     expect(output).toMatch(/--yes-i-accept-third-party-software/);
     expect(phases).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Build-dependency preflight (#4415): missing binutils/`strings` should fail
+// fast at preflight, before any clone/build/download work, instead of ~5
+// minutes in at OpenShell verification.
+// ---------------------------------------------------------------------------
+
+/**
+ * Like buildIsolatedSystemPath but lets the caller exclude additional binary
+ * names (in addition to node/npm/npx). Used to simulate a host that is missing
+ * `strings` (binutils) while keeping the rest of coreutils available.
+ */
+function buildSystemPathExcluding(extra: readonly string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-nodep-"));
+  const EXCLUDE = new Set(["node", "npm", "npx", ...extra]);
+  for (const sysDir of ["/usr/bin", "/bin"]) {
+    if (!fs.existsSync(sysDir)) continue;
+    for (const name of fs.readdirSync(sysDir)) {
+      if (EXCLUDE.has(name)) continue;
+      try {
+        fs.symlinkSync(path.join(sysDir, name), path.join(dir, name));
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+    }
+  }
+  return dir;
+}
+
+/** docker stub whose `info` always succeeds, so ensure_docker passes. */
+function writeDockerOkStub(fakeBin: string) {
+  writeExecutable(
+    path.join(fakeBin, "docker"),
+    `#!/usr/bin/env bash
+if [ "$1" = "info" ]; then exit 0; fi
+exit 0
+`,
+  );
+  writeExecutable(
+    path.join(fakeBin, "systemctl"),
+    `#!/usr/bin/env bash
+if [ "$1" = "is-active" ] && [ "$2" = "docker" ]; then echo "active"; exit 0; fi
+exit 0
+`,
+  );
+}
+
+describe("installer build-dependency preflight (#4415)", { timeout: 30_000 }, () => {
+  it("fails fast at preflight when binutils (strings) is missing, before any clone/build", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).not.toBe(0);
+    expect(output).toMatch(/'strings' \(from binutils\) is required/);
+    expect(output).toMatch(/sudo apt-get install -y binutils/);
+    // Fail-fast guarantee: never reached the OpenShell install/verify or the
+    // CLI build, which is the ~5-minutes-in failure point the issue reports.
+    expect(output).not.toMatch(/Installing OpenShell/);
+    expect(output).not.toMatch(/Cloning into/);
+  });
+
+  it("does not fire the binutils preflight when OpenShell install is deferred", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-no-strings-deferred-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    writeNodeStub(fakeBin);
+    // npm stub that fails fast on install, so the run stops shortly AFTER the
+    // (skipped) binutils preflight rather than doing real work. The assertion
+    // only cares that our binutils error never fires under DEFER.
+    writeNpmStub(fakeBin, 'echo "npm stub stop" >&2; exit 91');
+    writeDockerOkStub(fakeBin);
+    const noStringsPath = buildSystemPathExcluding(["strings"]);
+
+    const result = spawnSync("bash", [INSTALLER], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmp,
+        PATH: `${fakeBin}:${noStringsPath}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+        NPM_PREFIX: path.join(tmp, "prefix"),
+      },
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    // The deferred path postpones all OpenShell work (and its own strings
+    // check) to a later phase, so the early preflight must stay silent.
+    expect(output).not.toMatch(/'strings' \(from binutils\) is required/);
   });
 });

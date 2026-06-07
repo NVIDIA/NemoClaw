@@ -21,6 +21,7 @@ export interface SandboxRegistryMetadataHelpers {
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   >;
@@ -46,6 +47,7 @@ export function createSandboxRegistryMetadataHelpers(
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   > {
@@ -59,6 +61,9 @@ export function createSandboxRegistryMetadataHelpers(
       sandboxGpuEnabled: config.sandboxGpuEnabled,
       sandboxGpuMode: config.mode,
       sandboxGpuDevice: config.sandboxGpuDevice,
+      // Only persist a proof when this run produced one; omit on reuse/update
+      // paths so a prior proof result is preserved rather than nulled out.
+      ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
       openshellDriver: deps.isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),

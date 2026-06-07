@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { GpuDetection } from "../inference/nim";
+import type { SandboxGpuProofResult } from "../state/registry";
 
 export type SandboxGpuMode = "auto" | "1" | "0";
 export type SandboxGpuFlag = "enable" | "disable" | null;
@@ -13,6 +14,10 @@ export type SandboxGpuConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice: string | null;
   errors: string[];
+  // Outcome of the live direct sandbox GPU proof, populated after onboarding
+  // runs the verifier so it can be persisted to the registry (#4231). Absent
+  // until the proof runs; never overwrites a stored proof on reuse paths.
+  sandboxGpuProof?: SandboxGpuProofResult | null;
 };
 
 export type ResumeSandboxGpuOverrides = {

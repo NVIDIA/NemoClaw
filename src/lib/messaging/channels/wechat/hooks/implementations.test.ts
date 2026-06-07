@@ -41,6 +41,7 @@ describe("WeChat hook implementations", () => {
         id: WECHAT_ILINK_LOGIN_HOOK_ID,
         handler: createWechatIlinkLoginHook({
           env,
+          log: () => {},
           saveCredential: (key, value) => saved.push({ key, value }),
           runLogin: async () => ({
             kind: "ok",
@@ -100,6 +101,7 @@ describe("WeChat hook implementations", () => {
         id: WECHAT_ILINK_LOGIN_HOOK_ID,
         handler: createWechatIlinkLoginHook({
           env,
+          log: () => {},
           saveCredential: (key, value) => saved.push({ key, value }),
           runLogin: async () => ({ kind: "timeout" }),
         }),
@@ -166,7 +168,9 @@ describe("WeChat hook implementations", () => {
         }),
       },
     ]);
-    const hook = wechatManifest.hooks[1];
+    const hook = wechatManifest.hooks.find(
+      (entry) => entry.id === "wechat-seed-openclaw-account",
+    );
 
     if (!hook) throw new Error("missing WeChat seed hook");
 

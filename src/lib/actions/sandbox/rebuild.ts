@@ -23,10 +23,12 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
-  LOCAL_INFERENCE_PROVIDERS: string[];
-  REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
-};
+const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG, providerExistsInGateway } =
+  require("../../onboard/providers") as {
+    LOCAL_INFERENCE_PROVIDERS: string[];
+    REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
+    providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
+  };
 
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -41,6 +43,13 @@ import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import {
+  createBuiltInChannelManifestRegistry,
+  MessagingSetupApplier,
+  MessagingWorkflowPlanner,
+  toMessagingAgentId,
+} from "../../messaging";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -50,6 +59,7 @@ import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
+import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -60,8 +70,8 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
-import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -160,6 +170,34 @@ function preflightHermesProviderCredentials(
   console.error("");
   console.error("  Sandbox is untouched — no data was lost.");
   return false;
+}
+
+async function stageMessagingManifestPlanForRebuild(
+  sandboxName: string,
+  sandboxEntry: registry.SandboxEntry,
+  rebuildAgent: string | null,
+  log: (msg: string) => void,
+): Promise<SandboxMessagingPlan | null> {
+  const agent = loadAgent(rebuildAgent || "openclaw");
+  const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
+  const plan = await planner.buildRebuildPlanFromSandboxEntry({
+    sandboxName,
+    agent: toMessagingAgentId(agent),
+    sandboxEntry,
+    supportedChannelIds: agent.messagingPlatforms,
+  });
+  if (!plan || plan.channels.length === 0) {
+    MessagingSetupApplier.clearPlanEnv();
+    log("Messaging manifest rebuild plan: no configured channels");
+    return null;
+  }
+  MessagingSetupApplier.writePlanToEnv(plan);
+  log(
+    `Messaging manifest rebuild plan staged: ${plan.channels
+      .map((channel) => channel.channelId)
+      .join(",")}`,
+  );
+  return plan;
 }
 
 /**
@@ -370,18 +408,29 @@ export async function rebuildSandbox(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
     if (!credentialValue) {
-      console.error("");
-      console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
-      console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
-      console.error("  but it is not set in the environment.");
-      console.error("");
-      console.error("  To fix, do one of:");
-      console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
-      console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
-      console.error("");
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(`Missing credential: ${rebuildCredentialEnv}`);
-      return;
+      // When the inference provider is already registered in the OpenShell
+      // gateway, the recreate step does not need a host env value — the
+      // gateway is the source of truth for the secret. Skip the env-only
+      // preflight in that case so flows like `channels add` + rebuild keep
+      // working when the user has logged out of the original shell.
+      if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+        log(
+          `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
+        );
+      } else {
+        console.error("");
+        console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+        console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+        console.error("  but it is not set in the environment.");
+        console.error("");
+        console.error("  To fix, do one of:");
+        console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+        console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
+        console.error("");
+        console.error("  Sandbox is untouched — no data was lost.");
+        bail(`Missing credential: ${rebuildCredentialEnv}`);
+        return;
+      }
     }
   } else {
     // No credentialEnv in session — local inference (Ollama/vLLM) or
@@ -390,6 +439,22 @@ export async function rebuildSandbox(
     log(
       "Preflight credential check: no credentialEnv in session (local inference or missing session)",
     );
+  }
+
+  let rebuildMessagingPlan: SandboxMessagingPlan | null = null;
+  try {
+    rebuildMessagingPlan = await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
+    );
+    console.error(`  ${message}`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(message);
+    return;
   }
 
   // Step 1: Ensure sandbox is live for backup
@@ -619,6 +684,7 @@ export async function rebuildSandbox(
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
     s.disabledChannels = rebuildDisabledChannels;
+    s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
@@ -826,6 +892,10 @@ export async function rebuildSandbox(
   const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
   const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
   const agentDef = rebuiltAgent ? loadAgent(rebuiltAgent.name) : loadAgent("openclaw");
+  // #4538: set when the post-upgrade mutable-config permission repair ran but
+  // could not verify the contract — the rebuilt sandbox may still EACCES on
+  // gateway-side config writes, so the final result is downgraded below.
+  let mutablePermsRepairUnverified = false;
   if (agentDef.name === "openclaw") {
     // openclaw doctor --fix validates and repairs directory structure.
     // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -869,6 +939,52 @@ export async function rebuildSandbox(
         `  ${D}WeChat account seed skipped (seed helper returned ${seedWechatResult?.status ?? "null"})${R}`,
       );
     }
+
+    // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
+    // layout, which silently tightens NemoClaw's mutable config contract
+    // (setgid + group-writable /sandbox/.openclaw and group-writable
+    // openclaw.json). Run this LAST in the OpenClaw post-restore sequence —
+    // after doctor --fix and the WeChat seed helper, both of which rewrite
+    // openclaw.json (the seed helper atomically writes it 0600) — so the
+    // restored contract is not immediately undone. No-op for shields-up
+    // sandboxes (config is intentionally root-owned/locked).
+    log("Restoring mutable OpenClaw config permissions after post-restore config writes");
+    // The shields wrapper can throw before it returns a structured result
+    // (validateName, or getShieldsPosture triggering inline auto-restore). A
+    // thrown error here must not abort the rest of the rebuild — treat it as an
+    // unverified repair and continue.
+    let permRepair: ReturnType<typeof shields.repairMutableConfigPerms> | null = null;
+    try {
+      permRepair = shields.repairMutableConfigPerms(sandboxName);
+    } catch (err) {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}⚠${R} Mutable config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (permRepair === null) {
+      // already handled above
+    } else if (!permRepair.applied) {
+      if (permRepair.skipReason === "unreadable") {
+        // Posture could not be determined, so the contract may still be broken.
+        // This is NOT a benign skip — surface it as incomplete.
+        mutablePermsRepairUnverified = true;
+        console.error(
+          `  ${YW}⚠${R} Mutable config permissions not restored: ${permRepair.reason}`,
+        );
+      } else {
+        // "locked" (shields up — config is intentionally root-owned/locked) or
+        // "agent": a deliberate no-op, not a broken contract. Do not downgrade.
+        log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+      }
+    } else if (permRepair.verified) {
+      console.log(`  ${G}✓${R} Mutable config permissions restored`);
+    } else {
+      mutablePermsRepairUnverified = true;
+      console.error(
+        `  ${YW}⚠${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+      );
+    }
   }
   // Hermes: no explicit post-restore step needed. Hermes's SessionDB._init_schema()
   // auto-migrates state.db (SQLite) on first connection via sequential ALTER TABLE
@@ -885,16 +1001,25 @@ export async function rebuildSandbox(
   if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
 
   console.log("");
-  if (restore.success) {
+  if (restore.success && !mutablePermsRepairUnverified) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
     if (versionCheck.expectedVersion) {
       console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
     }
   } else {
-    console.log(
-      `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
-    );
-    console.log(`    Backup available at: ${backupManifest.backupPath}`);
+    // At least one post-restore step is incomplete. Surface every applicable
+    // failure (#4538: a failed state restore and an unverified permission
+    // repair are independent \u2014 report both so the operator does not miss the
+    // backup-restore recovery just because permissions also need attention).
+    console.log(`  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but some post-restore steps were incomplete`);
+    if (!restore.success) {
+      console.log(`    State restore was incomplete \u2014 backup available at: ${backupManifest.backupPath}`);
+    }
+    if (mutablePermsRepairUnverified) {
+      console.log(
+        `    Mutable config permissions were not verified \u2014 run \`${CLI_NAME} ${sandboxName} doctor --fix\` to restore the OpenClaw config permission contract`,
+      );
+    }
   }
   } finally {
     if (!rebuildShieldsWindow.relocked) {

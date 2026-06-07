@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
@@ -35,24 +37,135 @@ describe("E2E reusable workflow contract", () => {
     const defaultSecrets = {
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
       BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
+      DOCKERHUB_USERNAME:
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
+      DOCKERHUB_TOKEN:
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
     };
+    const trustedRefGuard = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
     const messagingLiveSecrets = {
-      TELEGRAM_BOT_TOKEN_REAL: "${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}",
-      TELEGRAM_CHAT_ID_E2E: "${{ secrets.TELEGRAM_CHAT_ID_E2E }}",
-      DISCORD_BOT_TOKEN_REAL: "${{ secrets.DISCORD_BOT_TOKEN_REAL }}",
-      DISCORD_CHANNEL_ID_E2E: "${{ secrets.DISCORD_CHANNEL_ID_E2E }}",
-      SLACK_BOT_TOKEN_REAL: "${{ secrets.SLACK_BOT_TOKEN_REAL }}",
-      SLACK_APP_TOKEN_REAL: "${{ secrets.SLACK_APP_TOKEN_REAL }}",
-      SLACK_CHANNEL_ID_E2E: "${{ secrets.SLACK_CHANNEL_ID_E2E }}",
+      TELEGRAM_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}`,
+      TELEGRAM_CHAT_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.TELEGRAM_CHAT_ID_E2E || '' }}`,
+      DISCORD_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.DISCORD_BOT_TOKEN_REAL || '' }}`,
+      DISCORD_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.DISCORD_CHANNEL_ID_E2E || '' }}`,
+      SLACK_BOT_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_BOT_TOKEN_REAL || '' }}`,
+      SLACK_APP_TOKEN_REAL: `\${{ (${trustedRefGuard}) && secrets.SLACK_APP_TOKEN_REAL || '' }}`,
+      SLACK_CHANNEL_ID_E2E: `\${{ (${trustedRefGuard}) && secrets.SLACK_CHANNEL_ID_E2E || '' }}`,
     };
 
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
+      const expectsLiveMessaging = name === "messaging-providers-e2e";
       const expectedSecrets =
-        name === "messaging-providers-e2e"
-          ? { ...defaultSecrets, ...messagingLiveSecrets }
-          : defaultSecrets;
+        expectsLiveMessaging ? { ...defaultSecrets, ...messagingLiveSecrets } : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
+      expect(job.with?.messaging_live_secrets ?? false, name).toBe(
+        expectsLiveMessaging
+          ? "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}"
+          : false,
+      );
+    }
+  });
+
+  it("requires trusted target refs and an explicit opt-in before exposing live messaging secrets", () => {
+    const callInputs =
+      runnerWorkflow.on?.workflow_call?.inputs ??
+      runnerWorkflow.true?.workflow_call?.inputs ??
+      {};
+    const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
+    const messagingJob = nightlyWorkflow.jobs["messaging-providers-e2e"];
+
+    expect(callInputs.messaging_live_secrets?.default).toBe(false);
+    expect(messagingJob.with?.messaging_live_secrets).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}",
+    );
+    for (const name of [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ]) {
+      expect(messagingJob.secrets?.[name], name).toBe(
+        `\${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.${name} || '' }}`,
+      );
+    }
+    expect(runStep?.env?.TELEGRAM_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.DISCORD_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.SLACK_BOT_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.SLACK_BOT_TOKEN_REAL || '' }}",
+    );
+    expect(runStep?.env?.SLACK_APP_TOKEN_REAL).toBe(
+      "${{ inputs.messaging_live_secrets && secrets.SLACK_APP_TOKEN_REAL || '' }}",
+    );
+  });
+
+  it("authenticates Docker Hub pulls without exposing credentials to target-ref dispatches", () => {
+    const authStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Authenticate to Docker Hub",
+    );
+
+    expect(authStep?.if).toBe(
+      "${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target_ref == '' }}",
+    );
+    expect(authStep?.env?.DOCKERHUB_USERNAME).toBe("${{ secrets.DOCKERHUB_USERNAME }}");
+    expect(authStep?.env?.DOCKERHUB_TOKEN).toBe("${{ secrets.DOCKERHUB_TOKEN }}");
+    expect(authStep?.run).toContain("docker login docker.io");
+    expect(authStep?.run).toContain("continuing with anonymous pulls");
+  });
+
+  it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
+    const directE2eJobs = [
+      "docs-validation-e2e",
+      "openclaw-tui-chat-correlation-e2e",
+      "issue-3600-gpu-proof-optional-e2e",
+      "kimi-inference-compat-e2e",
+      "bedrock-runtime-compatible-anthropic-e2e",
+      "token-rotation-e2e",
+      "sandbox-operations-e2e",
+      "openshell-gateway-upgrade-e2e",
+      "double-onboard-e2e",
+      "onboard-repair-e2e",
+      "onboard-resume-e2e",
+      "onboard-negative-paths-e2e",
+      "runtime-overrides-e2e",
+      "credential-sanitization-e2e",
+      "telegram-injection-e2e",
+      "launchable-smoke-e2e",
+      "gpu-e2e",
+      "gpu-double-onboard-e2e",
+    ];
+
+    for (const name of directE2eJobs) {
+      const checkoutStep = nightlyWorkflow.jobs[name].steps?.find((step) =>
+        String(step.uses ?? "").startsWith("actions/checkout@"),
+      );
+      const authStep = nightlyWorkflow.jobs[name].steps?.find(
+        (step) => step.name === "Authenticate to Docker Hub",
+      );
+
+      expect(checkoutStep?.with?.ref, name).toBe("${{ inputs.target_ref || github.ref }}");
+      expect(checkoutStep?.with?.["persist-credentials"], name).toBe(false);
+      expect(authStep, name).toBeDefined();
+      expect(authStep?.if, name).toBe(
+        "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}",
+      );
+      expect(authStep?.env?.DOCKERHUB_USERNAME, name).toBe(
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}",
+      );
+      expect(authStep?.env?.DOCKERHUB_TOKEN, name).toBe(
+        "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
+      );
+      expect(authStep?.run, name).toContain("docker login docker.io");
+      expect(authStep?.run, name).not.toContain("persist-credentials:");
+      expect(authStep?.run, name).not.toContain("uses:");
+      expect(authStep?.run, name).not.toContain("with:");
     }
   });
 
@@ -108,5 +221,17 @@ describe("E2E reusable workflow contract", () => {
     expect(cloudJob.uses).toBe("./.github/workflows/e2e-script.yaml");
     expect(cloudJob.with?.script).toBe("test/e2e/test-full-e2e.sh");
     expect(cloudJob.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+  });
+
+  it("gates WhatsApp sandbox-owned preload acceptance on non-root entrypoint evidence", () => {
+    const script = readFileSync(new URL("./e2e/test-messaging-providers.sh", import.meta.url), "utf8");
+
+    expect(script).toContain(
+      "entrypoint_start_log_stat=$(sandbox_exec \"stat -c '%U:%a' /tmp/nemoclaw-start.log",
+    );
+    expect(script).toContain(
+      "[ \"$whatsapp_qr_preload_stat\" = \"sandbox:444\" ] && [ \"$entrypoint_start_log_stat\" = \"sandbox:600\" ]",
+    );
+    expect(script).toContain("entrypoint start log: ${entrypoint_start_log_stat}");
   });
 });

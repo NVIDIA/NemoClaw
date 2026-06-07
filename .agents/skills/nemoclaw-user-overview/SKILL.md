@@ -1,17 +1,15 @@
 ---
 name: "nemoclaw-user-overview"
-description: "Explains what NemoClaw covers: onboarding, lifecycle management, and agent operations within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works. Trigger keywords - nemoclaw overview, openclaw always-on assistants, hermes agent, nvidia openshell, nvidia nemotron, nemoclaw ecosystem, openclaw openshell, nemoclaw vs openshell, sandboxed openclaw, how nemoclaw works, nemoclaw sandbox lifecycle blueprint, nemoclaw release notes, nemoclaw changelog."
+description: "Explains what NemoClaw covers: onboarding, lifecycle management, and agent operations within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works. Trigger keywords - nemoclaw overview, openclaw always-on assistants, hermes agent, nvidia openshell, nvidia nemotron, nemoclaw ecosystem, nemohermes, nemoclaw vs openshell, run hermes openshell sandbox, openclaw openshell, sandboxed openclaw, how nemoclaw works, nemoclaw sandbox lifecycle blueprint, nemoclaw release notes, nemoclaw changelog."
 license: "Apache-2.0"
 ---
-
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # NemoClaw User Overview
 
 ## References
 
 - **Load [references/overview.md](references/overview.md)** when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works. Explains what NemoClaw covers: onboarding, lifecycle management, and agent operations within OpenShell containers, plus capabilities and why it exists.
+- **Load [references/ecosystem-hermes.md](references/ecosystem-hermes.md)** when users ask about Hermes, OpenShell, and NemoClaw together, or when to use NemoClaw versus OpenShell for Hermes. Explains how Hermes, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond integrating OpenShell yourself, and when to prefer NemoHermes versus OpenShell.
 - **Load [references/ecosystem.md](references/ecosystem.md)** when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell. Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond the community sandbox, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly.
 - **Load [references/how-it-works.md](references/how-it-works.md)** for sandbox lifecycle and architecture mechanics; not for product definition (Overview) or multi-project placement (Ecosystem). Describes how NemoClaw works internally: CLI, plugin, blueprint runner, OpenShell orchestration, inference routing, and protection layers.
 - **Load [references/release-notes.md](references/release-notes.md)** when users ask about recent changes, the release cadence, or where to track versioned assets on GitHub. Includes the NemoClaw release notes.

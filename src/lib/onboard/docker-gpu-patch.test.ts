@@ -579,7 +579,11 @@ describe("docker-gpu-patch", () => {
       String(call[0]).includes("nemoclaw-gpu-backup"),
     );
     expect(backupRmCall).toBeGreaterThanOrEqual(0);
-    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeLessThan(
+    // Backup container is removed only AFTER supervisor reconnect confirms
+    // the GPU container is reachable. If reconnect fails the rollback path
+    // restores the backup under the original name (see the rollback test
+    // below), so the backup must outlive the supervisor probe.
+    expect(dockerRm.mock.invocationCallOrder[backupRmCall]).toBeGreaterThan(
       runOpenshell.mock.invocationCallOrder[0],
     );
   });
@@ -592,6 +596,7 @@ describe("docker-gpu-patch", () => {
       return "";
     });
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
     const result = recreateOpenShellDockerSandboxWithGpu(
@@ -607,7 +612,7 @@ describe("docker-gpu-patch", () => {
         dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),
-        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRm,
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
@@ -615,7 +620,16 @@ describe("docker-gpu-patch", () => {
     );
 
     expect(result.newContainerId).toBe("new-container-id");
+    expect(result.backupRemoved).toBe(false);
+    expect(result.originalName).toBe("openshell-alpha");
+    expect(result.backupContainerName).toContain("nemoclaw-gpu-backup");
     expect(runOpenshell).not.toHaveBeenCalled();
+    // The create path takes the supervisor wait into its own hands later in
+    // the flow. The patch helper must NOT remove the backup yet — that would
+    // re-introduce the deleted-backup / failed-new state #4664 fixes.
+    expect(
+      dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
+    ).toBe(false);
     expect(dockerRunDetached).toHaveBeenCalledWith(
       expect.arrayContaining([
         "--env",
@@ -837,7 +851,10 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     // Without the short-circuit, a patched container that crashes on startup
     // leaves users waiting the full 900s+ supervisor-reconnect timeout before
-    // any Error-phase diagnostics run (#4316).
+    // any Error-phase diagnostics run. With the debounce now in place, this
+    // test asserts the K=1 (no-debounce) behavior explicitly so the original
+    // fast-fail intent is preserved when the operator opts out of the
+    // debounce.
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
     const listOutputs = [
       "alpha   Provisioning   1s ago",
@@ -853,10 +870,11 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       runOpenshell,
       runCaptureOpenshell,
       sleep,
+      errorPhaseDebouncePolls: 1,
     });
 
     expect(ok).toBe(false);
-    // Without short-circuit we'd loop ~300 iterations. With it, the second
+    // Without short-circuit we'd loop ~300 iterations. With K=1 the second
     // iteration's list output shows Error and the wait bails out.
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);

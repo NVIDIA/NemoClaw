@@ -1,50 +1,45 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Sandbox Image Hardening
 
-The NemoClaw sandbox image applies several security measures to reduce attack
-surface and limit the blast radius of untrusted workloads.
+The NemoClaw sandbox image applies several security measures to reduce attack surface and limit the blast radius of untrusted workloads.
 
 ## Removed Unnecessary Tools
 
-Build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) are
-explicitly purged from the runtime image. These tools are not needed at runtime
-and would unnecessarily widen the attack surface.
+NemoClaw explicitly purges build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image.
+These tools are not needed at runtime and would unnecessarily widen the attack surface.
 
-The runtime image keeps a small set of operational utilities for normal sandbox
-workflows, including `vi`, `jq`, and `dos2unix`. Use these for lightweight
-inspection and file cleanup inside the sandbox, but make durable image or policy
-changes in the NemoClaw source tree and rebuild the sandbox.
+The runtime image keeps a small set of operational utilities for normal sandbox workflows, including `vi`, `jq`, and `dos2unix`.
+Use these utilities for lightweight inspection and file cleanup inside the sandbox, but make durable image or policy changes in the NemoClaw source tree and rebuild the sandbox.
 
-If you need a compiler during build, use the existing multi-stage build
-(the `builder` stage has full Node.js tooling) and copy only artifacts into the
-runtime stage.
+If you need a compiler during build, use the existing multi-stage build.
+The `builder` stage has full Node.js tooling.
+Copy only artifacts into the runtime stage.
 
 ## Process Limits
 
-The container ENTRYPOINT sets `ulimit -u 512` to cap the number of processes
-a sandbox user can spawn. This mitigates fork-bomb attacks. The startup script
-(`nemoclaw-start.sh`) applies the same limit.
+The container ENTRYPOINT sets `ulimit -u 512` to cap the number of processes a sandbox user can spawn.
+This mitigates fork-bomb attacks.
+The startup script (`nemoclaw-start.sh`) applies the same limit.
 
-Adjust the value via the `--ulimit nproc=512:512` flag if launching with
-`docker run` directly.
+Adjust the value with the `--ulimit nproc=512:512` flag if you launch with `docker run` directly.
 
 ## Dropping Linux Capabilities
 
-The NemoClaw entrypoint drops dangerous capabilities from the process bounding
-set before it starts agent services.
+The NemoClaw entrypoint drops dangerous capabilities from the process bounding set before it starts agent services.
 It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
 `CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`,
 `CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
-When `setpriv` is available, the entrypoint also removes the remaining
-privilege-separation capabilities during the switch from root to the
-`sandbox` and `gateway` users.
+When `setpriv` is available, the entrypoint also removes the remaining privilege-separation capabilities during the switch from root to the `sandbox` and `gateway` users.
+
+The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable the entrypoint logs a warning and continues with the runtime-provided capability set.
+If `setpriv` is unavailable, the entrypoint falls back to `gosu`.
+To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment: the agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities.
+This is opt-in because hosts that cannot drop capabilities (no `CAP_SETPCAP` — many cloud VMs, Docker Desktop, WSL) are common, and the check covers the agent process tree only.
 
 For defense-in-depth, also drop all Linux capabilities at the container runtime
 when you launch the image directly:
 
-```console
-$ docker run --rm \
+```bash
+docker run --rm \
     --cap-drop=ALL \
     --ulimit nproc=512:512 \
     nemoclaw-sandbox
@@ -83,7 +78,7 @@ The agent's home directory (`/sandbox`) is writable by default:
 
 | Path | Access | Purpose |
 |------|--------|---------|
-| `/sandbox` | read-write | Home directory — agents can create files and use standard home paths |
+| `/sandbox` | read-write | Home directory where agents can create files and use standard home paths |
 | `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins |
 | `/sandbox/.nemoclaw` | read-write (Landlock); DAC-restricted | Parent directory is `root:root` mode `1755`; the sandbox user can write only to `state/`, `migration/`, `snapshots/`, `staging/`, and `config.json`. `blueprints/` and the parent itself are root-owned to prevent tampering. |
 | `/tmp` | read-write | Temporary files and logs |
@@ -103,7 +98,7 @@ System paths remain read-only to prevent agents from:
 - Tampering with libraries or shell configuration outside `/sandbox`
 
 The image build pre-creates locked shell init files `.bashrc` and `.profile` without proxy entries.
-Runtime proxy configuration is sourced from system-wide shell hooks that read `/tmp/nemoclaw-proxy-env.sh`.
+System-wide shell hooks that read `/tmp/nemoclaw-proxy-env.sh` source the runtime proxy configuration.
 
 ### Landlock Kernel Requirements
 
@@ -115,8 +110,8 @@ Files outside the writable paths would be inaccessible to the agent regardless o
 
 Operators should verify Landlock availability:
 
-```console
-$ ls /sys/kernel/security/landlock
+```bash
+ls /sys/kernel/security/landlock
 ```
 
 For production deployments, kernel 5.13+ with Landlock enabled is strongly recommended.

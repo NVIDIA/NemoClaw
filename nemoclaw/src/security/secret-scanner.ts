@@ -26,7 +26,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { name: "NVIDIA API key", regex: /\bnvapi-[A-Za-z0-9_-]{20,}\b/ },
 
   // OpenAI — exclude sk-ant- (Anthropic) to avoid double-matching
-  { name: "OpenAI API key", regex: /\bsk-(?!ant-)[A-Za-z0-9]{20,}\b/ },
+  { name: "OpenAI API key", regex: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/ },
 
   // GitHub
   { name: "GitHub token", regex: /\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9]{36,}\b/ },
@@ -39,7 +39,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 
   // Slack
-  { name: "Slack token", regex: /\bxox[bpas]-[A-Za-z0-9-]{10,}\b/ },
+  { name: "Slack token", regex: /\b(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}\b/ },
 
   // Discord — require contextual prefix to avoid matching JWT/base64 strings
   {

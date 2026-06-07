@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
 import {
@@ -10,21 +10,24 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  getOpenClawPrimaryModel,
+  getProviderSelectionConfig,
+  getSandboxInferenceConfig,
   HERMES_PROVIDER_MODEL_OPTIONS,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
-  VLLM_LOCAL_CREDENTIAL_ENV,
-  getOpenClawPrimaryModel,
-  getProviderSelectionConfig,
-  getSandboxInferenceConfig,
   parseGatewayInference,
+  planInferenceRouteReconcile,
+  sanitizeRouteValueForDisplay,
+  VLLM_LOCAL_CREDENTIAL_ENV,
 } from "../../../dist/lib/inference/config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
       "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
@@ -223,6 +226,18 @@ describe("inference selection config", () => {
 });
 
 describe("getSandboxInferenceConfig", () => {
+  it("enables streaming usage for ollama-local behind the managed inference route", () => {
+    expect(getSandboxInferenceConfig("qwen3.6:35b", "ollama-local")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen3.6:35b`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsUsageInStreaming: true,
+      },
+    });
+  });
+
   it("maps NVIDIA Endpoints to the routed inference provider", () => {
     expect(
       getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
@@ -364,5 +379,71 @@ describe("parseGatewayInference", () => {
       provider: null,
       model: "some/model",
     });
+  });
+});
+
+describe("planInferenceRouteReconcile", () => {
+  const recorded = { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" };
+
+  it("is aligned when the live gateway matches the recorded route", () => {
+    expect(
+      planInferenceRouteReconcile(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        recorded,
+      ),
+    ).toEqual({ kind: "aligned" });
+  });
+
+  it("repairs when the gateway has no usable route", () => {
+    expect(planInferenceRouteReconcile(null, recorded)).toEqual({ kind: "repair" });
+  });
+
+  it("flags divergence when the gateway model differs (the #3726 case)", () => {
+    const live = { provider: "nvidia-prod", model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" };
+    expect(planInferenceRouteReconcile(live, recorded)).toEqual({
+      kind: "diverged",
+      live,
+      recorded,
+    });
+  });
+
+  it("flags divergence when only the gateway provider differs", () => {
+    const live = { provider: "openai", model: "nvidia/nemotron-3-super-120b-a12b" };
+    expect(planInferenceRouteReconcile(live, recorded)).toEqual({
+      kind: "diverged",
+      live,
+      recorded,
+    });
+  });
+
+  it("repairs a partial gateway route (provider only) instead of diverging", () => {
+    expect(planInferenceRouteReconcile({ provider: "nvidia-prod", model: null }, recorded)).toEqual({
+      kind: "repair",
+    });
+  });
+
+  it("repairs a partial gateway route (model only) instead of diverging", () => {
+    expect(
+      planInferenceRouteReconcile(
+        { provider: null, model: "nvidia/nemotron-3-super-120b-a12b" },
+        recorded,
+      ),
+    ).toEqual({ kind: "repair" });
+  });
+});
+
+describe("sanitizeRouteValueForDisplay", () => {
+  it("strips control characters and escape sequences", () => {
+    expect(sanitizeRouteValueForDisplay("nvidia-prod\u001b[2J")).toBe("nvidia-prod[2J");
+    expect(sanitizeRouteValueForDisplay("a\r\nb")).toBe("ab");
+    expect(sanitizeRouteValueForDisplay(null)).toBe("");
+    expect(sanitizeRouteValueForDisplay(undefined)).toBe("");
+  });
+
+  it("passes normal provider/model ids through unchanged", () => {
+    expect(sanitizeRouteValueForDisplay("nvidia/nemotron-3-super-120b-a12b")).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(sanitizeRouteValueForDisplay("nvidia-prod")).toBe("nvidia-prod");
   });
 });

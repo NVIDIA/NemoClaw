@@ -99,6 +99,10 @@ export function defaultHermesToolGatewaySelection(): string[] {
   );
 }
 
+export function allHermesToolGatewayPolicyPresets(): string[] {
+  return HERMES_TOOL_GATEWAY_PRESETS.map((preset) => preset.name);
+}
+
 function resolveHermesToolGatewaySelection(part: string) {
   const index = /^[0-9]+$/.test(part) ? Number(part) - 1 : -1;
   if (index >= 0) return HERMES_TOOL_GATEWAY_PRESETS[index] || null;

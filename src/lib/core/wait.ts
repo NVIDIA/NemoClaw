@@ -5,6 +5,23 @@
  * Synchronous waiting primitives for CLI commands.
  */
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { withLocalNoProxy } from "../subprocess-env.js";
+
+/**
+ * Build a curl-friendly env that injects NO_PROXY for loopback hosts so that
+ * probes against localhost-bound services (Ollama, gateway, dashboard, etc.)
+ * do not get routed through a user-configured HTTP_PROXY. See #4181.
+ */
+export function buildLoopbackProbeEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  withLocalNoProxy(env);
+  return env;
+}
+
 /**
  * Synchronously sleep for the given number of milliseconds.
  * Uses Atomics.wait to block without pegging the CPU.
@@ -58,12 +75,13 @@ export function waitForPort(port: number, timeoutSeconds = 5): boolean {
  */
 export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
+  const env = buildLoopbackProbeEnv();
   return waitUntil(() => {
     try {
       const result = spawnSync(
         "curl",
-        ["-sf", "--connect-timeout", "1", "--max-time", "1", url],
-        { stdio: "ignore" },
+        buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
+        { stdio: "ignore", env },
       );
       return result.status === 0;
     } catch {

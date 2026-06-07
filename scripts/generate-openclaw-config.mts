@@ -18,8 +18,11 @@
 //   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64, NEMOCLAW_DISCORD_GUILDS_B64,
 //   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
 //   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
-//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED.
+//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
+//   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
 
 import {
   chmodSync,
@@ -46,6 +49,8 @@ const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
@@ -107,6 +112,52 @@ function truthyEnvDefault(env: Env, name: string, defaultValue: boolean): boolea
     return defaultValue;
   }
   return !FALSE_VALUES.has(raw.trim().toLowerCase());
+}
+
+function parseOpenClawOtelSampleRate(raw: string): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0.0 || value > 1.0) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE must be between 0.0 and 1.0");
+  }
+  return value;
+}
+
+function buildOpenClawOtelConfig(env: Env): JsonObject | undefined {
+  if (!truthyEnvDefault(env, "NEMOCLAW_OPENCLAW_OTEL", false)) {
+    return undefined;
+  }
+
+  const endpoint = (env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT || DEFAULT_OPENCLAW_OTEL_ENDPOINT).trim();
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(endpoint);
+  } catch {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (!["http:", "https:"].includes(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must be an http(s) OTLP/HTTP endpoint");
+  }
+  if (parsedEndpoint.username || parsedEndpoint.password) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
+  }
+
+  const serviceName = (env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME).trim();
+  if (!serviceName) {
+    throw new Error("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME must not be empty");
+  }
+
+  return {
+    enabled: true,
+    endpoint,
+    protocol: "http/protobuf",
+    serviceName,
+    traces: true,
+    metrics: false,
+    logs: false,
+    sampleRate: parseOpenClawOtelSampleRate(
+      (env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE || "1.0").trim(),
+    ),
+  };
 }
 
 function validateDashboardPort(raw: string, envName: string): number {
@@ -454,6 +505,209 @@ function coerceCompatDict(value: unknown): JsonObject {
   throw new Error("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null");
 }
 
+// Canonical primary-agent entry. Always written first into agents.list, always
+// flagged default: true. Pinning the slot here prevents the extra-agents env
+// from displacing the primary agent: OpenClaw's resolveDefaultAgentId falls
+// back to agents[0] when no entry carries default: true, so a wholesale list
+// replacement would silently re-elect the first extra agent.
+//
+// The entry intentionally omits workspace/agentDir so OpenClaw applies its
+// built-in defaults (and so the host-side migration-state collector does not
+// register a phantom host root for the in-sandbox path).
+const MAIN_AGENT_ID = "main";
+const MAIN_AGENT_ENTRY: Readonly<JsonObject> = Object.freeze({
+  id: MAIN_AGENT_ID,
+  default: true,
+});
+const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+// Secondary agent paths must live under the canonical state dir
+// (/sandbox/.openclaw/). The runtime startup script (scripts/nemoclaw-start.sh
+// :: provision_agent_workspaces) discovers /sandbox/.openclaw/workspace-* and
+// chowns them sandbox:sandbox on first boot. The legacy /sandbox/.openclaw-data
+// path is migrated away on start, so it cannot host live agent state.
+const AGENT_DATA_ROOT = "/sandbox/.openclaw";
+
+// Per-agent paths must land in the canonical sandbox layout the runtime
+// startup script provisions and the sandbox isolation policy expects:
+//   workspace -> /sandbox/.openclaw/workspace-<agent-id>
+//   agentDir  -> /sandbox/.openclaw/agents/<agent-id>
+// Allowing arbitrary descendants of /sandbox/.openclaw/ would let an
+// operator point an agent at the gateway state, the openclaw.json config,
+// or a credentials directory, bypassing per-agent isolation and the
+// `provision_agent_workspaces` helper that chowns `workspace-*` dirs to
+// the sandbox user on first boot.
+function expectedAgentPath(kind: "workspace" | "agentDir", id: string): string {
+  const segment = kind === "workspace" ? `workspace-${id}` : `agents/${id}`;
+  return resolve(AGENT_DATA_ROOT, segment);
+}
+
+// Allowlisted operator-supplied keys for a secondary-agent entry. The
+// validator copies only these keys into the baked openclaw.json so an
+// unknown or credential-like field added by mistake cannot be carried into
+// the image (e.g. a stray `apiKey`, `token`, or `env`). Each nested object
+// has its own allowlist below — the top-level filter alone is not enough,
+// because operators could still smuggle `tools.apiKey` or
+// `subagents.token` into the baked config.
+const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
+  "id",
+  "workspace",
+  "agentDir",
+  "tools",
+  "subagents",
+  "description",
+]);
+const ALLOWED_TOOLS_KEYS = new Set<string>(["profile", "allow", "deny"]);
+const ALLOWED_SUBAGENTS_KEYS = new Set<string>(["maxSpawnDepth"]);
+
+function rejectUnknownKeys(obj: JsonObject, allowed: Set<string>, label: string): void {
+  const unknown = Object.keys(obj).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw new Error(
+      `${label} contains unsupported field(s): ${unknown.sort().join(", ")}. Allowed: ${[...allowed].sort().join(", ")}.`,
+    );
+  }
+}
+
+function pickAllowed(obj: JsonObject, allowed: Set<string>): JsonObject {
+  const out: JsonObject = {};
+  for (const key of allowed) {
+    if (key in obj) {
+      out[key] = obj[key];
+    }
+  }
+  return out;
+}
+
+function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
+  const tools = entry.tools;
+  if (!isObject(tools)) {
+    throw new Error(
+      `${label}.tools must be an object describing the per-agent tool policy (profile/allow/deny). Nothing is granted implicitly.`,
+    );
+  }
+  rejectUnknownKeys(tools, ALLOWED_TOOLS_KEYS, `${label}.tools`);
+  const allow = tools.allow;
+  const deny = tools.deny;
+  const hasAllow = Array.isArray(allow) && allow.length > 0;
+  const hasDeny = Array.isArray(deny) && deny.length > 0;
+  if (!hasAllow && !hasDeny) {
+    throw new Error(
+      `${label}.tools must declare a non-empty allow[] or deny[] (or both); secondary agents inherit no tools by default.`,
+    );
+  }
+  for (const key of ["allow", "deny"] as const) {
+    const value = tools[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value) || value.some((token) => typeof token !== "string" || !token)) {
+      throw new Error(
+        `${label}.tools.${key} must be an array of non-empty strings when present.`,
+      );
+    }
+  }
+  if (tools.profile !== undefined && typeof tools.profile !== "string") {
+    throw new Error(`${label}.tools.profile must be a string when present.`);
+  }
+  return pickAllowed(tools, ALLOWED_TOOLS_KEYS);
+}
+
+function validateExtraAgentSubagents(entry: JsonObject, label: string): JsonObject {
+  const subagents = entry.subagents;
+  if (!isObject(subagents)) {
+    throw new Error(
+      `${label}.subagents must be an object containing maxSpawnDepth. Set maxSpawnDepth: 0 to forbid further spawning.`,
+    );
+  }
+  rejectUnknownKeys(subagents, ALLOWED_SUBAGENTS_KEYS, `${label}.subagents`);
+  const depth = subagents.maxSpawnDepth;
+  if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
+    throw new Error(
+      `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
+    );
+  }
+  return pickAllowed(subagents, ALLOWED_SUBAGENTS_KEYS);
+}
+
+function validateExtraAgents(value: unknown): JsonObject[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects",
+    );
+  }
+  const seenIds = new Set<string>([MAIN_AGENT_ID]);
+  return value.map((entry, index) => {
+    const label = `NEMOCLAW_EXTRA_AGENTS_JSON[${index}]`;
+    if (!isObject(entry)) {
+      throw new Error(`${label} must be a JSON object`);
+    }
+    const id = entry.id;
+    if (typeof id !== "string" || !AGENT_ID_RE.test(id)) {
+      throw new Error(
+        `${label}.id must match ${AGENT_ID_RE} (1-32 chars, lowercase alphanumeric, dash, underscore; must start with a letter)`,
+      );
+    }
+    if (id === MAIN_AGENT_ID) {
+      throw new Error(
+        `${label}.id "${MAIN_AGENT_ID}" is reserved for the primary agent; use a different id`,
+      );
+    }
+    if (seenIds.has(id)) {
+      throw new Error(`${label}.id "${id}" is duplicated; agent ids must be unique`);
+    }
+    seenIds.add(id);
+    const canonicalPaths: Record<string, string> = {};
+    for (const pathKey of ["workspace", "agentDir"] as const) {
+      const pathValue = entry[pathKey];
+      if (typeof pathValue !== "string" || pathValue.length === 0) {
+        throw new Error(`${label}.${pathKey} must be a non-empty string`);
+      }
+      if (!isAbsolute(pathValue)) {
+        throw new Error(
+          `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
+        );
+      }
+      const expected = expectedAgentPath(pathKey, id);
+      if (resolve(pathValue) !== expected) {
+        throw new Error(
+          `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,
+        );
+      }
+      canonicalPaths[pathKey] = expected;
+    }
+    if (entry.default === true) {
+      throw new Error(
+        `${label}.default cannot be true; the primary "${MAIN_AGENT_ID}" agent is always the default`,
+      );
+    }
+    rejectUnknownKeys(entry, ALLOWED_EXTRA_AGENT_KEYS, label);
+    const tools = validateExtraAgentTools(entry, label);
+    const subagents = validateExtraAgentSubagents(entry, label);
+    // Build the canonical entry from a fresh object, never from the raw
+    // operator input. This guarantees:
+    //   - workspace/agentDir are the canonical strings (a dot-segment-laden
+    //     path that resolves to the canonical target is normalised before
+    //     bake, matching what provision_agent_workspaces parses);
+    //   - only allowlisted keys reach the image, at every nesting level.
+    const canonical: JsonObject = {
+      id,
+      workspace: canonicalPaths.workspace,
+      agentDir: canonicalPaths.agentDir,
+      tools,
+      subagents,
+    };
+    if (typeof entry.description === "string") {
+      canonical.description = entry.description;
+    }
+    return canonical;
+  });
+}
+
+function buildAgentsList(extras: JsonObject[]): JsonObject[] {
+  return [{ ...MAIN_AGENT_ENTRY }, ...extras];
+}
+
 function applyOpenClawSetupEffects(
   setup: JsonObject,
   inferenceCompat: JsonObject,
@@ -557,6 +811,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const inferenceCompat = coerceCompatDict(
     decodeJsonEnv(env, "NEMOCLAW_INFERENCE_COMPAT_B64", "e30="),
+  );
+  const extraAgents = validateExtraAgents(
+    decodeJsonEnv(env, "NEMOCLAW_EXTRA_AGENTS_JSON_B64", "W10="),
   );
   const openclawPlugins: JsonObject[] = [];
   const openclawPluginIds = new Set<string>();
@@ -751,6 +1008,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
       pluginEntries[pluginId] = { enabled: false };
     }
   }
+  const openclawOtel = buildOpenClawOtelConfig(env);
+  if (openclawOtel) {
+    pluginEntries["diagnostics-otel"] = { enabled: true };
+  }
 
   const plugins: JsonObject = { entries: pluginEntries };
   const pluginLoadPaths: string[] = [];
@@ -773,7 +1034,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
 
   const config: JsonObject = {
-    agents: { defaults: agentDefaults },
+    agents: { defaults: agentDefaults, list: buildAgentsList(extraAgents) },
     models: { mode: "merge", providers },
     channels: { defaults: {}, ...channelConfig },
     tools: openclawTools,
@@ -797,6 +1058,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
       enabled: true,
       proxyUrl,
       loopbackMode: "gateway-only",
+    };
+  }
+  if (openclawOtel) {
+    config.diagnostics = {
+      enabled: true,
+      otel: openclawOtel,
     };
   }
 

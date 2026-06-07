@@ -26,7 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Calver tag v2026.5.16 = Hermes Agent v0.14.0.
 ARG HERMES_VERSION=v2026.5.16
 ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
-ARG HERMES_UV_EXTRAS="messaging web pty"
+ARG HERMES_UV_EXTRAS="anthropic messaging web pty"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -130,7 +130,10 @@ RUN mkdir -p /sandbox/.hermes/memories \
     && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and
@@ -154,11 +157,13 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp),
-# web (API health/UI runtime), and pty (optional browser TUI bridge).
-# New Hermes integrations should be installed
-# by the agent workflow when they are enabled rather than shipped in the
-# base image by default.
+# integrations: anthropic (native Anthropic Messages routing), messaging
+# (Telegram, Discord, Slack, WeChat, WhatsApp), web (API health/UI runtime),
+# and pty (optional browser TUI bridge). These extras are resolved from the
+# selected Hermes release's uv.lock via `uv sync --frozen`, so dependency
+# changes remain tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review.
+# New Hermes integrations should be installed by the agent workflow when they
+# are enabled rather than shipped in the base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \
@@ -168,6 +173,9 @@ RUN mkdir -p /opt/hermes \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
 WORKDIR /opt/hermes
+# ui-tui and web are part of the checksum-pinned Hermes release tarball.
+# npm ci uses the lockfiles from that pinned tree; re-review on every
+# HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -184,10 +192,12 @@ RUN set -eu; \
             echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
         fi; \
     done \
-    && rm -rf /tmp/camoufox-* \
+    && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
-ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
+    HERMES_TUI_DIR="/opt/hermes/ui-tui" \
+    HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version

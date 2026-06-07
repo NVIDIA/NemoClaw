@@ -14,7 +14,23 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
-import { envInt } from "./env";
+import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
+import {
+  type DockerGpuSupervisorReconnectDeps,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "./docker-gpu-supervisor-reconnect";
+export {
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+};
+export type { DockerGpuSupervisorReconnectDeps };
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -23,9 +39,6 @@ const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
-const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
-export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
-  "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 const GPU_ENV_KEYS = new Set([
@@ -58,6 +71,7 @@ export type DockerGpuPatchDeps = {
   dockerRunDetached?: DockerRunFn;
   dockerRename?: DockerRenameFn;
   dockerRm?: DockerContainerFn;
+  dockerStart?: DockerContainerFn;
   dockerStop?: DockerContainerFn;
   dockerLogs?: DockerLogsFn;
   runOpenshell?: (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
@@ -70,6 +84,11 @@ export type DockerGpuPatchDeps = {
   readDir?: (dirPath: string) => string[] | null;
   /** Injectable file reader for unit testing CDI spec content checks. */
   readFile?: (filePath: string) => string | null;
+  /**
+   * Forwarded to the supervisor-reconnect wait. See
+   * `DockerGpuSupervisorReconnectDeps.errorPhaseDebouncePolls`.
+   */
+  errorPhaseDebouncePolls?: number;
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
@@ -95,14 +114,22 @@ export type DockerGpuPatchFailureContext = {
   backupContainerName?: string | null;
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
+  rolledBack?: boolean;
 };
 
 export type DockerGpuPatchResult = {
   applied: true;
   oldContainerId: string;
   newContainerId: string;
+  originalName: string;
   backupContainerName: string;
   mode: DockerGpuPatchMode;
+  // True when the patch path also confirmed supervisor reconnect AND removed
+  // the backup container. False when the caller deferred the reconnect wait
+  // (via `waitForSupervisor: false`); the backup is still in place and the
+  // caller is responsible for calling `finalizeDockerGpuPatchBackup` after
+  // its own supervisor wait completes.
+  backupRemoved: boolean;
 };
 
 export type DockerGpuCloneRunOptions = {
@@ -833,72 +860,6 @@ function waitForNewContainerId(
   return null;
 }
 
-function sandboxListShowsErrorPhase(
-  sandboxName: string,
-  runCaptureOpenshell: NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>,
-): boolean {
-  try {
-    const list = runCaptureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    return SANDBOX_FAILURE_PHASE_TOKENS.has(
-      parseSandboxPhaseFromListOutput(list, sandboxName) ?? "",
-    );
-  } catch {
-    return false;
-  }
-}
-
-function waitForOpenShellSandboxExec(
-  sandboxName: string,
-  timeoutSecs: number,
-  deps: DockerGpuPatchDeps,
-): boolean {
-  if (!deps.runOpenshell) return true;
-  const d = depsWithDefaults(deps);
-  const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
-  while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-    );
-    if (isZeroStatus(result)) return true;
-    // Short-circuit the supervisor-reconnect wait when the sandbox enters a
-    // terminal failure phase. Without this, a patched container that exits
-    // on startup leaves the user staring at the supervisor-reconnect
-    // timeout (default 900s) before any Error-phase diagnostics run (#4316).
-    if (
-      deps.runCaptureOpenshell &&
-      sandboxListShowsErrorPhase(sandboxName, deps.runCaptureOpenshell)
-    ) {
-      return false;
-    }
-    d.sleep(2);
-  }
-  return false;
-}
-
-export const waitForOpenShellSupervisorReconnect = waitForOpenShellSandboxExec;
-
-export function getDockerGpuSupervisorReconnectTimeoutSecs(
-  sandboxReadyTimeoutSecs: number,
-  env: Record<string, string | undefined> = process.env,
-): number {
-  const readyTimeoutSecs = Number.isFinite(sandboxReadyTimeoutSecs)
-    ? Math.max(1, Math.round(sandboxReadyTimeoutSecs))
-    : 1;
-  const fallback = Math.max(
-    readyTimeoutSecs,
-    DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS,
-  );
-  return Math.max(
-    1,
-    envInt(DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV, fallback, env),
-  );
-}
-
 function decoratePatchError<T extends Error>(
   error: T,
   context: DockerGpuPatchFailureContext,
@@ -1010,30 +971,38 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
     context.newContainerId = newContainerId;
 
-    d.dockerRm(backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-
-    if (options.waitForSupervisor !== false) {
-      const execReady = waitForOpenShellSandboxExec(
-        options.sandboxName,
-        options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
-        deps,
-      );
-      if (!execReady) {
-        throw new Error("OpenShell supervisor did not reconnect to the GPU-enabled container.");
-      }
-    }
-
-    return {
+    const selectedMode = selection.mode;
+    const buildPatchResult = (backupRemoved: boolean): DockerGpuPatchResult => ({
       applied: true,
       oldContainerId,
       newContainerId,
+      originalName,
       backupContainerName,
-      mode: selection.mode,
-    };
+      mode: selectedMode,
+      backupRemoved,
+    });
+
+    // Deferred: caller will run the supervisor wait and call
+    // `finalizeDockerGpuPatchBackup` (success → remove the backup, failure →
+    // roll back to it). Removing the backup here would strand the user with
+    // a deleted-backup / failed-new sandbox if the deferred reconnect fails.
+    if (options.waitForSupervisor === false) return buildPatchResult(false);
+
+    const execReady = waitForOpenShellSupervisorReconnect(
+      options.sandboxName,
+      options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
+      deps,
+    );
+    const reconcile = reconcileSupervisorReconnect(
+      execReady,
+      { newContainerId, backupContainerName, originalName },
+      deps,
+    );
+    if (!reconcile.execReady) {
+      context.rolledBack = reconcile.rolledBack;
+      throw reconcile.error;
+    }
+    return buildPatchResult(reconcile.backupRemoved);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     throw decoratePatchError(err, context);
@@ -1547,6 +1516,7 @@ export function collectDockerGpuPatchDiagnostics(
     `old_container_id=${context?.oldContainerId ?? "unknown"}`,
     `new_container_id=${context?.newContainerId ?? "unknown"}`,
     `backup_container_name=${context?.backupContainerName ?? "none"}`,
+    `rolled_back=${context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     "cleanup_commands:",
     ...cleanupCommands.map((command) => `  ${command}`),
   ];

@@ -84,7 +84,26 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-channels-add-remove}"
 INSTALL_LOG="/tmp/nemoclaw-e2e-install.log"
+REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-add-remove-e2e}"
+TELEGRAM_ALLOWED_IDS_VALUE="${TELEGRAM_ALLOWED_IDS:-123456789}"
+TELEGRAM_REQUIRE_MENTION_VALUE="${TELEGRAM_REQUIRE_MENTION:-0}"
+
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+maybe_skip_telegram_reachability_for_fake_token() {
+  if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] && is_fake_telegram_token "$TELEGRAM_TOKEN"; then
+    # This E2E normally uses a fake token to exercise add/remove plumbing, not
+    # the live Telegram API. Remove once the test has a hermetic fake Telegram API.
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping Telegram reachability probe for fake-token E2E"
+  fi
+}
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -140,6 +159,105 @@ policy_list_has_preset() {
   local preset="$1"
   nemoclaw "$SANDBOX_NAME" policy-list 2>/dev/null \
     | grep -E "^\s*●\s+${preset}\b" >/dev/null
+}
+
+assert_host_telegram_config() {
+  local context="$1"
+  local output
+  if output="$(node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, allowedIds, requireMention] = process.argv.slice(1);
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPath);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const entry = registry.sandboxes?.[sandboxName];
+if (!entry) fail("sandbox " + sandboxName + " missing from registry");
+const config = entry.messagingChannelConfig;
+if (!config || typeof config !== "object" || Array.isArray(config)) {
+  fail("messagingChannelConfig missing or not an object");
+}
+if (config.TELEGRAM_ALLOWED_IDS !== allowedIds) {
+  fail("TELEGRAM_ALLOWED_IDS expected " + allowedIds + ", got " + JSON.stringify(config.TELEGRAM_ALLOWED_IDS));
+}
+if (config.TELEGRAM_REQUIRE_MENTION !== requireMention) {
+  fail("TELEGRAM_REQUIRE_MENTION expected " + requireMention + ", got " + JSON.stringify(config.TELEGRAM_REQUIRE_MENTION));
+}
+' "$REGISTRY" "$SANDBOX_NAME" "$TELEGRAM_ALLOWED_IDS_VALUE" "$TELEGRAM_REQUIRE_MENTION_VALUE" 2>&1)"; then
+    pass "host registry messagingChannelConfig persists telegram config ${context}"
+  else
+    fail "host registry messagingChannelConfig missing telegram config ${context}: ${output}"
+  fi
+}
+
+assert_host_telegram_plan() {
+  local expected="$1"
+  local context="$2"
+  local output
+  if output="$(node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, expected] = process.argv.slice(1);
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPath);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const entry = registry.sandboxes?.[sandboxName];
+if (!entry) fail("sandbox " + sandboxName + " missing from registry");
+const state = entry.messaging;
+if (!state || state.schemaVersion !== 1) fail("messaging state missing or schemaVersion != 1");
+const plan = state.plan;
+if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");
+if (plan.sandboxName !== sandboxName) {
+  fail("messaging.plan.sandboxName expected " + sandboxName + ", got " + JSON.stringify(plan.sandboxName));
+}
+if (plan.agent !== "openclaw") fail("messaging.plan.agent expected openclaw, got " + JSON.stringify(plan.agent));
+const channels = Array.isArray(plan.channels) ? plan.channels : [];
+const channel = channels.find((item) => item?.channelId === "telegram");
+const disabledChannels = Array.isArray(plan.disabledChannels) ? plan.disabledChannels : [];
+const credentialBindings = Array.isArray(plan.credentialBindings) ? plan.credentialBindings : [];
+const networkEntries = Array.isArray(plan.networkPolicy?.entries) ? plan.networkPolicy.entries : [];
+const networkPresets = Array.isArray(plan.networkPolicy?.presets) ? plan.networkPolicy.presets : [];
+const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
+if (expected === "active") {
+  if (!channel) fail("telegram channel missing from messaging.plan.channels");
+  if (channel.active !== true) fail("telegram plan active expected true, got " + JSON.stringify(channel.active));
+  if (channel.disabled === true) fail("telegram plan disabled unexpectedly true");
+  if (!networkPresets.includes("telegram")) fail("telegram missing from messaging.plan.networkPolicy.presets");
+  if (!networkEntries.some((entry) => entry?.channelId === "telegram")) {
+    fail("telegram missing from messaging.plan.networkPolicy.entries");
+  }
+  if (!credentialBindings.some((entry) => entry?.channelId === "telegram" && entry?.providerEnvKey === "TELEGRAM_BOT_TOKEN")) {
+    fail("telegram TELEGRAM_BOT_TOKEN credential binding missing from messaging.plan");
+  }
+  if (!agentRender.some((entry) => entry?.channelId === "telegram" && entry?.agent === "openclaw")) {
+    fail("telegram openclaw agent render entry missing from messaging.plan");
+  }
+  if (disabledChannels.includes("telegram")) fail("telegram unexpectedly listed in messaging.plan.disabledChannels");
+} else if (expected === "removed") {
+  if (channel) fail("telegram still present in messaging.plan.channels");
+  if (disabledChannels.includes("telegram")) fail("telegram still present in messaging.plan.disabledChannels");
+  if (networkPresets.includes("telegram")) fail("telegram still present in messaging.plan.networkPolicy.presets");
+  if (networkEntries.some((entry) => entry?.channelId === "telegram")) {
+    fail("telegram still present in messaging.plan.networkPolicy.entries");
+  }
+  if (credentialBindings.some((entry) => entry?.channelId === "telegram")) {
+    fail("telegram credential binding still present in messaging.plan");
+  }
+  if (agentRender.some((entry) => entry?.channelId === "telegram")) {
+    fail("telegram agent render entry still present in messaging.plan");
+  }
+} else {
+  fail("unknown expected plan state: " + expected);
+}
+' "$REGISTRY" "$SANDBOX_NAME" "$expected" 2>&1)"; then
+    pass "host registry messaging.plan has telegram ${expected} ${context}"
+  else
+    fail "host registry messaging.plan expected telegram ${expected} ${context}: ${output}"
+  fi
 }
 
 # Run rebuild with live tail of the rebuild log so the operator can see
@@ -229,6 +347,8 @@ pass "C1a: Pre-cleanup complete"
 # messaging tokens and skip the messaging step entirely. This reproduces the
 # exact entry condition of the #3437 bug (onboard empty -> later channels add).
 unset TELEGRAM_BOT_TOKEN
+unset TELEGRAM_ALLOWED_IDS
+unset TELEGRAM_REQUIRE_MENTION
 
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX=1
@@ -322,6 +442,19 @@ section "Phase 3: channels add telegram + rebuild"
 # Now provide the token — this mirrors the real user flow: after onboard,
 # the operator decides to add a channel and exports the token first.
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
+export TELEGRAM_ALLOWED_IDS="$TELEGRAM_ALLOWED_IDS_VALUE"
+export TELEGRAM_REQUIRE_MENTION="$TELEGRAM_REQUIRE_MENTION_VALUE"
+maybe_skip_telegram_reachability_for_fake_token
+
+# Gateway-credential reuse gate. Before the fix, the rebuild preflight
+# aborted with "provider credential not found" when NVIDIA_API_KEY was unset
+# in the host env even though the inference provider was already registered
+# in the OpenShell gateway. Drop the key from the env around `channels add`
+# + rebuild so the post-add rebuild has to reuse the gateway-stored
+# credential instead of demanding it back on the host.
+NVIDIA_API_KEY_BACKUP="${NVIDIA_API_KEY:-}"
+unset NVIDIA_API_KEY
+info "NVIDIA_API_KEY unset for gateway-credential-reuse gate; gateway must hold the credential"
 
 if nemoclaw "$SANDBOX_NAME" channels add telegram >/tmp/nc-add.log 2>&1; then
   add_rc=0
@@ -335,6 +468,8 @@ else
   fail "C3a: channels add telegram did not register"
   tail -20 /tmp/nc-add.log 2>/dev/null || true
 fi
+assert_host_telegram_config "after channels add"
+assert_host_telegram_plan "active" "after channels add"
 
 info "Rebuilding sandbox to apply the add..."
 if run_rebuild_with_live_log /tmp/nc-rebuild-add.log; then
@@ -342,8 +477,28 @@ if run_rebuild_with_live_log /tmp/nc-rebuild-add.log; then
 else
   fail "C3b: rebuild (post-add) failed"
   tail -100 /tmp/nc-rebuild-add.log 2>/dev/null || true
+  # Restore env before bailing so later phases (and operators rerunning
+  # the script interactively) still see the original key.
+  if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+    export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+  fi
   print_summary
 fi
+
+# Gateway-credential reuse assertion: the rebuild must not have aborted with
+# the "provider credential not found" error.
+if grep -q "provider credential not found" /tmp/nc-rebuild-add.log; then
+  fail "C3c: REGRESSION — rebuild aborted on missing NVIDIA_API_KEY despite gateway-registered credential"
+else
+  pass "C3c: rebuild reused gateway-stored credential without NVIDIA_API_KEY"
+fi
+
+# Restore for the remaining phases — `channels remove` + rebuild should
+# work in the normal env-present case too.
+if [ -n "$NVIDIA_API_KEY_BACKUP" ]; then
+  export NVIDIA_API_KEY="$NVIDIA_API_KEY_BACKUP"
+fi
+unset NVIDIA_API_KEY_BACKUP
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 4: Post-add assertions (Test 2 acceptance, regression #3437)
@@ -377,6 +532,9 @@ else
   fail "C4c: telegram-bridge provider missing in gateway after add+rebuild"
 fi
 
+assert_host_telegram_config "after add+rebuild"
+assert_host_telegram_plan "active" "after add+rebuild"
+
 # C4d: network reachability. With the preset applied, the bridge-style
 # probe (see telegram_egress_open) should reach Telegram and elicit a
 # response; without it, the proxy denies the CONNECT. User-facing symptom
@@ -409,6 +567,8 @@ else
   fail "C5a: channels remove telegram did not unregister"
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
+assert_host_telegram_config "after channels remove"
+assert_host_telegram_plan "removed" "after channels remove"
 
 info "Rebuilding sandbox to apply the remove..."
 if run_rebuild_with_live_log /tmp/nc-rebuild-remove.log; then
@@ -453,5 +613,7 @@ if policy_list_has_preset telegram; then
 else
   pass "C6c: 'telegram' preset removed from policy list after remove+rebuild"
 fi
+
+assert_host_telegram_config "after remove+rebuild"
 
 print_summary

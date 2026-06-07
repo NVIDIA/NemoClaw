@@ -1,24 +1,24 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles
+
+import { AgentOnly } from "../_components/AgentGuide";
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
 You can tune every control, but each change shifts the risk profile.
-This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
+This page documents each configurable control, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
 For background on how the layers fit together, refer to How It Works (use the `nemoclaw-user-overview` skill).
 
 ## Protection Layers at a Glance
 
 NemoClaw enforces security at four layers.
-NemoClaw locks some when it creates the sandbox and requires a restart to change them.
+NemoClaw locks some controls when it creates the sandbox and requires a restart to change them.
 You can hot-reload others while the sandbox runs.
 
-The following diagram shows the default posture immediately after `nemoclaw onboard`, before you approve any endpoints or apply any presets.
+The following diagram shows the default posture immediately after onboarding, before you approve any endpoints or apply any presets.
 
 ```mermaid
 flowchart TB
-    subgraph HOST["Your Machine: default posture after nemoclaw onboard"]
+    subgraph HOST["Your Machine: default posture after onboarding"]
         direction TB
 
         YOU["👤 Operator"]
@@ -70,15 +70,16 @@ flowchart TB
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
 | Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
-| Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use `nemoclaw inference set`. |
+| Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
 
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets operators approve or deny requests in real time.
+Network policy allowlists do not disable OpenShell's SSRF guard; see Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for the interaction between egress rules and internal-address blocking.
 
 ### Deny-by-Default Egress
 
-The sandbox blocks all outbound connections unless you explicitly list the endpoint in the policy file `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
+The sandbox blocks all outbound connections unless you explicitly list the endpoint in the applicable baseline policy files.
 
 | Aspect | Detail |
 |---|---|
@@ -92,7 +93,7 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 Each network policy entry restricts which executables can reach the endpoint using the `binaries` field.
 
 OpenShell identifies the calling binary by reading `/proc/<pid>/exe` (the kernel-trusted executable path, not `argv[0]`), walking the process tree for ancestor binaries, and computing a SHA256 hash of each binary on first use.
-If someone replaces a binary while the sandbox runs, the hash mismatch triggers an immediate deny.
+If someone replaces a binary while the sandbox runs, the hash mismatch immediately denies the request.
 
 | Aspect | Detail |
 |---|---|
@@ -126,12 +127,12 @@ The `protocol` field on an endpoint controls whether the proxy also inspects ind
 
 ### Operator Approval Flow
 
-When the agent reaches an unlisted endpoint, OpenShell blocks the request and prompts the operator in the TUI.
+When the agent reaches an unlisted endpoint, OpenShell blocks the request and prompts you in the TUI.
 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The gateway blocks all unlisted endpoints and requires approval. |
-| What you can change | The system merges approved endpoints into the sandbox's policy as a new durable revision. They persist across sandbox restarts within the same sandbox instance. However, when you destroy and recreate the sandbox (for example, by running `nemoclaw onboard`), the policy resets to the baseline defined in the blueprint. |
+| What you can change | The system merges approved endpoints into the sandbox's policy as a new durable revision. They persist across sandbox restarts within the same sandbox instance. However, when you destroy and recreate the sandbox through onboarding, the policy resets to the baseline defined in the blueprint. |
 | Risk if relaxed | Approving an endpoint permanently widens the running sandbox's policy. If you approve a broad domain (such as a CDN that hosts arbitrary content), the agent can fetch anything from that domain until you destroy and recreate the sandbox. |
 | Recommendation | Review each blocked request before approving. If you find yourself approving the same endpoint repeatedly, add it to the baseline policy with appropriate binary and path restrictions. To reset approved endpoints, destroy and recreate the sandbox. |
 
@@ -143,6 +144,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 |---|---|---|
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. The sandbox base image includes the `brew` binary; this preset opens network egress to GitHub and the Homebrew formulae index so `brew install` can fetch bottles. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
+| `claude-code` | Claude Code CLI API, telemetry, and crash-report endpoints. | Allows a separately installed Claude Code CLI to reach Anthropic and telemetry hosts with its own credentials. Do not use this preset for NemoClaw inference routing. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
@@ -173,6 +175,8 @@ The container mounts system directories read-only to prevent the agent from modi
 
 ### Agent Config Directory
 
+<AgentOnly variant="openclaw">
+
 The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration (model routing, CORS settings, channel config).
 The current entrypoint reads the gateway auth token from OpenClaw config when present, exports it as `OPENCLAW_GATEWAY_TOKEN`, and writes it to `/tmp/nemoclaw-proxy-env.sh` so interactive sandbox sessions can reach the gateway through system-wide shell hooks.
 In root mode, the gateway process still runs as the separate `gateway` user, but the token is intentionally available to sandbox shells for local gateway access.
@@ -180,7 +184,7 @@ In root mode, the gateway process still runs as the separate `gateway` user, but
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
-For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and high-risk state entry points cannot be changed by the sandbox user.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config and high-risk state entry points.
 The immutability workflow locks high-risk state directories (`skills`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` with `chmod -R go-w`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
 The same workflow also locks the secret-bearing directories (`credentials`, `identity`, `pairing`) to `root:root 700` with `chmod -R go-rwX`.
@@ -190,7 +194,7 @@ The list is the union of state directories declared by every shipped agent manif
 Two exemption kinds keep runtime data writable.
 The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`; the lock helper never touches those paths.
 Inside a locked tree, the helper restores `agents/<agent-id>/sessions/` to `sandbox:sandbox 2770` after the surrounding `agents/` lock so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
-If any high-risk state-dir root is a symlink when the lock runs, it refuses to proceed and reports "Config not locked: state dir root is a symlink" rather than silently following the link with privileged `chown -R` / `chmod -R`.
+If any high-risk state-dir root is a symlink when the lock runs, the lock helper refuses to proceed and reports "Config not locked: state dir root is a symlink" instead of following the link with privileged `chown -R` / `chmod -R`.
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
@@ -208,6 +212,25 @@ If any high-risk state-dir root is a symlink when the lock runs, it refuses to p
 | What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+The `/sandbox/.hermes` directory contains Hermes runtime configuration, generated environment settings, logs, platform state, and durable database state.
+NemoClaw writes `config.yaml` and `.env` during onboarding and rebuilds.
+Direct edits to these files can be overwritten when NemoClaw regenerates the image.
+
+Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
+Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
+
+| Aspect | Detail |
+|---|---|
+| Default | The Hermes config tree contains NemoClaw-generated config plus mutable runtime state. |
+| What you can change | Use host-side NemoClaw commands for durable model, provider, messaging, and policy changes; inspect files directly only for debugging. |
+| Risk of direct edits | Direct edits to generated config can drift from the host registry and may be lost on rebuild. |
+| Recommendation | For sensitive workloads, keep generated config under NemoClaw control and back up Hermes state before destructive operations. |
+
+</AgentOnly>
 
 ### Writable Paths
 
@@ -244,20 +267,28 @@ When the entrypoint switches from root to the `sandbox` and `gateway` users, it 
 The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
 During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
-This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
+This behavior is best effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill)).
+
+To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
+The agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities, so it will not boot on a host whose bounding set still holds them — typically one that cannot perform the drop (no `CAP_SETPCAP`, or `capsh` missing) and was not given a clean bounding set by the container runtime.
+This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WSL); leaving it unset preserves the best-effort default.
+The check covers the agent process tree only — a `nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+
+<AgentOnly variant="openclaw">
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to Sandbox Hardening.
+</AgentOnly>
 
 | Aspect | Detail |
 |---|---|
 | Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then uses `setpriv` during user step-down when possible. Best-effort. |
-| What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw flow (with `nemoclaw onboard`), the entrypoint handles capability dropping automatically. |
+| What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw onboarding flow, the entrypoint handles capability dropping automatically. |
 | Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` or `setpriv` cannot run, the container retains more of the runtime-provided capability set. |
 | Recommendation | Run on an image that includes `capsh` and `setpriv` (the NemoClaw image includes them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
 
 ### Gateway Process Isolation
 
-The OpenClaw gateway runs as a separate `gateway` user, not as the `sandbox` user that runs the agent.
+The in-sandbox gateway runs as a separate `gateway` user, not as the `sandbox` user that runs the agent.
 
 | Aspect | Detail |
 |---|---|
@@ -281,7 +312,7 @@ The `no-new-privileges` flag prevents processes from gaining additional privileg
 
 A process limit caps the number of processes the sandbox user can spawn.
 The entrypoint sets both soft and hard limits using `ulimit -u 512`.
-This is best-effort: if the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
+This behavior is best effort: if the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
 
 | Aspect | Detail |
 |---|---|
@@ -334,7 +365,7 @@ A registry compromise or accidental force-push cannot silently swap the sandbox 
 | Default | `nemoclaw-blueprint/blueprint.yaml` pins the sandbox image by digest. A CI regression test blocks any mutable-tag reference from merging. |
 | What you can change | Contributors bumping the sandbox image must update the digest in `blueprint.yaml`. Release tooling should rewrite the digest automatically. |
 | Risk if relaxed | Reverting to a mutable tag (`:latest`) allows a registry-side change to replace the sandbox image without any blueprint update, which is a supply-chain risk. |
-| Recommendation | Always reference the sandbox image by digest. If you build a custom image with `nemoclaw onboard --from`, the digest constraint does not apply to your local build. |
+| Recommendation | Always reference the sandbox image by digest. If you build a custom image with the onboarding `--from` path, the digest constraint does not apply to your local build. |
 
 ### Auth Profile Permissions
 
@@ -349,6 +380,8 @@ This prevents other users on the host from reading stored credentials.
 | Recommendation | No action needed. If you see a `permission denied` error when reading auth profiles, verify that you are running as the same user who created them. |
 
 ## Gateway Authentication Controls
+
+<AgentOnly variant="openclaw">
 
 The OpenClaw gateway authenticates devices that connect to the Control UI dashboard.
 NemoClaw hardens these defaults at image build time.
@@ -392,10 +425,21 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 
 | Aspect | Detail |
 |---|---|
-| Default | The watcher approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat`. All other clients are rejected and logged. |
-| What you can change | This is not a user-facing knob. The allowlist is defined in the entrypoint script. |
+| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat` or `cli`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. All other clients or scopes are rejected and logged. |
+| What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
-| Recommendation | No action needed. The entrypoint handles this automatically. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+| Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes exposes an OpenAI-compatible API on the forwarded Hermes port and can optionally expose the native Hermes dashboard.
+Do not publish those endpoints on shared or public networks unless you put them behind your own access controls.
+NemoClaw still keeps provider credentials in OpenShell and routes model traffic through `inference.local`.
+Generated Hermes runtime files use OpenShell resolver placeholders for managed-tool and messaging credentials.
+Hermes startup rejects raw secret-shaped values in sandbox-visible environment or config fields, while allowing empty values, migration sentinels, OpenShell resolver placeholders, and expected Slack placeholder forms.
+
+</AgentOnly>
 
 ### CLI Secret Redaction
 
@@ -406,9 +450,11 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 | Default | Enabled. The runner redacts secrets from stdout, stderr, and thrown error messages. |
 | What you can change | This is not a user-facing knob. The CLI enforces it on all command output paths. |
 | Risk if relaxed | Without redaction, secrets could appear in terminal scrollback, log files, or debug output shared in bug reports. |
-| Recommendation | No action needed. If you share `nemoclaw debug` output, verify that no secrets appear in the collected diagnostics. |
+| Recommendation | No action needed. If you share NemoClaw debug output, verify that no secrets appear in the collected diagnostics. |
 
 ### Memory Secret Scanner
+
+<AgentOnly variant="openclaw">
 
 The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
 The scanner intercepts Write, Edit, and similar tool calls targeting memory and workspace paths before they reach disk.
@@ -416,10 +462,18 @@ The scanner intercepts Write, Edit, and similar tool calls targeting memory and 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Three classifiers, all enforced through `isMemoryPath()`: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
+| What it covers | Three path classifiers, all enforced through `isMemoryPath()`, plus credential-shaped text such as provider API keys, OpenAI project keys with `sk-proj-` prefixes, and Slack app-level `xapp-` tokens. The path classifiers are: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes does not use the OpenClaw NemoClaw plugin memory scanner.
+Keep secrets in environment variables or OpenShell providers, and avoid writing raw credentials to Hermes state files or workspace content.
+
+</AgentOnly>
 
 ## Inference Controls
 
@@ -435,7 +489,7 @@ The agent never receives the provider API key.
 | Default | The agent talks to `inference.local`. The host owns the credential and upstream endpoint. |
 | What you can change | You cannot configure this architecture. The system always enforces it. |
 | Risk if bypassed | If the agent could reach an inference endpoint directly (by adding it to the network policy), it would need an API key. Since the sandbox does not contain credentials, this acts as defense-in-depth. However, adding an inference provider's host to the network policy without going through OpenShell routing could let the agent use a stolen or hardcoded key. |
-| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy. Use OpenShell inference routing instead. |
+| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy for NemoClaw model traffic. Use OpenShell inference routing instead. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
 
 ### Provider Trust Tiers
 
@@ -454,12 +508,14 @@ Different inference providers have different trust and cost profiles.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start. DGX Spark and DGX Station managed vLLM entries are offered by default, and an already-running vLLM server on `localhost:8000` is offered in the menu without a flag, because selecting either is an explicit user action.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start.
+DGX Spark and DGX Station managed vLLM entries appear by default.
+An already-running vLLM server on `localhost:8000` also appears in the menu without a flag because selecting it is an explicit user action.
 
 | Aspect | Detail |
 |---|---|
 | Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries, plus already-running vLLM on `localhost:8000`, are offered when detected. |
-| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before running `nemoclaw onboard` to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
+| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before onboarding to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
 | Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |
 
@@ -505,16 +561,16 @@ The following patterns weaken security without providing meaningful benefit.
 | Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
-| Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Lock config for always-on assistants handling sensitive data. |
-| Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
+| Leaving generated agent config writable on sensitive workloads | The generated config tree contains model routing, channel settings, and runtime integration state (`/sandbox/.openclaw` for OpenClaw, `/sandbox/.hermes` for Hermes). Writable config lets the agent drift from host-managed policy and routing. | Keep generated config under NemoClaw control for always-on assistants handling sensitive data. |
+| Adding inference provider hosts to the network policy for NemoClaw inference | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. Apply `claude-code` only when intentionally running the separate Claude Code CLI inside the sandbox. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 
 ## Known Limitations
 
 | Limitation | Impact | Mitigation |
 |-----------|--------|------------|
-| `openclaw agent --local` bypasses gateway | Secret scanning, network policy, and inference auth are not enforced when the agent runs in local mode. | A runtime warning is emitted when `--local` is detected. Avoid `--local` for production workflows. A future OpenClaw-level hook will close this gap. |
-| Direct filesystem writes bypass secret scanner | The scanner intercepts OpenClaw tool calls, not raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. The scanner is application-layer defense-in-depth, not a filesystem-level control. |
+| Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
+| Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
 | Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 
 ## Related Topics
@@ -522,6 +578,8 @@ The following patterns weaken security without providing meaningful benefit.
 - Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference.
 - Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for static and dynamic policy changes.
 - Approve or Deny Network Requests (use the `nemoclaw-user-manage-policy` skill) for the operator approval flow.
-- Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
+<AgentOnly variant="openclaw">
+- Sandbox Hardening for container-level security measures.
+</AgentOnly>
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 - How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.

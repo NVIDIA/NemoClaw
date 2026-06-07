@@ -307,6 +307,28 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
   });
 
+  it("captures the CUDA-usability proof onto the config for status persistence (#4231)", () => {
+    const proof = { status: "verified" as const, cudaVerified: true, at: "t" };
+    // Fresh config so the assignment does not leak into the shared GPU_CONFIG.
+    const config: { sandboxGpuEnabled: boolean; sandboxGpuProof?: typeof proof | null } = {
+      sandboxGpuEnabled: true,
+    };
+    verifyGpuSandboxAfterReady(
+      config,
+      "vllm-local",
+      baseOptions({
+        verifyDirectSandboxGpu: vi.fn(() => proof),
+        deps: {
+          findContainerIds: () => ["container-abc"],
+          dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
+          dockerRun: dockerRunWithCurl({ status: 0 }),
+          sleep: vi.fn(),
+        },
+      }),
+    );
+    expect(config.sandboxGpuProof).toEqual(proof);
+  });
+
   it("does not duplicate proof diagnostics when Docker GPU patch verifier handles them", () => {
     const proofError = new Error("process.exit");
     const verifyGpuOrExit = vi.fn(() => {

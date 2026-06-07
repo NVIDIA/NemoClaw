@@ -41,10 +41,15 @@ export interface PrivilegedExec {
 //
 // Coverage tracks the union of state_dirs declared by every shipped agent
 // manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml).
-// Runtime-mutable subtrees that must keep being writable while shields are
-// up are intentionally omitted:
+// Runtime-mutable subtrees/files that must keep being writable while shields
+// are up are intentionally omitted:
 //   - `sessions` (Hermes top-level) and `agents/*/sessions` (OpenClaw) — the
 //     latter is restored via WRITABLE_RUNTIME_SUBPATHS after the lock loop.
+//   - `.hermes_history` (Hermes top-level file) — prompt_toolkit appends to
+//     this file from the sandbox user on every TUI keypress. It is deliberately
+//     precreated/repaired as `sandbox:sandbox 0660` while the parent config dir
+//     can remain `root:root 0755` under shields-up. Removal condition: upstream
+//     Hermes exposes a supported option to redirect or disable FileHistory.
 //   - `memories`, `logs`, `cache`, `plans` (Hermes) — runtime mutables.
 //   - `openclaw-weixin` is regenerated from envs at image-build time
 //     (see src/lib/actions/sandbox/rebuild.ts) and is not a manifest state_dir.
