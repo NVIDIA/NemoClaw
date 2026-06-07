@@ -215,10 +215,12 @@ describe("config-io", () => {
 
       const sibling = path.join(dir, "should-be-healed.json");
       fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+      fs.chmodSync(sibling, 0o644);
 
       const outsideDir = makeTempDir();
       const outside = path.join(outsideDir, "target");
       fs.writeFileSync(outside, "outside", { mode: 0o644 });
+      fs.chmodSync(outside, 0o644);
       const linkPath = path.join(dir, "rogue-link");
       fs.symlinkSync(outside, linkPath);
 
@@ -243,6 +245,7 @@ describe("config-io", () => {
     const outsideDir = makeTempDir();
     const outside = path.join(outsideDir, "target.json");
     fs.writeFileSync(outside, JSON.stringify({ outside: true }), { mode: 0o644 });
+    fs.chmodSync(outside, 0o644);
     const symlinkPath = path.join(dir, "config.json");
     fs.symlinkSync(outside, symlinkPath);
 
@@ -281,6 +284,7 @@ describe("config-io", () => {
       fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
       const sibling = path.join(unrelatedDir, "other.json");
       fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+      fs.chmodSync(sibling, 0o644);
 
       readConfigFile(target, null);
 
