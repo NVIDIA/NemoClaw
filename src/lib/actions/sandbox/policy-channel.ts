@@ -60,9 +60,22 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
+import {
+  POLICY_CONTEXT_SANDBOX_PATH,
+  writePolicyContextToSandbox,
+} from "./policy-explain";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
+
+function refreshSandboxPolicyContextFile(sandboxName: string): void {
+  const result = writePolicyContextToSandbox(sandboxName);
+  if (!result.written && result.reason && result.reason !== "sandbox unreachable") {
+    console.error(
+      `  Could not refresh ${POLICY_CONTEXT_SANDBOX_PATH} for sandbox '${sandboxName}': ${result.reason}`,
+    );
+  }
+}
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -194,6 +207,7 @@ export async function addSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
+  refreshSandboxPolicyContextFile(sandboxName);
 }
 
 /**
@@ -247,6 +261,7 @@ async function applyExternalPreset(
       // Custom presets share the registry slot with built-ins (customPolicies
       // in policy/index.ts:684), so they need the same session-sync.
       syncSessionPolicyPresetsWithRegistry(sandboxName, loaded.presetName, "add");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
   } catch (err: unknown) {
@@ -1580,4 +1595,5 @@ export async function removeSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
+  refreshSandboxPolicyContextFile(sandboxName);
 }

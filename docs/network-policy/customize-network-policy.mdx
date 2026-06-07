@@ -320,6 +320,45 @@ $$nemoclaw my-assistant policy-remove my-internal-api --yes
 
 `policy-remove` accepts both built-in and custom preset names. Run `$$nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
+## Agent Policy Context
+
+When an agent runs in the sandbox, it needs a compact view of the active policy so it can decide whether a host or integration is allowed and what to suggest when something fails.
+`$$nemoclaw <name> policy-explain` prints that view as a redacted summary: the recorded tier, the applied presets and their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
+
+```bash
+$$nemoclaw my-assistant policy-explain
+```
+
+Pass `--json` to emit the same context as a structured object the agent can read:
+
+```bash
+$$nemoclaw my-assistant policy-explain --json
+```
+
+NemoClaw also seeds the rendered context inside the sandbox at `/sandbox/.openclaw/workspace/POLICY.md` once during onboarding and refreshes it on every `policy-add` or `policy-remove`, so the in-sandbox agent picks it up when it scans the workspace.
+Pass `--write` to refresh that file on demand without changing the policy:
+
+```bash
+$$nemoclaw my-assistant policy-explain --write
+```
+
+The output is intentionally redacted.
+Network policy rule bodies, credential metadata, internal IP ranges, and binary allowlists are not included — only host stems and category-level summaries appear.
+
+The context also documents how the agent should classify a failed host or integration attempt:
+
+| Classification | When it applies |
+|----------------|-----------------|
+| `blocked-by-policy` | The host is not declared by any applied preset, or the request is refused with HTTP 403 / a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`). |
+| `missing-approval` | The host is allowed by an applied preset, but the request is refused with HTTP 401 or 403 (credentials or scope are missing). |
+| `unsupported` | The capability is not offered by NemoClaw or OpenShell. |
+| `unknown` | None of the above apply; the agent should surface the underlying error. |
+
+Use the classification to pick the next step.
+For `blocked-by-policy`, run `$$nemoclaw <name> policy-add <preset>` or author a [custom preset](#custom-preset-files).
+For `missing-approval`, confirm the API token and scopes for the integration.
+For `unsupported`, surface the limitation to the user without retrying.
+
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests) for real-time operator approval.

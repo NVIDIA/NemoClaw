@@ -1,0 +1,142 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../policy/context", () => ({
+  buildPolicyContext: vi.fn(),
+  renderPolicyContextMarkdown: vi.fn(),
+}));
+
+import type { PolicyContext } from "../../policy/context";
+import {
+  POLICY_CONTEXT_SANDBOX_PATH,
+  explainSandboxPolicy,
+  writePolicyContextToSandbox,
+} from "./policy-explain";
+
+function fakeContext(sandboxName: string): PolicyContext {
+  return {
+    sandboxName,
+    tier: null,
+    activePresets: [],
+    knownUnappliedPresets: [],
+    approvalPath: {
+      inspect: `nemoclaw ${sandboxName} policy list`,
+      add: `nemoclaw ${sandboxName} policy add <preset>`,
+      remove: `nemoclaw ${sandboxName} policy remove <preset>`,
+      documentation: "docs/network-policy/customize-network-policy.mdx",
+    },
+    supportBoundaries: [],
+    generatedAt: "2026-06-07T00:00:00.000Z",
+  };
+}
+
+describe("explainSandboxPolicy", () => {
+  it("renders the policy context as markdown by default", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "# rendered\n");
+    const log = vi.fn();
+    const logJson = vi.fn();
+    const exec = vi.fn();
+
+    const ctx = explainSandboxPolicy(
+      "alpha",
+      {},
+      { build, render, log, logJson, exec },
+    );
+
+    expect(build).toHaveBeenCalledWith("alpha");
+    expect(render).toHaveBeenCalledWith(ctx);
+    expect(log).toHaveBeenCalledWith("# rendered\n");
+    expect(logJson).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("emits JSON when the json flag is set", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn();
+    const log = vi.fn();
+    const logJson = vi.fn();
+    const exec = vi.fn();
+
+    const ctx = explainSandboxPolicy(
+      "alpha",
+      { json: true },
+      { build, render, log, logJson, exec },
+    );
+
+    expect(logJson).toHaveBeenCalledWith(ctx);
+    expect(log).not.toHaveBeenCalled();
+    expect(render).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("writes the rendered context into the sandbox when writeToSandbox is set", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "# rendered\n");
+    const log = vi.fn();
+    const logJson = vi.fn();
+    const exec = vi.fn((_sandbox: string, _command: string) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const warn = vi.fn();
+
+    explainSandboxPolicy(
+      "alpha",
+      { writeToSandbox: true },
+      { build, render, log, logJson, exec, warn },
+    );
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    const command = exec.mock.calls[0][1];
+    expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
+    expect(command).toContain("base64 -d");
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("writePolicyContextToSandbox", () => {
+  it("encodes the rendered markdown as base64 and pipes it through base64 -d", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "hello sandbox\n");
+    const exec = vi.fn((_sandbox: string, _command: string) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+
+    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+
+    expect(result.written).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(1);
+    const command = exec.mock.calls[0][1];
+    const encoded = Buffer.from("hello sandbox\n", "utf-8").toString("base64");
+    expect(command).toContain(encoded);
+    expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
+  });
+
+  it("returns sandbox-unreachable when exec yields null", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "x");
+    const exec = vi.fn(() => null);
+
+    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+
+    expect(result).toEqual({ written: false, reason: "sandbox unreachable" });
+  });
+
+  it("returns a descriptive reason when the sandbox command exits non-zero", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "x");
+    const exec = vi.fn(() => ({ status: 13, stdout: "", stderr: "denied" }));
+
+    const result = writePolicyContextToSandbox("alpha", { build, render, exec });
+
+    expect(result.written).toBe(false);
+    expect(result.reason).toContain("status 13");
+    expect(result.reason).toContain("denied");
+  });
+});
