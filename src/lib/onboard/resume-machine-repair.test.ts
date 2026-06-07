@@ -5,13 +5,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   createSession,
+  filterSafeUpdates,
   MACHINE_SNAPSHOT_VERSION,
+  normalizeSession,
   type Session,
+  type SessionUpdates,
 } from "../state/onboard-session";
+import { advanceTo, branchTo } from "./machine/result";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import {
   repairResumeMachineSnapshot,
   resumeMachineState,
 } from "./resume-machine-repair";
+import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
 function createFailedSession(mutator: (session: Session) => void): Session {
   const session = createSession({
@@ -30,6 +36,73 @@ function createFailedSession(mutator: (session: Session) => void): Session {
   });
   mutator(session);
   return session;
+}
+
+function cloneSession(session: Session): Session {
+  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+}
+
+function createBoundaryHarness(initial: Session) {
+  let session = cloneSession(initial);
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    const current = cloneSession(session);
+    session = cloneSession(mutator(current) ?? current);
+    return cloneSession(session);
+  };
+  const deps: OnboardRuntimeDeps = {
+    loadSession: () => cloneSession(session),
+    createSession,
+    saveSession: (next) => {
+      session = cloneSession(next);
+      return cloneSession(session);
+    },
+    updateSession,
+    markStepStarted: () => cloneSession(session),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepSkipped: () => cloneSession(session),
+    markStepFailed: () => cloneSession(session),
+    markStepFailedRecordOnly: () => cloneSession(session),
+    completeSession: (updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        current.status = "complete";
+        current.resumable = false;
+        return current;
+      }),
+    filterSafeUpdates,
+    emitEvent: () => undefined,
+    now: () => "2026-06-01T00:02:00.000Z",
+  };
+  const boundary = new OnboardRuntimeBoundary({
+    toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+    maybeForceE2eStepFailure: () => undefined,
+    createRuntime: () => new OnboardRuntime(deps),
+    stepMutationOptions: { updateMachine: false },
+  });
+  return { boundary, getSession: () => cloneSession(session) };
+}
+
+async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
+  repairResumeMachineSnapshot(initial, "2026-06-01T00:01:00.000Z");
+  initial.failure = null;
+  initial.status = "in_progress";
+  const { boundary, getSession } = createBoundaryHarness(initial);
+  await boundary.recordOnboardStarted(true);
+  await boundary.recordStateResultsWithStepCompatibility([
+    advanceTo("preflight", { metadata: { state: "init" } }),
+    advanceTo("gateway", { metadata: { state: "preflight" } }),
+    advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+    advanceTo("inference", { metadata: { state: "provider_selection" } }),
+    advanceTo("sandbox", { metadata: { state: "inference" } }),
+    branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    advanceTo("policies", { metadata: { state: "openclaw" } }),
+    advanceTo("finalizing", { metadata: { state: "policies" } }),
+  ]);
+  await boundary.recordSessionComplete();
+  return getSession();
 }
 
 describe("resume machine repair", () => {
@@ -101,4 +174,35 @@ describe("resume machine repair", () => {
       revision: 3,
     });
   });
+
+  it.each([
+    ["preflight", "preflight", null],
+    ["gateway", "gateway", "preflight"],
+    ["inference", "inference", "provider_selection"],
+  ] as const)(
+    "lets record-only resume complete from failed %s",
+    async (_name, failedStep, completedStep) => {
+      const session = createFailedSession((current) => {
+        current.failure = {
+          step: failedStep,
+          message: `${failedStep} failed`,
+          recordedAt: "2026-06-01T00:00:00.000Z",
+        };
+        current.lastStepStarted = failedStep;
+        current.steps[failedStep].status = "failed";
+        if (completedStep) {
+          current.lastCompletedStep = completedStep;
+          current.steps[completedStep].status = "complete";
+        }
+      });
+
+      const completed = await runRecordOnlyResumeSequence(session);
+
+      expect(completed).toMatchObject({
+        status: "complete",
+        failure: null,
+        machine: { state: "complete" },
+      });
+    },
+  );
 });

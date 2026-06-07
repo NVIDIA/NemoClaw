@@ -9,6 +9,10 @@ import { nextMachineStateAfterCompletedStep } from "../state/onboard-step-state"
 import { machineStateFromOnboardSessionStep } from "./machine/events";
 import type { OnboardMachineState } from "./machine/types";
 
+/**
+ * Reads the legacy step-level source of truth for interrupted sessions whose
+ * durable FSM snapshot was already collapsed to the terminal failed state.
+ */
 function activeStepMachineState(session: Session): OnboardMachineState | null {
   const failedStepName = session.failure?.step ?? null;
   const failedStep = failedStepName ? session.steps[failedStepName] : null;
@@ -30,6 +34,9 @@ function activeStepMachineState(session: Session): OnboardMachineState | null {
   return null;
 }
 
+/**
+ * Computes the nonterminal state where a failed durable session should resume.
+ */
 export function resumeMachineState(session: Session): OnboardMachineState {
   return activeStepMachineState(session) ?? nextMachineStateAfterCompletedStep(
     session.lastCompletedStep,
@@ -37,6 +44,14 @@ export function resumeMachineState(session: Session): OnboardMachineState {
   ) ?? "init";
 }
 
+/**
+ * Repairs the legacy failed-session/FSM boundary during --resume.
+ *
+ * Source fix constraint: failed -> resume is not a modeled FSM transition yet,
+ * and legacy step fields still act as the secondary durable source for resume.
+ * Remove this bridge once failed-session recovery is represented by explicit
+ * FSM recovery results or step fields stop being used to derive resume state.
+ */
 export function repairResumeMachineSnapshot(
   session: Session,
   stateEnteredAt = new Date().toISOString(),
