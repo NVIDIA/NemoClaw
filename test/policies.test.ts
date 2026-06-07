@@ -1062,8 +1062,6 @@ exit 1
       }) as never);
 
       try {
-        // Apply a real built-in preset so applyPresetContent runs end-to-end
-        // up to the resolvability check.
         expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
         expect(exitSpy).toHaveBeenCalledWith(1);
         // No `nemoclaw-policy-*` temp dir should have been created before

@@ -21,6 +21,11 @@ function makeTempDir(): string {
   return dir;
 }
 
+function writeFileWithMode(filePath: string, contents: string, mode: number) {
+  fs.writeFileSync(filePath, contents, { mode });
+  fs.chmodSync(filePath, mode);
+}
+
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -75,6 +80,7 @@ describe("config-io", () => {
   it("tightens pre-existing weak directory permissions to 0o700", () => {
     const dir = path.join(makeTempDir(), "config");
     fs.mkdirSync(dir, { mode: 0o755 });
+    fs.chmodSync(dir, 0o755);
 
     ensureConfigDir(dir);
 
@@ -154,7 +160,7 @@ describe("config-io", () => {
     const dir = makeTempDir();
     fs.chmodSync(dir, 0o700);
     const file = path.join(dir, "config.json");
-    fs.writeFileSync(file, JSON.stringify({ tight: true }), { mode: 0o644 });
+    writeFileWithMode(file, JSON.stringify({ tight: true }), 0o644);
 
     const result = readConfigFile(file, null);
 
@@ -186,7 +192,7 @@ describe("config-io", () => {
         "usage-notice.json",
       ];
       for (const name of siblings) {
-        fs.writeFileSync(path.join(dir, name), "stale", { mode: 0o644 });
+        writeFileWithMode(path.join(dir, name), "stale", 0o644);
       }
 
       readConfigFile(target, null);
@@ -214,13 +220,11 @@ describe("config-io", () => {
       fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
 
       const sibling = path.join(dir, "should-be-healed.json");
-      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
-      fs.chmodSync(sibling, 0o644);
+      writeFileWithMode(sibling, "stale", 0o644);
 
       const outsideDir = makeTempDir();
       const outside = path.join(outsideDir, "target");
-      fs.writeFileSync(outside, "outside", { mode: 0o644 });
-      fs.chmodSync(outside, 0o644);
+      writeFileWithMode(outside, "outside", 0o644);
       const linkPath = path.join(dir, "rogue-link");
       fs.symlinkSync(outside, linkPath);
 
@@ -244,8 +248,7 @@ describe("config-io", () => {
 
     const outsideDir = makeTempDir();
     const outside = path.join(outsideDir, "target.json");
-    fs.writeFileSync(outside, JSON.stringify({ outside: true }), { mode: 0o644 });
-    fs.chmodSync(outside, 0o644);
+    writeFileWithMode(outside, JSON.stringify({ outside: true }), 0o644);
     const symlinkPath = path.join(dir, "config.json");
     fs.symlinkSync(outside, symlinkPath);
 
@@ -283,8 +286,7 @@ describe("config-io", () => {
       const target = path.join(unrelatedDir, "config.json");
       fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
       const sibling = path.join(unrelatedDir, "other.json");
-      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
-      fs.chmodSync(sibling, 0o644);
+      writeFileWithMode(sibling, "stale", 0o644);
 
       readConfigFile(target, null);
 
@@ -305,7 +307,7 @@ describe("config-io", () => {
       const target = path.join(hostDir, "sandboxes.json");
       fs.writeFileSync(target, JSON.stringify({ ok: true }), { mode: 0o600 });
       const sibling = path.join(hostDir, "onboard-session.json");
-      fs.writeFileSync(sibling, "stale", { mode: 0o644 });
+      writeFileWithMode(sibling, "stale", 0o644);
 
       readConfigFile(target, null);
 
