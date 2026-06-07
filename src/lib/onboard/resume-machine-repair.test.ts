@@ -19,6 +19,9 @@ import {
 } from "./resume-machine-repair";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
+/**
+ * Builds a failed durable session while letting each test set the interrupted step.
+ */
 function createFailedSession(mutator: (session: Session) => void): Session {
   const session = createSession({
     machine: {
@@ -38,10 +41,16 @@ function createFailedSession(mutator: (session: Session) => void): Session {
   return session;
 }
 
+/**
+ * Round-trips sessions through normalization to match persisted runtime state.
+ */
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
 }
 
+/**
+ * Creates a memory-backed runtime boundary with record-only step mutations.
+ */
 function createBoundaryHarness(initial: Session) {
   let session = cloneSession(initial);
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
@@ -85,6 +94,9 @@ function createBoundaryHarness(initial: Session) {
   return { boundary, getSession: () => cloneSession(session) };
 }
 
+/**
+ * Replays the live resume sequence from failed snapshot repair through completion.
+ */
 async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
   repairResumeMachineSnapshot(initial, "2026-06-01T00:01:00.000Z");
   initial.failure = null;
