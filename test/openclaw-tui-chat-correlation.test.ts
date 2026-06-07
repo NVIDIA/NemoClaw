@@ -31,6 +31,7 @@ type ChatMessage = {
 type ChatEventPayload = {
   runId?: string;
   state?: string;
+  sessionKey?: string;
   message?: ChatMessage;
   errorMessage?: string;
 };
@@ -49,6 +50,7 @@ type SentRun = {
 };
 
 type Issue2603Trace = {
+  sessionKey?: string;
   sentRuns: SentRun[];
   events: GatewayEvent[];
   historyMessages: ChatMessage[];
@@ -57,6 +59,7 @@ type Issue2603Trace = {
 type CompactChatEvent = {
   runId?: string;
   state?: string;
+  sessionKey?: string;
   text: string;
   errorMessage?: string;
 };
@@ -75,6 +78,7 @@ type DuplicateUserTurn = {
 
 type Issue2603Analysis = {
   chatEvents: CompactChatEvent[];
+  foreignSessionChatEvents: CompactChatEvent[];
   emptyFinalsForSubmittedRuns: CompactChatEvent[];
   missingReplies: string[];
   duplicateReplies: { replyToken: string; count: number }[];
@@ -113,12 +117,27 @@ function textFromMessage(message: unknown): string {
   return textFromContent(record.content);
 }
 
+// The gateway websocket broadcasts chat events from every session, so a live
+// capture can observe replies or aborts that belong to another session — for
+// example a prior retry attempt whose runs complete or get aborted late
+// (#4881). Chat events that carry a different sessionKey are excluded from
+// correlation analysis; events without a sessionKey are kept (fail-open) so
+// the assertions can never be blinded by a payload-shape change.
+function isOwnSessionChatEvent(event: GatewayEvent, sessionKey?: string): boolean {
+  const eventSessionKey = event.payload?.sessionKey;
+  return (
+    event.event === "chat" &&
+    (!sessionKey || typeof eventSessionKey !== "string" || eventSessionKey === sessionKey)
+  );
+}
+
 function compactChatEvents(events: GatewayEvent[]): CompactChatEvent[] {
   return events
     .filter((event) => event.event === "chat")
     .map((event) => ({
       runId: event.payload?.runId,
       state: event.payload?.state,
+      sessionKey: event.payload?.sessionKey,
       text: textFromMessage(event.payload?.message),
       errorMessage: event.payload?.errorMessage,
     }));
@@ -131,13 +150,19 @@ function countBy(values: string[]): Map<string, number> {
 }
 
 function analyzeIssue2603Trace({
+  sessionKey,
   sentRuns,
   events,
   historyMessages,
 }: Issue2603Trace): Issue2603Analysis {
   const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
   const expectedRunByReplyToken = new Map(sentRuns.map((entry) => [entry.replyToken, entry.runId]));
-  const chatEvents = compactChatEvents(events);
+  const chatEvents = compactChatEvents(
+    events.filter((event) => isOwnSessionChatEvent(event, sessionKey)),
+  );
+  const foreignSessionChatEvents = compactChatEvents(
+    events.filter((event) => event.event === "chat" && !isOwnSessionChatEvent(event, sessionKey)),
+  );
 
   const emptyFinalsForSubmittedRuns = chatEvents.filter(
     (event) =>
@@ -192,6 +217,7 @@ function analyzeIssue2603Trace({
 
   return {
     chatEvents,
+    foreignSessionChatEvents,
     emptyFinalsForSubmittedRuns,
     missingReplies,
     duplicateReplies,
@@ -220,9 +246,14 @@ function summarizeLiveAttempt(attempt: LiveIssue2603Trace, index: number) {
   const analysis = analyzeIssue2603Trace(attempt);
   return {
     attempt: index + 1,
-    sentRunCount: attempt.sentRuns.length,
+    sessionKey: attempt.sessionKey,
+    sentRuns: attempt.sentRuns.map((entry) => ({
+      promptToken: entry.promptToken,
+      runId: entry.runId,
+    })),
     eventCount: attempt.events.length,
     chatEventCount: analysis.chatEvents.length,
+    foreignSessionChatEvents: analysis.foreignSessionChatEvents,
     missingReplies: analysis.missingReplies,
     emptyFinalsForSubmittedRuns: analysis.emptyFinalsForSubmittedRuns,
     missingUserTurns: analysis.missingUserTurns,
@@ -249,6 +280,7 @@ function buildFailureSummary(
       missingUserTurns: analysis.missingUserTurns,
       duplicateUserTurns: analysis.duplicateUserTurns,
       chatEvents: analysis.chatEvents,
+      foreignSessionChatEvents: analysis.foreignSessionChatEvents,
     },
     null,
     2,
@@ -429,8 +461,16 @@ function compactReplyTokenText(value) {
   return String(value || "").replace(/\s+/g, "");
 }
 
+// Chat events are broadcast for every session on this gateway; only events
+// from this run's session may satisfy the reply wait (nemoclaw #4881).
+function isOwnSessionChatEvent(event) {
+  if (event.event !== "chat") return false;
+  const eventSessionKey = event.payload?.sessionKey;
+  return typeof eventSessionKey !== "string" || eventSessionKey === sessionKey;
+}
+
 function sawAllReplies(replyTokens) {
-  return replyTokens.every((token) => events.some((event) => event.event === "chat" && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
+  return replyTokens.every((token) => events.some((event) => isOwnSessionChatEvent(event) && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
 }
 
 ws.on("message", (data) => {
@@ -489,7 +529,7 @@ ws.on("open", async () => {
     }
 
     const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
-    const hasEmptyFinalForSubmittedRun = () => events.some((event) => event.event === "chat" && event.payload?.state === "final" && submittedRunIds.has(event.payload?.runId) && !textFromMessage(event.payload?.message).trim());
+    const hasEmptyFinalForSubmittedRun = () => events.some((event) => isOwnSessionChatEvent(event) && event.payload?.state === "final" && submittedRunIds.has(event.payload?.runId) && !textFromMessage(event.payload?.message).trim());
 
     if (hasEmptyFinalForSubmittedRun()) {
       await new Promise((resolve) => setTimeout(resolve, 2_000));
@@ -539,29 +579,42 @@ function runLiveIssue2603Repro(sandboxName: string): LiveIssue2603Trace {
   return JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as LiveIssue2603Trace;
 }
 
+// A capture failure is an attempt that observed no chat signal for its own
+// submitted runs: no chat event references a submitted run id and no chat
+// event contains a reply token. Chat events that carry neither (for example
+// empty aborted events for another attempt's stale runs, as in #4881) are
+// infrastructure noise and must not defeat this classification. Any event
+// that does reference a submitted run or reply token keeps the strict
+// correlation assertions in force.
 function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
   if (repro.error || !Array.isArray(repro.sentRuns) || !Array.isArray(repro.events)) return false;
 
   const analysis = analyzeIssue2603Trace(repro);
-  return (
-    repro.sentRuns.length === 3 &&
-    analysis.chatEvents.length === 0 &&
-    analysis.emptyFinalsForSubmittedRuns.length === 0 &&
-    analysis.duplicateReplies.length === 0 &&
-    analysis.uncorrelatedReplies.length === 0 &&
-    analysis.missingReplies.length === repro.sentRuns.length
+  const submittedRunIds = new Set(repro.sentRuns.map((entry) => entry.runId));
+  const hasSubmittedRunEvent = analysis.chatEvents.some(
+    (event) => typeof event.runId === "string" && submittedRunIds.has(event.runId),
   );
+  const hasReplyTokenEvent = repro.sentRuns.some((entry) =>
+    analysis.chatEvents.some((event) => event.text.includes(entry.replyToken)),
+  );
+  return repro.sentRuns.length === 3 && !hasSubmittedRunEvent && !hasReplyTokenEvent;
 }
 
-// The zero-chat-events failure is an observability race at the live repro boundary:
-// OpenClaw accepts the chat.send requests, but this websocket client captures no
-// chat stream events before assertions. The source boundary is the pinned
-// OpenClaw 2026.5.x gateway/websocket runtime inside the sandbox, so this
-// NemoClaw-side E2E can only keep the #2603/#3145 correlation assertions stable
-// while preserving signal for real empty-final, duplicate-turn, and
-// uncorrelated-reply regressions. Remove this retry when OpenClaw exposes a
-// deterministic chat subscription/readiness acknowledgement or the 10x nightly
-// sweep no longer shows the zero-event capture signature without this guard.
+// The no-chat-events failure happens when slow inference keeps the submitted
+// runs in flight past the reply deadline: OpenClaw accepts the chat.send
+// requests, but this websocket client captures no chat stream events for them
+// before assertions. The retry uses a fresh session, and because the prior
+// attempt's orphaned runs may complete or get aborted *during* the retry —
+// broadcasting events with the same reply tokens under the old run ids — the
+// analysis is session-scoped so those stale events cannot masquerade as
+// uncorrelated replies or block this classifier (#4881, #4742, #4637). The
+// source boundary is the pinned OpenClaw 2026.5.x gateway/websocket runtime
+// inside the sandbox, so this NemoClaw-side E2E can only keep the #2603/#3145
+// correlation assertions stable while preserving signal for real empty-final,
+// duplicate-turn, and uncorrelated-reply regressions. Remove this retry when
+// OpenClaw exposes a deterministic chat subscription/readiness acknowledgement
+// or the 10x nightly sweep no longer shows the capture-failure signature
+// without this guard.
 function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIssue2603Run {
   const attempts: LiveIssue2603Trace[] = [];
   let repro = runLiveIssue2603Repro(sandboxName);
@@ -569,7 +622,7 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
 
   if (looksLikeEventCaptureFailure(repro)) {
     console.warn(
-      "ISSUE2603_RETRY captured zero chat events after accepted sends; retrying with a fresh session",
+      "ISSUE2603_RETRY captured no chat events for the submitted runs; retrying with a fresh session",
     );
     repro = runLiveIssue2603Repro(sandboxName);
     attempts.push(repro);
@@ -721,6 +774,97 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     ).toBe(false);
   });
 
+  it("excludes chat events from other sessions from correlation analysis", () => {
+    const [runA, runB, runC] = capturedIssue2603Trace.sentRuns;
+    const analysis = analyzeIssue2603Trace({
+      sessionKey: "issue2603-own-session",
+      sentRuns: capturedIssue2603Trace.sentRuns,
+      events: [
+        // Own-session reply for A under the submitted run id: counted.
+        {
+          event: "chat",
+          payload: {
+            runId: runA.runId,
+            state: "final",
+            sessionKey: "issue2603-own-session",
+            message: { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] },
+          },
+        },
+        // Stale replies for B and C from a previous attempt's session under
+        // foreign run ids: excluded instead of reported as uncorrelated.
+        {
+          event: "chat",
+          payload: {
+            runId: "0870f90c-1534-49f1-9731-37f04dbd31d1",
+            state: "final",
+            sessionKey: "issue2603-stale-session",
+            message: { role: "assistant", content: [{ type: "text", text: "B2603-REPLY" }] },
+          },
+        },
+        {
+          event: "chat",
+          payload: {
+            runId: "3e9fcfd6-ff8a-43f4-a14f-b1899443badf",
+            state: "final",
+            sessionKey: "issue2603-stale-session",
+            message: { role: "assistant", content: [{ type: "text", text: "C2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [],
+    });
+
+    expect(analysis.chatEvents).toHaveLength(1);
+    expect(analysis.foreignSessionChatEvents).toHaveLength(2);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
+    expect(analysis.missingReplies).toEqual([runB.replyToken, runC.replyToken]);
+  });
+
+  it("keeps chat events without a sessionKey in correlation analysis (fail-open)", () => {
+    const [runA] = capturedIssue2603Trace.sentRuns;
+    const analysis = analyzeIssue2603Trace({
+      sessionKey: "issue2603-own-session",
+      sentRuns: [runA],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: runA.runId,
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [],
+    });
+
+    expect(analysis.chatEvents).toHaveLength(1);
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
+  });
+
+  it("classifies stale aborted events for foreign runs as a capture failure (#4881)", () => {
+    const staleAbortedEvents: GatewayEvent[] = [
+      "16aa47fc-9f1a-4a00-94f4-930f92ab0561",
+      "4335776b-aab2-4d02-b479-60cefcccf503",
+      "1f7b660e-4ef4-46db-9c7f-1c469ced4258",
+    ].map((runId) => ({
+      event: "chat",
+      payload: { runId, state: "aborted" },
+    }));
+    const repro = {
+      sentRuns: capturedIssue2603Trace.sentRuns,
+      events: staleAbortedEvents,
+      historyMessages: [],
+    };
+
+    // Fail-open: without a sessionKey on the events they stay in the
+    // analysis, but events that reference neither a submitted run nor a
+    // reply token must still classify as a capture failure.
+    expect(analyzeIssue2603Trace(repro).chatEvents).toHaveLength(3);
+    expect(looksLikeEventCaptureFailure(repro)).toBe(true);
+  });
+
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
     "keeps rapid live TUI/webchat sends correlated on a real OpenClaw sandbox",
     () => {
@@ -730,6 +874,15 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
 
       const analysis = analyzeIssue2603Trace(repro);
       const failureSummary = buildFailureSummary(analysis, repro, attempts);
+      // An infrastructure capture failure (no chat events for the submitted
+      // runs) is gateway/inference latency at the live repro boundary, not a
+      // #2603/#3145 correlation regression — surface it as its own assertion.
+      expect(
+        looksLikeEventCaptureFailure(repro),
+        `INFRASTRUCTURE CAPTURE FAILURE: ${attempts.length} attempt(s) observed no chat events ` +
+          `for their submitted runs. This signature is gateway/inference latency at the live repro ` +
+          `boundary, not a #2603/#3145 correlation regression. ${failureSummary}`,
+      ).toBe(false);
       expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
       expect(analysis.missingReplies, failureSummary).toEqual([]);
       expect(analysis.duplicateReplies, failureSummary).toEqual([]);

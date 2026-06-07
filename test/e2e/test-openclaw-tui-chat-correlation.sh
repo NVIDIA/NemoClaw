@@ -58,6 +58,24 @@ if [ ! -x ./node_modules/.bin/vitest ]; then
   npm ci --include=dev
 fi
 
+vitest_status=0
 NEMOCLAW_ISSUE_2603_LIVE=1 \
   NEMOCLAW_ISSUE_2603_SANDBOX="$SANDBOX_NAME" \
-  ./node_modules/.bin/vitest run test/openclaw-tui-chat-correlation.test.ts --reporter=verbose
+  ./node_modules/.bin/vitest run test/openclaw-tui-chat-correlation.test.ts --reporter=verbose ||
+  vitest_status=$?
+
+# On failure, export the in-sandbox gateway log before cleanup destroys the
+# sandbox: it records why the gateway aborted or delayed chat.send runs, which
+# the websocket capture alone cannot explain (#4881).
+if [ "$vitest_status" -ne 0 ]; then
+  GATEWAY_LOG_EXPORT="${E2E_OPENCLAW_TUI_CORRELATION_GATEWAY_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-gateway.log}"
+  echo "Vitest failed (exit ${vitest_status}); exporting sandbox gateway log to ${GATEWAY_LOG_EXPORT}"
+  openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
+    'tail -n 400 /tmp/openclaw-issue2603-gateway.log 2>/dev/null || echo "gateway log missing"' \
+    >"$GATEWAY_LOG_EXPORT" 2>&1 || true
+  echo "==== openclaw gateway log (tail) ===="
+  cat "$GATEWAY_LOG_EXPORT" || true
+  echo "==== end openclaw gateway log ===="
+fi
+
+exit "$vitest_status"

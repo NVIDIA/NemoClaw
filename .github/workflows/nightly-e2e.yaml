@@ -485,7 +485,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-openclaw-tui-chat-correlation
-          path: /tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log
+          path: |
+            /tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log
+            /tmp/nemoclaw-e2e-openclaw-tui-correlation-gateway.log
           if-no-files-found: ignore
 
   issue-4434-tui-unreachable-inference-e2e:
