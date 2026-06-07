@@ -62,7 +62,6 @@ describe("CLI dispatch", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-openclaw-timeout-", [
       'if [ "$1" = "sandbox" ]; then',
       "  while true; do :; done",
-      "  exit 0",
       "fi",
     ]);
 
