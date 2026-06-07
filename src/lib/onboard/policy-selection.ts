@@ -286,9 +286,18 @@ export async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ): Promise<string[]> {
-  return withPolicyApplicationTrace(sandboxName, options, () =>
+  const chosen = await withPolicyApplicationTrace(sandboxName, options, () =>
     setupPoliciesWithSelectionInner(deps, sandboxName, options),
   );
+  try {
+    const policyExplain: typeof import("../actions/sandbox/policy-explain") =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("../actions/sandbox/policy-explain");
+    policyExplain.writePolicyContextToSandbox(sandboxName);
+  } catch {
+    // Initial seed is best-effort; later policy mutations refresh the file.
+  }
+  return chosen;
 }
 
 async function setupPoliciesWithSelectionInner(

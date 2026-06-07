@@ -15,10 +15,30 @@ type CliResult = {
   stderr: string;
 };
 
+const ENV_ALLOWLIST: readonly string[] = [
+  "PATH",
+  "NODE_PATH",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  "TMPDIR",
+  "NO_COLOR",
+  "FORCE_COLOR",
+];
+
+function minimalEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const base: NodeJS.ProcessEnv = {};
+  for (const key of ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) base[key] = value;
+  }
+  return { ...base, ...overrides };
+}
+
 function runCli(env: NodeJS.ProcessEnv, args: readonly string[]): CliResult {
   const result = spawnSync(process.execPath, [CLI, ...args], {
     encoding: "utf-8",
-    env: { ...process.env, ...env },
+    env: minimalEnv(env),
   });
   return {
     status: result.status,

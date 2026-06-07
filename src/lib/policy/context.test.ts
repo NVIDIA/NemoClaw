@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../state/registry", () => ({
   getSandbox: vi.fn(),
+  getCustomPolicies: vi.fn(() => []),
 }));
 
 vi.mock(".", () => ({
@@ -92,6 +93,8 @@ function stubTier() {
 
 function resetMocks() {
   vi.mocked(registry.getSandbox).mockReset();
+  vi.mocked(registry.getCustomPolicies).mockReset();
+  vi.mocked(registry.getCustomPolicies).mockReturnValue([]);
   vi.mocked(policies.listPresets).mockReset();
   vi.mocked(policies.listCustomPresets).mockReset();
   vi.mocked(policies.loadPreset).mockReset();
@@ -155,6 +158,26 @@ describe("buildPolicyContext", () => {
     const ctx = buildPolicyContext(SANDBOX);
     const internal = ctx.activePresets.find((p) => p.name === "internal");
     expect(internal?.source).toBe("custom");
+  });
+
+  it("derives custom preset host stems from the registry-stored content, not loadPreset", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    vi.mocked(policies.listCustomPresets).mockReturnValue([
+      { file: "internal.yaml", name: "internal", description: "internal API" },
+    ]);
+    vi.mocked(registry.getCustomPolicies).mockReturnValue([
+      {
+        name: "internal",
+        content: "preset:\n  name: internal\nnetwork_policies:\n  internal:\n    endpoints:\n      - host: internal.example.com\n",
+      },
+    ]);
+    vi.mocked(getTier).mockReturnValue(null);
+    stubRegistry({ policies: ["internal"], policyTier: undefined });
+
+    const ctx = buildPolicyContext(SANDBOX);
+    const internal = ctx.activePresets.find((p) => p.name === "internal");
+    expect(internal?.allowedHostCategories).toEqual(["internal.example.com"]);
   });
 });
 
@@ -257,5 +280,38 @@ describe("classifyAccessFailure", () => {
     });
 
     expect(result.matchedPreset).toBe("slack");
+  });
+
+  it("returns unsupported when the caller declares the capability unavailable", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      capability: { supported: false, reason: "messaging not enabled for this agent" },
+    });
+
+    expect(result.kind).toBe("unsupported");
+    expect(result.reason).toContain("messaging not enabled for this agent");
+    expect(result.nextStep).toContain("Surface the limitation");
+  });
+
+  it("returns unsupported even when the host matches an applied preset", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      error: { status: 403 },
+      capability: { supported: false },
+    });
+
+    expect(result.kind).toBe("unsupported");
   });
 });

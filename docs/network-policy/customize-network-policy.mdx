@@ -345,14 +345,13 @@ $$nemoclaw my-assistant policy-explain --write
 The output is intentionally redacted.
 Network policy rule bodies, credential metadata, internal IP ranges, and binary allowlists are not included — only host stems and category-level summaries appear.
 
-The context also documents how the agent should classify a failed host or integration attempt:
+The context also documents how the agent should classify a failed host or integration attempt.
+The rules are evaluated in order so HTTP 403 has a single interpretation per call: when the host matches an applied preset the request is treated as an authentication failure, otherwise as a policy denial.
 
-| Classification | When it applies |
-|----------------|-----------------|
-| `blocked-by-policy` | The host is not declared by any applied preset, or the request is refused with HTTP 403 / a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`). |
-| `missing-approval` | The host is allowed by an applied preset, but the request is refused with HTTP 401 or 403 (credentials or scope are missing). |
-| `unsupported` | The capability is not offered by NemoClaw or OpenShell. |
-| `unknown` | None of the above apply; the agent should surface the underlying error. |
+1. `unsupported` — the caller asserts the capability is not offered for this sandbox (for example, a messaging channel that the active agent does not support). The agent should surface the limitation without retrying.
+2. `missing-approval` — the host **is** allowed by an applied preset and the request is refused with HTTP 401 or 403. The network path is open; credentials or scope are missing.
+3. `blocked-by-policy` — the host is **not** allowed by any applied preset and either an existing built-in or custom preset declares it (apply that preset), or the request is refused with a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`) or HTTP 403.
+4. `unknown` — none of the above apply; the agent should surface the underlying error.
 
 Use the classification to pick the next step.
 For `blocked-by-policy`, run `$$nemoclaw <name> policy-add <preset>` or author a [custom preset](#custom-preset-files).

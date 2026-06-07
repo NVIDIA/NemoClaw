@@ -869,6 +869,13 @@ $$nemoclaw my-assistant policy-remove pypi --yes
 Set `NEMOCLAW_NON_INTERACTIVE=1` as an alternative to `--yes`.
 If the preset is unknown or not currently applied, the command exits non-zero with a clear error.
 
+| Flag | Description |
+|------|-------------|
+| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
+| `--dry-run` | Preview which endpoints would be removed without applying changes |
+
+Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+
 ### `$$nemoclaw <name> policy-explain`
 
 Print a redacted summary of the active policy context for a sandbox so an agent or operator can reason about what is allowed, what is blocked, and how to request a change.
@@ -896,10 +903,8 @@ The context also documents how a failed host or integration attempt should be cl
 
 | Flag | Description |
 |------|-------------|
-| `--yes`, `--force` | Skip the confirmation prompt (requires a preset name) |
-| `--dry-run` | Preview which endpoints would be removed without applying changes |
-
-Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
+| `--json` | Emit the policy context as a structured JSON object for agent consumption |
+| `--write` | Refresh `/sandbox/.openclaw/workspace/POLICY.md` inside the sandbox in addition to printing |
 
 ### `$$nemoclaw <name> hosts-add`
 

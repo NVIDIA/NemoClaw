@@ -13,10 +13,11 @@ export default class SandboxPolicyExplainCommand extends NemoClawCommand {
   static summary = "Explain the active policy context for the sandbox";
   static description =
     "Print a redacted summary of the active policy presets, allowed host categories, approval paths, and support boundaries. The agent can read this output to decide whether a host or integration is allowed and what remediation step to suggest.";
-  static usage = ["<name> [--json]"];
+  static usage = ["<name> [--json] [--write]"];
   static examples = [
     "<%= config.bin %> sandbox policy explain alpha",
     "<%= config.bin %> sandbox policy explain alpha --json",
+    "<%= config.bin %> sandbox policy explain alpha --write",
   ];
   static args = {
     sandboxName: sandboxNameArg,

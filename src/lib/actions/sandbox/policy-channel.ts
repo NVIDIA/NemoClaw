@@ -1220,6 +1220,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
       return false;
     }
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "add");
+    refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1342,10 +1343,12 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+    refreshSandboxPolicyContextFile(sandboxName);
     return;
   }
   if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+    refreshSandboxPolicyContextFile(sandboxName);
     return;
   }
   try {
@@ -1359,6 +1362,7 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
       );
     } else {
       syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

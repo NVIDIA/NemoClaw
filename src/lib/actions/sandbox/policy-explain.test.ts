@@ -96,6 +96,43 @@ describe("explainSandboxPolicy", () => {
     expect(command).toContain("base64 -d");
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("warns when --write cannot reach the sandbox", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "# rendered\n");
+    const log = vi.fn();
+    const logJson = vi.fn();
+    const exec = vi.fn(() => null);
+    const warn = vi.fn();
+
+    explainSandboxPolicy(
+      "alpha",
+      { writeToSandbox: true },
+      { build, render, log, logJson, exec, warn },
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("sandbox unreachable");
+    expect(warn.mock.calls[0][0]).toContain(POLICY_CONTEXT_SANDBOX_PATH);
+  });
+
+  it("warns when --write fails with a non-zero exit", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "# rendered\n");
+    const log = vi.fn();
+    const logJson = vi.fn();
+    const exec = vi.fn(() => ({ status: 13, stdout: "", stderr: "denied" }));
+    const warn = vi.fn();
+
+    explainSandboxPolicy(
+      "alpha",
+      { writeToSandbox: true },
+      { build, render, log, logJson, exec, warn },
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("status 13");
+  });
 });
 
 describe("writePolicyContextToSandbox", () => {

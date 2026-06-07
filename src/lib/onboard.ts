@@ -5794,7 +5794,7 @@ async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ) {
-  const selectedTier = await setupPoliciesWithSelectionImpl(
+  return setupPoliciesWithSelectionImpl(
     {
       policies,
       tiers,
@@ -5813,15 +5813,6 @@ async function setupPoliciesWithSelection(
     sandboxName,
     options,
   );
-  try {
-    const policyExplain: typeof import("./actions/sandbox/policy-explain") =
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("./actions/sandbox/policy-explain");
-    policyExplain.writePolicyContextToSandbox(sandboxName);
-  } catch {
-    // Initial seed is best-effort; later policy mutations refresh the file.
-  }
-  return selectedTier;
 }
 
 const {

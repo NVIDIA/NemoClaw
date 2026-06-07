@@ -90,8 +90,9 @@ export function explainSandboxPolicy(
   }
   if (options.writeToSandbox) {
     const writeResult = writePolicyContextToSandbox(sandboxName, { ...deps, build, render });
-    if (!writeResult.written && writeResult.reason !== "sandbox unreachable") {
-      warn(`  Could not seed ${POLICY_CONTEXT_SANDBOX_PATH}: ${writeResult.reason}`);
+    if (!writeResult.written) {
+      const detail = writeResult.reason ?? "unknown reason";
+      warn(`  Could not seed ${POLICY_CONTEXT_SANDBOX_PATH}: ${detail}.`);
     }
   }
   return ctx;

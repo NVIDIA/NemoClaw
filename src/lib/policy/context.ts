@@ -58,11 +58,17 @@ export type AccessFailureKind =
   | "unsupported"
   | "unknown";
 
+export interface AccessFailureCapability {
+  supported: boolean;
+  reason?: string;
+}
+
 export interface AccessFailureInput {
   sandboxName: string;
   host: string;
   port?: number;
   error?: { code?: string; status?: number; message?: string };
+  capability?: AccessFailureCapability;
 }
 
 export interface AccessFailureClassification {
@@ -89,8 +95,7 @@ function normaliseHost(value: string): string {
   return value.trim().toLowerCase().replace(/\.$/, "");
 }
 
-function presetHostStems(presetName: string): string[] {
-  const content = loadPreset(presetName);
+function hostStemsFromContent(content: string | null | undefined): string[] {
   if (!content) return [];
   const stems = new Set<string>();
   for (const host of getPresetEndpoints(content)) {
@@ -103,11 +108,12 @@ function presetHostStems(presetName: string): string[] {
 function presetEntry(
   info: PresetInfo,
   source: PolicyContextPreset["source"],
+  content: string | null,
 ): PolicyContextPreset {
   return {
     name: info.name,
     description: info.description,
-    allowedHostCategories: presetHostStems(info.name),
+    allowedHostCategories: hostStemsFromContent(content),
     source,
   };
 }
@@ -117,15 +123,18 @@ function partitionPresets(
   applied: ReadonlySet<string>,
 ): { active: PolicyContextPreset[]; unapplied: PolicyContextPreset[] } {
   const builtin = listPresets();
-  const custom = listCustomPresets(sandboxName);
+  const customInfo = listCustomPresets(sandboxName);
+  const customByName = new Map(
+    registry.getCustomPolicies(sandboxName).map((entry) => [entry.name, entry.content]),
+  );
   const active: PolicyContextPreset[] = [];
   const unapplied: PolicyContextPreset[] = [];
   for (const info of builtin) {
-    const entry = presetEntry(info, "builtin");
+    const entry = presetEntry(info, "builtin", loadPreset(info.name));
     (applied.has(info.name) ? active : unapplied).push(entry);
   }
-  for (const info of custom) {
-    active.push(presetEntry(info, "custom"));
+  for (const info of customInfo) {
+    active.push(presetEntry(info, "custom", customByName.get(info.name) ?? null));
   }
   return { active, unapplied };
 }
@@ -291,6 +300,15 @@ function isPolicyBlockErrorCode(code: string | undefined): boolean {
 export function classifyAccessFailure(
   input: AccessFailureInput,
 ): AccessFailureClassification {
+  if (input.capability && input.capability.supported === false) {
+    const reason = input.capability.reason ?? "capability is not offered for this sandbox";
+    return {
+      kind: "unsupported",
+      reason: `Host '${input.host}' is unreachable because the capability is unsupported: ${reason}.`,
+      nextStep:
+        "Surface the limitation to the user; do not retry. Choose an alternative provider or sandbox configuration that supports the capability.",
+    };
+  }
   const ctx = buildPolicyContext(input.sandboxName);
   const matched = findMatchingPreset(input.host, ctx.activePresets);
   const status = input.error?.status;
