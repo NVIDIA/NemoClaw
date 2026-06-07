@@ -59,10 +59,17 @@ function localApprovalPolicyPythonScript(src: string): string {
 }
 
 function autoPairPythonScript(src: string): string {
-  return localApprovalPolicyPythonScript(src).replace(
-    "import time",
-    "import time\ntime.sleep = lambda _seconds: None",
-  );
+  return localApprovalPolicyPythonScript(src)
+    .replaceAll("time.time()", "_nemoclaw_test_time()")
+    .replaceAll("time.sleep(", "_nemoclaw_test_sleep(")
+    .replace(
+      "import time",
+      `import time
+_nemoclaw_test_clock = [time.time()]
+_nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
+def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
+`,
+    );
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
@@ -2080,14 +2087,6 @@ exit 2
   }, 30_000);
 
   it("bounds the openclaw CLI invocation so a wedged child cannot pin the watcher", () => {
-    // Regression for CodeRabbit feedback on PR #4292: the watcher's
-    // `run()` helper used to call `subprocess.run` with no timeout, so a
-    // hung `openclaw devices list` could hold the watcher past DEADLINE
-    // and past the fast→slow transition. The fix adds a per-invocation
-    // timeout (default 10s, overridable via env). This test uses a fake
-    // openclaw that sleeps longer than the per-invocation timeout but
-    // shorter than the watcher deadline, and verifies the watcher does
-    // not block on it.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-runto-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
 
@@ -2095,7 +2094,7 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 # Sleep longer than the per-invocation timeout to simulate a wedged CLI.
-sleep 5
+sleep 2
 echo '{"pending":[],"paired":[]}'
 exit 0
 `,
@@ -2114,13 +2113,12 @@ exit 0
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
-          // Watcher must finish well before the test timeout. Per-call
-          // timeout 1s × ~3 polls + slow sleep = ~6s; the deadline
-          // bounds the whole loop at 4s.
-          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "4",
-          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "1",
+          // Watcher must finish well before the test timeout while still
+          // exercising a genuine subprocess.run timeout.
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
         },
         timeout: 20_000,
       });
@@ -2130,23 +2128,15 @@ exit 0
       expect(run.stdout).toContain("watcher deadline reached approvals=0");
       // Timeout log was emitted for at least one stuck `devices list`.
       expect(run.stdout).toContain("[auto-pair] timeout calling devices list");
-      // Sanity: with timeout=1s and deadline=4s the watcher must finish
-      // in well under the 20s test cap. If the timeout didn't fire, the
-      // first `sleep 5` would already exceed 4s on its own and the
-      // watcher could still run for many seconds; cap at 12s.
-      expect(elapsedMs).toBeLessThan(12_000);
+      // Sanity: if the timeout didn't fire, the first `sleep 2` would
+      // already exceed this cap before the watcher could reach its deadline.
+      expect(elapsedMs).toBeLessThan(1_800);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
 
   it("retries a transient approve timeout instead of permanently handling the requestId", () => {
-    // Regression for CodeRabbit feedback on PR #4292: a transient
-    // timeout from `openclaw devices approve` used to mark the
-    // requestId HANDLED unconditionally, so the late scope upgrade was
-    // never retried — defeating the watcher's whole purpose. The fix
-    // detects the rc=124 timeout sentinel and skips HANDLED, so the
-    // next poll retries the same request.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-aretry-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "approve-count");
@@ -2184,7 +2174,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
   echo "$count" > ${JSON.stringify(stateFile)}
   if [ "$count" = "1" ]; then
     # First call: hang past the per-call timeout to force rc=124.
-    sleep 5
+    sleep 2
     exit 0
   fi
   # Second call: succeed and record the approval.
@@ -2207,10 +2197,10 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
-          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "8",
-          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
-          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
         },
         timeout: 30_000,
       });

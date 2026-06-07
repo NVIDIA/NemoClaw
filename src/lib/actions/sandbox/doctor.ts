@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
@@ -30,6 +29,11 @@ import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { readCloudflaredState } from "../../tunnel/services";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
+import {
+  buildGatewayInspectFailureChecks,
+  type GatewayInspectOptions,
+} from "./doctor-gateway-fallback";
+import { captureHostCommand } from "./doctor-host-command";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
@@ -53,13 +57,6 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
-type CommandCapture = {
-  status: number;
-  stdout: string;
-  stderr: string;
-  error?: Error;
-};
-
 function pushInferenceHealthCheck(
   checks: DoctorCheck[],
   probe: ProviderHealthStatus,
@@ -78,26 +75,6 @@ function pushInferenceHealthCheck(
     detail: probe.ok ? `${probe.endpoint} reachable` : probe.detail,
     hint: probe.ok ? undefined : "check network access or provider credentials",
   });
-}
-
-function captureHostCommand(
-  command: string,
-  args: string[],
-  timeout = 5000,
-): CommandCapture {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    env: process.env,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  return {
-    status: result.status ?? (result.error ? 1 : 0),
-    stdout: String(result.stdout || ""),
-    stderr: String(result.stderr || ""),
-    error: result.error,
-  };
 }
 
 function oneLine(value = ""): string {
@@ -189,7 +166,10 @@ function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   return doctorReportExitCode(report);
 }
 
-function dockerInspectGateway(containerName: string): DoctorCheck[] {
+function dockerInspectGateway(
+  containerName: string,
+  options: GatewayInspectOptions = {},
+): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const inspect = captureHostCommand(
     "docker",
@@ -202,14 +182,7 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
     5000,
   );
   if (inspect.status !== 0) {
-    checks.push({
-      group: "Gateway",
-      label: "Docker container",
-      status: "fail",
-      detail: `${containerName} not found or not inspectable`,
-      hint: `run \`docker ps --filter name=${containerName}\``,
-    });
-    return checks;
+    return buildGatewayInspectFailureChecks(containerName, options);
   }
 
   const [runningRaw, healthRaw, imageRaw] = inspect.stdout.trim().split("\t");
@@ -607,10 +580,6 @@ export async function runSandboxDoctor(
     hint: openshellBin ? undefined : "install OpenShell before using sandbox commands",
   });
 
-  if (shouldInspectLegacyGatewayContainer(sb)) {
-    checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
-  }
-
   let openshellConnected = false;
   if (openshellBin) {
     const recovery = await recoverNamedGatewayRuntime();
@@ -626,6 +595,14 @@ export async function runSandboxDoctor(
         : oneLine(cleanStatus || lifecycle?.gatewayInfo || "not connected to nemoclaw"),
       hint: openshellConnected ? undefined : "run `openshell gateway select nemoclaw` and retry",
     });
+  }
+
+  if (shouldInspectLegacyGatewayContainer(sb)) {
+    checks.push(
+      ...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+        namedGatewayConnected: openshellConnected,
+      }),
+    );
   }
 
   if (openshellBin && openshellConnected) {
