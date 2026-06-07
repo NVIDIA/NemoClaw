@@ -13,15 +13,6 @@ const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
 
-function configureGuardBlock(src: string): string {
-  const start = src.indexOf("# nemoclaw-configure-guard begin");
-  const end = src.indexOf("# nemoclaw-configure-guard end", start);
-  const endMarker = "# nemoclaw-configure-guard end";
-  expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return src.slice(start, end + endMarker.length);
-}
-
 function runtimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
   const end = src.indexOf("# cleanup_on_signal", start);

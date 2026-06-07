@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { scenario } from "../scenarios/builder.ts";
 import { compileRunPlans } from "../scenarios/compiler.ts";
-import { buildScenarioRegistry, listScenarios } from "../scenarios/registry.ts";
+import { buildScenarioRegistry } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SCENARIOS = path.join(REPO_ROOT, "test/e2e-scenario/scenarios/run.ts");
