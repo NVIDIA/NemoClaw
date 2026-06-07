@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-import { pruneDisabledMessagingPolicyPresets } from "../src/lib/onboard/messaging-policy-presets";
+import { pruneDisabledMessagingPolicyPresets } from "../src/lib/messaging/applier/policy-presets";
 
 type ManifestWithOptionalPresets = {
   version: number;

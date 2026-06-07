@@ -6,4 +6,5 @@ export * from "./host-state-applier";
 export * from "./agent-config";
 export * from "./openshell-provider";
 export * from "./policy";
+export * from "./policy-presets";
 export type * from "./types";

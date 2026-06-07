@@ -521,7 +521,7 @@ import {
   setupHermesToolGateways,
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
-import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
+import { getPolicyPresetsFromPlan } from "./onboard/messaging-plan-session";
 import {
   filterEnabledChannelsByAgent,
   resolveQrSelectedChannels,
@@ -3379,6 +3379,7 @@ async function createSandbox(
       directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled,
       dockerGpuPatch: useDockerGpuPatch,
       additionalPresets: hermesToolGateways,
+      messagingPolicyPresets: getPolicyPresetsFromPlan(onboardSession.loadSession()?.messagingPlan),
     },
   );
   if (initialSandboxPolicy.cleanup) {
@@ -6566,15 +6567,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       model,
       endpointUrl,
       credentialEnv,
-      selectedMessagingChannels,
+      messagingPolicyPresets: getPolicyPresetsFromPlan(onboardSession.loadSession()?.messagingPlan),
       webSearchConfig,
       webSearchSupported,
       hermesToolGateways,
       agent,
       deps: {
         loadSession: onboardSession.loadSession,
-        getActiveSandbox: (name) => registry.getSandbox(name),
-        mergePolicyMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
           verifyCompatibleEndpointSandboxSmoke({
             ...options,

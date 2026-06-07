@@ -43,6 +43,11 @@ export function getDisabledChannelsFromPlan(
   return plan.disabledChannels.length > 0 ? [...plan.disabledChannels] : null;
 }
 
+/** Derive the messaging network policy presets for active channels from a plan. */
+export function getPolicyPresetsFromPlan(plan: SandboxMessagingPlan | null | undefined): string[] {
+  return plan?.networkPolicy.presets ? [...plan.networkPolicy.presets] : [];
+}
+
 /**
  * Derive the equivalent of session.messagingChannelConfig from a plan.
  * Config inputs (kind === "config") carry their resolved env-key/value pairs

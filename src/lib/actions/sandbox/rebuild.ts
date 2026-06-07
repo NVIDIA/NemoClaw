@@ -50,7 +50,7 @@ import {
   toMessagingAgentId,
 } from "../../messaging";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { pruneDisabledMessagingPolicyPresets } from "../../messaging/applier/policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
