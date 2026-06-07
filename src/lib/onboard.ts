@@ -63,9 +63,6 @@ const {
   getGatewayBootstrapRepairPlan,
 }: typeof import("./onboard/gateway-bootstrap") = require("./onboard/gateway-bootstrap");
 const {
-  verifyWebSearchInsideSandbox: verifyWebSearchInsideSandboxWithDeps,
-}: typeof import("./onboard/web-search-verify") = require("./onboard/web-search-verify");
-const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
   prepareInitialSandboxCreatePolicy,
@@ -89,13 +86,13 @@ const {
   hasWechatConfigDrift,
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
-const {
-  setupMessagingChannels: setupMessagingChannelsImpl,
-} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
-const { MessagingHostStateApplier }: typeof import("./messaging") = require("./messaging");
+const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFromEnv, writePlanToEnv, getRegistrySandboxMessagingPlan, MessagingHostStateApplier } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
+const {
+  repairResumeMachineSnapshot,
+}: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
 const {
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
@@ -123,11 +120,10 @@ const pRetry = require("p-retry");
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
-const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } =
-  runner;
+const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
-const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
+const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
 const {
   dockerContainerInspectFormat,
@@ -178,14 +174,12 @@ const localInference: typeof import("./inference/local") = require("./inference/
 const {
   findReachableOllamaHost,
   resetOllamaHostCache,
-  getDefaultOllamaModel,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
-  validateOllamaModel,
   validateLocalProvider,
 } = localInference;
 const {
@@ -227,8 +221,6 @@ const {
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-  HERMES_NOUS_API_KEY_HELP_URL,
-  getRequestedHermesAuthMethod,
   hermesAuthMethodLabel,
   normalizeHermesAuthMethod,
 } = hermesAuth;
@@ -258,7 +250,6 @@ const {
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   getProviderLabel,
-  getEffectiveProviderName,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getSandboxInferenceConfig,
@@ -270,7 +261,6 @@ const {
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
   VLLM_LOCAL_CREDENTIAL_ENV: string;
   getProviderLabel: (key: string) => string;
-  getEffectiveProviderName: (key: string | null | undefined) => string | null;
   getNonInteractiveProvider: () => string | null;
   getNonInteractiveModel: (providerKey: string) => string | null;
   getSandboxInferenceConfig: (
@@ -285,7 +275,7 @@ const {
     inferenceCompat: LooseObject | null;
   };
 };
-const { sleepSeconds, waitForHttp, waitUntil } = require("./core/wait");
+const { sleepSeconds, waitUntil } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
@@ -353,7 +343,6 @@ const {
   exitOnSandboxGpuConfigErrors,
   formatSandboxGpuPassthroughNote,
   resolveSandboxGpuFlagFromOptions,
-  sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
 } = sandboxGpuPreflight;
 const openshellVersion: typeof import("./onboard/openshell-version") = require("./onboard/openshell-version");
@@ -474,8 +463,6 @@ const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
-const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
-  require("./onboard/host-gateway-process");
 const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
@@ -573,9 +560,6 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
-const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
-
-const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 
 import type {
   JsonObject as LooseObject,
@@ -648,7 +632,6 @@ const {
   openshellArgv,
   runOpenshell,
   runCaptureOpenshell,
-  safeOpenShellArgument,
   getGatewayPortArg,
   getDockerDriverGatewayEndpointArg,
 } = createOpenshellCliHelpers({
@@ -709,7 +692,7 @@ const selectOnboardAgent = createSelectOnboardAgent({
 });
 
 
-const { getTransportRecoveryMessage, getProbeRecovery } = validationRecovery;
+const { getTransportRecoveryMessage } = validationRecovery;
 
 // Validation functions — delegated to src/lib/validation.ts
 const {
@@ -719,7 +702,6 @@ const {
   validateNvidiaApiKeyValue,
   isSafeModelId,
   shouldSkipResponsesProbe,
-  shouldForceCompletionsApi,
 } = validation;
 
 // validateNvidiaApiKeyValue — see validation import above
@@ -732,7 +714,6 @@ const {
   resolveHermesNousApiKey,
   stageNousApiKeyProviderEnv,
   ensureHermesNousApiKeyEnv,
-  openshellResultMessage,
   checkHermesProviderStoreReachable,
 } = hermesAuth.createHermesAuthHelpers({
   isNonInteractive,
@@ -960,7 +941,6 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
 }
 
 const {
-  sandboxExistsInGateway,
   pruneStaleSandboxEntry,
   shouldRestoreLatestBackupOnRecreate,
   confirmRecreateForSelectionDrift,
@@ -975,9 +955,6 @@ const {
 
 
 const {
-  validateBraveSearchApiKey,
-  promptBraveSearchRecovery,
-  promptBraveSearchApiKey,
   ensureValidatedBraveSearchCredential,
   configureWebSearch,
   verifyWebSearchInsideSandbox,
@@ -1001,8 +978,6 @@ const {
   verifyOnboardInferenceSmoke,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
-  probeOpenAiLikeEndpoint,
-  probeAnthropicEndpoint,
 } = require("./inference/onboard-probes");
 
 const {
@@ -2935,9 +2910,8 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  if (braveWebSearchEnabled) {
-    messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
-  }
+  if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
+  const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
   const previousProviderCredentialHashes =
     registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
@@ -3560,6 +3534,7 @@ async function createSandbox(
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
+  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(envArgs, extraPlaceholderKeys, formatEnvAssignment);
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
@@ -3841,7 +3816,7 @@ async function createSandbox(
 
 type ProviderChoice = { key: string; label: string };
 
-const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
+const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
     parseGatewayInference,
     runCaptureOpenshell,
@@ -6132,6 +6107,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
       onboardSession.updateSession((current: Session) => {
+        repairResumeMachineSnapshot(current);
         current.mode = isNonInteractive() ? "non-interactive" : "interactive";
         current.failure = null;
         current.status = "in_progress";
@@ -6241,7 +6217,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    const resumeSandboxNameForGpu = recordedSandboxName || requestedSandboxName || null;
 
     console.log("");
     console.log(`  ${cliDisplayName()} Onboarding`);
@@ -6462,7 +6437,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       fresh,
       resumeAgentChanged,
-      session,
+      session: providerInferenceResult.session,
       sandboxName,
       model,
       provider,
@@ -6503,6 +6478,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
         setupMessagingChannels,
         readMessagingChannelConfigFromEnv,
+        readMessagingPlanFromEnv,
+        writePlanToEnv,
+        getRegistrySandboxMessagingPlan,
         promptValidatedSandboxName,
         selectResourceProfileForSandbox: () => selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
         stopStaleDashboardListenersForSandbox,

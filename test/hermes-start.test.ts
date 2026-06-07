@@ -442,6 +442,16 @@ function runHermesGatewayRuntimeCleanup(opts: {
       "TCP:127.0.0.1:19119",
     ]);
   }
+  fs.writeFileSync(
+    path.join(tmpDir, "sitecustomize.py"),
+    [
+      "import os",
+      "",
+      "# Keep the Python helper aligned with the shell fixture's mocked id -u.",
+      "os.geteuid = lambda: 1000",
+      "",
+    ].join("\n"),
+  );
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.writeFileSync(
@@ -449,6 +459,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      `PYTHONPATH=${shellQuote(tmpDir)}`,
+      "export PYTHONPATH",
       extractShellFunctionFromSource(src, "cmdline_is_hermes_gateway"),
       extractShellFunctionFromSource(src, "has_live_hermes_gateway"),
       extractShellFunctionFromSource(src, "cleanup_orphan_socat_forwarders"),

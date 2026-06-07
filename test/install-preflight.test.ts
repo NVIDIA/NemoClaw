@@ -488,7 +488,7 @@ exit 98
     expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
     expect(output).toMatch(/NEMOCLAW_NO_EXPRESS=1/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
-    expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
+    expect(output).toContain("nvidia.com/nemoclaw.sh");
   });
 
   it("scripts/install.sh --help lists the full non-interactive provider set", () => {
@@ -1544,6 +1544,10 @@ fi`,
     writeExecutable(
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
+if [ "$1" = "info" ] && [ "$2" = "--format" ]; then
+  echo '{"ServerVersion":"5.0.0","Name":"Podman Engine","CDISpecDirs":[]}'
+  exit 0
+fi
 if [ "$1" = "info" ]; then
   echo "Podman Engine"
   exit 0
@@ -1551,7 +1555,6 @@ fi
 exit 0
 `,
     );
-
     const result = spawnSync("bash", [INSTALLER], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",

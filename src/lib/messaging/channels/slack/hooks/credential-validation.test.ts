@@ -51,8 +51,9 @@ describe("Slack token validation", () => {
   it("validates bot tokens with auth.test", () => {
     let configPath = "";
     let configText = "";
-    vi.mocked(runCurlProbe).mockImplementation((args) => {
+    vi.mocked(runCurlProbe).mockImplementation((args, opts) => {
       configPath = curlConfigPath(args);
+      expect(opts?.trustedConfigFiles).toContain(configPath);
       configText = fs.readFileSync(configPath, "utf8");
       expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
       return probe('{"ok":true,"user_id":"U123"}');

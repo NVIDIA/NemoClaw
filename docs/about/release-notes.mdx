@@ -13,6 +13,16 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.60
+
+NemoClaw v0.0.60 improves runtime guidance, sandbox lifecycle reliability, local inference setup, messaging enrollment, and maintainer safeguards:
+
+- OpenClaw runtime guidance stays active without appearing in the visible chat transcript, and sandbox network and filesystem context now tells agents to try allowed in-sandbox actions before reporting them unavailable. OpenClaw device-approval policy also uses the same allowlist and scope behavior during startup and connect. For more information, refer to [Architecture](../reference/architecture).
+- Onboarding and sandbox lifecycle paths preserve more host state. NemoClaw uses the package-managed OpenShell gateway user service when available, scopes gateway and dashboard cleanup by sandbox instance, detects Docker-driver sandboxes without writing the local gateway marker, rolls back failed Docker GPU patches, honors `.dockerignore` for custom `--from <Dockerfile>` contexts, and can skip default workspace-template seeding with `NEMOCLAW_MINIMAL_BOOTSTRAP=1`. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Local inference setup is more predictable across NVIDIA NIM, Ollama, vLLM, DGX Spark, DGX Station, Anthropic-compatible routes, and Hermes. NemoClaw pulls NIM images by platform digest, uses stable managed-vLLM images and updated DGX model profiles, tightens Ollama fit checks, synchronizes Anthropic route metadata, preserves Hermes proxy API-key placeholders, and serves the prebuilt Hermes dashboard assets from the sandbox image. For more information, refer to [NemoClaw Inference Options](../inference/inference-options).
+- Messaging and day-two CLI operations share more common plumbing. Messaging enrollment uses manifest hooks across Telegram, Discord, Slack, WeChat, and WhatsApp, `$$nemoclaw tunnel status` reports Cloudflare tunnel state directly, global `status` and `list` honor sandbox environment overrides consistently, and installed OpenClaw skills are mirrored into the agent home directory for session startup. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- Policy and secret-handling safeguards cover more edge cases. Non-interactive `NEMOCLAW_POLICY_TIER` validation fails before side effects, interactive onboarding ignores invalid environment values and prompts normally, safe common egress presets are available where supported, persistent-memory scanning catches additional OpenAI and Slack token shapes, and Hermes remote secrets stay out of sandbox-visible surfaces. For more information, refer to [Security Best Practices](../security/best-practices).
+
 ## v0.0.59
 
 NemoClaw v0.0.59 improves OpenClaw runtime compatibility, inference setup, credential reuse, messaging safeguards, and sandbox startup diagnostics:

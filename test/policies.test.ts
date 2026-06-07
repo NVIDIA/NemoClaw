@@ -1045,37 +1045,33 @@ exit 1
     // `process.exit(1)` the matching `finally` does not run, so a temp dir
     // created before the exit gets orphaned in $TMPDIR. A mocked exit (which
     // throws) doesn't reproduce that — `finally` still runs and cleans up. To
-    // catch the real-world bug, snapshot $TMPDIR at the *moment* of exit:
+    // catch the real-world bug, spy on this process's mkdtempSync calls:
     // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
-    // should exist yet.
+    // should be requested.
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
-      const beforeCount = fs
-        .readdirSync(os.tmpdir())
-        .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
-      let countAtExit = -1;
+      const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
       const resolveSpy = vi
         .spyOn(resolveOpenshellModule, "resolveOpenshell")
         .mockReturnValue(null);
+      const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
-        countAtExit = fs
-          .readdirSync(os.tmpdir())
-          .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
         throw new Error("__test_exit__");
       }) as never);
 
       try {
-        // Apply a real built-in preset so applyPresetContent runs end-to-end
-        // up to the resolvability check.
         expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
         expect(exitSpy).toHaveBeenCalledWith(1);
         // No `nemoclaw-policy-*` temp dir should have been created before
         // the resolvability check exited.
-        expect(countAtExit).toBe(beforeCount);
+        expect(
+          mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
+        ).toEqual([]);
       } finally {
         resolveSpy.mockRestore();
+        mkdtempSpy.mockRestore();
         errSpy.mockRestore();
         logSpy.mockRestore();
         exitSpy.mockRestore();
@@ -2035,12 +2031,18 @@ exit 1
     });
 
     it("telegram REST preset relies on automatic TLS handling", () => {
-      const content = requirePresetContent(policies.loadPreset("telegram"));
-      expect(content).toBeTruthy();
-      expect(content).toMatch(
-        /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?enforcement:\s*enforce/,
+      const parsed = parsePresetYaml("telegram");
+      const endpoint = parsed.network_policies?.telegram_bot?.endpoints?.find(
+        (candidate: { host?: string }) => candidate.host === "api.telegram.org",
       );
-      expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
+      expect(endpoint).toEqual(
+        expect.objectContaining({
+          host: "api.telegram.org",
+          protocol: "rest",
+          enforcement: "enforce",
+        }),
+      );
+      expect(endpoint).not.toHaveProperty("tls");
     });
 
     it("wechat REST preset enumerates explicit iLink hosts on port 443 with allow GET/POST", () => {
@@ -2049,17 +2051,25 @@ exit 1
       // listed explicitly. The proxy must still see
       // protocol/enforcement/method allowlists on each entry — dropping any
       // of those silently widens egress past what the preset documents.
-      const content = requirePresetContent(policies.loadPreset("wechat"));
-      for (const host of ["ilinkai\\.weixin\\.qq\\.com", "ilinkai\\.wechat\\.com"]) {
-        expect(content).toMatch(
-          new RegExp(
-            `host:\\s*"?${host}"?[\\s\\S]*?port:\\s*443[\\s\\S]*?protocol:\\s*rest[\\s\\S]*?enforcement:\\s*enforce`,
-          ),
+      const parsed = parsePresetYaml("wechat");
+      const endpoints = parsed.network_policies?.wechat_bridge?.endpoints ?? [];
+      for (const host of ["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]) {
+        const endpoint = endpoints.find((candidate: { host?: string }) => candidate.host === host) as
+          | { rules?: Array<{ allow?: { method?: string } }> }
+          | undefined;
+        expect(endpoint).toEqual(
+          expect.objectContaining({
+            host,
+            port: 443,
+            protocol: "rest",
+            enforcement: "enforce",
+          }),
         );
-        expect(content).toMatch(
-          new RegExp(
-            `host:\\s*"?${host}"?[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*GET[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*POST`,
-          ),
+        expect(endpoint?.rules).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ allow: expect.objectContaining({ method: "GET" }) }),
+            expect.objectContaining({ allow: expect.objectContaining({ method: "POST" }) }),
+          ]),
         );
       }
     });

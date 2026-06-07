@@ -118,6 +118,8 @@ When the default API port is already held by another sandbox, `$$nemoclaw onboar
 </AgentOnly>
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway and dashboard cleanup is scoped by sandbox name and port.
+A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 
 ```bash
 $$nemoclaw onboard                                      # first sandbox uses 18789

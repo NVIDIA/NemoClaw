@@ -21,6 +21,7 @@ const {
 const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { isSafeModelId } from "../validation";
 import {
@@ -382,12 +383,14 @@ export function getServedModelId(port = VLLM_PORT): string | null {
   const out = runCapture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "5",
-      "--max-time",
-      "5",
-      `http://127.0.0.1:${Number(port)}/v1/models`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${Number(port)}/v1/models`,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -894,12 +897,14 @@ export function waitForNimHealth(
       const result = runCapture(
         [
           "curl",
-          "-sf",
-          "--connect-timeout",
-          "5",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${hostPort}/v1/models`,
+          ...buildValidatedCurlCommandArgs([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "5",
+            `http://127.0.0.1:${hostPort}/v1/models`,
+          ]),
         ],
         { ignoreError: true },
       );
@@ -981,12 +986,14 @@ export function nimStatusByName(name: string, port?: number): NimStatus {
       const health = runCapture(
         [
           "curl",
-          "-sf",
-          "--connect-timeout",
-          "5",
-          "--max-time",
-          "5",
-          `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+          ...buildValidatedCurlCommandArgs([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "5",
+            `http://127.0.0.1:${resolvedHostPort}/v1/models`,
+          ]),
         ],
         { ignoreError: true, timeout: NIM_STATUS_PROBE_TIMEOUT_MS + 1000 },
       );

@@ -14,6 +14,8 @@ describe("coverage report", () => {
   it("should_render_single_coverage_table", () => {
     const meta = loadMetadataFromDir(E2E_DIR);
     const md = renderCoverageReport(meta);
+    expect(md).toContain("test/e2e-scenario/nemoclaw_scenarios/{scenarios,expected-states}.yaml");
+    expect(md).toContain("test/e2e-scenario/validation_suites/suites.yaml");
     // Exactly one primary Scenario Coverage table.
     const headers = md.match(/\|\s*Scenario\s*\|\s*Platform\s*\|\s*Install\s*\|\s*Runtime\s*\|\s*Onboarding\s*\|\s*Expected state\s*\|\s*Suites\s*\|/g);
     expect(headers).toBeTruthy();

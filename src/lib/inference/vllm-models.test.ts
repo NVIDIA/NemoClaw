@@ -40,7 +40,7 @@ describe("vllm model registry", () => {
     ).toEqual(deepseek);
   });
 
-  it("registers DeepSeek V4 Flash for DGX Station", () => {
+  it("registers DeepSeek V4 Flash as a managed-vLLM override", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
     expect(deepseek).toBeDefined();
     expect(deepseek!.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
@@ -111,7 +111,7 @@ describe("vllm model registry", () => {
     expect(cmd).not.toContain("--reasoning-parser qwen3");
   });
 
-  it("builds the DeepSeek V4 Flash DGX Station serve command with inherited one-GPU defaults", () => {
+  it("builds the DeepSeek V4 Flash serve command with inherited one-GPU defaults", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
     const cmd = buildVllmServeCommand(deepseek!);
     expect(cmd).toContain("vllm serve deepseek-ai/DeepSeek-V4-Flash");

@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-manage-sandboxes"
-description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, install hermes plugins, hermes plugins nemoclaw, nemoclaw hermes plugins, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
+description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, install hermes plugins, hermes plugins nemoclaw, nemoclaw hermes plugins, nemohermes dockerignore, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
 license: "Apache-2.0"
 ---
 
@@ -113,6 +113,8 @@ When the default API port is already held by another sandbox, `nemoclaw onboard`
 </AgentOnly>
 If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
 NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway and dashboard cleanup is scoped by sandbox name and port.
+A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 
 ```bash
 nemoclaw onboard                                      # first sandbox uses 18789
@@ -276,7 +278,7 @@ For a full comparison of the two forms, including what they fetch, what they tru
 - **[references/runtime-controls.md](references/runtime-controls.md)** — Single page that answers what can change at runtime versus what requires a rebuild for NemoClaw sandboxes.
 - **Load [references/backup-restore.md](references/backup-restore.md)** when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds.
 - **Load [references/messaging-channels.md](references/messaging-channels.md)** when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges. Explains how Telegram, Discord, Slack, WeChat, and WhatsApp reach sandboxed OpenClaw and Hermes agents through OpenShell-managed processes and NemoClaw channel commands.
-- **[references/install-plugins-hermes.md](references/install-plugins-hermes.md)** — Explains how to install Hermes plugins in NemoClaw-managed sandboxes.
+- **Load [references/install-plugins-hermes.md](references/install-plugins-hermes.md)** when users ask how to install, build, or configure Hermes plugins under NemoClaw. Explains how to install Hermes plugins in NemoClaw-managed sandboxes, including custom Dockerfile build-directory layout and `.dockerignore` handling.
 - **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
 
 ## Related Skills

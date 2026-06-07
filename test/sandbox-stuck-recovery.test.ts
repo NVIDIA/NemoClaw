@@ -146,11 +146,10 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-sandbox", "Provisioning");
 
-      // Short connect timeout so the test doesn't wait 120s. Provisioning
-      // is not a terminal state, so the readiness poll introduced in #466
-      // waits until NEMOCLAW_CONNECT_TIMEOUT elapses.
+      // Use the shortest accepted whole-second timeout so this still exercises
+      // the non-terminal readiness wait without adding avoidable wall time.
       const result = runCli(tmpDir, sandboxName, "connect", {
-        NEMOCLAW_CONNECT_TIMEOUT: "3",
+        NEMOCLAW_CONNECT_TIMEOUT: "1",
       });
       expect(result.status).not.toBe(0);
 

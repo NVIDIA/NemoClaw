@@ -5,6 +5,7 @@
  * Synchronous waiting primitives for CLI commands.
  */
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { withLocalNoProxy } from "../subprocess-env.js";
 
 /**
@@ -79,7 +80,7 @@ export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
     try {
       const result = spawnSync(
         "curl",
-        ["-sf", "--connect-timeout", "1", "--max-time", "1", url],
+        buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
         { stdio: "ignore", env },
       );
       return result.status === 0;

@@ -27,21 +27,21 @@ vi.mock("./nim", () => ({
   getGpuIndicesByName: mocks.getGpuIndicesByName,
 }));
 
-import { detectVllmProfile, pullImage } from "./vllm";
+import { buildVllmRunCommand, detectVllmProfile, pullImage } from "./vllm";
 
 describe("vLLM profile detection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("uses DeepSeek V4 Flash and the 26.05.post1 NGC image on DGX Station", () => {
+  it("uses Qwen3.6 27B and the 26.05.post1 NGC image on DGX Station", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
 
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
     expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
-    expect(profile!.defaultModel.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
-    expect(profile!.defaultModel.envValue).toBe("deepseek-v4-flash");
+    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
+    expect(profile!.defaultModel.envValue).toBe("qwen3.6-27b");
   });
 
   it("keeps DGX Spark on the Qwen3.6 35B NVFP4 default", () => {
@@ -123,5 +123,25 @@ describe("vLLM image pull", () => {
     mocks.dockerPullWithProgressWatchdog.mockResolvedValue(result);
 
     await expect(pullImage(profile!)).resolves.toEqual({ ok: false, reason });
+  });
+});
+
+describe("vLLM run command", () => {
+  it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const cmd = buildVllmRunCommand(profile!, profile!.defaultModel, profile!.dockerRunFlags.join(" "));
+    expect(cmd).toContain("docker run -d --restart unless-stopped");
+    expect(cmd).toContain(`--name ${profile!.containerName}`);
+    expect(cmd).toContain(":8000");
+  });
+
+  it("preserves the profile run flags and image", () => {
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const cmd = buildVllmRunCommand(profile!, profile!.defaultModel, "--gpus device=0 --ipc=host");
+    expect(cmd).toContain("--restart unless-stopped --gpus device=0 --ipc=host");
+    expect(cmd).toContain(profile!.image);
+    expect(cmd).toContain("--entrypoint /bin/bash");
   });
 });

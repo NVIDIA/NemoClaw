@@ -10,6 +10,7 @@ import {
   dockerPullWithProgressWatchdog,
   dockerSpawn,
 } from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
@@ -59,15 +60,15 @@ function nemotronNanoModel(): VllmModelDef {
   return match;
 }
 
-function qwen35bNvfp4Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
+function qwen27bFP8Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
   return match;
 }
 
-function deepseekV4FlashModel(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
-  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
+function qwen35bNvfp4Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
   return match;
 }
 
@@ -139,7 +140,7 @@ const SPARK_PROFILE: VllmProfile = {
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   image: VLLM_IMAGES.ngc2605Post1,
-  defaultModel: deepseekV4FlashModel(),
+  defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -330,6 +331,23 @@ function downloadModel(
   });
 }
 
+// Build the `docker run` command for the long-lived vLLM inference container.
+// Exported for testing. `--restart unless-stopped` makes the container come
+// back after a host reboot or Docker daemon restart (#4886); without a restart
+// policy the container stays down after a reboot and `nemoclaw inference get`
+// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+export function buildVllmRunCommand(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runFlags: string,
+): string {
+  const extra = runFlags ? ` ${runFlags}` : "";
+  return (
+    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -351,9 +369,7 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
+  const cmd = buildVllmRunCommand(profile, model, flags);
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,
@@ -371,7 +387,17 @@ function vllmModelsEndpoint(): string {
 
 function vllmEndpointReady(): boolean {
   const response = runCapture(
-    ["curl", "-sf", "--connect-timeout", "2", "--max-time", "5", vllmModelsEndpoint()],
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        vllmModelsEndpoint(),
+      ]),
+    ],
     { ignoreError: true },
   ).trim();
   if (!response) return false;
@@ -472,8 +498,8 @@ export async function installVllm(
 ): Promise<{ ok: boolean }> {
   // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
   // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Station to DeepSeek V4 Flash; Spark
-  // to the Qwen3.6-35B-A3B NVFP4 checkpoint.
+  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
+  // Qwen3.6-35B-A3B NVFP4 checkpoint.
   // Validate gated-model access (HF_TOKEN required for models like
   // DeepSeek-R1 Distill 70B) before touching docker so the user does not
   // burn a multi-minute pull on a 401.

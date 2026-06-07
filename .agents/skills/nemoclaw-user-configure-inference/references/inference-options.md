@@ -297,6 +297,7 @@ When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that v
 If vLLM is not running and your host matches a DGX Spark or DGX Station managed profile, NemoClaw shows the **Install vLLM** or **Start vLLM** entry by default.
 Generic Linux NVIDIA GPU hosts still require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
 NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+Managed DGX Spark and DGX Station profiles use the stable NGC `nvcr.io/nvidia/vllm:26.05.post1-py3` container image.
 If Docker pull output stops making progress, a watchdog stops the stalled pull instead of failing slow but active downloads on a fixed wall-clock timeout.
 If vLLM never becomes ready, NemoClaw prints a short tail of the vLLM container logs before exiting.
 The first run can take 10 to 30 minutes.
@@ -307,7 +308,7 @@ Managed vLLM uses these profiles:
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
-| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
+| DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 **Note:**
@@ -344,7 +345,8 @@ Recognized slugs are:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on the DGX Station profile |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | Default on the DGX Station profile |
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | Default on the DGX Spark profile |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
@@ -377,6 +379,9 @@ NEMOCLAW_EXPERIMENTAL=1 nemoclaw onboard
 Select **Local NVIDIA NIM [experimental]** from the provider list.
 NemoClaw filters available models by GPU VRAM, pulls the NIM container image, starts it, and waits for it to become healthy before continuing.
 On hosts with mixed NVIDIA GPU models, the preflight summary shows each detected GPU model and the total VRAM so you can confirm which device class the model selection used.
+On Docker 29.x or containerd image-store hosts, NemoClaw resolves the host-platform manifest digest before pulling multi-architecture NIM images when the registry exposes an index.
+It pulls `repo@digest` and retags the local image so NGC attestation metadata on other architectures does not block the selected platform.
+If the registry does not expose a matching index, NemoClaw falls back to the tag pull.
 
 NVIDIA hosts NIM container images on `nvcr.io`, and `docker pull` requires NGC registry authentication.
 If Docker is not already logged in to `nvcr.io`, onboard prompts for an [NGC API key](https://org.ngc.nvidia.com/setup/api-key) and runs `docker login nvcr.io` over `--password-stdin` so the key is never written to disk or shell history.
@@ -384,6 +389,8 @@ The prompt masks the key during input and retries one time on a bad key before f
 In non-interactive mode, onboard exits with login instructions if Docker is not already authenticated; run `docker login nvcr.io` yourself, then re-run `nemoclaw onboard --non-interactive`.
 If `NGC_API_KEY` or `NVIDIA_API_KEY` is already exported, NemoClaw passes it into the managed NIM container through the process environment instead of command-line arguments.
 If the NIM container exits before the health endpoint becomes ready, onboarding stops early and prints the last container log lines.
+After NIM becomes healthy, NemoClaw reads `/v1/models` and uses the served model id for validation when it differs from the catalog name.
+Unsafe served ids are rejected instead of being written into the sandbox config.
 
 **Note:**
 

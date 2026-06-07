@@ -24,6 +24,8 @@ It uploads skill instructions and refreshes skill discovery, but it does not ins
 
 Put the custom Dockerfile and everything it needs to `COPY` in one directory.
 `nemohermes onboard --from <Dockerfile>` sends the Dockerfile's parent directory as the Docker build context.
+Add a `.dockerignore` next to the Dockerfile to keep local caches, generated artifacts, model files, or other unneeded paths out of the staged context.
+NemoClaw still excludes credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` tries to include them.
 
 ```text
 my-hermes-plugin-sandbox/
@@ -105,6 +107,7 @@ These are the most common places where Hermes plugin installation gets mixed up 
 - Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
 - Do not remove `/sandbox/.hermes/plugins/nemoclaw`; NemoClaw depends on that plugin for managed Hermes behavior.
 - Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
+- Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Do not assume OpenShell policy allows Python package downloads during runtime by default.
 
 ## Next Steps

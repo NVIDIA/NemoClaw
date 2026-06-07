@@ -358,7 +358,7 @@ describe("fetch-guard patch regression guard", () => {
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",
-      "# SECURITY: Clear any gateway auth token",
+      "# Release the offline lock",
     );
     const script = [
       "openclaw() {",

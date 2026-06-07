@@ -49,6 +49,7 @@ import {
   MessagingWorkflowPlanner,
   toMessagingAgentId,
 } from "../../messaging";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -176,7 +177,7 @@ async function stageMessagingManifestPlanForRebuild(
   sandboxEntry: registry.SandboxEntry,
   rebuildAgent: string | null,
   log: (msg: string) => void,
-): Promise<void> {
+): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
   const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
@@ -188,7 +189,7 @@ async function stageMessagingManifestPlanForRebuild(
   if (!plan || plan.channels.length === 0) {
     MessagingSetupApplier.clearPlanEnv();
     log("Messaging manifest rebuild plan: no configured channels");
-    return;
+    return null;
   }
   MessagingSetupApplier.writePlanToEnv(plan);
   log(
@@ -196,6 +197,7 @@ async function stageMessagingManifestPlanForRebuild(
       .map((channel) => channel.channelId)
       .join(",")}`,
   );
+  return plan;
 }
 
 /**
@@ -439,8 +441,9 @@ export async function rebuildSandbox(
     );
   }
 
+  let rebuildMessagingPlan: SandboxMessagingPlan | null = null;
   try {
-    await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
+    rebuildMessagingPlan = await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
@@ -681,6 +684,7 @@ export async function rebuildSandbox(
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
     s.disabledChannels = rebuildDisabledChannels;
+    s.messagingPlan = rebuildMessagingPlan;
     s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
