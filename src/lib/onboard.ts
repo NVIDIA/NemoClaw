@@ -90,9 +90,7 @@ const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFro
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
-const {
-  repairResumeMachineSnapshot,
-}: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
+const { repairResumeMachineSnapshot }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
 const {
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
@@ -561,9 +559,7 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
 
-import type {
-  JsonObject as LooseObject,
-} from "./core/json-types";
+import type { JsonObject as LooseObject } from "./core/json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -690,7 +686,6 @@ const selectOnboardAgent = createSelectOnboardAgent({
   isNonInteractive,
   note,
 });
-
 
 const { getTransportRecoveryMessage } = validationRecovery;
 
@@ -863,7 +858,6 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-
 function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
@@ -953,7 +947,6 @@ const {
   isAffirmativeAnswer,
 });
 
-
 const {
   ensureValidatedBraveSearchCredential,
   configureWebSearch,
@@ -965,7 +958,6 @@ const {
   cliName,
   runCaptureOpenshell,
 });
-
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 
@@ -990,7 +982,6 @@ const {
   agentProductName,
   promptValidationRecovery,
 });
-
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
