@@ -228,6 +228,45 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   }
 }
 
+describe("sandbox provisioning: runtime npm online state", () => {
+  it("resets NPM_CONFIG_OFFLINE to false after the local plugin install", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const settings: { value: string; index: number }[] = [];
+    const re = /^ENV\s+NPM_CONFIG_OFFLINE=(\S+)/gm;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(dockerfile)) !== null) {
+      const value = match[1].replace(/[\\\s]+$/, "").toLowerCase();
+      settings.push({ value, index: match.index });
+    }
+    expect(
+      settings.length,
+      "Dockerfile should set NPM_CONFIG_OFFLINE at least once for the local plugin install",
+    ).toBeGreaterThanOrEqual(2);
+    const lockOn = settings.find((s) => s.value === "true");
+    const lockOff = settings.find((s) => s.value === "false");
+    expect(lockOn, "Dockerfile should still scope an offline lock around the plugin install").toBeDefined();
+    expect(
+      lockOff,
+      "Dockerfile must reset NPM_CONFIG_OFFLINE=false so the runtime image does not propagate `only-if-cached`",
+    ).toBeDefined();
+    expect(
+      settings[settings.length - 1].value,
+      "The last NPM_CONFIG_OFFLINE setting wins at runtime; it must be `false`",
+    ).toBe("false");
+
+    const pluginInstallIdx = dockerfile.indexOf("openclaw plugins install /opt/nemoclaw");
+    expect(pluginInstallIdx, "expected `openclaw plugins install` RUN in Dockerfile").toBeGreaterThan(-1);
+    expect(
+      lockOn!.index,
+      "The offline lock must precede the local plugin install",
+    ).toBeLessThan(pluginInstallIdx);
+    expect(
+      lockOff!.index,
+      "The offline reset must follow the local plugin install",
+    ).toBeGreaterThan(pluginInstallIdx);
+  });
+});
+
 describe("sandbox provisioning: image health checks (#1430)", () => {
   it.each([
     ["default dashboard URL", {}, "http://127.0.0.1:18789/health"],

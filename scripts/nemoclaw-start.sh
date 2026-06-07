@@ -128,6 +128,11 @@ _TOOL_REDIRECTS=(
   'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
   'npm_config_prefix=/tmp/npm-global'
+  # Pin npm online at runtime so a stale base image or future build-time
+  # offline-lock regression cannot force `only-if-cached` mode on PID 1 or
+  # `openshell sandbox connect` sessions.
+  'npm_config_offline=false'
+  'NPM_CONFIG_OFFLINE=false'
 )
 for _redir in "${_TOOL_REDIRECTS[@]}"; do
   export "${_redir?}"

@@ -521,6 +521,12 @@ describe("service environment", () => {
         expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
         expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
+        // Pin npm online for connect sessions and PID 1 so a leaked
+        // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
+        // mode on dashboard-driven MCP installs, skill installers, or
+        // ad-hoc `npx -y` invocations inside the sandbox.
+        expect(envFile).toContain("npm_config_offline=false");
+        expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
         // Permission should be 444 (hardened via emit_sandbox_sourced_file)
         // Cross-platform: Linux uses stat -c '%a', macOS uses stat -f '%Lp'
         let perms: string;

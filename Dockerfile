@@ -580,8 +580,10 @@ RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local
 # hadolint ignore=DL3059,DL4006
 RUN python3 /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 
-# Lock down npm: no further registry traffic in this image. Everything past
-# this point must resolve from local sources only.
+# Lock down npm for the next RUN: the local OpenClaw plugin install must
+# resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
+# touching the registry. Reset to false after that RUN so the runtime image
+# does not propagate `only-if-cached` mode to in-sandbox `npx` / `npm install`.
 ENV NPM_CONFIG_OFFLINE=true \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false
@@ -610,6 +612,10 @@ RUN openclaw plugins install /opt/nemoclaw \
             -name examples \
         \) -prune -exec rm -rf {} +; \
     fi
+
+# Release the offline lock so the runtime sandbox can install MCP servers,
+# skills, and ad-hoc packages via the OpenShell L7 proxy.
+ENV NPM_CONFIG_OFFLINE=false
 
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
