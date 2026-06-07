@@ -309,7 +309,7 @@ describe("service environment", () => {
     });
   });
 
-  describe("runtime npm online state (issue #4773)", () => {
+  describe("runtime npm online state", () => {
     it("entrypoint exports npm_config_offline=false and NPM_CONFIG_OFFLINE=false at PID 1", () => {
       const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
       const start = src.indexOf("_TOOL_REDIRECTS=(");
