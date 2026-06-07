@@ -12,17 +12,23 @@
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
+  mkdtempSync,
   mkdirSync,
+  openSync,
+  readSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { spawnSync } from "child_process";
 
 import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
@@ -39,8 +45,14 @@ const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
-/** Allows large state archives to be listed without Node's default 1 MiB spawn buffer cap. */
-const TAR_LISTING_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
+// Compatibility boundary: existing backups are raw tar streams, so validation
+// still shells out to system tar. Route listings through a bounded temp file
+// instead of child-process stdout buffers; remove this path when backup
+// validation moves to a native streaming tar parser or indexed manifest format.
+const TAR_LISTING_STDERR_MAX_BUFFER_BYTES = 1024 * 1024;
+const TAR_LISTING_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
+const TAR_LISTING_READ_CHUNK_BYTES = 64 * 1024;
+const TAR_LISTING_MAX_LINE_CHARS = 1024 * 1024;
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -234,33 +246,100 @@ function rejectSymlinksOnPath(targetPath: string): void {
   }
 }
 
+function readTextLinesFromFile(filePath: string, onLine: (line: string) => void): void {
+  const fd = openSync(filePath, "r");
+  const decoder = new StringDecoder("utf8");
+  const chunk = Buffer.alloc(TAR_LISTING_READ_CHUNK_BYTES);
+  let pending = "";
+  try {
+    while (true) {
+      const bytesRead = readSync(fd, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      pending += decoder.write(chunk.subarray(0, bytesRead));
+      if (pending.length > TAR_LISTING_MAX_LINE_CHARS) {
+        throw new Error("tar listing line exceeds supported length");
+      }
+      let newlineIndex = pending.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = pending.slice(0, newlineIndex).replace(/\r$/, "");
+        if (line.length > 0) onLine(line);
+        pending = pending.slice(newlineIndex + 1);
+        newlineIndex = pending.indexOf("\n");
+      }
+    }
+    pending += decoder.end();
+    if (pending.length > TAR_LISTING_MAX_LINE_CHARS) {
+      throw new Error("tar listing line exceeds supported length");
+    }
+    const lastLine = pending.replace(/\r$/, "");
+    if (lastLine.length > 0) onLine(lastLine);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function tarExitStatus(result: ReturnType<typeof spawnSync>): number {
+  return result.status ?? (result.error || result.signal ? 1 : 0);
+}
+
+function runTarListing(
+  tarBuffer: Buffer,
+  args: string[],
+  failureLabel: string,
+  onLine: (line: string) => void,
+): string | null {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tar-listing-"));
+  const listingPath = path.join(tempDir, "listing.txt");
+  let listingFd: number | null = null;
+  try {
+    listingFd = openSync(listingPath, "w");
+    const result = spawnSync("tar", args, {
+      input: tarBuffer,
+      encoding: "utf-8",
+      stdio: ["pipe", listingFd, "pipe"],
+      timeout: 60000,
+      maxBuffer: TAR_LISTING_STDERR_MAX_BUFFER_BYTES,
+    });
+    closeSync(listingFd);
+    listingFd = null;
+
+    const status = tarExitStatus(result);
+    if (status !== 0) {
+      return `${failureLabel} failed (exit ${status}): ${(result.stderr || "").substring(0, 200)}`;
+    }
+
+    const listingSize = statSync(listingPath).size;
+    if (listingSize > TAR_LISTING_MAX_OUTPUT_BYTES) {
+      return `${failureLabel} exceeded ${TAR_LISTING_MAX_OUTPUT_BYTES} bytes`;
+    }
+
+    readTextLinesFromFile(listingPath, onLine);
+    return null;
+  } catch (error) {
+    return `${failureLabel} failed: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    if (listingFd !== null) closeSync(listingFd);
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * List tar entries and validate every path is within targetDir.
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
-  const result = spawnSync("tar", ["-tf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-    maxBuffer: TAR_LISTING_MAX_BUFFER_BYTES,
+  const entries: string[] = [];
+  const listingFailure = runTarListing(tarBuffer, ["-tf", "-"], "tar listing", (line) => {
+    entries.push(line);
   });
-
-  if (result.status !== 0) {
+  if (listingFailure) {
     return {
       safe: false,
       entries: [],
-      violations: [
-        `tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`,
-      ],
+      violations: [listingFailure],
     };
   }
 
-  const entries = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((e) => e.length > 0);
   const violations: string[] = [];
 
   for (const entry of entries) {
@@ -374,31 +453,15 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * files outside the extraction root.
  */
 export function rejectHardLinks(tarBuffer: Buffer): string[] {
-  const result = spawnSync("tar", ["-tvf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-    maxBuffer: TAR_LISTING_MAX_BUFFER_BYTES,
-  });
-
-  if (result.status !== 0) {
-    return [`tar verbose listing failed (exit ${result.status})`];
-  }
-
   const violations: string[] = [];
-  const lines = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((l) => l.length > 0);
-
-  for (const line of lines) {
+  const listingFailure = runTarListing(tarBuffer, ["-tvf", "-"], "tar verbose listing", (line) => {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
     // and include " link to " in the line.
     if (line.startsWith("h") || / link to /.test(line)) {
       violations.push(`hard link: ${line.trim()}`);
     }
-  }
+  });
+  if (listingFailure) return [listingFailure];
 
   return violations;
 }
