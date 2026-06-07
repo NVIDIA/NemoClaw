@@ -507,7 +507,7 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 
 `nemohermes <name> status` prints the running Hermes version on the `Agent` line:
 
-```console
+```bash
 nemohermes my-assistant status
 ```
 
@@ -1142,7 +1142,7 @@ Use this path only when the destination sandbox can be replaced by the selected 
 Mount the sandbox filesystem on the host machine via SSHFS for bidirectional file sharing.
 Files edited on the host appear instantly inside the sandbox, and vice versa.
 
-```console
+```bash
 nemohermes my-assistant share mount
 ```
 
@@ -1187,7 +1187,7 @@ nemohermes my-assistant share unmount
 
 Check whether the sandbox filesystem is currently mounted.
 
-```console
+```bash
 nemohermes my-assistant share status
 ```
 
@@ -1254,7 +1254,7 @@ Show the current cloudflared public-URL tunnel status for the selected or defaul
 The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `nemohermes status`.
 Selection honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
 
-```console
+```bash
 nemohermes tunnel status
 ```
 

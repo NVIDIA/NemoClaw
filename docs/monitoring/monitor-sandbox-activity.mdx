@@ -71,13 +71,13 @@ Use these files when you need an audit trail, a compliance review surface, or re
 
 To inspect the session directory from the host, run a sandbox command:
 
-```console
+```bash
 $$nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
 ```
 
 To copy a session log for offline review, use the OpenShell sandbox download command:
 
-```console
+```bash
 openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
 ```
 
