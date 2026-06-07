@@ -22,6 +22,7 @@ The table below maps each commonly changed item to the layer that owns it and th
 | Channel enable/disable (turn a configured channel off without removing the token) | Rebuild required (`openclaw.json` is the source of truth at runtime, see #3453) | `nemoclaw <name> channels stop <channel>` then rebuild |
 | Dashboard forward port | Runtime. Port is re-resolved on next `connect` | `NEMOCLAW_DASHBOARD_PORT=<port> nemoclaw <name> connect` |
 | Dashboard bind address (loopback compared to all interfaces) | Runtime. Applies on next `connect` | `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 nemoclaw <name> connect` (see #3259) |
+| Default OpenClaw workspace template seed (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `HEARTBEAT.md`) | Locked at first sandbox boot. Re-onboard required to change the bake-time choice. | Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before `nemoclaw onboard` to skip default template seeding for new/pristine workspaces. **Does not delete files already present.** Partial mitigation for #2598 (cuts ~3k tokens of project-context overhead off OpenClaw's per-turn bootstrap injection). |
 | Web search backend (Brave, Tavily, and so on) | Runtime through `web.backend` config flag; rebuild only if `web.fetchEnabled` flips | `nemoclaw <name> config set --key web.backend --value tavily` |
 | Filesystem layout (Landlock zones, read-only mounts, container caps) | **Locked at creation**. No runtime change | Re-onboard with `nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | **Locked at creation** | Re-onboard with a different `--name` |

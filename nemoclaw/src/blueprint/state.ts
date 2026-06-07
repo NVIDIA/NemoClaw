@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -144,17 +145,21 @@ export function loadState(): NemoClawState {
   }
 }
 
+function writeStateFile(state: NemoClawState): void {
+  const finalPath = statePath();
+  const tmpPath = `${finalPath}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  renameSync(tmpPath, finalPath);
+}
+
 export function saveState(state: NemoClawState): void {
   ensureStateDir();
   state.updatedAt = new Date().toISOString();
   state.createdAt ??= state.updatedAt;
-  writeFileSync(statePath(), JSON.stringify(state, null, 2));
+  writeStateFile(state);
 }
 
 export function clearState(): void {
   ensureStateDir();
-  const path = statePath();
-  if (existsSync(path)) {
-    writeFileSync(path, JSON.stringify(blankState(), null, 2));
-  }
+  writeStateFile(blankState());
 }

@@ -100,7 +100,7 @@ function slackApiArgs(configPath: string, url: string): string[] {
 function runSlackApiProbe(token: string, url: string): CurlProbeResult {
   const { configPath, cleanup } = writeSlackCurlConfig(token);
   try {
-    return runCurlProbe(slackApiArgs(configPath, url));
+    return runCurlProbe(slackApiArgs(configPath, url), { trustedConfigFiles: [configPath] });
   } finally {
     cleanup();
   }

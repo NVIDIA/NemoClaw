@@ -56,6 +56,23 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
 // huge file. 1 MiB leaves plenty of headroom over any plausible mutation.
 const LEGACY_CREDS_FILE_MAX_BYTES = 1 * 1024 * 1024;
 
+function noFollowFlag(): number | undefined {
+  return typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : undefined;
+}
+
+function openReadOnlyNoFollow(filePath: string): number {
+  const flag = noFollowFlag();
+  if (flag === undefined) {
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink()) {
+      const error = new Error(`Refusing to follow symlink: ${filePath}`) as NodeJS.ErrnoException;
+      error.code = "ELOOP";
+      throw error;
+    }
+  }
+  return fs.openSync(filePath, fs.constants.O_RDONLY | (flag ?? 0));
+}
+
 /**
  * Resolve the user's home directory and reject obviously unsafe choices
  * (e.g. `/tmp`, `/`) so we never use a world-readable path for state.
@@ -235,18 +252,20 @@ export function listCredentialKeys(): string[] {
  * backup tools and same-user processes tend to read.
  */
 function secureUnlink(filePath: string): void {
+  let opened = false;
   try {
-    const stat = fs.lstatSync(filePath);
-    if (stat.isSymbolicLink()) {
-      // The credentials path was a symlink; remove the link itself without
-      // touching whatever it pointed at.
-      fs.unlinkSync(filePath);
+    const flag = noFollowFlag();
+    if (flag === undefined) {
+      const stat = fs.lstatSync(filePath);
+      if (stat.isFile() || stat.isSymbolicLink()) fs.unlinkSync(filePath);
       return;
     }
-    if (!stat.isFile()) return;
-    if (stat.size > 0) {
-      const fd = fs.openSync(filePath, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
-      try {
+    const fd = fs.openSync(filePath, fs.constants.O_RDWR | flag);
+    opened = true;
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) return;
+      if (stat.size > 0) {
         const chunkSize = Math.min(stat.size, 64 * 1024);
         const zeros = Buffer.alloc(chunkSize);
         let written = 0;
@@ -256,15 +275,18 @@ function secureUnlink(filePath: string): void {
           written += len;
         }
         fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
       }
+    } finally {
+      fs.closeSync(fd);
     }
   } catch {
-    // best effort
+    // best effort; a final-component symlink either fails O_NOFOLLOW or is
+    // handled by the no-O_NOFOLLOW lstat fallback without touching its target.
   }
   try {
-    fs.unlinkSync(filePath);
+    if (opened || fs.lstatSync(filePath).isSymbolicLink()) {
+      fs.unlinkSync(filePath);
+    }
   } catch {
     // best effort
   }
@@ -310,7 +332,7 @@ export function stageLegacyCredentialsToEnv(): string[] {
   // symlink planted at the credentials path.
   let fd: number;
   try {
-    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = openReadOnlyNoFollow(legacyFile);
   } catch {
     return [];
   }
@@ -421,7 +443,7 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
 
   let fd: number;
   try {
-    fd = fs.openSync(legacyFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = openReadOnlyNoFollow(legacyFile);
   } catch {
     return false;
   }

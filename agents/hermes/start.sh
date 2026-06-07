@@ -333,7 +333,9 @@ cleanup_orphan_socat_forwarders() {
         kill "$pid" 2>/dev/null || true
         ;;
       *socat*"TCP-LISTEN:${dashboard_public_port}"*"TCP:127.0.0.1:${dashboard_internal_port}"*)
-        [ -n "$dashboard_public_port" ] && [ -n "$dashboard_internal_port" ] || continue
+        if [ -z "$dashboard_public_port" ] || [ -z "$dashboard_internal_port" ]; then
+          continue
+        fi
         echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public_port}->${dashboard_internal_port} (pid ${pid})" >&2
         kill "$pid" 2>/dev/null || true
         ;;

@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
-import { getAgentBranding, type AgentBranding } from "../../cli/branding";
+import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { sleepMs } from "../../core/wait";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
@@ -65,7 +65,23 @@ function defaultRunDocker(args: string[], options: SpawnSyncOptions = {}): RunRe
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  return defaultRun("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], { env }).status === 0;
+  if (!command || command.includes("\0")) return false;
+  const hasPathSeparator = command.includes(path.sep) || command.includes(path.posix.sep) || command.includes(path.win32.sep);
+  const candidates = hasPathSeparator
+    ? [command]
+    : String(env.PATH || "")
+        .split(path.delimiter)
+        .filter(Boolean)
+        .map((entry) => path.join(entry, command));
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return true;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return false;
 }
 
 function defaultReadLine(env: NodeJS.ProcessEnv): string | null {
@@ -738,7 +754,7 @@ function executePlan(
 
 export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): { paths: UninstallPaths; plan: UninstallPlan } {
   const env = { ...process.env, ...(deps.env ?? {}) };
-  const home = env.HOME || os.tmpdir();
+  const home = env.HOME || os.homedir();
   const paths = defaultUninstallPaths({
     home,
     repoRoot: path.resolve(__dirname, "..", "..", ".."),

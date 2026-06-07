@@ -880,8 +880,8 @@ describe("onboard session", () => {
     //      ORIGINAL stale lock (dead PID 999999), isProcessAlive
     //      returns false, and acquireOnboardLock enters the stale-
     //      cleanup path calling unlinkIfInodeMatches.
-    //    - stat #2 (inside unlinkIfInodeMatches): BEFORE the actual
-    //      stat, swap the file for a fresh claim. stat #2 then sees
+    //    - stat #1 (inside unlinkIfInodeMatches): BEFORE the actual
+    //      stat, swap the file for a fresh claim. stat #1 then sees
     //      a different inode → must skip the unlink.
     //
     //    CodeRabbit correctly flagged the original test: swapping on
@@ -891,10 +891,10 @@ describe("onboard session", () => {
     const originalStatSync = fs.statSync;
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
       statCallCount += 1;
-      // Just before stat #2 (inside unlinkIfInodeMatches), simulate
+      // Just before stat #1 (inside unlinkIfInodeMatches), simulate
       // the race: a concurrent fast process unlinks the stale lock
-      // and writes a fresh claim. stat #2 then sees a new inode.
-      if (statCallCount === 2) {
+      // and writes a fresh claim. stat #1 then sees a new inode.
+      if (statCallCount === 1) {
         // Write the fresh claim to a temp file first, then rename over
         // the stale lock. This guarantees a different inode even on
         // tmpfs/overlayfs which can reuse inodes after unlink+recreate.
@@ -914,9 +914,9 @@ describe("onboard session", () => {
     });
 
     try {
-      // The acquire call will see EEXIST (stale lock present), stat it,
-      // then the swap happens, then the second stat (inside the cleanup
-      // helper) sees a different inode → must NOT unlink.
+      // The acquire call will see EEXIST (stale lock present), read it
+      // through a pinned descriptor, then the stat inside the cleanup
+      // helper sees a different inode → must NOT unlink.
       const result = session.acquireOnboardLock("nemoclaw onboard --resume");
       // The fresh lock that the simulated concurrent process wrote
       // should still be on disk after acquireOnboardLock returns.
@@ -976,7 +976,7 @@ describe("onboard session", () => {
     const statSpy = vi.spyOn(fs, "statSync").mockImplementation((...args) => {
       if (args[0] === session.LOCK_FILE) {
         statCallCount += 1;
-        if (statCallCount === 3) {
+        if (statCallCount === 1) {
           const tmpClaim = session.LOCK_FILE + ".race-tmp";
           fs.writeFileSync(
             tmpClaim,

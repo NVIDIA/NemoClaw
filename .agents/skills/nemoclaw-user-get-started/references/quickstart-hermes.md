@@ -20,18 +20,19 @@ export NEMOCLAW_AGENT=hermes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-If a headless host needs to expose the Hermes API through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
-Use the externally reachable origin for port `8642`, without the `/v1` path.
-NemoClaw derives the forwarded port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final OpenAI-compatible base URL with `/v1` in the ready summary.
+If a headless host needs to expose the Hermes dashboard through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
+Use the externally reachable origin for the dashboard port `18789`.
+NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
+The OpenAI-compatible API remains available separately on port `8642`.
 
 ```bash
 export NEMOCLAW_AGENT=hermes
-export CHAT_UI_URL="https://hermes.example.com:8642"
+export CHAT_UI_URL="https://hermes.example.com:18789"
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-For SSH local port forwarding to `127.0.0.1:8642`, leave `CHAT_UI_URL` unset.
-Do not append an OpenClaw `#token=` fragment to the Hermes URL.
+For SSH local port forwarding to `127.0.0.1:18789`, leave `CHAT_UI_URL` unset.
+Do not append an OpenClaw `#token=` fragment to the Hermes dashboard URL.
 Hermes API clients authenticate with the bearer token from the generated Hermes environment instead of an OpenClaw dashboard URL token.
 
 If NemoClaw is already installed, start Hermes onboarding directly.
@@ -58,6 +59,9 @@ Choose the inference provider that matches where you want Hermes model traffic t
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the Inference Options (use the `nemoclaw-user-configure-inference` skill) page.
 The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+If you authenticate Hermes through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, or managed code execution.
+Those choices add the matching Hermes policy presets to the sandbox.
+API-key mode is inference-only and does not enable managed tool gateways.
 
 After provider and model selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
@@ -86,19 +90,13 @@ Use the provider variables from Inference Options (use the `nemoclaw-user-config
 
 ## Connect to Hermes
 
-When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes API endpoint.
-Hermes exposes an OpenAI-compatible API on port `8642`, not a browser dashboard.
-To also launch the native Hermes web dashboard, opt in before onboarding:
-
-```bash
-export NEMOCLAW_HERMES_DASHBOARD=1
-nemohermes onboard
-```
-
-The dashboard uses port `9119` by default.
-Set `NEMOCLAW_HERMES_DASHBOARD_PORT` before onboarding to choose a different port.
-Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` to enable Hermes' optional in-browser TUI tab.
-For upstream dashboard features, refer to the [Hermes web dashboard documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
+When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes dashboard URL.
+Hermes exposes its built-in browser dashboard on port `18789`.
+NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients.
+NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
+Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
+If you need to recover the Hermes dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned install paths.
+Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only if you want Hermes' optional in-browser TUI tab.
 
 ```text
 ──────────────────────────────────────────────────
@@ -109,13 +107,9 @@ Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
 
 Access
 
-  Hermes Agent OpenAI-compatible API
-  Port 8642 must be forwarded before connecting.
-  http://127.0.0.1:8642/v1
-
-  Hermes Agent Web dashboard
-  Port 9119 must be forwarded before opening this URL.
-  http://127.0.0.1:9119/
+  Hermes Agent Dashboard
+  Port 18789 must be forwarded before opening this URL.
+  http://127.0.0.1:18789/
 
 Terminal:
   nemohermes my-hermes connect
@@ -144,9 +138,21 @@ To chat with the agent from a terminal, follow these steps:
    hermes
    ```
 
+## Open the Dashboard
+
+The onboard flow starts the dashboard port forward automatically.
+Open the dashboard from the host:
+
+```console
+$ nemohermes my-hermes dashboard-url --quiet
+http://127.0.0.1:18789/
+```
+
+Hermes handles dashboard sessions itself, so this URL does not include an OpenClaw `#token=` fragment.
+
 ## Check the API Endpoint
 
-The onboard flow starts the port forward automatically.
+The onboard flow also starts the API port forward automatically.
 Check the health endpoint from the host to confirm that the Hermes API is reachable.
 
 ```bash
@@ -162,17 +168,6 @@ openshell forward start --background 8642 my-hermes
 Configure an OpenAI-compatible client with the base URL `http://127.0.0.1:8642/v1`.
 Hermes uses API header authentication for client requests.
 Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
-
-## Open the Optional Dashboard
-
-When you set `NEMOCLAW_HERMES_DASHBOARD=1` during onboarding, NemoClaw starts `hermes dashboard --no-open` inside the sandbox and forwards `http://127.0.0.1:9119/` on the host.
-The API endpoint remains separate on `8642`.
-
-If the dashboard forward is missing after a reboot or terminal restart, start it again:
-
-```bash
-openshell forward start --background 9119 my-hermes
-```
 
 Treat the dashboard as a local management UI.
 Avoid exposing it on shared or public networks unless you put it behind your own access controls.

@@ -228,6 +228,89 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   }
 }
 
+describe("sandbox provisioning: runtime npm online state", () => {
+  it("replays the Dockerfile ENV directives so the runtime image inherits NPM_CONFIG_OFFLINE=false", () => {
+    const exports = collectDockerfileEnvExports(DOCKERFILE);
+    const probe = [
+      "#!/usr/bin/env bash",
+      "set -eo pipefail",
+      ...exports,
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+    ].join("\n");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-"));
+    const scriptPath = path.join(tmp, "replay.sh");
+    try {
+      fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe("false");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("exercises the staged plugin install with the offline lock still applied", () => {
+    const stage = stageDockerfileUntil(DOCKERFILE, "openclaw plugins install /opt/nemoclaw");
+    const probe = [
+      "#!/usr/bin/env bash",
+      "set -eo pipefail",
+      ...stage,
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+    ].join("\n");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-staged-"));
+    const scriptPath = path.join(tmp, "staged.sh");
+    try {
+      fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe("true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+function dockerfileEnvDirectives(text: string): string[] {
+  const lines = text.split("\n");
+  const directives: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    if (!/^ENV\s/.test(raw)) continue;
+    let collected = raw.replace(/^ENV\s+/, "");
+    while (collected.endsWith("\\") && i + 1 < lines.length) {
+      collected = `${collected.slice(0, -1)} ${lines[++i] ?? ""}`;
+    }
+    directives.push(collected.trim());
+  }
+  return directives;
+}
+
+function envDirectiveToExports(directive: string): string[] {
+  const exports: string[] = [];
+  const pattern = /([A-Za-z_][A-Za-z0-9_]*)=("([^"]*)"|'([^']*)'|(\S+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(directive)) !== null) {
+    const name = match[1];
+    const value = match[3] ?? match[4] ?? match[5] ?? "";
+    exports.push(`export ${name}=${JSON.stringify(value)}`);
+  }
+  return exports;
+}
+
+function collectDockerfileEnvExports(file: string): string[] {
+  const text = fs.readFileSync(file, "utf-8");
+  return dockerfileEnvDirectives(text).flatMap(envDirectiveToExports);
+}
+
+function stageDockerfileUntil(file: string, runMarker: string): string[] {
+  const text = fs.readFileSync(file, "utf-8");
+  const cutoff = text.indexOf(runMarker);
+  if (cutoff === -1) {
+    throw new Error(`Dockerfile is missing expected RUN marker: ${runMarker}`);
+  }
+  return dockerfileEnvDirectives(text.slice(0, cutoff)).flatMap(envDirectiveToExports);
+}
+
 describe("sandbox provisioning: image health checks (#1430)", () => {
   it.each([
     ["default dashboard URL", {}, "http://127.0.0.1:18789/health"],

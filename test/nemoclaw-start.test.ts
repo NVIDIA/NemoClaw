@@ -3259,6 +3259,371 @@ describe("provider placeholder refresh (#4251)", () => {
       "slack.default.botToken runtime SLACK_BOT_TOKEN is neither the SLACK_BOT_TOKEN OpenShell placeholder nor a xoxb- Slack token",
     );
   });
+
+  it("emits the deterministic accepted-extras breadcrumb so e2e harnesses can prove env-arg propagation", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+            },
+          },
+        },
+      },
+      {
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toMatch(
+      /\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted 2 entry\(ies\): TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B/,
+    );
+  });
+
+  it("does not emit the accepted-extras breadcrumb when NEMOCLAW_EXTRA_PLACEHOLDER_KEYS is unset", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+            },
+          },
+        },
+      },
+      {},
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).not.toContain(
+      "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted",
+    );
+  });
+
+  it("splits NEMOCLAW_EXTRA_PLACEHOLDER_KEYS on commas the same way as whitespace", () => {
+    const scopedA = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
+    const scopedB = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_B";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              a: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+              b: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_B" },
+            },
+          },
+        },
+      },
+      {
+        // Comma- and whitespace-mixed input — the bash for-loop only splits on
+        // default IFS (whitespace), so without the comma->space normalization
+        // both keys would arrive concatenated as a single token and fail the
+        // regex check.
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
+        TELEGRAM_BOT_TOKEN_AGENT_A: scopedA,
+        TELEGRAM_BOT_TOKEN_AGENT_B: scopedB,
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.a.botToken).toBe(scopedA);
+    expect(run.config.channels.telegram.accounts.b.botToken).toBe(scopedB);
+    expect(run.result.stderr).toContain(
+      "Refreshed provider placeholders from OpenShell runtime env: TELEGRAM_BOT_TOKEN_AGENT_A,TELEGRAM_BOT_TOKEN_AGENT_B",
+    );
+  });
+
+  it("revision-collapses NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries the same way as canonical keys", () => {
+    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN_AGENT_A";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A",
+              },
+            },
+          },
+        },
+      },
+      {
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+        TELEGRAM_BOT_TOKEN_AGENT_A: scoped,
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(scoped);
+    expect(run.result.stderr).toContain(
+      "Refreshed provider placeholders from OpenShell runtime env: TELEGRAM_BOT_TOKEN_AGENT_A",
+    );
+  });
+
+  it("does not let canonical TELEGRAM_BOT_TOKEN rewrite the suffixed extra placeholder", () => {
+    // Pre-fix bug: the python rewrite did `if old in value: value.replace(old, new)`,
+    // so the canonical replacement for `openshell:resolve:env:TELEGRAM_BOT_TOKEN`
+    // greedily rewrote the prefix of `openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A`,
+    // routing the per-profile placeholder to the wrong canonical revision and
+    // making rotation of an extra key unsafe. The grammar-aware regex now
+    // matches each placeholder as an exact token only.
+    const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const extraScoped = "openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+              agentA: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: canonicalScoped,
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+        TELEGRAM_BOT_TOKEN_AGENT_A: extraScoped,
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(canonicalScoped);
+    expect(run.config.channels.telegram.accounts.agentA.botToken).toBe(extraScoped);
+  });
+
+  it("leaves the suffixed extra placeholder unchanged when only the canonical revision is set", () => {
+    // Companion to the canonical-vs-extra collision test: when the operator
+    // staged a revision for TELEGRAM_BOT_TOKEN but not for the extra key,
+    // the extra placeholder must stay on its canonical form rather than be
+    // partially rewritten by the prefix replacement.
+    const canonicalScoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+              agentA: { botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A" },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: canonicalScoped,
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: "TELEGRAM_BOT_TOKEN_AGENT_A",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(canonicalScoped);
+    expect(run.config.channels.telegram.accounts.agentA.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN_AGENT_A",
+    );
+  });
+
+  it("rejects malformed and canonical-collision NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entries without faulting", () => {
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "telegram_bot_token 9NUM_START Path$Bad TELEGRAM_BOT_TOKEN TELEGRAM_BOT_TOKEN_VALID",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'telegram_bot_token'",
+    );
+    expect(run.result.stderr).toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '9NUM_START'",
+    );
+    expect(run.result.stderr).toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'Path$Bad'",
+    );
+    // Canonical-collision tokens are filtered silently by the case statement.
+    expect(run.result.stderr).not.toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'TELEGRAM_BOT_TOKEN'",
+    );
+    // The canonical-key revision-collapse still runs end-to-end.
+    expect(run.config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+    );
+  });
+
+  it("refuses arbitrary host secret names that do not extend a canonical channel envKey inside the sandbox", () => {
+    // Defence-in-depth: even if an operator clobbers NEMOCLAW_EXTRA_PLACEHOLDER_KEYS
+    // inside a running sandbox after the host-side parser already filtered it,
+    // the container-side refresh helper must mirror the host's canonical-prefix
+    // restriction so a noncanonical name such as GITHUB_TOKEN never reaches the
+    // python placeholder walker.
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+            },
+          },
+        },
+      },
+      {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        NEMOCLAW_EXTRA_PLACEHOLDER_KEYS:
+          "GITHUB_TOKEN AWS_SECRET_ACCESS_KEY NPM_TOKEN KUBECONFIG NEMOCLAW_EXTRA_PLACEHOLDER_KEYS TELEGRAM_BOT_TOKEN_KEPT",
+        // Stage host secrets that would leak if the bash refresh ever
+        // accepted their names. The assertion below confirms none of these
+        // values appear in any output produced by the python heredoc.
+        GITHUB_TOKEN: "ghp-host-secret-would-leak",
+        AWS_SECRET_ACCESS_KEY: "aws-host-secret-would-leak",
+        NPM_TOKEN: "npm-host-secret-would-leak",
+        KUBECONFIG: "/host/path/would-leak",
+      },
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    for (const blocked of [
+      "GITHUB_TOKEN",
+      "AWS_SECRET_ACCESS_KEY",
+      "NPM_TOKEN",
+      "KUBECONFIG",
+      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+    ]) {
+      expect(run.result.stderr).toContain(
+        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${blocked}' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>`,
+      );
+    }
+    expect(run.result.stderr).not.toContain(
+      "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry 'TELEGRAM_BOT_TOKEN_KEPT'",
+    );
+    // None of the staged host secret values should reach any stdout/stderr
+    // line the python heredoc emits, because their names were rejected before
+    // the heredoc ran.
+    expect(run.result.stderr).not.toContain("ghp-host-secret-would-leak");
+    expect(run.result.stderr).not.toContain("aws-host-secret-would-leak");
+    expect(run.result.stderr).not.toContain("npm-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("ghp-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("aws-host-secret-would-leak");
+    expect(run.result.stdout).not.toContain("npm-host-secret-would-leak");
+    expect(JSON.stringify(run.config)).not.toContain("ghp-host-secret-would-leak");
+    expect(JSON.stringify(run.config)).not.toContain("aws-host-secret-would-leak");
+  });
+
+  it("mirrors every canonical channel envKey from the TypeScript parser as an extension prefix", () => {
+    // Behavioural parity guard: the in-container parser hardcodes its
+    // canonical-prefix allowlist, so a future channel addition in
+    // src/lib/sandbox/channels.ts must show up in scripts/nemoclaw-start.sh
+    // for the runtime side to keep accepting the same per-profile keys.
+    // For each TypeScript-derived canonical envKey, plant a `<KEY>_PARITY`
+    // extension and assert that the bash refresh accepts and revision-
+    // collapses it. Drift in either direction (new channel added but bash
+    // not updated, or bash list shrunk) breaks one of the two assertions.
+    const distPath = path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "extra-placeholder-keys.js");
+    const { canonicalPlaceholderKeys } = require(distPath);
+    const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
+    expect(canonicalKeys.length).toBeGreaterThan(0);
+
+    for (const canonical of canonicalKeys) {
+      const extension = `${canonical}_PARITY`;
+      const scoped = `openshell:resolve:env:v77_${extension}`;
+      const run = runRefresh(
+        {
+          channels: {
+            telegram: {
+              accounts: {
+                parity: { botToken: `openshell:resolve:env:${extension}` },
+              },
+            },
+          },
+        },
+        {
+          NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: extension,
+          [extension]: scoped,
+        },
+      );
+
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(
+        run.result.stderr,
+        `bash refresh refused canonical extension '${extension}' — parity drift with src/lib/onboard/extra-placeholder-keys.ts`,
+      ).not.toContain(
+        `[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '${extension}'`,
+      );
+      expect(run.config.channels.telegram.accounts.parity.botToken).toBe(scoped);
+    }
+  });
+
+  it("caps NEMOCLAW_EXTRA_PLACEHOLDER_KEYS at 32 entries inside the sandbox", () => {
+    // 33 fillers in the list, all extending TELEGRAM_BOT_TOKEN_, all valid
+    // canonical extensions. The cap should accept the first 32 (indices
+    // 0..31) and reject the 33rd entry (index 32, named ..._FILLER_32),
+    // which is also the beyondCap placeholder we plant in openclaw.json.
+    const tokens = Array.from({ length: 33 }, (_, i) => `TELEGRAM_BOT_TOKEN_FILLER_${i}`);
+    const beyondCap = tokens[32];
+    const beyondCapScoped = `openshell:resolve:env:v42_${beyondCap}`;
+    const env: Record<string, string> = {
+      NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: tokens.join(" "),
+      // Stage a revision-scoped placeholder ONLY for the beyondCap entry.
+      // If the cap is a no-op, the python heredoc would iterate beyondCap
+      // and collapse the canonical placeholder in openclaw.json to the
+      // v42_-scoped form. With the cap working, beyondCap stays out of
+      // the keys list, so the rewrite never runs.
+      [beyondCap]: beyondCapScoped,
+      // Deliberately leave TELEGRAM_BOT_TOKEN / DISCORD_BOT_TOKEN / etc.
+      // unset so no canonical replacement is added; that sidesteps the
+      // python heredoc's substring-match path which would otherwise let a
+      // shorter canonical replacement bleed into beyondCap regardless of
+      // the cap state.
+    };
+    const run = runRefresh(
+      {
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+              },
+              beyondCap: {
+                botToken: `openshell:resolve:env:${beyondCap}`,
+              },
+            },
+          },
+        },
+      },
+      env,
+    );
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stderr).toContain(
+      "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: capped at 32 entries; ignoring remainder",
+    );
+    // The beyondCap key must not be processed by the python heredoc, so the
+    // beyondCap canonical placeholder must stay unchanged on disk.
+    expect(run.config.channels.telegram.accounts.beyondCap.botToken).toBe(
+      `openshell:resolve:env:${beyondCap}`,
+    );
+    expect(run.result.stderr).not.toContain(
+      `Refreshed provider placeholders from OpenShell runtime env: ${beyondCap}`,
+    );
+    expect(run.result.stdout).not.toContain(beyondCapScoped);
+  });
 });
 
 describe("Slack runtime env normalization (#4274)", () => {

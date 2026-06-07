@@ -9,6 +9,7 @@
  * of re-implementing parsing or process-env state handling.
  */
 
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
 
 const { runCapture } = require("../runner");
@@ -117,12 +118,14 @@ export function probeOllamaRuntimeModelStatus(
   const output = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/ps`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/ps`,
+      ]),
     ],
     { ignoreError: true },
   );

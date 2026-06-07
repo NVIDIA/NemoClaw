@@ -192,8 +192,8 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
- * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
+ * the per-platform profile default (Station prefers Qwen3.6-27B, Spark the
+ * Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
  * Match is case-insensitive against either the `envValue` slug or the full

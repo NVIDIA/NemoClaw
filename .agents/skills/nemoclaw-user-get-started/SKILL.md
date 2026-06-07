@@ -70,7 +70,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
-Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, and local-inference presets.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, local-inference, and read-only weather presets.
 On DGX Spark, express install uses `my-spark-assistant` as the sandbox name unless `NEMOCLAW_SANDBOX_NAME` is already set.
 On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
@@ -182,7 +182,7 @@ Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) befor
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
 Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
-The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, read-only weather lookups, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
 The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.
@@ -260,7 +260,7 @@ openclaw tui
 
 ## References
 
-- **Load [references/quickstart-hermes.md](references/quickstart-hermes.md)** when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell. Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes API endpoint.
+- **Load [references/quickstart-hermes.md](references/quickstart-hermes.md)** when users ask for Hermes setup, NemoHermes onboarding, or running Hermes inside OpenShell. Installs NemoClaw, selects the Hermes agent, and launches a sandboxed Hermes dashboard and API endpoint.
 - **Load [references/prerequisites.md](references/prerequisites.md)** when verifying prerequisites before installation. Lists the hardware, software, and container runtime requirements for running NemoClaw.
 - **Load [references/windows-preparation.md](references/windows-preparation.md)** when preparing a Windows machine for NemoClaw, enabling WSL 2, configuring Docker Desktop for Windows, or troubleshooting a Windows-specific install error. Covers Windows-only preparation steps required before the Quickstart.
 
