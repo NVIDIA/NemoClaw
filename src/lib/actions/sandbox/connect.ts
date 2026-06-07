@@ -74,7 +74,7 @@ type SandboxListProbe = {
   output: string;
 };
 
-type SandboxInferenceRouteProbe = {
+export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
   detail: string;
@@ -88,6 +88,54 @@ type SandboxInferenceRouteEnsureResult = {
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+};
+
+export type SandboxInferenceRouteRepairResult = {
+  healthy: boolean;
+  repairAttempted: boolean;
+  detail: string;
+};
+
+export type SandboxInferenceRouteRepairDeps = {
+  isRepairDisabled?: () => boolean;
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => SandboxInferenceRouteProbe;
+  shouldApplyVmDnsMonkeypatch: (sb: SandboxEntry | null) => boolean;
+  applyVmDnsMonkeypatch: (
+    sandboxName: string,
+    sb: SandboxEntry | null,
+  ) => { ok: boolean; reason?: string };
+  reapplyVmInferenceRoute: (
+    sandboxName: string,
+    sb: SandboxEntry | null,
+  ) => SandboxInferenceRouteProbe | null;
+  repairLegacyDnsProxy: (
+    sandboxName: string,
+    quiet: boolean,
+  ) => { exitCode: number; message?: string | null };
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+};
+
+export type ManagedInferenceRouteResetDeps = {
+  verifyLocalInferenceRouteDependencies: (
+    provider: string,
+    options: { quiet?: boolean },
+  ) => boolean;
+  runInferenceSet: (provider: string, model: string) => { status: number | null };
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => SandboxInferenceRouteProbe;
+  printUnrecoverableInferenceRoute: (
+    sandboxName: string,
+    sb: SandboxEntry,
+    detail: string,
+  ) => void;
+  log?: (message: string) => void;
+  error?: (message: string) => void;
 };
 
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS = 3;
@@ -327,15 +375,18 @@ function reapplyVmInferenceRoute(
   return probeSandboxInferenceRoute(sandboxName);
 }
 
-function repairSandboxInferenceRouteIfNeeded(
+export function repairSandboxInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry | null,
   { quiet = false }: { quiet?: boolean } = {},
-): { healthy: boolean; repairAttempted: boolean; detail: string } {
-  if (process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1") {
+  deps: SandboxInferenceRouteRepairDeps,
+): SandboxInferenceRouteRepairResult {
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
+  if (deps.isRepairDisabled?.()) {
     return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
   }
-  const initialProbe = probeSandboxInferenceRoute(sandboxName);
+  const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
@@ -344,21 +395,21 @@ function repairSandboxInferenceRouteIfNeeded(
   }
 
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
-    if (shouldApplyVmDnsMonkeypatch(sb)) {
+    if (deps.shouldApplyVmDnsMonkeypatch(sb)) {
       if (!quiet) {
-        console.log("");
-        console.log(
+        log("");
+        log(
           `  inference.local is unavailable inside '${sandboxName}'. Applying OpenShell VM DNS monkeypatch...`,
         );
       }
-      const patch = applyOpenShellVmDnsMonkeypatch(sandboxName, sb);
-      const patchedProbe = patch.ok ? probeSandboxInferenceRoute(sandboxName, {
+      const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
+      const patchedProbe = patch.ok ? deps.probe(sandboxName, {
         attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
         delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
       }) : null;
       if (patchedProbe?.healthy) {
         if (!quiet) {
-          console.log("  inference.local route repaired.");
+          log("  inference.local route repaired.");
         }
         return {
           healthy: true,
@@ -368,11 +419,11 @@ function repairSandboxInferenceRouteIfNeeded(
       }
       if (!quiet) {
         if (!patch.ok && patch.reason) {
-          console.error(
+          error(
             `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
           );
         } else if (patchedProbe?.broken) {
-          console.error(
+          error(
             "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
           );
         }
@@ -380,15 +431,15 @@ function repairSandboxInferenceRouteIfNeeded(
     }
 
     if (!quiet) {
-      console.log("");
-      console.log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
+      log("");
+      log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
     }
-    const finalProbe = reapplyVmInferenceRoute(sandboxName, sb);
+    const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
     if (!quiet) {
       if (finalProbe?.healthy) {
-        console.log("  inference.local route repaired.");
+        log("  inference.local route repaired.");
       } else if (finalProbe?.broken) {
-        console.error(
+        error(
           `  Warning: inference.local is still unavailable through the OpenShell ${sb?.openshellDriver || "non-legacy"} gateway path.`,
         );
       }
@@ -415,17 +466,14 @@ function repairSandboxInferenceRouteIfNeeded(
   }
 
   if (!quiet) {
-    console.log("");
-    console.log(`  inference.local is unavailable inside '${sandboxName}'. Repairing sandbox DNS proxy...`);
+    log("");
+    log(`  inference.local is unavailable inside '${sandboxName}'. Repairing sandbox DNS proxy...`);
   }
-  const repair = runSetupDnsProxy(
-    { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName },
-    { log: quiet ? () => undefined : console.log },
-  );
+  const repair = deps.repairLegacyDnsProxy(sandboxName, quiet);
   if (repair.exitCode !== 0) {
     if (!quiet) {
-      console.error("  Warning: failed to repair sandbox DNS proxy.");
-      if (repair.message) console.error(`  ${repair.message}`);
+      error("  Warning: failed to repair sandbox DNS proxy.");
+      if (repair.message) error(`  ${repair.message}`);
     }
     return {
       healthy: false,
@@ -434,15 +482,15 @@ function repairSandboxInferenceRouteIfNeeded(
     };
   }
 
-  const repairedProbe = probeSandboxInferenceRoute(sandboxName, {
+  const repairedProbe = deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (!quiet) {
     if (repairedProbe.healthy) {
-      console.log("  inference.local route repaired.");
+      log("  inference.local route repaired.");
     } else if (repairedProbe.broken) {
-      console.error("  Warning: inference.local is still unavailable after DNS proxy repair.");
+      error("  Warning: inference.local is still unavailable after DNS proxy repair.");
     }
   }
   if (!repairedProbe.healthy && !repairedProbe.broken) {
@@ -457,6 +505,30 @@ function repairSandboxInferenceRouteIfNeeded(
     repairAttempted: true,
     detail: repairedProbe.detail,
   };
+}
+
+function repairSandboxInferenceRouteIfNeeded(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+  { quiet = false }: { quiet?: boolean } = {},
+): SandboxInferenceRouteRepairResult {
+  return repairSandboxInferenceRouteWithDeps(
+    sandboxName,
+    sb,
+    { quiet },
+    {
+      isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
+      probe: probeSandboxInferenceRoute,
+      shouldApplyVmDnsMonkeypatch,
+      applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
+      reapplyVmInferenceRoute,
+      repairLegacyDnsProxy: (name, isQuiet) =>
+        runSetupDnsProxy(
+          { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName: name },
+          { log: isQuiet ? () => undefined : console.log },
+        ),
+    },
+  );
 }
 
 function verifyLocalInferenceRouteDependencies(
@@ -510,68 +582,90 @@ function printUnrecoverableInferenceRoute(
   console.error("  Connect is stopping because the sandbox inference route is known to be broken.");
 }
 
-function resetManagedInferenceRoute(
+export function resetManagedInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
+  deps: ManagedInferenceRouteResetDeps,
 ): boolean {
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
   if (!sb.provider || !sb.model) return false;
 
-  if (!verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
     if (!quiet) {
-      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
     }
     return false;
   }
 
   if (!quiet) {
-    console.log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
+    log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
   }
-  const resetResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
+  const resetResult = deps.runInferenceSet(sb.provider, sb.model);
   if (resetResult.status !== 0) {
-    const finalProbe = probeSandboxInferenceRoute(sandboxName, {
+    const finalProbe = deps.probe(sandboxName, {
       attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
       delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
     });
     if (finalProbe.healthy) {
       if (!quiet) {
-        console.log("  inference.local route repaired.");
+        log("  inference.local route repaired.");
       }
       return true;
     }
 
     if (!quiet) {
-      console.error("  Error: failed to reset the OpenShell inference route.");
-      printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
+      error("  Error: failed to reset the OpenShell inference route.");
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
     }
     return false;
   }
 
-  if (!verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
     if (!quiet) {
-      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
     }
     return false;
   }
 
-  const finalProbe = probeSandboxInferenceRoute(sandboxName, {
+  const finalProbe = deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (finalProbe.healthy) {
     if (!quiet) {
-      console.log("  inference.local route repaired.");
+      log("  inference.local route repaired.");
     }
     return true;
   }
 
   if (!quiet) {
-    printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
+    deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
   }
   return false;
+}
+
+function resetManagedInferenceRoute(
+  sandboxName: string,
+  sb: SandboxEntry,
+  { detail, quiet = false }: { detail: string; quiet?: boolean },
+): boolean {
+  return resetManagedInferenceRouteWithDeps(
+    sandboxName,
+    sb,
+    { detail, quiet },
+    {
+      verifyLocalInferenceRouteDependencies,
+      runInferenceSet: (provider, model) =>
+        runOpenshell(buildInferenceSetArgs(provider, model), {
+          ignoreError: true,
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        }),
+      probe: probeSandboxInferenceRoute,
+      printUnrecoverableInferenceRoute,
+    },
+  );
 }
 
 function ensureSandboxInferenceRoute(

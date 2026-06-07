@@ -60,12 +60,15 @@ jobs:
             [wsl-repo-cloud-openclaw]=windows-latest
             [gpu-repo-local-ollama-openclaw]=linux-amd64-gpu-rtxpro6000-latest-1
             [brev-launchable-cloud-openclaw]=ubuntu-latest
+            [ubuntu-gateway-port-conflict-negative]=ubuntu-latest
+            [ubuntu-invalid-nvidia-key-negative]=ubuntu-latest
             [ubuntu-no-docker-preflight-negative]=ubuntu-latest
             [ubuntu-repo-cloud-hermes]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-discord]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-slack]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-brave]=ubuntu-latest
+            [ubuntu-repo-cloud-openclaw-custom-policies]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-discord]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-double-provider-switch]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-double-same-provider]=ubuntu-latest

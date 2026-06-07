@@ -23,9 +23,18 @@ const planScriptPath = path.join(repoRoot, "scripts", "release-plan.ts");
 const tsxPath = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const tempRoots: string[] = [];
 
+function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return { ...env, ...extra };
+}
+
 function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
+  return baseEnv({
     GIT_AUTHOR_NAME: "Release Test",
     GIT_AUTHOR_EMAIL: "release-test@example.com",
     GIT_COMMITTER_NAME: "Release Test",
@@ -34,7 +43,7 @@ function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     GIT_CONFIG_KEY_0: "tag.gpgSign",
     GIT_CONFIG_VALUE_0: "false",
     ...extra,
-  };
+  });
 }
 
 function run(
@@ -134,8 +143,7 @@ function runReleaseLatestWithoutIdentity(
   const xdgConfigHome = path.join(fixture.root, "empty-xdg-config");
   fs.mkdirSync(home);
   fs.mkdirSync(xdgConfigHome);
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
+  const env = baseEnv({
     GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: "user.useConfigOnly",
     GIT_CONFIG_VALUE_0: "true",
@@ -146,7 +154,7 @@ function runReleaseLatestWithoutIdentity(
     RELEASE_TAG: releaseTag,
     REMOTE_NAME: "origin",
     XDG_CONFIG_HOME: xdgConfigHome,
-  };
+  });
   delete env.GIT_AUTHOR_NAME;
   delete env.GIT_AUTHOR_EMAIL;
   delete env.GIT_COMMITTER_NAME;

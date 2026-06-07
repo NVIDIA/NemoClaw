@@ -3,11 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  DashboardUrlCommandError,
-  buildDashboardUrl,
-  runDashboardUrlCommand,
-} from "./dashboard-url-command";
+import { buildDashboardUrl, runDashboardUrlCommand } from "./dashboard-url-command";
 
 function makeSinks() {
   const out: string[] = [];

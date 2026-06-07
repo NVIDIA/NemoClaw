@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
+import * as registry from "../state/registry";
 import {
   type ChannelInputSpec,
   type ChannelManifest,
@@ -10,12 +11,14 @@ import {
   createBuiltInChannelManifestRegistry,
   getMessagingManifestAvailabilityContext,
   hasMessagingManifestRequiredInputs,
+  MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   resolveMessagingManifestSeed,
   type SandboxMessagingPlan,
   toMessagingAgentId,
 } from "../messaging";
+export { MessagingHostStateApplier };
 import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
 import {
   promptMessagingChannelLineSelection,
@@ -249,6 +252,18 @@ function printInSandboxQrStatus(manifest: ChannelManifest): void {
   for (const line of manifest.enrollmentNotes ?? []) {
     console.log(`  ${line}`);
   }
+}
+
+export function readMessagingPlanFromEnv(): SandboxMessagingPlan | null {
+  return MessagingSetupApplier.readPlanFromEnv();
+}
+
+export function writePlanToEnv(plan: SandboxMessagingPlan): void {
+  MessagingSetupApplier.writePlanToEnv(plan);
+}
+
+export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
+  return registry.getSandbox(sandboxName)?.messaging?.plan ?? null;
 }
 
 function resolveMessagingSetupSandboxName(options: SetupSelectedMessagingChannelsOptions): string {

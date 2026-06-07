@@ -61,7 +61,8 @@ const DOCKER_DRIVER_GATEWAY_MOUNT_PATH = "/opt/nemoclaw/openshell-gateway";
 // sees the cmdline string, not argv0; without an argv0 gate the compat mount
 // path could match unrelated commands. The compat parent is rediscovered via
 // the PID file written at launch time.
-const HOST_GATEWAY_PGREP_PATTERN = "^(/[^ ]*/)?openshell-gateway( |$)";
+/** Anchored pgrep pattern for direct host openshell-gateway processes. */
+export const HOST_GATEWAY_PGREP_PATTERN = "^(/[^ ]*/)?openshell-gateway( |$)";
 const DEFAULT_TERM_WAIT_MS = 1000;
 const DEFAULT_KILL_WAIT_MS = 1000;
 const DEFAULT_POLL_INTERVAL_MS = 50;

@@ -24,9 +24,6 @@ const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
-const HERMES_POLICY = path.join(ROOT, "agents", "hermes", "policy-additions.yaml");
-const HERMES_POLICY_PERMISSIVE = path.join(ROOT, "agents", "hermes", "policy-permissive.yaml");
-const HERMES_START = path.join(ROOT, "agents", "hermes", "start.sh");
 
 function dockerRunCommandBetween(
   dockerfile: string,
