@@ -137,6 +137,80 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("doctor accepts a local openshell-gateway process when legacy inspect fails", () => {
+    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
+      'case "$*" in',
+      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+      '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+      "esac",
+    ]);
+    writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
+
+    const hostCalls = path.join(setup.home, "host-calls");
+    fs.writeFileSync(
+      path.join(setup.localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        `printf 'docker:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`,
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "inspect" ]; then echo "Error: No such object: $3" >&2; exit 1; fi',
+        'if [ "$1" = "port" ]; then exit 1; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(setup.localBin, "pgrep"),
+      [
+        "#!/usr/bin/env bash",
+        `printf 'pgrep:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`,
+        "printf '9999887\\n'",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(setup.localBin, "ss"),
+      [
+        "#!/usr/bin/env bash",
+        `printf 'ss:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`,
+        "printf 'LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*\\n'",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(setup.localBin, "curl"),
+      ["#!/usr/bin/env bash", 'echo "{}"', "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = setup.runDoctor("alpha doctor --json");
+
+    expect(r.code).toBe(0);
+    const report = JSON.parse(r.out) as {
+      status: string;
+      checks: Array<{ group: string; label: string; status: string; detail: string }>;
+    };
+    expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
+    expect(report.checks.find((check) => check.label === "Local gateway process")).toEqual(
+      expect.objectContaining({
+        group: "Gateway",
+        status: "ok",
+        detail: "openshell-gateway is running and listening on port 8080",
+      }),
+    );
+    expect(report.checks.filter((check) => check.group === "Gateway" && check.status === "fail")).toEqual([]);
+    expect(report.status).toBe("ok");
+
+    const calls = fs.readFileSync(hostCalls, "utf8");
+    expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
+    expect(calls).not.toContain("pgrep:-af openshell-gateway");
+    expect(calls).not.toContain("docker:port");
+  });
+
   it(
     "doctor reports fresh shields state as not configured instead of down",
     testTimeoutOptions(30_000),

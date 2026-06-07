@@ -20,6 +20,7 @@ import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -202,6 +203,20 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
     5000,
   );
   if (inspect.status !== 0) {
+    const processCheck = captureHostCommand("pgrep", ["-f", HOST_GATEWAY_PGREP_PATTERN], 5000);
+    const portCheck = captureHostCommand("ss", ["-ltn", `( sport = :${GATEWAY_PORT} )`], 5000);
+    const processRunning = processCheck.status === 0 && processCheck.stdout.trim().length > 0;
+    const portListening = portCheck.status === 0 && portCheck.stdout.includes(`:${GATEWAY_PORT}`);
+    if (processRunning && portListening) {
+      checks.push({
+        group: "Gateway",
+        label: "Local gateway process",
+        status: "ok",
+        detail: `openshell-gateway is running and listening on port ${GATEWAY_PORT}`,
+      });
+      return checks;
+    }
+
     checks.push({
       group: "Gateway",
       label: "Docker container",

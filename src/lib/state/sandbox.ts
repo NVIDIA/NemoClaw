@@ -39,6 +39,7 @@ const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
+const TAR_LISTING_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -242,6 +243,7 @@ export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarVal
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 60000,
+    maxBuffer: TAR_LISTING_MAX_BUFFER_BYTES,
   });
 
   if (result.status !== 0) {
@@ -376,6 +378,7 @@ export function rejectHardLinks(tarBuffer: Buffer): string[] {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 60000,
+    maxBuffer: TAR_LISTING_MAX_BUFFER_BYTES,
   });
 
   if (result.status !== 0) {
