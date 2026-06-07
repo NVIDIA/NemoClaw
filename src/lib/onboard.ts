@@ -6410,7 +6410,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(providerInferenceResult.stateResults);
-    session = providerInferenceResult.session;
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
