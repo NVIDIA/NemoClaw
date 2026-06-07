@@ -39,6 +39,7 @@ const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
+/** Allows large state archives to be listed without Node's default 1 MiB spawn buffer cap. */
 const TAR_LISTING_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 
 function parseJson<T>(text: string): T {
