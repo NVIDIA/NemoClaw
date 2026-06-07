@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { ROOT } from "../../runner";
+import { ROOT } from "../../state/paths";
 
 export type CommandCapture = {
   status: number;
@@ -24,7 +24,7 @@ export function captureHostCommand(
     timeout,
   });
   return {
-    status: result.status ?? (result.error ? 1 : 0),
+    status: result.status ?? (result.error || result.signal ? 1 : 0),
     stdout: String(result.stdout || ""),
     stderr: String(result.stderr || ""),
     error: result.error,
