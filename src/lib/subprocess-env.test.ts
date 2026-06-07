@@ -110,12 +110,14 @@ describe("withLocalNoProxy", () => {
   it("does not inject a broad .local suffix or arbitrary *.local hostnames", () => {
     const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
     withLocalNoProxy(env);
-    const parts = (env.NO_PROXY ?? "").split(",");
-    expect(parts).not.toContain(".local");
-    expect(parts).not.toContain("*.local");
-    expect(parts).not.toContain("evil.local");
-    expect(parts).not.toContain("attacker.local");
-    expect(parts.filter((p) => p.endsWith(".local"))).toEqual(["inference.local"]);
+    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+      const parts = (env[key] ?? "").split(",");
+      expect(parts).not.toContain(".local");
+      expect(parts).not.toContain("*.local");
+      expect(parts).not.toContain("evil.local");
+      expect(parts).not.toContain("attacker.local");
+      expect(parts.filter((p) => p.endsWith(".local"))).toEqual(["inference.local"]);
+    }
   });
 
   it("preserves a caller-provided .local entry without expanding the bypass", () => {
@@ -125,11 +127,13 @@ describe("withLocalNoProxy", () => {
       no_proxy: "trusted.local",
     };
     withLocalNoProxy(env);
-    const parts = (env.NO_PROXY ?? "").split(",");
-    expect(parts).toContain("trusted.local");
-    expect(parts).toContain("inference.local");
-    expect(parts).not.toContain(".local");
-    expect(parts).not.toContain("*.local");
+    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+      const parts = (env[key] ?? "").split(",");
+      expect(parts).toContain("trusted.local");
+      expect(parts).toContain("inference.local");
+      expect(parts).not.toContain(".local");
+      expect(parts).not.toContain("*.local");
+    }
   });
 });
 
