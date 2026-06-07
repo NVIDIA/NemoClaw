@@ -178,7 +178,10 @@ describe("CLI dispatch", () => {
 
       for (const action of ["add", "remove", "start", "stop"]) {
         const missingChannel = runWithEnv(`alpha channels ${action} 2>&1`, { HOME: home });
-        expect(missingChannel.code).toBe(PARSER_EXIT_CODE);
+        expect(
+          missingChannel.code,
+          `alpha channels ${action} exited ${missingChannel.code} with output:\n${missingChannel.out}`,
+        ).toBe(PARSER_EXIT_CODE);
         expect(missingChannel.out).toContain("Missing 1 required arg:");
         expect(missingChannel.out).toContain("channel  Messaging channel");
         expect(missingChannel.out).toContain("USAGE");
