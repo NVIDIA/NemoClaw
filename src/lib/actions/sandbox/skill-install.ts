@@ -343,7 +343,10 @@ export async function installSandboxSkill(
       const verb = isUpdate ? "updated" : "installed";
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
     } else {
-      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
+      console.error(
+        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
+          (paths.isOpenClaw && paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
+      );
       process.exit(1);
     }
   } finally {

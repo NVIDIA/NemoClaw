@@ -17,6 +17,8 @@ type ScorecardData = {
   /** Display date, e.g. "May 25". */
   today: string;
   runMode: ScorecardRunMode;
+  /** GitHub actor (username) who triggered the run. Empty/undefined for schedule. */
+  actor?: string;
   isSelectiveDispatch: boolean;
   /** Populated only when isSelectiveDispatch is true. */
   requestedJobs: string[];
@@ -81,8 +83,13 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
   // attachment stays under Slack's truncation threshold.
   const blocks: SlackBlock[] = [];
 
+  // Append actor suffix for dispatch-based runs (manual full / selective).
+  // Schedule runs skip the suffix because github.actor there is the workflow
+  // file author, not a meaningful trigger.
+  const showActor = data.runMode !== "Scheduled full nightly" && Boolean(data.actor);
+  const runModeText = showActor ? `${data.runMode} (by *${data.actor}*)` : data.runMode;
   const contextElements: SlackMrkdwnText[] = [
-    { type: "mrkdwn", text: `*Run mode:* ${data.runMode}` },
+    { type: "mrkdwn", text: `*Run mode:* ${runModeText}` },
   ];
   if (data.isSelectiveDispatch && data.requestedJobs.length > 0) {
     const jobList = data.requestedJobs.map((name) => `\`${name}\``).join(", ");
@@ -159,7 +166,21 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
  * — missing `text` triggers a warning).
  */
 function buildFallbackText(data: ScorecardData): string {
-  return `🌅 *NemoClaw Nightly Scorecard — ${data.today}*`;
+  let modeSegment: string;
+  switch (data.runMode) {
+    case "Scheduled full nightly":
+      modeSegment = "🗓️ DAILY";
+      break;
+    case "Manual full run":
+      modeSegment = data.actor ? `🛠 Manual full by ${data.actor}` : "🛠 Manual full";
+      break;
+    case "Selective dispatch":
+      modeSegment = data.actor ? `🛠 Selective by ${data.actor}` : "🛠 Selective";
+      break;
+    default:
+      modeSegment = data.runMode;
+  }
+  return `🌅 *NemoClaw Nightly Scorecard · ${modeSegment} · ${data.today}*`;
 }
 
 type SlackStatusColor = "danger" | "good" | "warning";
@@ -176,21 +197,21 @@ function getStatusColor(data: ScorecardData): SlackStatusColor {
   return "warning";
 }
 
-type SlackChannel = "ci" | "preview" | "situation-room";
+type SlackChannel = "daily" | "fullrun" | "preview";
 
 /**
  * Routes the Slack post to a channel based on run mode. Production runs
  * always land in one of the first two channels:
- *   "Scheduled full nightly" → "situation-room" (daily ops alerts)
- *   "Manual full run"        → "ci"             (team-wide CI channel)
+ *   "Scheduled full nightly" → "daily"   (daily ops alerts)
+ *   "Manual full run"        → "fullrun" (team-wide CI channel)
  *
  * Selective dispatch returns "preview", reserved for dev testing only.
  *
  * The caller maps the returned tag to a webhook URL secret.
  */
 function getSlackChannel(data: ScorecardData): SlackChannel {
-  if (data.runMode === "Scheduled full nightly") return "situation-room";
-  if (data.runMode === "Manual full run") return "ci";
+  if (data.runMode === "Scheduled full nightly") return "daily";
+  if (data.runMode === "Manual full run") return "fullrun";
   return "preview";
 }
 

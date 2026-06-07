@@ -470,6 +470,31 @@ export WHATSAPP_TOKEN="$WHATSAPP_TOKEN_DECOY"
 export WHATSAPP_BOT_TOKEN="$WHATSAPP_BOT_TOKEN_DECOY"
 export WHATSAPP_SESSION_SECRET="$WHATSAPP_SESSION_SECRET_DECOY"
 
+# NEMOCLAW_EXTRA_PLACEHOLDER_KEYS — operator-supplied per-profile credentials.
+# The host-side parser at src/lib/onboard/extra-placeholder-keys.ts accepts
+# only entries that extend a canonical channel envKey with a non-empty
+# `_<suffix>`, rejects bare canonical keys, the control env, and arbitrary
+# host secret names. The fixtures below cover three observable outcomes
+# Phase 2c asserts on:
+#
+#   1. TELEGRAM_BOT_TOKEN_AGENT_A — extension + token exported -> provider
+#      row registered, placeholder injected into the sandbox env.
+#   2. TELEGRAM_BOT_TOKEN_AGENT_MISSING — extension + token NOT exported ->
+#      registerExtraPlaceholderProviders pushes a token=null row that
+#      upsertMessagingProviders skips at the gateway; no placeholder is
+#      injected for that key.
+#   3. GITHUB_TOKEN — host secret shape -> rejected at the parser layer
+#      before any provider row is built; the raw value must never reach
+#      the sandbox provider gateway.
+EXTRAS_TELEGRAM_AGENT_A_TOKEN="test-fake-telegram-token-agent-a-e2e"
+EXTRAS_TELEGRAM_AGENT_B_TOKEN="test-fake-telegram-token-agent-b-e2e"
+EXTRAS_GITHUB_DECOY="test-fake-host-secret-that-must-not-leak"
+export NEMOCLAW_EXTRA_PLACEHOLDER_KEYS="TELEGRAM_BOT_TOKEN_AGENT_A TELEGRAM_BOT_TOKEN_AGENT_B TELEGRAM_BOT_TOKEN_AGENT_MISSING GITHUB_TOKEN"
+export TELEGRAM_BOT_TOKEN_AGENT_A="$EXTRAS_TELEGRAM_AGENT_A_TOKEN"
+export TELEGRAM_BOT_TOKEN_AGENT_B="$EXTRAS_TELEGRAM_AGENT_B_TOKEN"
+unset TELEGRAM_BOT_TOKEN_AGENT_MISSING
+export GITHUB_TOKEN="$EXTRAS_GITHUB_DECOY"
+
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
 sandbox_exec_stdin() {
   local cmd="$1"
@@ -677,14 +702,15 @@ if openshell --version >/dev/null 2>&1; then
 fi
 pass "Pre-cleanup complete"
 
-if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
-  && [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
-  && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
-  # This E2E normally uses fake tokens to exercise config plumbing, not the
-  # live Telegram API. Keep real-token runs on the onboard validation path.
-  # Remove once onboard has a hermetic fake Telegram API.
-  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  elif [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
+    && ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Host cannot reach api.telegram.org; skipping manifest Telegram reachability check"
+  fi
 fi
 if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
   && [ -z "${SLACK_BOT_TOKEN_REAL:-}" ] \
@@ -921,14 +947,22 @@ fi
 # `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
 # phone-camera frame, and the openclaw() guard injects it for the single
 # `channels login --channel whatsapp` invocation. Verify both the preload file
-# (root-owned, read-only) and the guard wiring are present in the sandbox.
+# (root-owned/read-only in root mode; read-only in non-root mode) and the guard
+# wiring are present in the sandbox.
 whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
+entrypoint_start_log_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-start.log 2>/dev/null || echo missing")
 if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
   pass "M-WA6b: WhatsApp compact-QR preload installed root:444 (#4522)"
+elif [ "$whatsapp_qr_preload_stat" = "sandbox:444" ] && [ "$entrypoint_start_log_stat" = "sandbox:600" ]; then
+  # /tmp/nemoclaw-start.log is written before sandbox-init.sh is sourced:
+  # root mode creates root:600, while non-root mode creates sandbox:600.
+  # Only accept sandbox-owned sourced files when that independent init-time
+  # signal proves privilege separation was already disabled.
+  pass "M-WA6b: WhatsApp compact-QR preload installed sandbox:444 (non-root mode) (#4522)"
 elif [ "$whatsapp_qr_preload_stat" = "missing" ]; then
   fail "M-WA6b: WhatsApp compact-QR preload not installed in sandbox (#4522)"
 else
-  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (#4522)"
+  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (entrypoint start log: ${entrypoint_start_log_stat}) (#4522)"
 fi
 
 # Assert on the actual NODE_OPTIONS injection line, not just the filename: the
@@ -1270,6 +1304,158 @@ if [ -n "$sandbox_fs_wa" ]; then
   fail "M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}"
 else
   pass "M-WA7c: No WhatsApp host credential material found on sandbox filesystem"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 2c: NEMOCLAW_EXTRA_PLACEHOLDER_KEYS — per-profile credential injection
+#
+# Validates the operator-supplied extra-placeholder-keys hook end-to-end:
+#   - the registered provider row exists in the OpenShell gateway under the
+#     deterministic `${sandbox}-extra-<slug>` name
+#   - the sandbox env exposes the canonical resolve placeholder for an
+#     extension key, never the raw token value
+#   - a listed-but-unset key produces no gateway provider row
+#   - a non-extending host secret name (GITHUB_TOKEN) is refused at the
+#     parser layer, never registered, never present in sandbox env/fs/log
+#   - the NEMOCLAW_EXTRA_PLACEHOLDER_KEYS env arg itself reaches the
+#     container so the in-container revision-collapse refresh sees the
+#     same list the host-side parser produced
+#   - two independent extension keys resolve to two distinct placeholders
+#     (the per-Hermes-profile property the feature exists to enable; the
+#     Hermes-side `.env` substitution is operator-driven and therefore not
+#     observable from an OpenClaw E2E)
+# ══════════════════════════════════════════════════════════════════
+section "Phase 2c: Extra placeholder keys — per-profile credential injection"
+
+# X1: Provider list shows the extension-key row with the slugged sandbox name.
+provider_list=$(openshell provider list 2>/dev/null || true)
+EXTRA_PROVIDER_NAME="${SANDBOX_NAME}-extra-telegram-bot-token-agent-a"
+if echo "$provider_list" | grep -qF "$EXTRA_PROVIDER_NAME"; then
+  pass "X1: Provider '$EXTRA_PROVIDER_NAME' registered for the operator-supplied extension key"
+else
+  fail "X1: Provider '$EXTRA_PROVIDER_NAME' missing from openshell provider list"
+fi
+
+# X2: Listed-but-unset extension key must not produce a provider row.
+MISSING_PROVIDER_NAME="${SANDBOX_NAME}-extra-telegram-bot-token-agent-missing"
+if echo "$provider_list" | grep -qF "$MISSING_PROVIDER_NAME"; then
+  fail "X2: Provider '$MISSING_PROVIDER_NAME' was registered despite the operator never exporting the credential"
+else
+  pass "X2: Missing-credential extension key produced no provider row (upsert skipped null token)"
+fi
+
+# X3: Non-extending host secret name must be refused at the parser layer.
+HOST_SECRET_PROVIDER_NAME="${SANDBOX_NAME}-extra-github-token"
+if echo "$provider_list" | grep -qF "$HOST_SECRET_PROVIDER_NAME"; then
+  fail "X3: Provider '$HOST_SECRET_PROVIDER_NAME' was registered — host secret name leaked past the parser allowlist"
+else
+  pass "X3: GITHUB_TOKEN refused by the parser; no provider row registered"
+fi
+
+# X4a: Sandbox env exposes the canonical resolve placeholder for the
+# first extension key, never the raw operator-supplied token value.
+sandbox_extra_env=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_A" 2>/dev/null || true)
+if [ -z "$sandbox_extra_env" ]; then
+  fail "X4a: TELEGRAM_BOT_TOKEN_AGENT_A is unset inside the sandbox; placeholder injection failed"
+elif echo "$sandbox_extra_env" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X4a: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_A env"
+elif echo "$sandbox_extra_env" | grep -q "^openshell:resolve:env:"; then
+  pass "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is the canonical resolve placeholder"
+  info "  placeholder: ${sandbox_extra_env:0:40}..."
+else
+  fail "X4a: Sandbox TELEGRAM_BOT_TOKEN_AGENT_A is neither the placeholder nor empty: ${sandbox_extra_env:0:80}"
+fi
+
+# X4b: A second extension key resolves to its own distinct placeholder, so
+# two Hermes profiles consuming `${TELEGRAM_BOT_TOKEN_AGENT_A}` and
+# `${TELEGRAM_BOT_TOKEN_AGENT_B}` get isolated credentials at L7 egress.
+sandbox_extra_env_b=$(sandbox_exec "printenv TELEGRAM_BOT_TOKEN_AGENT_B" 2>/dev/null || true)
+if [ -z "$sandbox_extra_env_b" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_B is unset inside the sandbox; placeholder injection failed for the second extension key"
+elif echo "$sandbox_extra_env_b" | grep -qF "$EXTRAS_TELEGRAM_AGENT_B_TOKEN"; then
+  fail "X4b: Raw operator-supplied token leaked into the sandbox TELEGRAM_BOT_TOKEN_AGENT_B env"
+elif [ "$sandbox_extra_env_b" = "$sandbox_extra_env" ]; then
+  fail "X4b: TELEGRAM_BOT_TOKEN_AGENT_A and TELEGRAM_BOT_TOKEN_AGENT_B resolve to the same placeholder; per-key isolation broken"
+elif echo "$sandbox_extra_env_b" | grep -q "^openshell:resolve:env:"; then
+  pass "X4b: Two extension keys resolve to distinct canonical placeholders"
+else
+  fail "X4b: Sandbox TELEGRAM_BOT_TOKEN_AGENT_B is neither the placeholder nor empty: ${sandbox_extra_env_b:0:80}"
+fi
+
+# X5: The control env NEMOCLAW_EXTRA_PLACEHOLDER_KEYS must reach the
+# nemoclaw-start.sh process inside the container so the
+# refresh_openclaw_provider_placeholders helper sees the per-profile keys
+# at boot. Grep the entrypoint log for the deterministic breadcrumb the
+# refresh helper emits whenever at least one extension key survives the
+# in-container parser — that line only fires after the env arg propagated
+# AND the canonical-prefix mirror accepted the entry.
+start_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/nemoclaw-start.log 2>/dev/null || true)
+if [ -z "$start_log" ]; then
+  fail "X5: /tmp/nemoclaw-start.log unavailable; cannot prove extras reached the in-container refresh helper"
+else
+  extras_breadcrumb=$(echo "$start_log" | grep -E "^\[config\] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted [0-9]+ entry\(ies\):" | tail -1 || true)
+  if [ -z "$extras_breadcrumb" ]; then
+    fail "X5: nemoclaw-start did not log an accepted-extras breadcrumb; env arg did not propagate or canonical-prefix mirror rejected it"
+    info "  Last 40 lines of /tmp/nemoclaw-start.log:"
+    echo "$start_log" | tail -40 | while IFS= read -r line; do info "    $line"; done
+  elif ! echo "$extras_breadcrumb" | grep -qw TELEGRAM_BOT_TOKEN_AGENT_A; then
+    fail "X5: accepted-extras breadcrumb missing TELEGRAM_BOT_TOKEN_AGENT_A: $extras_breadcrumb"
+  elif echo "$extras_breadcrumb" | grep -qw GITHUB_TOKEN; then
+    fail "X5: accepted-extras breadcrumb contains GITHUB_TOKEN — host filter bypass"
+  else
+    pass "X5: nemoclaw-start accepted-extras breadcrumb proves NEMOCLAW_EXTRA_PLACEHOLDER_KEYS reached the in-container parser"
+    info "  ${extras_breadcrumb:0:160}"
+  fi
+fi
+
+# X6: The raw operator-supplied token value must not appear on any
+# observable sandbox surface (env dump, process list, filesystem).
+sandbox_env_extras_dump=$(sandbox_exec "env 2>/dev/null" 2>/dev/null || true)
+if [ -z "$sandbox_env_extras_dump" ]; then
+  skip "X6a: Sandbox environment dump is empty"
+elif echo "$sandbox_env_extras_dump" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X6a: Raw extension-key token found in sandbox environment dump"
+else
+  pass "X6a: Raw extension-key token absent from sandbox environment dump"
+fi
+
+sandbox_ps_extras=$(openshell sandbox exec -n "$SANDBOX_NAME" -- \
+  sh -c 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n"' 2>/dev/null || true)
+if [ -z "$sandbox_ps_extras" ]; then
+  skip "X6b: Sandbox process list is empty"
+elif echo "$sandbox_ps_extras" | grep -qF "$EXTRAS_TELEGRAM_AGENT_A_TOKEN"; then
+  fail "X6b: Raw extension-key token found in sandbox process list"
+else
+  pass "X6b: Raw extension-key token absent from sandbox process list"
+fi
+
+sandbox_fs_extras=$(sandbox_exec "
+  grep -rIlm1 -F '$EXTRAS_TELEGRAM_AGENT_A_TOKEN' /sandbox /home /etc /tmp /var 2>/dev/null || true
+")
+if [ -n "$sandbox_fs_extras" ]; then
+  fail "X6c: Raw extension-key token found on sandbox filesystem: ${sandbox_fs_extras}"
+else
+  pass "X6c: Raw extension-key token absent from sandbox filesystem"
+fi
+
+# X7: The refused GITHUB_TOKEN value must not reach the sandbox at all —
+# neither as an env var, nor on the filesystem. (The host process exports
+# it for the parser-rejection test; the sandbox-create env allowlist must
+# drop it.)
+sandbox_github_env=$(sandbox_exec "printenv GITHUB_TOKEN" 2>/dev/null || true)
+if echo "$sandbox_github_env" | grep -qF "$EXTRAS_GITHUB_DECOY"; then
+  fail "X7a: Refused GITHUB_TOKEN value reached the sandbox env"
+else
+  pass "X7a: Refused GITHUB_TOKEN value never reached the sandbox env"
+fi
+
+sandbox_fs_github=$(sandbox_exec "
+  grep -rIlm1 -F '$EXTRAS_GITHUB_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+")
+if [ -n "$sandbox_fs_github" ]; then
+  fail "X7b: Refused GITHUB_TOKEN value found on sandbox filesystem: ${sandbox_fs_github}"
+else
+  pass "X7b: Refused GITHUB_TOKEN value absent from sandbox filesystem"
 fi
 
 # ══════════════════════════════════════════════════════════════════

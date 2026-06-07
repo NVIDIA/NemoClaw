@@ -3,11 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  DashboardUrlCommandError,
-  buildDashboardUrl,
-  runDashboardUrlCommand,
-} from "./dashboard-url-command";
+import { buildDashboardUrl, runDashboardUrlCommand } from "./dashboard-url-command";
 
 function makeSinks() {
   const out: string[] = [];
@@ -92,24 +88,63 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });
 
-  it("fails for non-OpenClaw agents without fetching a token", () => {
+  it("prints a plain dashboard URL for session-auth non-OpenClaw agents without fetching a token", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-fetch");
 
+    runDashboardUrlCommand(
+      "hermes",
+      { quiet: true },
+      {
+        fetchToken,
+        getSandbox: () => ({ agent: "hermes", dashboardPort: 18789 }),
+        getAgentDashboardAuth: () => "session",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(fetchToken).not.toHaveBeenCalled();
+    expect(sinks.out).toEqual(["http://127.0.0.1:18789/"]);
+    expect(sinks.err).toEqual([]);
+  });
+
+  it("fetches a token for non-OpenClaw agents with token-auth dashboards", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "agent-token");
+
+    runDashboardUrlCommand(
+      "agent-ui",
+      { quiet: true },
+      {
+        fetchToken,
+        getSandbox: () => ({ agent: "agent-ui", dashboardPort: 19001 }),
+        getAgentDashboardAuth: () => "url_token",
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(fetchToken).toHaveBeenCalledWith("agent-ui");
+    expect(sinks.out).toEqual(["http://127.0.0.1:19001/#token=agent-token"]);
+  });
+
+  it("fails when non-OpenClaw agent dashboard metadata cannot be resolved", () => {
+    const sinks = makeSinks();
+
     expect(() =>
       runDashboardUrlCommand(
-        "hermes",
+        "agent-ui",
         { quiet: true },
         {
-          fetchToken,
-          getSandbox: () => ({ agent: "hermes", dashboardPort: 8642 }),
+          fetchToken: () => "agent-token",
+          getSandbox: () => ({ agent: "agent-ui", dashboardPort: 19001 }),
+          getAgentDashboardAuth: () => null,
           log: sinks.log,
           error: sinks.error,
         },
       ),
-    ).toThrow(DashboardUrlCommandError);
-
-    expect(fetchToken).not.toHaveBeenCalled();
+    ).toThrow(/Could not resolve dashboard metadata/);
     expect(sinks.out).toEqual([]);
   });
 

@@ -8,8 +8,8 @@
 # start` instead of `openclaw gateway run`. Key differences:
 #   - No device-pairing auto-pair watcher (Hermes has no browser pairing)
 #   - Config is YAML (config.yaml + .env) not JSON (openclaw.json)
-#   - Gateway listens on internal port 18642, socat forwards to 8642
-#   - Optional dashboard listens on internal port 19119, socat forwards to 9119
+#   - Gateway listens on internal port 18642, socat forwards the API to 8642
+#   - Dashboard listens on a private loopback port, socat forwards it to 18789
 #
 # SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
 # kill it or restart it with a tampered config. Config hash is verified at
@@ -39,6 +39,19 @@ fi
 
 # SECURITY: Lock down PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+if [ -d /opt/hermes/hermes_cli/web_dist ]; then
+  export HERMES_WEB_DIST="${HERMES_WEB_DIST:-/opt/hermes/hermes_cli/web_dist}"
+fi
+
+# Hermes' browser Chat tab shells out to the React/Ink TUI. Force it to the
+# trusted prebuilt bundle baked into the image so `hermes dashboard --tui
+# --skip-build` never honors a stale/user-controlled TUI path or tries to run
+# npm under root-owned /opt/hermes at runtime. Remove this when upstream Hermes
+# reliably discovers the prebaked ui-tui bundle without HERMES_TUI_DIR.
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
 
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
@@ -109,15 +122,71 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:8642}"
+
+_chat_ui_url_port() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 1
+  python3 - "$CHAT_UI_URL" <<'PYPORT'
+import re
+import sys
+from urllib.parse import urlparse
+
+raw_url = sys.argv[1]
+if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+    raw_url = f"http://{raw_url}"
+try:
+    port = urlparse(raw_url).port
+except ValueError:
+    sys.exit(1)
+if port is None or port < 1024 or port > 65535:
+    sys.exit(1)
+print(port)
+PYPORT
+}
+
+_dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$_dashboard_port_raw" ]; then
+  if _chat_ui_port="$(_chat_ui_url_port)"; then
+    _dashboard_port="$_chat_ui_port"
+  else
+    _dashboard_port=18789
+  fi
+else
+  _dashboard_port="$(printf '%s' "$_dashboard_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _dashboard_port_valid=1
+  case "$_dashboard_port" in
+    *[!0-9]* | '') _dashboard_port_valid=0 ;;
+  esac
+  if [ "$_dashboard_port_valid" -eq 1 ] && { [ "$_dashboard_port" -lt 1024 ] || [ "$_dashboard_port" -gt 65535 ]; }; then
+    _dashboard_port_valid=0
+  fi
+  if [ "$_dashboard_port_valid" -ne 1 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' - must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+
+if [ "$_dashboard_port" -eq 8642 ]; then
+  echo "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API" >&2
+  exit 1
+fi
+
+if [ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]; then
+  CHAT_UI_URL="http://127.0.0.1:${_dashboard_port}"
+else
+  CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_dashboard_port}}"
+fi
+
 PUBLIC_PORT=8642
-# Hermes binds to 127.0.0.1 regardless of config (upstream bug).
-# Run it on an internal port and use socat to expose on PUBLIC_PORT.
+# Hermes binds the API server to 127.0.0.1. Run it on an internal port and
+# use socat to expose the OpenAI-compatible API on PUBLIC_PORT.
 INTERNAL_PORT=18642
-HERMES_DASHBOARD_ENABLED="${NEMOCLAW_HERMES_DASHBOARD:-0}"
-HERMES_DASHBOARD_PUBLIC_PORT="${NEMOCLAW_HERMES_DASHBOARD_PORT:-9119}"
-HERMES_DASHBOARD_INTERNAL_PORT="${NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT:-19119}"
-HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-0}"
+DASHBOARD_PUBLIC_PORT="$_dashboard_port"
+DASHBOARD_INTERNAL_PORT="${NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT:-19119}"
+if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
+  DASHBOARD_INTERNAL_PORT=19120
+fi
+HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/tmp/hermes-dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -153,31 +222,27 @@ validate_tcp_port() {
 validate_port_configuration() {
   validate_tcp_port PUBLIC_PORT "$PUBLIC_PORT"
   validate_tcp_port INTERNAL_PORT "$INTERNAL_PORT"
-  validate_tcp_port HERMES_DASHBOARD_PUBLIC_PORT "$HERMES_DASHBOARD_PUBLIC_PORT"
-  validate_tcp_port HERMES_DASHBOARD_INTERNAL_PORT "$HERMES_DASHBOARD_INTERNAL_PORT"
-  if [ "$HERMES_DASHBOARD_PUBLIC_PORT" -eq "$PUBLIC_PORT" ]; then
-    echo "[gateway] ERROR: HERMES_DASHBOARD_PUBLIC_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
+  validate_tcp_port DASHBOARD_PUBLIC_PORT "$DASHBOARD_PUBLIC_PORT"
+  validate_tcp_port DASHBOARD_INTERNAL_PORT "$DASHBOARD_INTERNAL_PORT"
+  if [ "$DASHBOARD_PUBLIC_PORT" -eq "$PUBLIC_PORT" ]; then
+    echo "[gateway] ERROR: DASHBOARD_PUBLIC_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
     exit 1
   fi
-  if [ "$HERMES_DASHBOARD_INTERNAL_PORT" -eq "$INTERNAL_PORT" ]; then
-    echo "[gateway] ERROR: HERMES_DASHBOARD_INTERNAL_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
+  if [ "$DASHBOARD_INTERNAL_PORT" -eq "$INTERNAL_PORT" ]; then
+    echo "[gateway] ERROR: DASHBOARD_INTERNAL_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
     exit 1
   fi
-  if [ "$HERMES_DASHBOARD_PUBLIC_PORT" -eq "$INTERNAL_PORT" ]; then
-    echo "[gateway] ERROR: HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
+  if [ "$DASHBOARD_PUBLIC_PORT" -eq "$INTERNAL_PORT" ]; then
+    echo "[gateway] ERROR: DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
     exit 1
   fi
-  if [ "$HERMES_DASHBOARD_INTERNAL_PORT" -eq "$PUBLIC_PORT" ]; then
-    echo "[gateway] ERROR: HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
+  if [ "$DASHBOARD_INTERNAL_PORT" -eq "$PUBLIC_PORT" ]; then
+    echo "[gateway] ERROR: DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
     exit 1
   fi
 }
 
 validate_port_configuration
-
-hermes_dashboard_enabled() {
-  truthy_env "$HERMES_DASHBOARD_ENABLED"
-}
 
 hermes_dashboard_tui_enabled() {
   truthy_env "$HERMES_DASHBOARD_TUI"
@@ -188,13 +253,12 @@ hermes_dashboard_tui_enabled() {
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
 print_dashboard_urls() {
-  local local_url
-  local_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
-  echo "[gateway] Hermes API: ${local_url}" >&2
-  echo "[gateway] Health:     ${local_url%/v1}/health" >&2
-  if hermes_dashboard_enabled; then
-    echo "[gateway] Dashboard:  http://127.0.0.1:${HERMES_DASHBOARD_PUBLIC_PORT}/" >&2
-  fi
+  local api_url dashboard_url
+  api_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
+  dashboard_url="http://127.0.0.1:${DASHBOARD_PUBLIC_PORT}/"
+  echo "[gateway] Hermes Dashboard: ${dashboard_url}" >&2
+  echo "[gateway] Hermes API:       ${api_url}" >&2
+  echo "[gateway] Health:           ${api_url%/v1}/health" >&2
   echo "[gateway] Connect any OpenAI-compatible frontend to this endpoint." >&2
 }
 
@@ -204,7 +268,7 @@ start_gateway_log_stream() {
 }
 
 start_dashboard_log_stream() {
-  { tail -n +1 -F /tmp/hermes-dashboard.log 2>/dev/null | sed -u 's/^/[dashboard-log:] /' >&2; } &
+  { tail -n +1 -F /tmp/dashboard.log 2>/dev/null | sed -u 's/^/[dashboard-log:] /' >&2; } &
   DASHBOARD_LOG_TAIL_PID=$!
 }
 
@@ -255,8 +319,8 @@ has_live_hermes_gateway() {
 
 cleanup_orphan_socat_forwarders() {
   local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
-  local dashboard_internal="${HERMES_DASHBOARD_INTERNAL_PORT:-19119}"
-  local dashboard_public="${HERMES_DASHBOARD_PUBLIC_PORT:-9119}"
+  local dashboard_public_port="${DASHBOARD_PUBLIC_PORT:-}"
+  local dashboard_internal_port="${DASHBOARD_INTERNAL_PORT:-}"
   local cmdline_file pid cmdline
 
   for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
@@ -268,8 +332,11 @@ cleanup_orphan_socat_forwarders() {
         echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
         kill "$pid" 2>/dev/null || true
         ;;
-      *socat*"TCP-LISTEN:${dashboard_public}"*"TCP:127.0.0.1:${dashboard_internal}"*)
-        echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public}->${dashboard_internal} (pid ${pid})" >&2
+      *socat*"TCP-LISTEN:${dashboard_public_port}"*"TCP:127.0.0.1:${dashboard_internal_port}"*)
+        if [ -z "$dashboard_public_port" ] || [ -z "$dashboard_internal_port" ]; then
+          continue
+        fi
+        echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public_port}->${dashboard_internal_port} (pid ${pid})" >&2
         kill "$pid" 2>/dev/null || true
         ;;
     esac
@@ -322,6 +389,14 @@ hermes_config_root_is_locked() {
     && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
+apply_shields_up_runtime_env() {
+  hermes_config_root_is_locked || return 0
+  if [ -z "${HERMES_KANBAN_DISPATCH_IN_GATEWAY:-}" ]; then
+    export HERMES_KANBAN_DISPATCH_IN_GATEWAY=0
+    echo "[gateway] Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0 (embedded kanban dispatcher suspended; kanban.db on locked config root is read-only)" >&2
+  fi
+}
+
 ensure_hermes_config_root_mode() {
   if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
     echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
@@ -365,9 +440,113 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+ensure_hermes_history_file() {
+  local file="$1"
+  local mode="$2"
+
+  # Use a no-follow fd workflow instead of check-then-use shell path
+  # operations. /sandbox/.hermes is intentionally sandbox-writable while
+  # shields are down, so root must not validate the pathname and then later
+  # chown/chmod whatever an agent swaps into that path. Python gives us
+  # O_NOFOLLOW + fstat/fchown/fchmod against the actual opened inode.
+  NEMOCLAW_HERMES_HISTORY_FILE="$file" \
+    NEMOCLAW_HERMES_HISTORY_MODE="$mode" \
+    python3 - <<'PYHISTORY'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+path = os.environ["NEMOCLAW_HERMES_HISTORY_FILE"]
+mode_text = os.environ["NEMOCLAW_HERMES_HISTORY_MODE"]
+try:
+    mode = int(mode_text, 8)
+except ValueError:
+    print(f"[SECURITY] Refusing Hermes layout repair because requested mode {mode_text!r} is invalid", file=sys.stderr)
+    sys.exit(1)
+
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] Refusing Hermes layout repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+    sys.exit(1)
+
+flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+
+
+def describe_unsafe_existing_path() -> str:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "could not be opened safely"
+    if stat.S_ISLNK(st.st_mode):
+        return "is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a regular file"
+    return "could not be opened safely"
+
+try:
+    fd = os.open(path, flags, mode)
+except OSError as exc:
+    reason = describe_unsafe_existing_path()
+    detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+    print(f"[SECURITY] Refusing Hermes layout repair because {path} {reason}: {detail}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # Reject hard-linked targets. An attacker who controls the sandbox user
+    # before shields-up can pre-create .hermes_history as a hard link to
+    # config.yaml or .env. O_NOFOLLOW and regular-file checks pass, so without
+    # this guard fchown/fchmod would walk the shared inode and silently undo
+    # the shields-up root:root 0444 lock on the config file after
+    # verify_config_integrity has already passed.
+    if st.st_nlink != 1:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} has hard-link count {st.st_nlink}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.geteuid() == 0:
+        try:
+            uid = pwd.getpwnam("sandbox").pw_uid
+            gid = grp.getgrnam("sandbox").gr_gid
+        except KeyError as exc:
+            print(f"[SECURITY] Refusing Hermes layout repair because sandbox account lookup failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        os.fchown(fd, uid, gid)
+    os.fchmod(fd, mode)
+
+    st = os.fstat(fd)
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except OSError as exc:
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} no longer names the opened history file: {exc.strerror}", file=sys.stderr)
+        sys.exit(1)
+    if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+        print(f"[SECURITY] Refusing Hermes layout repair because {path} changed during repair", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.close(fd)
+PYHISTORY
+}
+
 repair_hermes_startup_layout() {
   if hermes_config_root_is_locked; then
-    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    # The locked-root posture seals config.yaml/.env, not the dir, so we can
+    # still bring a missing prompt_toolkit history file into existence as a
+    # sandbox-owned regular file. Sandboxes built before the precreate landed
+    # would otherwise stay broken until the next `shields down` cycle.
+    # Refusal (symlink, non-regular, create failure) is a hard stop: starting
+    # the gateway with an unsafe .hermes_history under a locked root would
+    # either let the TUI clobber an attacker-pointed path or repeat the
+    # original keypress traceback.
+    echo "[gateway] Hermes layout repair limited to history file because config root is locked" >&2
+    ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
     return 0
   fi
 
@@ -377,6 +556,7 @@ repair_hermes_startup_layout() {
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+  ensure_hermes_history_file "${HERMES_DIR}/.hermes_history" 660
 }
 
 cleanup_stale_hermes_gateway_runtime() {
@@ -397,20 +577,21 @@ cleanup_stale_hermes_gateway_runtime() {
   cleanup_orphan_socat_forwarders
 }
 
-# ── socat forwarder ──────────────────────────────────────────────
-# Hermes API server binds to 127.0.0.1 regardless of config (upstream bug).
+# ── socat forwarders ─────────────────────────────────────────────
+# Hermes services bind to 127.0.0.1 for safety.
 # OpenShell needs the port accessible on 0.0.0.0 for port forwarding.
-# socat bridges 0.0.0.0:PUBLIC_PORT → 127.0.0.1:INTERNAL_PORT.
+# socat bridges 0.0.0.0:<public> to 127.0.0.1:<internal>.
 SOCAT_PID=""
 DASHBOARD_SOCAT_PID=""
 start_socat_forwarder() {
-  local label="${1:-gateway}"
-  local public_port="${2:-$PUBLIC_PORT}"
-  local internal_port="${3:-$INTERNAL_PORT}"
+  local public_port="$1"
+  local internal_port="$2"
+  local label="$3"
   local pid_var="${4:-SOCAT_PID}"
+  local _socat_pid
 
   if ! command -v socat >/dev/null 2>&1; then
-    echo "[gateway] socat not available — ${label} port forwarding from host may not work" >&2
+    echo "[gateway] socat not available - ${label} port forwarding from host may not work" >&2
     return
   fi
   local attempts=0
@@ -423,8 +604,9 @@ start_socat_forwarder() {
   done
   nohup socat TCP-LISTEN:"${public_port}",bind=0.0.0.0,fork,reuseaddr \
     TCP:127.0.0.1:"${internal_port}" >/dev/null 2>&1 &
-  printf -v "$pid_var" '%s' "$!"
-  echo "[gateway] ${label} socat forwarder 0.0.0.0:${public_port} → 127.0.0.1:${internal_port} (pid ${!pid_var})" >&2
+  _socat_pid=$!
+  printf -v "$pid_var" '%s' "$_socat_pid"
+  echo "[gateway] ${label} socat forwarder 0.0.0.0:${public_port} -> 127.0.0.1:${internal_port} (pid ${_socat_pid})" >&2
 }
 
 build_hermes_dashboard_args() {
@@ -433,7 +615,7 @@ build_hermes_dashboard_args() {
     --host
     127.0.0.1
     --port
-    "$HERMES_DASHBOARD_INTERNAL_PORT"
+    "$DASHBOARD_INTERNAL_PORT"
     --skip-build
     --no-open
   )
@@ -442,36 +624,79 @@ build_hermes_dashboard_args() {
   fi
 }
 
-start_hermes_dashboard_current_user() {
-  hermes_dashboard_enabled || return 0
+prepare_hermes_dashboard_home() {
+  local owner="${1:-}"
+  if [ -L "$HERMES_DASHBOARD_HOME" ]; then
+    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
+    return 1
+  fi
+  mkdir -p "$HERMES_DASHBOARD_HOME"
+  if [ -L "$HERMES_DASHBOARD_HOME" ] || [ ! -d "$HERMES_DASHBOARD_HOME" ]; then
+    echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
+    return 1
+  fi
+  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
+    chown "$owner" "$HERMES_DASHBOARD_HOME"
+  fi
+  chmod 700 "$HERMES_DASHBOARD_HOME"
+}
 
+start_hermes_dashboard_current_user() {
   build_hermes_dashboard_args
-  prepare_restricted_log /tmp/hermes-dashboard.log "" 600
-  HERMES_HOME="${HERMES_DIR}" \
-    nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/hermes-dashboard.log 2>&1 &
-  HERMES_DASHBOARD_PID=$!
-  echo "[gateway] hermes dashboard launched (pid $HERMES_DASHBOARD_PID)" >&2
+  prepare_hermes_dashboard_home ""
+  prepare_restricted_log /tmp/dashboard.log "" 600
+  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
+    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
+  DASHBOARD_PID=$!
+  echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
   start_dashboard_log_stream
-  start_socat_forwarder "dashboard" \
-    "$HERMES_DASHBOARD_PUBLIC_PORT" \
-    "$HERMES_DASHBOARD_INTERNAL_PORT" \
-    DASHBOARD_SOCAT_PID
+  start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
 }
 
 start_hermes_dashboard_sandbox_user() {
-  hermes_dashboard_enabled || return 0
-
   build_hermes_dashboard_args
-  prepare_restricted_log /tmp/hermes-dashboard.log sandbox:sandbox 600
-  HERMES_HOME="${HERMES_DIR}" \
-    nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/hermes-dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
-  HERMES_DASHBOARD_PID=$!
-  echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $HERMES_DASHBOARD_PID)" >&2
+  prepare_hermes_dashboard_home sandbox:sandbox
+  prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600
+  HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
+    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
+  DASHBOARD_PID=$!
+  echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
   start_dashboard_log_stream
-  start_socat_forwarder "dashboard" \
-    "$HERMES_DASHBOARD_PUBLIC_PORT" \
-    "$HERMES_DASHBOARD_INTERNAL_PORT" \
-    DASHBOARD_SOCAT_PID
+  start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
+}
+
+wait_for_hermes_gateway_internal() {
+  local gateway_pid="$1"
+  local attempts=0
+  while [ "$attempts" -lt 45 ]; do
+    if curl -sf --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$gateway_pid" 2>/dev/null; then
+      wait "$gateway_pid"
+      return $?
+    fi
+    attempts=$((attempts + 1))
+    sleep 1
+  done
+  echo "[gateway] Hermes gateway did not become healthy on internal port ${INTERNAL_PORT}" >&2
+  return 1
+}
+
+restore_hermes_config_permissions_after_dashboard_start() {
+  [ "$(id -u)" -eq 0 ] || return 0
+  # Hermes dashboard startup may tighten HERMES_HOME to 0700 because it runs as
+  # the sandbox owner. The gateway process runs as the separate gateway user and
+  # reads config via sandbox-group membership, so restore NemoClaw's shared
+  # mutable-root mode after the dashboard has performed its startup checks.
+  local attempts=0
+  while [ "$attempts" -lt 5 ]; do
+    ensure_hermes_config_root_mode || return 1
+    attempts=$((attempts + 1))
+    sleep 1
+  done
 }
 
 # ── Messaging egress ─────────────────────────────────────────────
@@ -533,6 +758,11 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
+    cat <<'TUIENVEOF'
+if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
+  export HERMES_TUI_DIR="/opt/hermes/ui-tui"
+fi
+TUIENVEOF
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -817,6 +1047,114 @@ PYPLACEHOLDERS
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
 }
 
+validate_hermes_env_secret_boundary() {
+  local env_file="${HERMES_DIR}/.env"
+  [ -e "$env_file" ] || return 0
+  if [ -L "$env_file" ]; then
+    echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
+    return 1
+  fi
+  [ -f "$env_file" ] || return 0
+
+  python3 - "$env_file" <<'PYSECRETBOUNDARY'
+import re
+import sys
+
+env_file = sys.argv[1]
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+violations = []
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+with open(env_file, encoding="utf-8") as fh:
+    for lineno, raw_line in enumerate(fh, 1):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export ") :].lstrip()
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        if key in allowed_nonsecret_keys:
+            continue
+        if not secret_key_re.search(key):
+            continue
+        value = unquote(value)
+        if value in allowed_literals:
+            continue
+        if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+            continue
+        violations.append(f"{key} (line {lineno})")
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYSECRETBOUNDARY
+}
+
+validate_hermes_runtime_env_secret_boundary() {
+  python3 - <<'PYRUNTIMESECRETBOUNDARY'
+import os
+import re
+import sys
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+allowed_raw_secret_keys = {"OPENCLAW_GATEWAY_TOKEN"}
+allowed_nonsecret_keys = set((
+    "API_SERVER_HOST",
+    "API_SERVER_PORT",
+    "GPG_KEY",
+    "NEMOCLAW_INFERENCE_API",
+    "NEMOCLAW_PROVIDER_KEY",
+))
+violations = []
+
+for key, value in sorted(os.environ.items()):
+    if key in allowed_raw_secret_keys or key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    if value in allowed_literals:
+        continue
+    if value.startswith("openshell:resolve:env:") or placeholder_re.fullmatch(value):
+        continue
+    violations.append(key)
+
+if violations:
+    print(
+        "[SECURITY] Refusing Hermes startup because the process environment "
+        "contains raw secret-shaped values. Store credentials in OpenShell "
+        "providers and keep only openshell resolver placeholders in the sandbox.",
+        file=sys.stderr,
+    )
+    for item in violations:
+        print(f"[SECURITY]   {item}", file=sys.stderr)
+    sys.exit(1)
+PYRUNTIMESECRETBOUNDARY
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .hermes
@@ -839,14 +1177,16 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  apply_shields_up_runtime_env
+  validate_hermes_env_secret_boundary
+  validate_hermes_runtime_env_secret_boundary
   refresh_hermes_provider_placeholders
   configure_messaging_channels
+  retry_tirith_marker_if_needed
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
-
-  retry_tirith_marker_if_needed
 
   cleanup_stale_hermes_gateway_runtime
 
@@ -863,20 +1203,20 @@ if [ "$(id -u)" -ne 0 ]; then
   GATEWAY_PID=$!
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
   start_gateway_log_stream
+  wait_for_hermes_gateway_internal "$GATEWAY_PID"
+  start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
   start_hermes_dashboard_current_user
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-  SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+  SANDBOX_CHILD_PIDS=("$GATEWAY_PID" "$DASHBOARD_PID")
   [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
-  [ -n "${HERMES_DASHBOARD_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$HERMES_DASHBOARD_PID")
   [ -n "${DASHBOARD_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_LOG_TAIL_PID")
-  [ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
-  start_socat_forwarder "api" "$PUBLIC_PORT" "$INTERNAL_PORT" SOCAT_PID
   [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
+  [ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
   print_dashboard_urls
 
   wait "$GATEWAY_PID"
@@ -887,14 +1227,16 @@ fi
 
 export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+apply_shields_up_runtime_env
+validate_hermes_env_secret_boundary
+validate_hermes_runtime_env_secret_boundary
 refresh_hermes_provider_placeholders
 configure_messaging_channels
+retry_tirith_marker_if_needed
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
-
-retry_tirith_marker_if_needed
 
 cleanup_stale_hermes_gateway_runtime
 
@@ -911,20 +1253,21 @@ HERMES_HOME="${HERMES_DIR}" \
 GATEWAY_PID=$!
 echo "[gateway] hermes gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 start_gateway_log_stream
+wait_for_hermes_gateway_internal "$GATEWAY_PID"
+start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
 start_hermes_dashboard_sandbox_user
+restore_hermes_config_permissions_after_dashboard_start
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+SANDBOX_CHILD_PIDS=("$GATEWAY_PID" "$DASHBOARD_PID")
 [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
-[ -n "${HERMES_DASHBOARD_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$HERMES_DASHBOARD_PID")
 [ -n "${DASHBOARD_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_LOG_TAIL_PID")
-[ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT
-start_socat_forwarder "api" "$PUBLIC_PORT" "$INTERNAL_PORT" SOCAT_PID
 [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
+[ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
 print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.

@@ -31,6 +31,7 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
       SLACK_BOT_TOKEN: "xoxb-slack-bot-token-for-test",
       SLACK_APP_TOKEN: "xapp-slack-app-token-for-test",
       DISCORD_BOT_TOKEN: "test-discord-token",
+      NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
       ...extraEnv,
     },
     timeout: 15000,
@@ -117,6 +118,22 @@ const providerCalls = [];
 onboardProviders.upsertMessagingProviders = (defs) => {
   providerCalls.push(...defs);
   callOrder.push("upsertMessagingProviders");
+};
+
+const workflowPlanner = require(${j("messaging/compiler/workflow-planner.js")});
+const originalBuildPlan = workflowPlanner.MessagingWorkflowPlanner.prototype.buildPlan;
+const buildPlanCalls = [];
+workflowPlanner.MessagingWorkflowPlanner.prototype.buildPlan = async function(context) {
+  if (context.workflow === "add-channel") buildPlanCalls.push({
+    sandboxName: context.sandboxName,
+    agent: context.agent,
+    workflow: context.workflow,
+    isInteractive: context.isInteractive,
+    configuredChannels: context.configuredChannels,
+    disabledChannels: context.disabledChannels,
+    supportedChannelIds: context.supportedChannelIds,
+  });
+  return originalBuildPlan.call(this, context);
 };
 
 const registry = require(${j("state/registry.js")});
@@ -233,6 +250,7 @@ module.exports = {
   providerCalls,
   registryUpdates,
   sessionUpdates,
+  buildPlanCalls,
   savedCredentialKeys,
   deletedCredentialKeys,
   credentialSaveCalls,
@@ -243,6 +261,40 @@ module.exports = {
 }
 
 describe("channels add applies matching policy preset (issue #3437)", () => {
+  it("plans channel enrollment through the messaging manifest workflow", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      buildPlanCalls: ctx.buildPlanCalls,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.buildPlanCalls, [
+      {
+        sandboxName: "test-sb",
+        agent: "openclaw",
+        workflow: "add-channel",
+        isInteractive: false,
+        configuredChannels: ["slack"],
+        disabledChannels: [],
+        supportedChannelIds: ["telegram", "discord", "wechat", "slack", "whatsapp"],
+      },
+    ]);
+  });
+
   for (const channel of ["telegram", "slack", "discord"]) {
     it(`applies the '${channel}' preset before triggering rebuild`, () => {
       const script = `${buildPreamble()}
@@ -319,12 +371,30 @@ const ctx = module.exports;
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
 
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
-    assert.deepEqual(payload.registryUpdates, [
-      {
-        name: "test-sb",
-        updates: { messagingChannels: ["whatsapp"], disabledChannels: [] },
-      },
-    ]);
+    assert.deepEqual(payload.registryUpdates[0], {
+      name: "test-sb",
+      updates: { messagingChannels: ["whatsapp"], disabledChannels: [] },
+    });
+    const messagingStateUpdate = payload.registryUpdates.find(
+      (entry: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } } }) =>
+        entry.updates?.messaging?.plan,
+    );
+    assert.ok(
+      messagingStateUpdate,
+      `expected a registry update that stores durable messaging state; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.deepEqual(
+      messagingStateUpdate.updates.messaging.plan.channels.map(
+        (channel: { channelId: string }) => channel.channelId,
+      ),
+      ["whatsapp"],
+    );
+    assert.equal(messagingStateUpdate.updates.messaging.plan.agent, "hermes");
+    assert.deepEqual(messagingStateUpdate.updates.messaging.plan.credentialBindings, []);
+    assert.deepEqual(
+      payload.registryUpdates.map((entry: { name: string }) => entry.name),
+      ["test-sb", "test-sb"],
+    );
     assert.deepEqual(
       payload.appliedCalls,
       [{ sandboxName: "test-sb", presetName: "whatsapp" }],
@@ -1009,7 +1079,7 @@ process.exit = (code) => {
     );
   });
 
-  it("validates Slack credentials before persisting tokens or registering providers", () => {
+  it("validates Slack credentials before registering providers", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
 (async () => {
@@ -1054,6 +1124,11 @@ const ctx = module.exports;
       payload.callOrder.indexOf("slackProbe:app") <
         payload.callOrder.indexOf("saveCredential:SLACK_BOT_TOKEN"),
       `Slack validation must complete before token persistence; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      payload.callOrder.indexOf("slackProbe:app") <
+        payload.callOrder.indexOf("upsertMessagingProviders"),
+      `Slack validation must complete before provider registration; got ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
       payload.callOrder.indexOf("saveCredential:SLACK_APP_TOKEN") <
@@ -1114,7 +1189,7 @@ global.__slackBotProbe = {
     );
   });
 
-  it("aborts Slack channel add on rejected Slack API validation before persistence or registration", () => {
+  it("aborts Slack channel add on rejected Slack API validation before provider registration", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
 global.__slackBotProbe = {
@@ -1174,7 +1249,7 @@ process.exit = (code) => {
     );
   });
 
-  it("aborts Slack channel add on indeterminate Slack API validation before persistence or registration", () => {
+  it("aborts Slack channel add on indeterminate Slack API validation before provider registration", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
 global.__slackBotProbe = {

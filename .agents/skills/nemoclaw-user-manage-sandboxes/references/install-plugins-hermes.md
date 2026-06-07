@@ -1,0 +1,117 @@
+# Install Hermes Plugins
+
+Hermes plugins extend the Hermes runtime inside a NemoClaw-managed sandbox.
+They are different from NemoClaw skills and from OpenClaw plugins, so install them through the Hermes plugin path instead of `skill install`.
+
+## How Hermes Loads Plugins
+
+NemoClaw sets `HERMES_HOME` to `/sandbox/.hermes` when it starts the Hermes gateway.
+Hermes plugin directories live under `/sandbox/.hermes/plugins/<plugin-name>`.
+NemoClaw uses the same mechanism for its built-in Hermes integration, which the sandbox image bakes into `/sandbox/.hermes/plugins/nemoclaw`.
+
+The built-in NemoClaw Hermes plugin provides sandbox status tools, skill reload support, managed-tool broker patches, and runtime grounding for the OpenShell sandbox.
+Do not replace or remove `/sandbox/.hermes/plugins/nemoclaw` when you add your own plugin.
+
+## Choose an Install Path
+
+Today, the supported path for custom Hermes plugins is to bake the plugin into a custom sandbox image and onboard from that Dockerfile.
+Use this path when the plugin adds Python code, runtime hooks, or dependencies that Hermes must see at gateway startup.
+
+`nemohermes <name> skill install <path>` is only for `SKILL.md` agent skills.
+It uploads skill instructions and refreshes skill discovery, but it does not install Hermes runtime plugins.
+
+## Prepare a Build Directory
+
+Put the custom Dockerfile and everything it needs to `COPY` in one directory.
+`nemohermes onboard --from <Dockerfile>` sends the Dockerfile's parent directory as the Docker build context.
+Add a `.dockerignore` next to the Dockerfile to keep local caches, generated artifacts, model files, or other unneeded paths out of the staged context.
+NemoClaw still excludes credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` tries to include them.
+
+```text
+my-hermes-plugin-sandbox/
+├── Dockerfile
+└── my-hermes-plugin/
+    ├── __init__.py
+    └── requirements.txt
+```
+
+If you start from the stock NemoClaw Hermes Dockerfile, keep the NemoClaw Hermes image contract intact.
+The image must still include the generated Hermes config, NemoClaw Hermes plugin, blueprint files, and `nemoclaw-start` entrypoint.
+
+**Warning:**
+
+A custom `--from` Dockerfile replaces the normal NemoClaw Hermes Dockerfile.
+  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough unless your Dockerfile also preserves the NemoClaw Hermes layers from `agents/hermes/Dockerfile`.
+
+## Install the Plugin in the Image
+
+Add your plugin after the Dockerfile has created `/sandbox/.hermes`.
+The example below shows the layer that copies a plugin directory into the Hermes plugin tree.
+
+```dockerfile
+COPY my-hermes-plugin/ /opt/my-hermes-plugin/
+
+USER root
+RUN mkdir -p /sandbox/.hermes/plugins/my-hermes-plugin \
+    && cp -a /opt/my-hermes-plugin/. /sandbox/.hermes/plugins/my-hermes-plugin/ \
+    && if [ -f /opt/my-hermes-plugin/requirements.txt ]; then \
+        /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/my-hermes-plugin/requirements.txt; \
+    fi \
+    && chown -R sandbox:sandbox /sandbox/.hermes/plugins/my-hermes-plugin \
+    && chmod -R a+rX /sandbox/.hermes/plugins/my-hermes-plugin
+
+USER sandbox
+WORKDIR /sandbox
+```
+
+Keep plugin code and dependency files inside the build directory.
+Avoid copying host credentials, local caches, or broad home-directory contents into the image.
+
+## Create the Sandbox
+
+Run onboarding with the custom Dockerfile and an explicit sandbox name.
+NemoClaw requires a name for `--from` builds so a custom image cannot silently replace the default sandbox.
+
+```bash
+nemohermes onboard --name my-hermes-build --from ./my-hermes-plugin-sandbox/Dockerfile
+```
+
+For non-interactive onboarding, set the same values through environment variables.
+
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 \
+NEMOCLAW_SANDBOX_NAME=my-hermes-build \
+NEMOCLAW_FROM_DOCKERFILE=./my-hermes-plugin-sandbox/Dockerfile \
+nemohermes onboard
+```
+
+If you resume an interrupted onboarding run, use the same Dockerfile path that started the session.
+NemoClaw records the custom Dockerfile path and rejects a resume that points at a different image source.
+
+## Network Access
+
+Hermes plugins still run inside the OpenShell sandbox boundary.
+If a plugin calls an external API at runtime, add a policy preset for the required hostnames and binaries before you recreate the sandbox.
+
+Hermes uses Python for plugin execution, so policy entries usually need to allow the Hermes Python runtime, such as `/opt/hermes/.venv/bin/python`, in addition to any command-line wrapper your plugin starts.
+For package downloads during sandbox runtime, use the `pypi` preset or a custom preset that allows the package hosts you need.
+
+For policy concepts, refer to Network Policies (use the `nemoclaw-user-reference` skill).
+For custom preset workflows, refer to Customize Network Policy (use the `nemoclaw-user-manage-policy` skill).
+
+## Common Mistakes
+
+These are the most common places where Hermes plugin installation gets mixed up with other NemoClaw extension paths.
+
+- Do not use `skill install` for Hermes runtime plugins.
+- Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
+- Do not remove `/sandbox/.hermes/plugins/nemoclaw`; NemoClaw depends on that plugin for managed Hermes behavior.
+- Do not put the Dockerfile in a broad directory unless you intend to send that whole directory as the Docker build context.
+- Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
+- Do not assume OpenShell policy allows Python package downloads during runtime by default.
+
+## Next Steps
+
+- Review NemoHermes Command Reference (use the `nemoclaw-user-reference` skill) for `nemohermes onboard --from` details.
+- Review Customize Network Policy (use the `nemoclaw-user-manage-policy` skill) if the plugin needs runtime network egress.
+- Review [Runtime Controls](runtime-controls.md) before changing shields or mutability settings for a plugin-enabled sandbox.

@@ -5,30 +5,32 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-
-import * as agentRuntime from "../../agent/runtime";
-import { loadAgent } from "../../agent/defs";
-import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
-import { readCloudflaredState } from "../../tunnel/services";
-import { probeProviderHealth, type ProviderHealthStatus } from "../../inference/health";
-import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
-import { parseGatewayInference } from "../../inference/config";
+import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { loadAgent } from "../../agent/defs";
+import * as agentRuntime from "../../agent/runtime";
+import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
-import * as registry from "../../state/registry";
-import type { SandboxEntry } from "../../state/registry";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { parseGatewayInference } from "../../inference/config";
+import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
+import type { SandboxEntry } from "../../state/registry";
+import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
-import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
+import { readCloudflaredState } from "../../tunnel/services";
+import { buildConfigPermsCheck } from "./doctor-config-perms";
+import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
@@ -205,7 +207,7 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
       label: "Docker container",
       status: "fail",
       detail: `${containerName} not found or not inspectable`,
-      hint: "run `docker ps --filter name=openshell-cluster-nemoclaw`",
+      hint: `run \`docker ps --filter name=${containerName}\``,
     });
     return checks;
   }
@@ -319,7 +321,7 @@ function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
   const endpoint = `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
   const result = captureHostCommand(
     "curl",
-    ["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint],
+    buildValidatedCurlCommandArgs(["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint]),
     6000,
   );
   const required = currentProvider === "ollama-local";
@@ -514,6 +516,23 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
   };
 }
 
+/**
+ * Decide whether to inspect the legacy k3s gateway container
+ * (`openshell-cluster-<name>`). That container only exists for the legacy
+ * Kubernetes gateway driver. The current Linux/arm64 Docker-driver gateway runs
+ * as a host process (or a separate `nemoclaw-openshell-gateway` compatibility
+ * container), so inspecting `openshell-cluster-nemoclaw` there always fails and
+ * produces a false doctor failure even when OpenShell reports the named gateway
+ * as connected (#4502). Prefer the sandbox's recorded driver; fall back to
+ * platform detection for older registry entries that predate the field.
+ */
+function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
+  const driver = sb?.openshellDriver;
+  if (driver === "docker" || driver === "vm") return false;
+  if (driver === "kubernetes") return true;
+  return !isLinuxDockerDriverGatewayEnabled();
+}
+
 type RunSandboxDoctorOptions = {
   quietJson?: boolean;
 };
@@ -525,15 +544,27 @@ export async function runSandboxDoctor(
   options: RunSandboxDoctorOptions = {},
 ): Promise<DoctorReport | undefined> {
   const asJson = args.includes("--json");
+  const wantsFix = args.includes("--fix");
   const helpRequested = args.includes("--help") || args.includes("-h");
-  const unknown = args.filter((arg) => !["--json", "--help", "-h"].includes(arg));
+  const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
-    console.log(`  Usage: ${CLI_NAME} <name> doctor [--json]`);
+    console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
+    console.log(`  --fix   Restore the mutable OpenClaw config permission contract if it was tightened`);
     return;
   }
   if (unknown.length > 0) {
     console.error(`  Unknown doctor argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`);
-    console.error(`  Usage: ${CLI_NAME} <name> doctor [--json]`);
+    console.error(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
+    process.exit(1);
+  }
+  // `--fix` mutates sandbox permissions; `--json` is the machine-readable
+  // readiness-gate path. Refuse the combination so automation consuming JSON
+  // can never trigger a silent repair (the JSON report has no dedicated
+  // repair-intent field). Run `doctor --json` to detect, then `doctor --fix`
+  // to repair.
+  if (wantsFix && asJson) {
+    console.error(`  ${CLI_NAME} doctor: --fix cannot be combined with --json`);
+    console.error(`  Run \`${CLI_NAME} ${sandboxName} doctor --json\` to detect, then \`${CLI_NAME} ${sandboxName} doctor --fix\` to repair`);
     process.exit(1);
   }
 
@@ -576,7 +607,9 @@ export async function runSandboxDoctor(
     hint: openshellBin ? undefined : "install OpenShell before using sandbox commands",
   });
 
-  checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
+  if (shouldInspectLegacyGatewayContainer(sb)) {
+    checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
+  }
 
   let openshellConnected = false;
   if (openshellBin) {
@@ -744,6 +777,18 @@ export async function runSandboxDoctor(
       detail: shieldsPosture.detail,
       hint: shieldsHint,
     });
+
+    // #4538: detect (and optionally repair with --fix) a mutable OpenClaw config
+    // tree that `openclaw doctor --fix` tightened from the NemoClaw contract
+    // (setgid + group-writable 2770/660) back to single-user 700/600. When that
+    // happens the gateway UID can no longer persist config edits.
+    const permsCheck = buildConfigPermsCheck(sandboxName, wantsFix, {
+      inspect: shields.inspectMutableConfigPerms,
+      repair: shields.repairMutableConfigPerms,
+      cliName: CLI_NAME,
+    });
+    if (permsCheck) checks.push(permsCheck);
+
     checks.push(messagingDoctorCheck(sandboxName, sb));
     // #4156: bridge the gap between "configured" and "runtime-visible" — the
     // existing messaging check above probes provider attachment, not whether

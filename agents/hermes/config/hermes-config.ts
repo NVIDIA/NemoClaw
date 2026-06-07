@@ -8,7 +8,7 @@ import {
 } from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
-const API_SERVER_TOOLSETS = [
+const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
   "terminal",
@@ -26,15 +26,46 @@ const API_SERVER_TOOLSETS = [
   "audio",
 ];
 
+const MESSAGING_PLATFORM_BY_CHANNEL: Record<string, string> = {
+  discord: "discord",
+  slack: "slack",
+  telegram: "telegram",
+  wechat: "weixin",
+  whatsapp: "whatsapp",
+};
+
+function hermesApiMode(inferenceApi: string): string | null {
+  // Source of truth: the host-side inference selector and Dockerfile patcher
+  // only write the closed set below into NEMOCLAW_INFERENCE_API. Fail fast for
+  // any other non-empty value so host/sandbox routing contract drift does not
+  // silently fall back to Hermes' default OpenAI-compatible mode.
+  switch (inferenceApi) {
+    case "":
+    case "openai-completions":
+      return null;
+    case "anthropic-messages":
+      return "anthropic_messages";
+    case "openai-responses":
+      return "codex_responses";
+    default:
+      throw new Error(`Unsupported Hermes inference API: ${inferenceApi}`);
+  }
+}
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
-  const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const remotePlatformToolsets = [...REMOTE_PLATFORM_TOOLSETS];
+  const modelConfig: Record<string, unknown> = {
+    default: settings.model,
+    provider: "custom",
+    base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+  };
+  const apiMode = hermesApiMode(settings.inferenceApi);
+  if (apiMode) modelConfig.api_mode = apiMode;
+
   const config: Record<string, unknown> = {
     _config_version: 12,
-    model: {
-      default: settings.model,
-      provider: "custom",
-      base_url: settings.baseUrl,
-    },
+    model: modelConfig,
     terminal: {
       backend: "local",
       timeout: 180,
@@ -58,7 +89,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       enabled: ["nemoclaw"],
     },
     platform_toolsets: {
-      api_server: apiServerToolsets,
+      api_server: remotePlatformToolsets,
     },
   };
 
@@ -80,9 +111,9 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     }
     if (
       settings.managedToolGateways.presets.includes("nous-audio") &&
-      !apiServerToolsets.includes("tts")
+      !remotePlatformToolsets.includes("tts")
     ) {
-      apiServerToolsets.push("tts");
+      remotePlatformToolsets.push("tts");
     }
   }
 
@@ -99,7 +130,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // API server — internal port only.
   // Hermes binds to 127.0.0.1 regardless of config (upstream bug).
   // socat in start.sh forwards 0.0.0.0:8642 -> 127.0.0.1:18642.
-  config.platforms = {
+  const platforms: Record<string, unknown> = {
     api_server: {
       enabled: true,
       extra: {
@@ -108,6 +139,19 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       },
     },
   };
+
+  if (settings.messaging.enabledChannels.has("slack")) {
+    platforms.slack = { enabled: true };
+  }
+
+  config.platforms = platforms;
+  const platformToolsets = config.platform_toolsets as Record<string, string[]>;
+  for (const channel of settings.messaging.enabledChannels) {
+    const platform = MESSAGING_PLATFORM_BY_CHANNEL[channel];
+    if (platform) {
+      platformToolsets[platform] = [...remotePlatformToolsets];
+    }
+  }
 
   return config;
 }

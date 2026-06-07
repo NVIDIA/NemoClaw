@@ -203,7 +203,7 @@ export function isGatewayClusterActiveForGateway(
     ignoreError: true,
     timeout: timeoutMs,
   });
-  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output)) {
+  if (!isGatewayHealthy(status.output, gatewayInfo.output, activeGatewayInfo.output, gatewayName)) {
     return false;
   }
 
@@ -246,8 +246,9 @@ export function getGatewayClusterImageDrift({
     return null;
   }
   const currentImage =
-    deps.getGatewayClusterImageRef?.(gatewayName) ??
-    getGatewayClusterImageRef(gatewayName, { timeoutMs });
+    typeof deps.getGatewayClusterImageRef === "function"
+      ? deps.getGatewayClusterImageRef(gatewayName)
+      : getGatewayClusterImageRef(gatewayName, { timeoutMs });
   const currentVersion = parseGatewayClusterImageVersion(currentImage);
   if (
     !expectedVersion ||
@@ -400,8 +401,9 @@ export function getGatewayHostProcessDrift({
   // detector's own active gate). The active probe runs solely when a cluster
   // container exists, so the common marker-less host-process path stays cheap.
   const clusterImage =
-    deps.getGatewayClusterImageRef?.(gatewayName) ??
-    getGatewayClusterImageRef(gatewayName, { timeoutMs });
+    typeof deps.getGatewayClusterImageRef === "function"
+      ? deps.getGatewayClusterImageRef(gatewayName)
+      : getGatewayClusterImageRef(gatewayName, { timeoutMs });
   if (clusterImage) {
     const clusterActive =
       deps.isGatewayClusterActive?.(gatewayName) ??

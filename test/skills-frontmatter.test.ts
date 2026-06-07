@@ -11,11 +11,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const skillsRoot = path.join(repoRoot, ".agents", "skills");
-const spdxHeader = [
-  "<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->",
-  "<!-- SPDX-License-Identifier: Apache-2.0 -->",
-].join("\n");
-// SKILL.md: frontmatter first, then SPDX after the closing ---
 const skillFrontmatterRe = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
 
 function listMarkdownFiles(root: string): string[] {
@@ -49,17 +44,12 @@ describe("repo skill markdown files", () => {
 
   for (const markdownFile of generatedUserSkillFiles) {
     const relPath = path.relative(repoRoot, markdownFile);
-    const isSkill = path.basename(markdownFile) === "SKILL.md";
 
-    it(`includes SPDX header for ${relPath}`, () => {
+    it(`does not include generated SPDX comments for ${relPath}`, () => {
       const raw = fs.readFileSync(markdownFile, "utf8");
-      if (isSkill) {
-        // SKILL.md: SPDX must appear after frontmatter (not before, to preserve markdownlint compatibility)
-        expect(raw.includes(spdxHeader), `${relPath} is missing SPDX header`).toBe(true);
-      } else {
-        // Reference files: SPDX at the top
-        expect(raw.startsWith(spdxHeader), `${relPath} is missing SPDX header at start`).toBe(true);
-      }
+      expect(raw.includes("<!-- SPDX-"), `${relPath} should not include SPDX comments`).toBe(
+        false,
+      );
     });
   }
 
@@ -97,15 +87,7 @@ describe("repo skill markdown files", () => {
         frontmatter.description.trim().length,
         `${relPath} is missing frontmatter.description`,
       ).toBeGreaterThan(0);
-
-      // SPDX must appear after frontmatter
-      const afterFrontmatter = raw.slice(match[0].length);
-      expect(
-        afterFrontmatter.includes(spdxHeader),
-        `${relPath} must include SPDX header after frontmatter`,
-      ).toBe(true);
-
-      const body = raw.slice(match[0].length).replace(spdxHeader, "").trim();
+      const body = raw.slice(match[0].length).trim();
       expect(body.length, `${relPath} body is too short`).toBeGreaterThan(20);
     });
   }

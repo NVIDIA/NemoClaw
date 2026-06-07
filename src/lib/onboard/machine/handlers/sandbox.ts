@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withSandboxPhaseTrace } from "../../tracing";
+import { branchTo, type OnboardStateTransitionResult } from "../result";
 
 export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
   resume: boolean;
@@ -55,8 +57,15 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       sandboxName: string | null,
     ): string[] | null;
     getSandboxMessagingChannels(sandboxName: string): string[] | null | undefined;
-    setupMessagingChannels(agent: Agent, existingChannels: string[] | null): Promise<string[]>;
+    setupMessagingChannels(
+      agent: Agent,
+      existingChannels: string[] | null,
+      sandboxName: string,
+    ): Promise<string[]>;
     readMessagingChannelConfigFromEnv(): MessagingChannelConfig | null;
+    readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
+    writePlanToEnv(plan: SandboxMessagingPlan): void;
+    getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -77,7 +86,6 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
       hermesToolGateways: string[],
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
-    setDefaultSandbox(sandboxName: string): void;
     getSandboxAgentRegistryFields(agent: Agent, agentVersionKnown: boolean): Record<string, unknown>;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -98,6 +106,7 @@ export interface SandboxStateResult<WebSearchConfig> {
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 function sameEffectiveTelegramRequireMention(left: boolean | null, right: boolean | null): boolean {
@@ -256,26 +265,49 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     }
 
     await deps.startRecordedStep("sandbox", { provider, model });
+    if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
     const recordedMessagingChannels = deps.getRecordedMessagingChannelsForResume(resume, session, sandboxName);
+    let messagingPlan: SandboxMessagingPlan | null = null;
     if (recordedMessagingChannels) {
       selectedMessagingChannels = recordedMessagingChannels;
       if (selectedMessagingChannels.length > 0) {
         deps.note(`  [non-interactive] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`);
+        // Prefer a plan already in env over the session plan. rebuild.ts stages
+        // a fresh plan from the registry entry before calling onboard --resume,
+        // and that plan reflects post-stop/-start channel mutations. Overwriting
+        // it with the session plan (saved at initial onboard) would lose the
+        // disabled state and reactivate stopped channels after rebuild.
+        // Only restore the session plan when the env is empty, i.e. for plain
+        // process-restart resumes where no external caller staged a plan.
+        const envPlan = deps.readMessagingPlanFromEnv();
+        if (envPlan) {
+          messagingPlan = envPlan;
+        } else {
+          // Registry is always current — updated by stop/start/add/remove.
+          // Works for plain process-restart resumes and cancel-then-resume
+          // when sandbox step had previously completed.
+          const registryPlan = deps.getRegistrySandboxMessagingPlan(sandboxName);
+          if (registryPlan) {
+            deps.writePlanToEnv(registryPlan);
+            messagingPlan = registryPlan;
+          }
+        }
       }
     } else {
       const existing = sandboxName
         ? deps.getSandboxMessagingChannels(sandboxName) ?? session?.messagingChannels ?? null
         : session?.messagingChannels ?? null;
-      selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing);
+      selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
+      messagingPlan = deps.readMessagingPlanFromEnv();
     }
     const messagingChannelConfig = deps.readMessagingChannelConfigFromEnv();
     session = deps.updateSession((current) => {
       current.messagingChannels = selectedMessagingChannels;
       current.messagingChannelConfig = messagingChannelConfig as Session["messagingChannelConfig"];
+      current.messagingPlan = messagingPlan;
       return current;
     });
 
-    if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
     const confirmedSandboxName = sandboxName;
     const resourceProfile = await deps.selectResourceProfileForSandbox();
     if (fresh) deps.stopStaleDashboardListenersForSandbox(deps.listRegistrySandboxes().sandboxes, confirmedSandboxName);
@@ -307,7 +339,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
       provider,
       ...deps.getSandboxAgentRegistryFields(agent, !fromDockerfile),
     });
-    deps.setDefaultSandbox(sandboxName);
+    // Default-marking is deferred to finalization so a cancelled onboard never
+    // leaves this sandbox registered as default (#4614).
     session = await deps.recordStepComplete(
       "sandbox",
       deps.toSessionUpdates({
@@ -335,5 +368,12 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     selectedMessagingChannels,
     webSearchSupported,
     session,
+    stateResult: branchTo(agent ? "agent_setup" : "openclaw", {
+      metadata: {
+        state: "sandbox",
+        sandboxName: completedSandboxName,
+        agent: (agent as { name?: string } | null)?.name ?? "openclaw",
+      },
+    }),
   };
 }

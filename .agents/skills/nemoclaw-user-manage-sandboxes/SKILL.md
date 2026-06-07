@@ -1,75 +1,89 @@
 ---
 name: "nemoclaw-user-manage-sandboxes"
-description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
+description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, install hermes plugins, hermes plugins nemoclaw, nemoclaw hermes plugins, nemohermes dockerignore, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
 license: "Apache-2.0"
 ---
 
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Manage Sandbox Lifecycle
 
+import { AgentOnly } from "../_components/AgentGuide";
+
+<AgentOnly variant="openclaw">
 Use this guide after you finish the OpenClaw quickstart (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use this guide after you finish Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+</AgentOnly>
 It covers day-two sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
+<AgentOnly variant="openclaw">
 When a workflow uses the lower-level OpenShell CLI, see CLI Selection Guide (use the `nemoclaw-user-reference` skill) for the boundary between `nemoclaw` and `openshell`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+When a workflow uses the lower-level OpenShell CLI, see CLI Selection Guide (use the `nemoclaw-user-reference` skill) for the boundary between `nemoclaw`, `nemoclaw`, and `openshell`.
+</AgentOnly>
 
 ## List Sandboxes
 
 List every sandbox registered on this host:
 
-```console
-$ nemoclaw list
+```bash
+nemoclaw list
 ```
 
-The list shows each sandbox's model, provider, policy presets, active SSH session indicator, and dashboard URL when a dashboard port is recorded.
+The list shows each sandbox's model, provider, policy presets, active SSH session indicator, and dashboard URL when NemoClaw records a dashboard port.
 Use JSON output for scripts:
 
-```console
-$ nemoclaw list --json
+```bash
+nemoclaw list --json
 ```
 
 ## Check Sandbox Health
 
 Check a specific sandbox's health, inference route, active connections, live policy, update status, and messaging-channel overlap warnings:
 
-```console
-$ nemoclaw my-assistant status
+```bash
+nemoclaw my-assistant status
 ```
 
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 
-```console
-$ nemoclaw status
+```bash
+nemoclaw status
 ```
 
 ## Inspect Logs
 
 View recent sandbox logs:
 
-```console
-$ nemoclaw my-assistant logs
+```bash
+nemoclaw my-assistant logs
 ```
 
 Stream logs while you reproduce a problem:
 
-```console
-$ nemoclaw my-assistant logs --follow
+```bash
+nemoclaw my-assistant logs --follow
 ```
 
+<AgentOnly variant="openclaw">
 The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
+<AgentOnly variant="hermes">
+The log command reads both Hermes gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+</AgentOnly>
 
 ## Collect Diagnostics
 
 Collect diagnostics for bug reports or support handoff:
 
-```console
-$ nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
+```bash
+nemoclaw debug --sandbox my-assistant --output nemoclaw-debug.tar.gz
 ```
 
 Use `--quick` for a smaller local summary:
 
-```console
-$ nemoclaw debug --quick --sandbox my-assistant
+```bash
+nemoclaw debug --quick --sandbox my-assistant
 ```
 
 The debug command gathers system information, Docker state, gateway logs, and sandbox status.
@@ -78,37 +92,46 @@ The debug command gathers system information, Docker state, gateway logs, and sa
 
 If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
 
-```console
-$ openshell forward start --background <dashboard-port> my-gpt-claw
+```bash
+openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
 To list active forwards across all sandboxes, run the following command.
 
-```console
-$ openshell forward list
+```bash
+openshell forward list
 ```
 
 ## Run Multiple Sandboxes
 
 Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using.
+<AgentOnly variant="openclaw">
 When the default port is already held by another sandbox, `nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
+</AgentOnly>
+<AgentOnly variant="hermes">
+When the default API port is already held by another sandbox, `nemoclaw onboard` scans for the next free port and records it for the sandbox.
+</AgentOnly>
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway and dashboard cleanup is scoped by sandbox name and port.
+A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
 
-```console
-$ nemoclaw onboard                                      # first sandbox uses 18789
-$ nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+```bash
+nemoclaw onboard                                      # first sandbox uses 18789
+nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
 ```
 
 To choose a specific port, pass `--control-ui-port`:
 
-```console
-$ nemoclaw onboard --control-ui-port 19000
+```bash
+nemoclaw onboard --control-ui-port 19000
 ```
 
 You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
 
-```console
-$ CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
-$ NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
+```bash
+CHAT_UI_URL=http://127.0.0.1:19000 nemoclaw onboard
+NEMOCLAW_DASHBOARD_PORT=19000 nemoclaw onboard
 ```
 
 For full details on port conflicts and overrides, refer to Port already in use (use the `nemoclaw-user-reference` skill).
@@ -121,18 +144,23 @@ Recover from a misconfigured sandbox without re-running the full onboard wizard 
 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
-```console
-$ nemoclaw inference set --model <model> --provider <provider>
+```bash
+nemoclaw inference set --model <model> --provider <provider>
 ```
 
 Refer to Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
 
+<AgentOnly variant="openclaw">
 If `nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If `nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+</AgentOnly>
 
-```console
-$ nemoclaw <sandbox-name> recover
+```bash
+nemoclaw <sandbox-name> recover
 ```
 
 The command restarts the in-sandbox gateway and re-establishes the dashboard port-forward in one step.
@@ -141,22 +169,27 @@ Refer to `nemoclaw <name> recover` (use the `nemoclaw-user-reference` skill) for
 
 ### Reset a Stored Credential
 
-If a provider credential was entered incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
+If you entered a provider credential incorrectly during onboarding, clear the gateway-registered value and re-enter it on the next onboard run:
 
-```console
-$ nemoclaw credentials list                # see which providers are registered
-$ nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
-$ nemoclaw onboard                         # re-run to re-enter the cleared provider
+```bash
+nemoclaw credentials list                # see which providers are registered
+nemoclaw credentials reset <PROVIDER>    # clear a single provider, for example nvidia-prod
+nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-The credentials command is documented in full at `nemoclaw credentials reset <PROVIDER>` (use the `nemoclaw-user-reference` skill).
+The command reference documents `nemoclaw credentials reset <PROVIDER>` (use the `nemoclaw-user-reference` skill) in full.
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
+<AgentOnly variant="openclaw">
 If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up a new base image without losing your sandbox's workspace files, use `rebuild` instead of destroying and recreating:
+</AgentOnly>
+<AgentOnly variant="hermes">
+If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating:
+</AgentOnly>
 
-```console
-$ nemoclaw <sandbox-name> rebuild
+```bash
+nemoclaw <sandbox-name> rebuild
 ```
 
 Rebuild preserves the mounted workspace and registered policies while recreating the container.
@@ -167,8 +200,8 @@ Refer to `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill) for
 
 Apply an additional preset, such as Telegram or GitHub, to a running sandbox without re-onboarding:
 
-```console
-$ nemoclaw <sandbox-name> policy-add
+```bash
+nemoclaw <sandbox-name> policy-add
 ```
 
 Refer to `nemoclaw <name> policy-add` (use the `nemoclaw-user-reference` skill) for usage details and flags.
@@ -179,68 +212,28 @@ See `NEMOCLAW_POLICY_MODE` (use the `nemoclaw-user-reference` skill) for the ful
 
 ## Update to the Maintained Version
 
-When a maintained NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
-The standard installer follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
+When a maintained NemoClaw release becomes available, update the host CLI and then check whether existing sandboxes need rebuilds.
+The standard installer follows the admin-promoted `lkg` release tag by default.
+If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
-### Update the NemoClaw CLI
-
-Re-run the installer.
-Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
-If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
-The automatic path is offered only when the existing `nemoclaw` CLI supports `backup-all`; older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
-
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash
+nemoclaw upgrade-sandboxes --check
 ```
 
-### Upgrade Sandboxes with Stale Agent and Runtime Versions
+Before upgrade work, the installer runs `nemoclaw backup-all` when the installed CLI supports it.
+For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
-The installer checks registered sandboxes after onboarding succeeds and runs `nemoclaw upgrade-sandboxes --auto` for stale running sandboxes.
-Use `upgrade-sandboxes` directly to verify the result, rebuild when you skipped the installer or onboarding step, or handle sandboxes that were stopped or could not be version-checked.
-The upgrade flow is non-destructive by default because NemoClaw preserves manifest-defined workspace state, but a manual snapshot before any major upgrade gives you a state restore point.
-
-```console
-$ nemoclaw <sandbox-name> snapshot create --name pre-upgrade   # optional, recommended
-$ nemoclaw update --yes                                        # updates CLI through the maintained installer flow
-$ nemoclaw upgrade-sandboxes --check                            # verify or list remaining stale/unknown sandboxes
-$ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
+```bash
+nemoclaw <sandbox-name> snapshot create --name pre-upgrade
+nemoclaw update --yes
+nemoclaw upgrade-sandboxes --check
 ```
 
-`nemoclaw update` is the CLI wrapper around the same installer path as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
-Use `nemoclaw update --check` when you only want to inspect version state and see the maintained update command.
-
-For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
-
-If the upgraded sandbox needs its workspace state reverted, restore the pre-upgrade snapshot into the running sandbox.
-This restores saved state directories only; it does not downgrade the sandbox image or agent/runtime:
-
-```console
-$ nemoclaw <sandbox-name> snapshot restore pre-upgrade
-```
-
-### What Changes During a Rebuild
-
-Each rebuild destroys the existing container and creates a new one.
-NemoClaw protects your data through the same backup-and-restore flow as `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill):
-
-- NemoClaw preserves manifest-defined workspace state. Before deleting the old container, NemoClaw snapshots the state directories and durable state files defined in the agent manifest, typically `/sandbox/.openclaw/workspace/`; for Hermes this also includes `SOUL.md` and the SQLite database behind `.hermes/state.db`. Stored credentials (`~/.nemoclaw/credentials.json`) and registered policy presets live on the host and are re-applied to the new sandbox automatically.
-- NemoClaw does not preserve runtime changes outside the workspace state directories. This includes packages installed inside the running container with `apt` or `pip`, files in non-workspace paths, and in-memory or process state. If you have customized the running container at runtime, capture that as `Dockerfile` changes for `nemoclaw onboard --from` or a manual `openshell sandbox download` before the rebuild starts.
-
-Aborts before the destroy step are non-destructive.
-The flow refuses to proceed past preflight if a credential is missing or past backup if required manifest-defined state cannot be copied, so a failed run leaves the original sandbox intact and ready to retry.
-When a backup command reports partial archive output, NemoClaw keeps the usable entries and reports only the manifest-defined paths that could not be archived.
-
-See [Backup and Restore](references/backup-restore.md) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
-
-**If the rebuild aborts with `Missing credential: <KEY>`:**
-
-The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session.
-If you have switched providers since onboarding, for example from a remote API to a local Ollama setup, the preflight may still reference the old key and fail before any destroy step runs.
-
-To recover, re-run `nemoclaw onboard` and select your current provider.
-This refreshes the session metadata.
-Your existing container keeps serving traffic until the new image is ready.
+Each rebuild destroys the old container and creates a new one, while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
+Runtime changes outside those state paths, such as packages installed manually in the running container, are not preserved.
+For the full state-preservation contract, snapshot restore behavior, and manual backup workflow, refer to [Backup and Restore](references/backup-restore.md).
+For command flags, refer to `nemoclaw update` (use the `nemoclaw-user-reference` skill), `nemoclaw upgrade-sandboxes` (use the `nemoclaw-user-reference` skill), and `nemoclaw <name> rebuild` (use the `nemoclaw-user-reference` skill).
 
 ## Uninstall
 
@@ -258,15 +251,15 @@ nemoclaw uninstall
 
 **Note:**
 
-`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that snapshot and `backup-all` commands write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
 For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
-See `nemoclaw uninstall` (use the `nemoclaw-user-reference` skill) for the full preservation contract.
+See the Commands reference (use the `nemoclaw-user-reference` skill) for the full preservation contract.
 
-`nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
+The CLI uninstall command runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 
-If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
+If the CLI is missing or broken, fall back to the hosted script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
@@ -278,13 +271,14 @@ The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above a
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
 ```
 
-For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
+For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, refer to `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
 
 ## References
 
 - **[references/runtime-controls.md](references/runtime-controls.md)** — Single page that answers what can change at runtime versus what requires a rebuild for NemoClaw sandboxes.
 - **Load [references/backup-restore.md](references/backup-restore.md)** when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds.
 - **Load [references/messaging-channels.md](references/messaging-channels.md)** when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges. Explains how Telegram, Discord, Slack, WeChat, and WhatsApp reach sandboxed OpenClaw and Hermes agents through OpenShell-managed processes and NemoClaw channel commands.
+- **Load [references/install-plugins-hermes.md](references/install-plugins-hermes.md)** when users ask how to install, build, or configure Hermes plugins under NemoClaw. Explains how to install Hermes plugins in NemoClaw-managed sandboxes, including custom Dockerfile build-directory layout and `.dockerignore` handling.
 - **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
 
 ## Related Skills

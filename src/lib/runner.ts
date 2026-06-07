@@ -43,6 +43,33 @@ function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv): Record<string, string> {
   return buildSubprocessEnv(normalizedExtra);
 }
 
+function rejectNulByte(value: string, label: string): string {
+  if (value.includes("\0")) {
+    throw new Error(`${label} must not contain NUL bytes`);
+  }
+  return value;
+}
+
+function normalizeSpawnFile(file: string, callerName: string): string {
+  const normalized = rejectNulByte(String(file), `${callerName}: executable`);
+  if (normalized.length === 0) {
+    throw new Error(`${callerName}: executable must not be empty`);
+  }
+  return normalized;
+}
+
+function normalizeSpawnArgs(args: readonly unknown[], callerName: string): string[] {
+  return args.map((arg, index) => rejectNulByte(String(arg), `${callerName}: argv[${index + 1}]`));
+}
+
+function normalizeArgv(cmd: readonly string[], callerName: string): [string, string[]] {
+  if (cmd.length === 0) {
+    throw new Error(`${callerName}: argv array must not be empty`);
+  }
+  const [file, ...args] = cmd;
+  return [normalizeSpawnFile(file, callerName), normalizeSpawnArgs(args, callerName)];
+}
+
 function logOpenshellRuntimeHint(file: string, renderedCommand = ""): void {
   if (
     file === "openshell" ||
@@ -65,8 +92,17 @@ function spawnAndHandle(
   stdio: RunnerOptions["stdio"],
   renderedCommand: string,
 ): SpawnResult {
-  const result = spawnSync(file, args, {
+  const safeFile = normalizeSpawnFile(file, "spawnAndHandle");
+  const safeArgs = normalizeSpawnArgs(args, "spawnAndHandle");
+  // All non-shell runner paths pass argv arrays and force shell=false; runShell
+  // and runInteractiveShell enter here with a literal `bash -c` executable and
+  // an explicitly named shell boundary. Extra environment values are filtered by
+  // buildRunnerEnv before spawn.
+  // lgtm[js/indirect-command-line-injection]
+  // lgtm[js/shell-command-injection-from-environment]
+  const result = spawnSync(safeFile, safeArgs, {
     ...opts,
+    shell: false,
     stdio,
     cwd: ROOT,
     env: buildRunnerEnv(opts.env),
@@ -84,7 +120,7 @@ function spawnAndHandle(
     console.error(
       `  Command failed (exit ${result.status}): ${redact(renderedCommand).slice(0, 80)}`,
     );
-    logOpenshellRuntimeHint(file, renderedCommand);
+    logOpenshellRuntimeHint(safeFile, renderedCommand);
     process.exit(result.status || 1);
   }
   return result;
@@ -124,12 +160,7 @@ function runArrayCmd(
   defaultStdio: RunnerOptions["stdio"] = ["ignore", "pipe", "pipe"],
   callerName = "run",
 ): SpawnResult {
-  if (cmd.length === 0) {
-    throw new Error(`${callerName}: argv array must not be empty`);
-  }
-
-  const exe = cmd[0];
-  const args = cmd.slice(1);
+  const [exe, args] = normalizeArgv(cmd, callerName);
   const { ignoreError, suppressOutput, env: extraEnv, stdio: stdioCfg, ...spawnOpts } = opts;
 
   // Guard: re-enabling shell interpretation defeats the purpose of argv arrays.
@@ -139,10 +170,13 @@ function runArrayCmd(
 
   const stdio = stdioCfg ?? defaultStdio;
 
-  // run() always uses argv arrays and rejects `shell: true` above.
-  // codeql[js/indirect-command-line-injection]
+  // run() always uses argv arrays, rejects `shell: true` above, and validates
+  // the executable/argv for process-spawn metacharacters such as NUL bytes.
+  // lgtm[js/indirect-command-line-injection]
+  // lgtm[js/shell-command-injection-from-environment]
   const result = spawnSync(exe, args, {
     ...spawnOpts,
+    shell: false,
     stdio,
     cwd: ROOT,
     env: buildRunnerEnv(extraEnv),
@@ -216,12 +250,7 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   if (!Array.isArray(cmd)) {
     throw new Error("runCapture no longer accepts shell strings; pass an argv array instead");
   }
-  if (cmd.length === 0) {
-    throw new Error("runCapture: argv array must not be empty");
-  }
-
-  const exe = cmd[0];
-  const args = cmd.slice(1);
+  const [exe, args] = normalizeArgv(cmd, "runCapture");
   const { ignoreError, env: extraEnv, stdio: _stdio, ...spawnOpts } = opts;
 
   // Guard: re-enabling shell interpretation defeats the purpose of argv arrays.
@@ -230,10 +259,14 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   }
 
   try {
-    // runCapture() always uses argv arrays and rejects `shell: true` above.
-    // codeql[js/indirect-command-line-injection]
+    // runCapture() always uses argv arrays, rejects `shell: true` above, and
+    // validates the executable/argv for process-spawn metacharacters such as
+    // NUL bytes.
+    // lgtm[js/indirect-command-line-injection]
+    // lgtm[js/shell-command-injection-from-environment]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
+      shell: false,
       cwd: ROOT,
       env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
@@ -265,6 +298,10 @@ const { redact, redactError, writeRedactedResult } = require("./security/redact"
 /** Structured result returned by runCaptureEx. */
 export interface CaptureResult {
   stdout: string;
+  /** Captured stderr, trimmed. Many tools (docker, CUDA samples) write their
+   * actionable failure text here, so callers building diagnostics need it.
+   * Optional so existing `runCaptureEx` test seams stay source-compatible. */
+  stderr?: string;
   exitCode: number | null;
   /** True when spawnSync sets result.error due to a timeout (ETIMEDOUT). */
   timedOut: boolean;
@@ -280,12 +317,16 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
   if (!Array.isArray(cmd) || cmd.length === 0) {
     throw new Error("runCaptureEx: cmd must be a non-empty argv array");
   }
-  const exe = cmd[0];
-  const args = cmd.slice(1);
+  const [exe, args] = normalizeArgv(cmd, "runCaptureEx");
   const { env: extraEnv, stdio: _stdio, ...spawnOpts } = opts as CaptureOptions;
   try {
+    // runCaptureEx() follows the same argv-only, shell=false boundary as
+    // runCapture(), while returning structured timeout diagnostics.
+    // lgtm[js/indirect-command-line-injection]
+    // lgtm[js/shell-command-injection-from-environment]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
+      shell: false,
       cwd: ROOT,
       // #2616: route via buildRunnerEnv so subprocess env is sanitized and
       // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
@@ -299,8 +340,10 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
       (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
       result.status === 28;
     const stdout = result.stdout || "";
+    const stderr = result.stderr || "";
     return {
       stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
+      stderr: (typeof stderr === "string" ? stderr : stderr.toString("utf-8")).trim(),
       exitCode: result.status,
       timedOut,
     };
