@@ -83,6 +83,18 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-slack-deny-feedback.mts"));
   }
 
+  function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
+    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
+    const copiedScripts = [...dockerfile.matchAll(/^COPY\s+scripts\/(\S+)/gm)].map(
+      ([, relativePath]) => relativePath,
+    );
+    expect(copiedScripts).not.toHaveLength(0);
+
+    for (const relativePath of copiedScripts) {
+      expect(fs.existsSync(path.join(buildCtx, "scripts", relativePath))).toBe(true);
+    }
+  }
+
   function expectStagedNemoclawModes(buildCtx: string) {
     const stagedNemoclaw = path.join(buildCtx, "nemoclaw");
     const stagedSrc = path.join(stagedNemoclaw, "src");
@@ -212,7 +224,8 @@ describe("sandbox build context staging", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
 
     try {
-      const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+      const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+      expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
