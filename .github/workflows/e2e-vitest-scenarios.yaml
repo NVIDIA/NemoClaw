@@ -53,12 +53,14 @@ jobs:
 
       - name: Summarize artifacts
         if: always()
+        env:
+          FILTER_LABEL: ${{ inputs.test_filter || 'all' }}
         run: |
           {
             echo "## Vitest E2E Scenarios"
             echo
             echo "- Project: \`e2e-scenarios-live\`"
-            echo "- Filter: \`${{ inputs.test_filter || 'all' }}\`"
+            printf '%s%s%s\n' '- Filter: `' "${FILTER_LABEL}" '`'
             echo "- Artifact root: \`${E2E_ARTIFACT_DIR}\`"
             echo
             if [ -d "${E2E_ARTIFACT_DIR}" ]; then
@@ -75,4 +77,5 @@ jobs:
         with:
           name: e2e-vitest-scenarios
           path: .e2e/vitest/
+          include-hidden-files: true
           if-no-files-found: ignore
