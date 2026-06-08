@@ -80,6 +80,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
+    writeFixture(path.join("scripts", "patch-openclaw-slack-deny-feedback.mts"));
   }
 
   function expectStagedNemoclawModes(buildCtx: string) {
@@ -265,6 +266,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-slack-deny-feedback.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {
