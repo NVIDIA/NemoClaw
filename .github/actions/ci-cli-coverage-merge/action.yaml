@@ -12,6 +12,25 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Validate shard inputs
+      id: validate-shard-inputs
+      shell: bash
+      env:
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
+      run: |
+        set -euo pipefail
+
+        case "$CLI_SHARD_COUNT" in
+          ''|*[!0-9]*)
+            echo "::error title=Invalid CLI shard count::Expected positive integer, got ${CLI_SHARD_COUNT}"
+            exit 1
+            ;;
+        esac
+        if [ "$CLI_SHARD_COUNT" -lt 1 ]; then
+          echo "::error title=Invalid CLI shard count::Expected positive integer, got ${CLI_SHARD_COUNT}"
+          exit 1
+        fi
+
     - name: Setup Node.js
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
       with:
@@ -38,18 +57,20 @@ runs:
 
     - name: Verify CLI shard blob reports
       shell: bash
+      env:
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
       run: |
         set -euo pipefail
-        for shard in $(seq 1 "${{ inputs.shard-count }}"); do
-          blob=".vitest-reports/blob-${shard}-${{ inputs.shard-count }}.json"
+        for shard in $(seq 1 "$CLI_SHARD_COUNT"); do
+          blob=".vitest-reports/blob-${shard}-${CLI_SHARD_COUNT}.json"
           if [ ! -s "$blob" ]; then
             echo "::error title=Missing CLI shard blob::Expected non-empty ${blob}"
             exit 1
           fi
         done
-        blob_count=$(find .vitest-reports -maxdepth 1 -type f -name 'blob-*-${{ inputs.shard-count }}.json' | wc -l | tr -d ' ')
-        if [ "$blob_count" != "${{ inputs.shard-count }}" ]; then
-          echo "::error title=Unexpected CLI shard blob count::Expected ${{ inputs.shard-count }} blob reports, found ${blob_count}"
+        blob_count=$(find .vitest-reports -maxdepth 1 -type f -name "blob-*-${CLI_SHARD_COUNT}.json" | wc -l | tr -d ' ')
+        if [ "$blob_count" != "$CLI_SHARD_COUNT" ]; then
+          echo "::error title=Unexpected CLI shard blob count::Expected ${CLI_SHARD_COUNT} blob reports, found ${blob_count}"
           find .vitest-reports -maxdepth 1 -type f -print
           exit 1
         fi

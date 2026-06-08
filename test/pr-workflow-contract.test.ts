@@ -26,6 +26,25 @@ const sharedActionPaths = {
   pluginCoverage: "./.github/actions/ci-plugin-coverage",
 } as const;
 
+const trustedPrActionPaths = {
+  staticChecks: "./.trusted-ci-actions/.github/actions/ci-static-checks",
+  buildTypecheck: "./.trusted-ci-actions/.github/actions/ci-build-typecheck",
+  cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
+  cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
+  pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
+} as const;
+
+const trustedCheckoutAction =
+  "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+
+const trustedActionDirs = [
+  ".github/actions/ci-static-checks",
+  ".github/actions/ci-build-typecheck",
+  ".github/actions/ci-cli-coverage-shard",
+  ".github/actions/ci-cli-coverage-merge",
+  ".github/actions/ci-plugin-coverage",
+] as const;
+
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
   return steps.flatMap((step) => (step.run ? [step.run] : []));
@@ -43,12 +62,31 @@ function requiredStep(action: CompositeAction, stepName: string): WorkflowStep {
   return step;
 }
 
+function requiredStepIndex(action: CompositeAction, stepName: string): number {
+  const stepIndex = action.runs.steps.findIndex(
+    (candidate) => candidate.name === stepName,
+  );
+  if (stepIndex === -1) {
+    throw new Error(`Missing shared action step: ${stepName}`);
+  }
+  return stepIndex;
+}
+
 function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === stepName);
   if (!step) {
     throw new Error(`Missing workflow step: ${stepName}`);
   }
   return step;
+}
+
+function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
+  const stepIndex =
+    job.steps?.findIndex((candidate) => candidate.name === stepName) ?? -1;
+  if (stepIndex === -1) {
+    throw new Error(`Missing workflow step: ${stepName}`);
+  }
+  return stepIndex;
 }
 
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
@@ -133,19 +171,70 @@ describe("pull request and main workflow contracts", () => {
   });
 
   it("reuses the same shared CI actions in PR and main workflows", () => {
-    for (const [jobName, actionPath] of [
-      ["static-checks", sharedActionPaths.staticChecks],
-      ["build-typecheck", sharedActionPaths.buildTypecheck],
-      ["cli-test-shards", sharedActionPaths.cliCoverageShard],
-      ["cli-tests", sharedActionPaths.cliCoverageMerge],
-      ["plugin-tests", sharedActionPaths.pluginCoverage],
+    for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
+      [
+        "static-checks",
+        "Run static checks",
+        trustedPrActionPaths.staticChecks,
+        sharedActionPaths.staticChecks,
+      ],
+      [
+        "build-typecheck",
+        "Run build and type checks",
+        trustedPrActionPaths.buildTypecheck,
+        sharedActionPaths.buildTypecheck,
+      ],
+      [
+        "cli-test-shards",
+        "Run CLI coverage shard",
+        trustedPrActionPaths.cliCoverageShard,
+        sharedActionPaths.cliCoverageShard,
+      ],
+      [
+        "cli-tests",
+        "Merge CLI coverage",
+        trustedPrActionPaths.cliCoverageMerge,
+        sharedActionPaths.cliCoverageMerge,
+      ],
+      [
+        "plugin-tests",
+        "Run plugin coverage",
+        trustedPrActionPaths.pluginCoverage,
+        sharedActionPaths.pluginCoverage,
+      ],
     ] as const) {
       expect(stepUses(prWorkflow.jobs[jobName]), `PR ${jobName}`).toContain(
-        actionPath,
+        trustedActionPath,
       );
       expect(stepUses(mainWorkflow.jobs[jobName]), `main ${jobName}`).toContain(
-        actionPath,
+        mainActionPath,
       );
+      expect(stepUses(prWorkflow.jobs[jobName]), `PR ${jobName}`).not.toContain(
+        mainActionPath,
+      );
+      expect(stepUses(mainWorkflow.jobs[jobName]), `main ${jobName}`).not.toContain(
+        trustedActionPath,
+      );
+
+      const trustedCheckout = requiredWorkflowStep(
+        prWorkflow.jobs[jobName],
+        "Checkout trusted CI actions",
+      );
+      expect(trustedCheckout.uses).toBe(trustedCheckoutAction);
+      expect(trustedCheckout.with?.ref).toBe(
+        "${{ github.event.pull_request.base.sha }}",
+      );
+      expect(trustedCheckout.with?.path).toBe(".trusted-ci-actions");
+      expect(trustedCheckout.with?.["persist-credentials"]).toBe(false);
+      expect(trustedCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
+      for (const trustedActionDir of trustedActionDirs) {
+        expect(String(trustedCheckout.with?.["sparse-checkout"])).toContain(
+          trustedActionDir,
+        );
+      }
+      expect(
+        requiredWorkflowStepIndex(prWorkflow.jobs[jobName], "Checkout trusted CI actions"),
+      ).toBeLessThan(requiredWorkflowStepIndex(prWorkflow.jobs[jobName], stepName));
     }
 
     expect(stepUses(mainWorkflow.jobs.checks)).not.toContain(
@@ -171,6 +260,7 @@ describe("pull request and main workflow contracts", () => {
 
   it("preserves the shared static, build, and coverage gates", () => {
     const staticRuns = stepRuns(sharedActions.staticChecks);
+    const staticRunsJoined = staticRuns.join("\n");
     const staticPrekRun = staticRuns.find((run) =>
       run.includes("npx prek run --all-files --stage pre-push"),
     );
@@ -199,6 +289,11 @@ describe("pull request and main workflow contracts", () => {
     expect(staticRuns).toContain("npm run test-size:check");
     expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");
     expect(staticRuns).toContain("python3 scripts/generate-platform-docs.py --check");
+    expect(staticRunsJoined).toContain(
+      'HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"',
+    );
+    expect(staticRunsJoined).not.toContain('"${HADOLINT_URL}.sha256"');
+    expect(staticRunsJoined).not.toContain("EXPECTED=$(curl");
 
     expect(buildRuns.join("\n")).toContain("cd nemoclaw && npm install --ignore-scripts");
     expect(buildRuns).toContain("cd nemoclaw && npm run build");
@@ -212,23 +307,27 @@ describe("pull request and main workflow contracts", () => {
     expect(cliShardRuns).toContain("npm run build:cli");
     expect(cliShardRuns).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
     expect(cliShardRuns).toContain("npx vitest run --project cli");
-    expect(cliShardRuns).toContain("--shard=${{ inputs.shard }}/${{ inputs.shard-count }}");
+    expect(cliShardRuns).toContain('--shard="${CLI_SHARD}/${CLI_SHARD_COUNT}"');
     expect(cliShardRuns).toContain("--reporter=github-actions");
     expect(cliShardRuns).toContain("--reporter=blob");
     expect(cliShardRuns).toContain(
-      "--outputFile.blob=.vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json",
+      '--outputFile.blob=".vitest-reports/blob-${CLI_SHARD}-${CLI_SHARD_COUNT}.json"',
     );
-    expect(cliShardRuns).toContain("--coverage.reportsDirectory=coverage/cli/shard-${{ inputs.shard }}");
+    expect(cliShardRuns).toContain(
+      '--coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}"',
+    );
+    expect(cliShardRuns).not.toContain("${{ inputs.shard");
     expect(cliShardRuns).not.toContain("scripts/check-coverage-ratchet.ts");
 
     expect(cliMergeRuns).toContain("npm run build:cli");
     expect(cliMergeRuns).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
     expect(cliMergeRuns).toContain(
-      'blob=".vitest-reports/blob-${shard}-${{ inputs.shard-count }}.json"',
+      'blob=".vitest-reports/blob-${shard}-${CLI_SHARD_COUNT}.json"',
     );
     expect(cliMergeRuns).toContain(
-      "find .vitest-reports -maxdepth 1 -type f -name 'blob-*-${{ inputs.shard-count }}.json'",
+      'find .vitest-reports -maxdepth 1 -type f -name "blob-*-${CLI_SHARD_COUNT}.json"',
     );
+    expect(cliMergeRuns).not.toContain("${{ inputs.shard-count");
     expect(cliMergeRuns).toContain("npx vitest --mergeReports .vitest-reports");
     expect(cliMergeRuns).toContain("--reporter=json");
     expect(cliMergeRuns).toContain(
@@ -243,6 +342,60 @@ describe("pull request and main workflow contracts", () => {
     expect(pluginRuns).toContain(
       'scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"',
     );
+  });
+
+  it("validates CLI shard inputs before using them in shell commands", () => {
+    const shardValidationStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Validate shard inputs",
+    );
+    const shardValidationRun = shardValidationStep.run ?? "";
+    const shardRunStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Run CLI coverage shard",
+    );
+    const mergeValidationStep = requiredStep(
+      sharedActions.cliCoverageMerge,
+      "Validate shard inputs",
+    );
+    const mergeValidationRun = mergeValidationStep.run ?? "";
+    const mergeVerifyStep = requiredStep(
+      sharedActions.cliCoverageMerge,
+      "Verify CLI shard blob reports",
+    );
+
+    expect(shardValidationStep.env).toEqual({
+      CLI_SHARD: "${{ inputs.shard }}",
+      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
+    });
+    expect(shardValidationRun).toContain("*[!0-9]*");
+    expect(shardValidationRun).toContain("Invalid CLI shard");
+    expect(shardValidationRun).toContain("Invalid CLI shard count");
+    expect(shardValidationRun).toContain("Invalid CLI shard range");
+    expect(shardRunStep.env).toEqual({
+      CLI_SHARD: "${{ inputs.shard }}",
+      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
+    });
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageShard, "Validate shard inputs"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.cliCoverageShard, "Run CLI coverage shard"));
+
+    expect(mergeValidationStep.env).toEqual({
+      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
+    });
+    expect(mergeValidationRun).toContain("*[!0-9]*");
+    expect(mergeValidationRun).toContain("Invalid CLI shard count");
+    expect(mergeVerifyStep.env).toEqual({
+      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
+    });
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Validate shard inputs"),
+    ).toBeLessThan(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Verify CLI shard blob reports"),
+    );
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Validate shard inputs"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.cliCoverageMerge, "Merge CLI coverage"));
   });
 
   it("keeps the trusted test-size guard closed around budget policy changes", () => {
@@ -291,7 +444,9 @@ describe("pull request and main workflow contracts", () => {
       "Verify CLI shard blob reports",
     ).run;
 
-    expect(shardUploadStep.if).toBe("always()");
+    expect(shardUploadStep.if).toBe(
+      "${{ always() && steps.validate-shard-inputs.outcome == 'success' }}",
+    );
     expect(shardUploadStep.uses).toContain("actions/upload-artifact@");
     expect(shardUploadStep.with?.name).toBe("cli-blob-report-${{ inputs.shard }}");
     expect(shardUploadStep.with?.path).toBe(
@@ -305,9 +460,9 @@ describe("pull request and main workflow contracts", () => {
     expect(downloadStep.with?.path).toBe(".vitest-reports");
     expect(downloadStep.with?.["merge-multiple"]).toBe(true);
 
-    expect(verifyRun).toContain('seq 1 "${{ inputs.shard-count }}"');
+    expect(verifyRun).toContain('seq 1 "$CLI_SHARD_COUNT"');
     expect(verifyRun).toContain('[ ! -s "$blob" ]');
-    expect(verifyRun).toContain("Expected ${{ inputs.shard-count }} blob reports");
+    expect(verifyRun).toContain("Expected ${CLI_SHARD_COUNT} blob reports");
     expect(stepRuns(sharedActions.cliCoverageMerge).join("\n")).toContain(
       'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
     );
