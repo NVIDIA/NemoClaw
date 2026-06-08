@@ -771,8 +771,10 @@ function ensureSandboxInferenceRouteOrExit(
 // when the user runs `nemoclaw <sandbox> connect`. The script sources
 // `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
 // in-sandbox `openclaw devices list` invocation targets the running gateway
-// with its token. Approvals then use OpenClaw's local fallback by removing
-// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
+// with its token. Approvals then use OpenClaw's local fallback via the shared
+// `gateway_approval_env()` policy helper, which strips OPENCLAW_GATEWAY_URL,
+// OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN from the child env (the full
+// triplet needed to avoid the #4462 self-defeat), and apply the same allowlist
 // as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
 // modes. Unknown clients are ignored, not approved.
 //
