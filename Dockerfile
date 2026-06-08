@@ -198,6 +198,24 @@ RUN set -eu; \
 # sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
 # unmodified, so metadata/link-local/private IP literals are unchanged.
 #
+# === Patch 4: route unconfigured strict SSRF fetches through the egress proxy ===
+# (NVIDIA/NemoClaw#4687). fetchWithSsrFGuard builds a per-request DNS-pinned
+# *direct* undici dispatcher for STRICT-mode fetches that pass no explicit
+# dispatcherPolicy — e.g. the @openclaw/googlechat inbound JWT signing-cert
+# fetch from www.googleapis.com/service_accounts/v1/metadata/x509/.... A direct
+# dispatcher ignores the global EnvHttpProxyAgent installed by
+# NODE_USE_ENV_PROXY=1, so the request never reaches the OpenShell L7 proxy and
+# fails in the proxy-only sandbox netns — rejecting every inbound Google Chat
+# webhook. OpenClaw already has a "managed proxy" branch that routes such
+# fetches through the env proxy (createHttp1EnvHttpProxyAgent) while still
+# resolving + SSRF-validating the target hostname, but it is gated on
+# isManagedProxyActive() (OPENCLAW_PROXY_ACTIVE=1), which NemoClaw does not set.
+# Inside an OpenShell sandbox the configured egress proxy IS the managed proxy,
+# so extend that activation to OPENSHELL_SANDBOX=1 for fetches that supply no
+# explicit dispatcherPolicy. Explicit-proxy and direct(mTLS) dispatcher policies
+# (Google auth proxy / client-cert paths) keep their existing behavior, and
+# resolvePinnedHostnameWithPolicy still blocks private/link-local targets.
+#
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
 #   when all media-fetch callsites unconditionally pass useEnvProxy.
@@ -207,6 +225,9 @@ RUN set -eu; \
 # Patch 2b: drop when OpenClaw ships a reviewed web_fetch trusted-proxy SSRF
 #   policy surface that can allow host.openshell.internal without allowing
 #   broader private/special-use hostnames.
+# Patch 4: drop when OpenClaw routes unconfigured strict fetches through the
+#   env proxy in proxy-only environments without OPENCLAW_PROXY_ACTIVE, or when
+#   NemoClaw sets OPENCLAW_PROXY_ACTIVE=1 in the sandbox runtime instead.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -323,6 +344,40 @@ RUN set -eu; \
             echo "ERROR: Patch 2b target missing but web_fetch/trusted-proxy references remain:" >&2; \
             printf '%s\n' "$web_fetch_proxy_refs" | head -n 5 >&2; \
             patch_fail "Patch 2b cannot safely skip"; \
+        fi; \
+    fi; \
+    # --- Patch 4: route unconfigured strict fetches through the sandbox egress proxy (#4687) --- \
+    # Reviewed against openclaw@2026.5.27 dist fetch-guard: the STRICT-mode \
+    # managed-proxy gate is `mode === GUARDED_FETCH_MODE.STRICT && \
+    # isManagedProxyActive() && hasProxyEnvConfigured()`. Extend activation to \
+    # OPENSHELL_SANDBOX=1 only for fetches with no explicit dispatcherPolicy so \
+    # the per-request direct dispatcher reuses the env proxy (EnvHttpProxyAgent) \
+    # like the managed-proxy path already does; explicit-proxy / direct dispatcher \
+    # policies and out-of-sandbox behavior are unchanged. \
+    mp_files="$(grep -RIlF --include='*.js' 'const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive() && hasProxyEnvConfigured();' "$OC_DIST" || true)"; \
+    if [ -n "$mp_files" ]; then \
+        patched_managed_proxy=0; \
+        for f in $mp_files; do \
+            if grep -q 'nemoclaw: route unconfigured strict fetch' "$f"; then \
+                echo "INFO: Patch 4 already present in $f"; \
+            else \
+                sed -i -E 's#const canUseManagedProxy = mode === GUARDED_FETCH_MODE\.STRICT \&\& isManagedProxyActive\(\) \&\& hasProxyEnvConfigured\(\);#const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT \&\& (isManagedProxyActive() || (process.env.OPENSHELL_SANDBOX === "1" \&\& !params.dispatcherPolicy)) \&\& hasProxyEnvConfigured(); /* nemoclaw: route unconfigured strict fetch through sandbox egress proxy, see Dockerfile */#' "$f"; \
+                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && !params.dispatcherPolicy' "$f" \
+                    || patch_fail "Patch 4 verification failed for $f"; \
+                patched_managed_proxy=1; \
+            fi; \
+        done; \
+        if [ "$patched_managed_proxy" = "1" ]; then \
+            echo "INFO: Patch 4 applied to OpenClaw ${OC_VERSION} managed-proxy strict-fetch activation"; \
+        fi; \
+    else \
+        managed_proxy_refs="$(grep -RIlE --include='*.js' 'canUseManagedProxy|isManagedProxyActive' "$OC_DIST" || true)"; \
+        if [ -z "$managed_proxy_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no managed-proxy strict-fetch gate; Patch 4 not needed"; \
+        else \
+            echo "ERROR: Patch 4 target missing but managed-proxy references remain:" >&2; \
+            printf '%s\n' "$managed_proxy_refs" | head -n 5 >&2; \
+            patch_fail "Patch 4 cannot safely skip"; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
