@@ -17,10 +17,11 @@
 # Only the `gateway` subcommand is guarded; all other hermes subcommands
 # (dashboard, --version, ...) pass straight through unchanged.
 #
-# SECURITY: the validator and the real binary are resolved from fixed installed
-# paths, never from the environment. This wrapper exists to reject a malicious
-# runtime environment, so it must not let that same environment redirect the
-# guard (to a no-op) or the binary it protects. The dev fallback resolves
+# SECURITY: the validator, the python interpreter that runs it, and the real
+# binary are all resolved from fixed paths, never from the environment. This
+# wrapper exists to reject a malicious runtime environment, so it must not let
+# that same environment redirect the guard (to a no-op), the interpreter (a
+# PATH-shadowed python3), or the binary it protects. The dev fallback resolves
 # against this script's own directory so a checkout works without an install,
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
@@ -34,7 +35,19 @@ GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 [ -f "$GUARD" ] || GUARD="${_self_dir}/validate-env-secret-boundary.py"
 
 if [ "${1:-}" = "gateway" ]; then
-  python3 "$GUARD" runtime-env || exit $?
+  # Run the guard with python3 resolved from a fixed set of absolute paths, not
+  # via PATH: PATH is part of the untrusted environment this wrapper guards
+  # against, so a PATH-shadowed python3 could no-op the secret check. Fail
+  # closed if no trusted interpreter is found.
+  PYTHON3=""
+  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+    if [ -x "$_candidate" ]; then PYTHON3="$_candidate"; break; fi
+  done
+  if [ -z "$PYTHON3" ]; then
+    echo "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard" >&2
+    exit 127
+  fi
+  "$PYTHON3" "$GUARD" runtime-env || exit $?
 fi
 
 exec "$REAL_HERMES" "$@"

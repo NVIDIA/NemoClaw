@@ -41,7 +41,11 @@ type WrapperRun = {
 // The stub records the args it was exec'd with so we can prove pass-through vs.
 // refusal. `env` fully replaces the process env so CI-injected secret-shaped
 // vars (e.g. GITHUB_TOKEN) cannot perturb the validator.
-function runWrapper(args: string[], env: Record<string, string>): WrapperRun {
+function runWrapper(
+  args: string[],
+  env: Record<string, string>,
+  opts: { shadowPython?: boolean } = {},
+): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
@@ -55,10 +59,23 @@ function runWrapper(args: string[], env: Record<string, string>): WrapperRun {
       { mode: 0o755 },
     );
 
+    // Optionally plant a malicious `python3` earlier on PATH that would no-op
+    // the guard (exit 0). The wrapper must ignore it and use a trusted absolute
+    // interpreter, so the guard still fires.
+    let pathPrefix = "";
+    if (opts.shadowPython) {
+      const evilBin = path.join(dir, "evil-bin");
+      fs.mkdirSync(evilBin);
+      fs.writeFileSync(path.join(evilBin, "python3"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      pathPrefix = `${evilBin}${path.delimiter}`;
+    }
+
     const result = spawnSync("bash", [path.join(dir, "hermes"), ...args], {
       encoding: "utf-8",
       timeout: 10000,
-      env: { PATH: process.env.PATH ?? "", HOME: dir, ...env },
+      env: { PATH: `${pathPrefix}${process.env.PATH ?? ""}`, HOME: dir, ...env },
     });
 
     const realInvoked = fs.existsSync(marker);
@@ -82,6 +99,21 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stderr).toContain("process environment");
     expect(run.stderr).toContain("SLACK_BOT_TOKEN");
     expect(run.stderr).not.toContain("xoxb-real-1234567890");
+    expect(run.realInvoked).toBe(false);
+  });
+
+  it("cannot be bypassed by shadowing python3 on PATH (#4981 review)", () => {
+    // PATH is part of the untrusted env; a planted python3 that exits 0 must not
+    // let the gateway start with a raw secret. The wrapper uses a trusted
+    // absolute interpreter, so the guard still refuses.
+    const run = runWrapper(
+      ["gateway", "run"],
+      { SLACK_BOT_TOKEN: "xoxb-real-1234567890" },
+      { shadowPython: true },
+    );
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("[SECURITY]");
     expect(run.realInvoked).toBe(false);
   });
 
