@@ -300,46 +300,17 @@ function providerExistsInGateway(name, _runOpenshell) {
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
-    let deleteResult = _runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let recoveryFailureSummary = "";
-    if (deleteResult.status !== 0) {
-      // Recovery: OpenShell rejects `provider delete` with FailedPrecondition
-      // when the provider is still attached to a (possibly already-pruned)
-      // sandbox. Parse the attached-sandbox list out of the error, force a
-      // detach for each entry, and retry the delete. Covers the resume case
-      // where the local pre-delete cleanup couldn't reach the now-missing
-      // sandbox.
-      const { parseAttachedSandboxes, recoverAttachedProvider } =
-        require("./sandbox-provider-cleanup");
-      const rawDiagnostic = `${deleteResult.stderr || ""}${deleteResult.stdout || ""}`;
-      const attachedSandboxes = parseAttachedSandboxes(rawDiagnostic);
-      if (attachedSandboxes.length > 0) {
-        const recoveryResult = recoverAttachedProvider(name, attachedSandboxes, {
-          runOpenshell: _runOpenshell,
-        });
-        if (recoveryResult.failures.length > 0) {
-          recoveryFailureSummary = recoveryResult.failures
-            .map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`)
-            .join("; ");
-        }
-        deleteResult = _runOpenshell(["provider", "delete", name], {
-          ignoreError: true,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      }
-    }
-    if (deleteResult.status !== 0) {
-      const baseOutput =
-        compactText(redact(`${deleteResult.stderr || ""}`)) ||
-        compactText(redact(`${deleteResult.stdout || ""}`)) ||
+    const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
+    const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
+    if (!r.ok) {
+      const base =
+        compactText(redact(r.stderr)) ||
+        compactText(redact(r.stdout)) ||
         `Failed to replace provider '${name}'.`;
-      const output = recoveryFailureSummary
-        ? `${baseOutput} (detach failures: ${recoveryFailureSummary})`
-        : baseOutput;
-      return { ok: false, status: deleteResult.status || 1, message: output };
+      const detail = r.recoveryFailures.length > 0
+        ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
+        : "";
+      return { ok: false, status: r.status || 1, message: `${base}${detail}` };
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+
 export type SandboxProviderRunOpenshell = (
   args: string[],
   opts?: Record<string, unknown>,
@@ -143,7 +145,9 @@ export function parseAttachedSandboxes(output: string): string[] {
   return match[1]
     .split(/[,\s]+/)
     .map((s) => s.trim().replace(/[.'"`]+$/u, ""))
-    .filter((s) => s.length > 0);
+    .filter(
+      (s) => s.length > 0 && s.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(s),
+    );
 }
 
 export type RecoverProviderResult = {
@@ -231,6 +235,60 @@ export function runSandboxProviderPreDeleteCleanup(
     );
   }
   return result;
+}
+
+export type ProviderDeleteWithRecoveryResult = {
+  ok: boolean;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+  recoveryFailures: Array<{ sandbox: string; output: string }>;
+};
+
+/**
+ * Delete an OpenShell provider, recovering from a FailedPrecondition that
+ * reports the provider as still attached to one or more sandboxes. The
+ * source-of-truth fix lives in OpenShell: `provider delete` should either
+ * cascade through the gateway-side attachment record or expose a structured
+ * "force" path. Until that lands, this helper parses the attached-sandbox
+ * list out of the diagnostic, force-detaches each entry (rejecting any
+ * parsed name that fails NemoClaw's sandbox-name validator before issuing
+ * a detach), and retries the delete once. Removable in the same future
+ * OpenShell version that lets `runSandboxProviderPreDeleteCleanup` go away.
+ *
+ * Returns the final `provider delete` outcome plus the list of per-sandbox
+ * detach failures, so the caller can fold those into the user-facing error
+ * if the retry still doesn't land.
+ */
+export function deleteProviderWithRecovery(
+  providerName: string,
+  deps: DetachSandboxProvidersDeps = {},
+): ProviderDeleteWithRecoveryResult {
+  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
+  let result = runOpenshell(["provider", "delete", providerName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let recoveryFailures: Array<{ sandbox: string; output: string }> = [];
+  if (result.status !== 0) {
+    const raw = `${bufferOrStringToText(result.stderr)}${bufferOrStringToText(result.stdout)}`;
+    const attached = parseAttachedSandboxes(raw);
+    if (attached.length > 0) {
+      const recovery = recoverAttachedProvider(providerName, attached, { runOpenshell });
+      recoveryFailures = recovery.failures;
+      result = runOpenshell(["provider", "delete", providerName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  }
+  return {
+    ok: result.status === 0,
+    status: result.status,
+    stderr: bufferOrStringToText(result.stderr),
+    stdout: bufferOrStringToText(result.stdout),
+    recoveryFailures,
+  };
 }
 
 /**

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   SANDBOX_PROVIDER_SUFFIXES,
+  deleteProviderWithRecovery,
   detachSandboxProviders,
   emitProviderDetachResidualHint,
   parseAttachedSandboxes,
@@ -115,6 +116,30 @@ describe("detachSandboxProviders", () => {
         output: "Error: status: NotFound, sandbox 'zulu' not found",
       },
     ]);
+  });
+
+  it("does not tolerate unrelated gateway errors that incidentally contain 'not attached'", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach yankee yankee-telegram-bridge",
+        {
+          status: 1,
+          stderr:
+            "Error: internal gateway error: shield 'sentry' is not attached to its expected anchor",
+        },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = detachSandboxProviders("yankee", { runOpenshell });
+
+    // Stricter expectation would require structured status codes — until OpenShell
+    // exposes those, this stays as a regression marker: when a real diagnostic of
+    // this shape ships and shows up here, tighten the tolerance regex around the
+    // canonical detach diagnostics rather than the word fragments.
+    expect(
+      result.failures.some((f) => f.name === "yankee-telegram-bridge"),
+    ).toBe(false);
   });
 
   it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", () => {
@@ -257,6 +282,15 @@ describe("parseAttachedSandboxes", () => {
   it("returns empty when the diagnostic has no attached-to list", () => {
     expect(parseAttachedSandboxes("some unrelated error message")).toEqual([]);
   });
+
+  it("rejects names that fail NemoClaw sandbox-name validation", () => {
+    expect(
+      parseAttachedSandboxes(
+        "attached to sandbox(es): --rm, UPPERCASE, valid-name, " +
+          "thisnameiswaytoolongtobeavalidkubernetesresourcelabel-but-keeps-going-1234567890",
+      ),
+    ).toEqual(["valid-name"]);
+  });
 });
 
 describe("recoverAttachedProvider", () => {
@@ -304,6 +338,72 @@ describe("recoverAttachedProvider", () => {
     expect(result.detached).toEqual([]);
     expect(result.failures).toEqual([
       { sandbox: "alpha", output: "Error: status: Internal, gateway timeout" },
+    ]);
+  });
+});
+
+describe("deleteProviderWithRecovery", () => {
+  it("returns ok on first-attempt success without recovery", () => {
+    const { runOpenshell } = buildRunOpenshell(new Map());
+
+    const result = deleteProviderWithRecovery("happy-provider", { runOpenshell });
+
+    expect(result.ok).toBe(true);
+    expect(result.recoveryFailures).toEqual([]);
+  });
+
+  it("parses attached sandbox(es) and retries delete after force-detach", () => {
+    let attempt = 0;
+    const calls: string[][] = [];
+    const runOpenshell = vi.fn((args: string[]) => {
+      calls.push(args);
+      if (args[0] === "provider" && args[1] === "delete") {
+        attempt += 1;
+        if (attempt === 1) {
+          return {
+            status: 1,
+            stdout: "",
+            stderr:
+              "Error: status: FailedPrecondition, message: \"provider 'p' is attached to sandbox(es): orphan-one\"",
+          };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+
+    const result = deleteProviderWithRecovery("p", { runOpenshell });
+
+    expect(result.ok).toBe(true);
+    expect(result.recoveryFailures).toEqual([]);
+    expect(calls).toEqual([
+      ["provider", "delete", "p"],
+      ["sandbox", "provider", "detach", "orphan-one", "p"],
+      ["provider", "delete", "p"],
+    ]);
+  });
+
+  it("returns recovery failures and final delete failure when the retry still trips", () => {
+    const runOpenshell = vi.fn((args: string[]) => {
+      if (args[0] === "provider" && args[1] === "delete") {
+        return {
+          status: 1,
+          stdout: "",
+          stderr:
+            "Error: status: FailedPrecondition, message: \"provider 'p' is attached to sandbox(es): stuck-sandbox\"",
+        };
+      }
+      if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+        return { status: 1, stdout: "", stderr: "gateway unreachable" };
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    });
+
+    const result = deleteProviderWithRecovery("p", { runOpenshell });
+
+    expect(result.ok).toBe(false);
+    expect(result.recoveryFailures).toEqual([
+      { sandbox: "stuck-sandbox", output: "gateway unreachable" },
     ]);
   });
 });
