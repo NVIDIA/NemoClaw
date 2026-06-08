@@ -183,18 +183,35 @@ describe("ManifestCompiler", () => {
         source: "manifest",
       },
     ]);
-    expect(plan.agentRender.map((render) => `${render.channelId}:${render.kind}`)).toEqual([
-      "telegram:json-fragment",
-      "telegram:json-fragment",
-      "discord:json-fragment",
-      "discord:json-fragment",
-      "slack:json-fragment",
-      "whatsapp:json-fragment",
+    expect(plan.agentRender.map((render) => `${render.channelId}:${render.renderId}`)).toEqual([
+      "telegram:telegram-openclaw-channel",
+      "telegram:telegram-openclaw-groups",
+      "telegram:telegram-openclaw-plugin",
+      "discord:discord-openclaw-channel",
+      "discord:discord-openclaw-plugin",
+      "wechat:wechat-openclaw-plugin",
+      "slack:slack-openclaw-channel",
+      "slack:slack-openclaw-plugin",
+      "whatsapp:whatsapp-openclaw-channel",
+      "whatsapp:whatsapp-openclaw-plugin",
     ]);
+    expect(plan.agentRender.every((render) => render.handler === "common.staticOutputs")).toBe(
+      true,
+    );
     expect(JSON.stringify(plan.agentRender)).toContain(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
-    expect(plan.buildSteps).toEqual([
+    expect(
+      plan.buildSteps.map(({ value: _value, ...step }) => step),
+    ).toEqual([
+      {
+        channelId: "discord",
+        kind: "package-install",
+        hookId: "discord-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
       {
         channelId: "wechat",
         kind: "build-file",
@@ -219,7 +236,36 @@ describe("ManifestCompiler", () => {
         outputId: "openclawConfigPatch",
         required: true,
       },
+      {
+        channelId: "slack",
+        kind: "package-install",
+        hookId: "slack-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
+      {
+        channelId: "whatsapp",
+        kind: "package-install",
+        hookId: "whatsapp-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
     ]);
+    expect(plan.buildSteps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "package-install",
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        }),
+      ]),
+    );
+    expect(plan.buildSteps.every((step) => step.value !== undefined)).toBe(true);
     expect(plan.stateUpdates).toContainEqual({
       channelId: "wechat",
       kind: "rebuild-hydration",
@@ -237,7 +283,7 @@ describe("ManifestCompiler", () => {
       plan.agentRender.find(
         (render) => render.channelId === "telegram" && render.kind === "json-fragment",
       )?.templateRefs,
-    ).toEqual(expect.arrayContaining(["proxyUrl", "allowedIds.telegram.values"]));
+    ).toEqual([]);
   });
 
   it("compiles Hermes render and manifest-owned WeChat policy intent", async () => {
@@ -273,9 +319,13 @@ describe("ManifestCompiler", () => {
       "telegram:~/.hermes/config.yaml",
       "discord:~/.hermes/.env",
       "discord:~/.hermes/config.yaml",
+      "discord:~/.hermes/config.yaml",
       "wechat:~/.hermes/.env",
+      "wechat:~/.hermes/config.yaml",
       "slack:~/.hermes/.env",
+      "slack:~/.hermes/config.yaml",
       "whatsapp:~/.hermes/.env",
+      "whatsapp:~/.hermes/config.yaml",
     ]);
     expect(JSON.stringify(plan.agentRender)).toContain(
       "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
@@ -316,7 +366,7 @@ describe("ManifestCompiler", () => {
     });
     expect(plan.disabledChannels).toEqual(["wechat"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["wechat"]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["wechat"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["wechat", "wechat"]);
     expect(plan.healthChecks.map((entry) => entry.channelId)).toEqual(["wechat"]);
   });
 

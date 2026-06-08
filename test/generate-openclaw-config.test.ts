@@ -13,6 +13,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
+import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
@@ -37,12 +38,13 @@ const BASE_ENV: Record<string, string> = {
 let tmpDir: string;
 
 function buildTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
-  return {
+  const env = {
     PATH: process.env.PATH || "/usr/bin:/bin",
     ...BASE_ENV,
     ...envOverrides,
     HOME: tmpDir,
   };
+  return withLegacyMessagingPlanEnv(env, "openclaw");
 }
 
 function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
@@ -148,15 +150,8 @@ function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
   return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
 }
 
-function wechatNpmPackagePath(stateDir = path.join(tmpDir, ".openclaw")) {
-  return path.join(
-    fs.realpathSync(stateDir),
-    "npm",
-    "node_modules",
-    "@tencent-weixin",
-    "openclaw-weixin",
-  );
-}
+
+const SANDBOX_WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 
 function writeRegistryManifest(
   blueprintDir: string,
@@ -454,7 +449,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.discord.guilds).toEqual(guilds);
   });
 
-  it("does not seed channels.openclaw-weixin before the base plugin install registry exists", () => {
+  it("seeds channels.openclaw-weixin from manifest build-file outputs", () => {
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
     const wechatConfig = Buffer.from(
       JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
@@ -463,13 +458,21 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
     });
-    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+      installPath: SANDBOX_WECHAT_PLUGIN_INSTALL_PATH,
+    });
+    expect(config.plugins?.load?.paths).toEqual([SANDBOX_WECHAT_PLUGIN_INSTALL_PATH]);
+    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+      enabled: true,
+    });
     // The "wechat" alias is the NemoClaw channel name, not an OpenClaw
     // channel id — must never appear under channels.
     expect(config.channels?.wechat).toBeUndefined();
   });
 
-  it("detects installed WeChat metadata in nested extension directories", () => {
+  it("ignores installed WeChat metadata in nested extension directories", () => {
     const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "vendor", "openclaw-weixin");
     fs.mkdirSync(pluginDir, { recursive: true });
     fs.mkdirSync(path.join(tmpDir, ".openclaw", "extensions", "node_modules"), { recursive: true });
@@ -492,7 +495,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("seeds channels.openclaw-weixin when the base plugin install registry exists", () => {
+  it("uses canonical sandbox WeChat install metadata when the base plugin install registry exists", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     const installEntry = {
       source: "npm",
@@ -515,9 +518,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
       ...installEntry,
-      installPath: wechatExtensionPath(),
+      installPath: SANDBOX_WECHAT_PLUGIN_INSTALL_PATH,
     });
-    expect(config.plugins?.load?.paths).toEqual([wechatExtensionPath()]);
+    expect(config.plugins?.load?.paths).toEqual([SANDBOX_WECHAT_PLUGIN_INSTALL_PATH]);
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
       enabled: true,
     });
@@ -538,7 +541,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("seeds channels.openclaw-weixin and restores install registry when installed WeChat plugin metadata exists", () => {
+  it("uses canonical sandbox WeChat install metadata when host plugin metadata exists", () => {
     writeWeChatPluginMetadata({
       id: "openclaw-weixin",
       channels: ["openclaw-weixin"],
@@ -557,16 +560,16 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
       source: "npm",
       spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatExtensionPath(),
+      installPath: SANDBOX_WECHAT_PLUGIN_INSTALL_PATH,
     });
-    expect(config.plugins?.load?.paths).toEqual([wechatExtensionPath()]);
+    expect(config.plugins?.load?.paths).toEqual([SANDBOX_WECHAT_PLUGIN_INSTALL_PATH]);
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
       enabled: true,
     });
     expect(config.channels?.wechat).toBeUndefined();
   });
 
-  it("uses the npm package path when installed WeChat package metadata exists without an extension dir", () => {
+  it("ignores npm package metadata when manifest build-file output seeds WeChat", () => {
     writeWeChatNpmPackageMetadata({
       name: "@tencent-weixin/openclaw-weixin",
       openclaw: { channels: ["vendor-weixin"] },
@@ -584,12 +587,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
       source: "npm",
       spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatNpmPackagePath(),
+      installPath: SANDBOX_WECHAT_PLUGIN_INSTALL_PATH,
     });
-    expect(config.plugins?.load?.paths).toEqual([wechatNpmPackagePath()]);
-    expect(config.channels?.["vendor-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
+    expect(config.plugins?.load?.paths).toEqual([SANDBOX_WECHAT_PLUGIN_INSTALL_PATH]);
+    expect(config.channels?.["vendor-weixin"]).toBeUndefined();
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
       enabled: true,
     });
@@ -597,7 +598,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(fs.existsSync(wechatExtensionPath())).toBe(false);
   });
 
-  it("uses the npm package path when installed WeChat plugin metadata exists without an extension dir", () => {
+  it("ignores npm plugin metadata when manifest build-file output seeds WeChat", () => {
     writeWeChatNpmPluginMetadata({
       id: "openclaw-weixin",
       channelConfigs: { "vendor-weixin": {} },
@@ -615,12 +616,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
       source: "npm",
       spec: "@tencent-weixin/openclaw-weixin@2.4.3",
-      installPath: wechatNpmPackagePath(),
+      installPath: SANDBOX_WECHAT_PLUGIN_INSTALL_PATH,
     });
-    expect(config.plugins?.load?.paths).toEqual([wechatNpmPackagePath()]);
-    expect(config.channels?.["vendor-weixin"]?.accounts?.primary).toEqual({
-      enabled: true,
-    });
+    expect(config.plugins?.load?.paths).toEqual([SANDBOX_WECHAT_PLUGIN_INSTALL_PATH]);
+    expect(config.channels?.["vendor-weixin"]).toBeUndefined();
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
       enabled: true,
     });

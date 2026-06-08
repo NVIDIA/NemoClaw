@@ -257,6 +257,14 @@ function setJsonPath(
   }
   const finalSegment = segments[segments.length - 1] as string;
   assertSafeObjectKey(finalSegment, "Messaging render path");
+  const existing = cursor[finalSegment];
+  if (isObject(existing) && isObject(value)) {
+    mergeObjects(
+      existing as Record<string, MessagingSerializableValue>,
+      value as Record<string, MessagingSerializableValue>,
+    );
+    return;
+  }
   cursor[finalSegment] = value;
 }
 

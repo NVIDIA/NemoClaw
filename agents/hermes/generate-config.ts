@@ -14,13 +14,18 @@
 //   - Agent defaults (terminal, memory, skills, display)
 
 import { readHermesBuildSettings } from "./config/build-env.ts";
-import { buildHermesConfig } from "./config/hermes-config.ts";
-import { buildMessagingEnvLines } from "./config/messaging-config.ts";
+import {
+  applyHermesManifestHookRender,
+  readHermesManifestHookPlan,
+} from "./config/manifest-hooks.ts";
+import { buildHermesEnvLines } from "./config/hermes-env.ts";
+import { buildHermesConfig, finalizeHermesPlatformToolsets } from "./config/hermes-config.ts";
 import { discoverModelSpecificSetups } from "./config/model-specific-setup.ts";
 import { writeHermesConfigFiles } from "./config/write-config.ts";
 
 function main(): void {
   const settings = readHermesBuildSettings(process.env);
+  const messagingPlan = readHermesManifestHookPlan(process.env);
 
   discoverModelSpecificSetups(
     "hermes",
@@ -37,16 +42,9 @@ function main(): void {
   );
 
   const config = buildHermesConfig(settings);
-  const envLines = buildMessagingEnvLines(
-    settings.messaging.enabledChannels,
-    settings.messaging.allowedIds,
-    settings.messaging.discordGuilds,
-    settings.messaging.wechatConfig,
-    settings.messaging.slackConfig,
-    settings.managedToolGateways.brokerEnabled
-      ? settings.managedToolGateways.presets
-      : [],
-  );
+  const envLines = buildHermesEnvLines(settings);
+  applyHermesManifestHookRender(config, envLines, messagingPlan);
+  finalizeHermesPlatformToolsets(config, settings);
   const written = writeHermesConfigFiles(config, envLines);
 
   console.log(`[config] Wrote ${written.configPath} (model=${settings.model}, provider=custom)`);

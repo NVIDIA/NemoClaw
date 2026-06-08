@@ -142,15 +142,8 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw-build-messaging-plugins.py"),
-    path.join(stagedScriptsDir, "openclaw-build-messaging-plugins.py"),
-  );
-  // WeChat-account seed for the @tencent-weixin/openclaw-weixin plugin —
-  // runs at image build time when WeChat is enabled to skip the upstream
-  // plugin's in-sandbox QR login.
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "seed-wechat-accounts.py"),
-    path.join(stagedScriptsDir, "seed-wechat-accounts.py"),
+    path.join(rootDir, "scripts", "run-openclaw-build-hooks.mts"),
+    path.join(stagedScriptsDir, "run-openclaw-build-hooks.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),

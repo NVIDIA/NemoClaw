@@ -86,7 +86,13 @@ const {
   hasWechatConfigDrift,
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
-const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFromEnv, writePlanToEnv, getRegistrySandboxMessagingPlan, MessagingHostStateApplier } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const {
+  setupMessagingChannels: setupMessagingChannelsImpl,
+  readMessagingPlanFromEnv,
+  writePlanToEnv,
+  getRegistrySandboxMessagingPlan,
+  MessagingHostStateApplier,
+} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
@@ -370,7 +376,6 @@ const {
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
 const {
-  collectMessagingBuildConfig,
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
@@ -846,7 +851,12 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = { name: string; envKey: string; token: string | null; providerType?: string };
+type MessagingTokenDef = {
+  name: string;
+  envKey: string;
+  token: string | null;
+  providerType?: string;
+};
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -2903,27 +2913,7 @@ async function createSandbox(
   }
   if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
   const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
-  const previousProviderCredentialHashes =
-    registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const reusableMessagingProviders: string[] = [];
-  const reusableMessagingChannels: string[] = [];
-  const reusableMessagingEnvKeys = new Set<string>();
-  if (enabledChannels != null) {
-    for (const { name, envKey, token } of messagingTokenDefs) {
-      if (token) continue;
-      const channel =
-        envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
-      if (!channel || !enabledChannels.includes(channel)) continue;
-      if (!providerExistsInGateway(name)) continue;
-      reusableMessagingProviders.push(name);
-      reusableMessagingEnvKeys.add(envKey);
-      if (!reusableMessagingChannels.includes(channel)) {
-        reusableMessagingChannels.push(channel);
-      }
-    }
-  }
-
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -3333,7 +3323,6 @@ async function createSandbox(
           }
           return [];
         }),
-      ...reusableMessagingChannels,
       ...qrSelectedChannels,
     ]),
   ];
@@ -3376,12 +3365,7 @@ async function createSandbox(
   // attached providers are detached and safe to delete+create. That's
   // required for the legacy Brave generic→brave type migration since
   // `openshell provider update` cannot change `--type` (#3626).
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
+  const messagingProviders = upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true });
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
   }
@@ -3392,19 +3376,11 @@ async function createSandbox(
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
-  const activeChannelNames = new Set(activeMessagingChannels);
-  const { messagingAllowedIds, discordGuilds, slackConfig } = collectMessagingBuildConfig({
-    channels: MESSAGING_CHANNELS,
-    activeChannelNames,
-    enabledTokenEnvKeys,
-    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
-  });
   // Telegram mention-only mode — parity with Discord's requireMention.
   // Off by default so existing sandboxes behave the same; opt-in via
   // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
   const telegramConfig: { requireMention?: boolean } = {};
-  if (enabledTokenEnvKeys.has("TELEGRAM_BOT_TOKEN")) {
+  if (activeMessagingChannels.includes("telegram")) {
     const telegramRequireMention = computeTelegramRequireMention();
     if (telegramRequireMention !== null) {
       telegramConfig.requireMention = telegramRequireMention;
@@ -3468,18 +3444,12 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
-    activeMessagingChannels,
-    messagingAllowedIds,
-    discordGuilds,
     resolved ? resolved.ref : null,
-    telegramConfig,
-    wechatConfig as Record<string, unknown>,
     // Docker-on-Colima uses normal container ownership; keep the old VM chmod
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
     sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
-    slackConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3712,12 +3682,6 @@ async function createSandbox(
     const hash = token ? hashCredential(token) : null;
     if (hash) {
       providerCredentialHashes[envKey] = hash;
-    }
-  }
-  for (const envKey of reusableMessagingEnvKeys) {
-    const previousHash = previousProviderCredentialHashes[envKey];
-    if (typeof previousHash === "string" && previousHash) {
-      providerCredentialHashes[envKey] = previousHash;
     }
   }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.

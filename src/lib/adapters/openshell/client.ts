@@ -30,6 +30,7 @@ interface OpenshellSpawnOptions {
 
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
+  input?: string;
 }
 
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
@@ -134,6 +135,7 @@ export function runOpenshellCommand(
     env: { ...process.env, ...opts.env },
     encoding: "utf-8",
     stdio: opts.stdio ?? "inherit",
+    input: opts.input,
     timeout: opts.timeout,
   });
   if (result.error) {

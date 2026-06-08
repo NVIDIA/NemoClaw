@@ -10,10 +10,10 @@
 // token and per-account metadata up front, store the secret in OpenShell
 // as a provider credential, and never persist it inside the sandbox image
 // or its state directory. The captured session is then seeded into the
-// upstream plugin's on-disk account store at image build time (see
-// scripts/seed-wechat-accounts.py), so the upstream plugin starts
-// already-logged-in and never tries to drive its own QR login inside the
-// sandbox.
+// upstream plugin's on-disk account store at image build time via the
+// wechat.seedOpenClawAccount post-agent-install hook, so the upstream
+// plugin starts already logged in and never tries to drive its own QR
+// login inside the sandbox.
 //
 // Endpoints (Tencent iLink CGI, observed against the public gateway):
 //   GET https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3

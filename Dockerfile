@@ -410,14 +410,12 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
-COPY scripts/openclaw-build-messaging-plugins.py /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
-COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
+COPY scripts/run-openclaw-build-hooks.mts /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
-        /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py \
-        /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
+        /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
@@ -454,34 +452,10 @@ ARG NEMOCLAW_AGENT_TIMEOUT=600
 # change at image build time. Ref: issue #2880
 ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
-# Base64-encoded JSON list of messaging channel names to pre-configure
-# (e.g. ["discord","telegram"]). Channels are added with placeholder tokens
-# so the L7 proxy can rewrite them at egress. Default: empty list.
-ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
-# Base64-encoded JSON map of channel→allowed sender IDs for DM allowlisting
-# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist.
-# Slack also uses those IDs for channel @mention allowlisting. Channels without
-# IDs keep the OpenClaw default (pairing). Default: empty map.
-ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
-# Base64-encoded JSON map of Discord guild configs keyed by server ID
-# (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
-# Used to enable guild-channel responses for native Discord. Default: empty map.
-ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
-# Base64-encoded JSON Telegram config (e.g. {"requireMention":true}).
-# When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
-# with groupPolicy: open. See #1737, #3022. Default: empty map.
-ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
-# Base64-encoded JSON WeChat config (e.g.
-# {"accountId":"…","baseUrl":"https://…","userId":"…"}).
-# Captured by the host-side iLink QR login during onboard. Non-secret per-account
-# metadata only — the bot token flows through the OpenShell provider, never
-# baked into the image. Default: empty map.
-ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
-# Base64-encoded JSON Slack config (e.g.
-# {"allowedChannels":["C012AB3CD","C987ZY6XW"]}).
-# Channel IDs scope Slack channel @mention handling. User allowlists still come
-# from NEMOCLAW_MESSAGING_ALLOWED_IDS_B64. Default: empty map.
-ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+# Base64-encoded manifest hook plan for messaging build inputs and agent
+# rendering. The plan contains placeholders only; secrets are resolved at
+# runtime via OpenShell providers.
+ARG NEMOCLAW_MESSAGING_PLAN_B64=
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
@@ -535,12 +509,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
-    NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
-    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
-    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
-    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
@@ -578,7 +547,7 @@ USER sandbox
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 
 # hadolint ignore=DL3059,DL4006
-RUN python3 /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts
 
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
@@ -592,8 +561,8 @@ ENV NPM_CONFIG_OFFLINE=true \
 # This must fail the image build if registration fails; otherwise the sandbox
 # can boot with a discoverable plugin manifest but without the /nemoclaw runtime
 # command registered in the active Gateway.
-# Re-apply WeChat account seeding after OpenClaw doctor/plugin-install touches
-# openclaw.json; the seed script no-ops unless WeChat is actively configured.
+# WeChat account seed files are written during config generation from
+# serialized manifest hook build-file outputs before the sandbox starts.
 # Prune non-runtime metadata from staged bundled plugin dependencies before
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
@@ -601,7 +570,6 @@ ENV NPM_CONFIG_OFFLINE=true \
 RUN openclaw plugins install /opt/nemoclaw \
     && openclaw plugins enable nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
-    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \

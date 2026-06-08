@@ -14,10 +14,8 @@
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
-//   NEMOCLAW_INFERENCE_COMPAT_B64, NEMOCLAW_MESSAGING_CHANNELS_B64,
-//   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64, NEMOCLAW_DISCORD_GUILDS_B64,
-//   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
-//   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_INFERENCE_COMPAT_B64, NEMOCLAW_MESSAGING_PLAN_B64,
+//   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
@@ -35,10 +33,226 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
+
+type MessagingPlan = {
+  readonly schemaVersion: 1;
+  readonly agent: string;
+  readonly channels: readonly MessagingPlanChannel[];
+  readonly agentRender: readonly MessagingRenderEntry[];
+  readonly buildSteps: readonly MessagingBuildStep[];
+};
+
+type MessagingPlanChannel = {
+  readonly channelId: string;
+  readonly active?: boolean;
+  readonly disabled?: boolean;
+};
+
+type MessagingRenderEntry = {
+  readonly channelId: string;
+  readonly agent: string;
+  readonly target: string;
+  readonly kind: "json-fragment" | "env-lines";
+  readonly path?: string;
+  readonly value?: unknown;
+};
+
+type MessagingBuildStep = {
+  readonly channelId: string;
+  readonly kind: "build-arg" | "build-file" | "package-install";
+  readonly outputId: string;
+  readonly required?: boolean;
+  readonly value?: unknown;
+};
+
+function readMessagingPlanFromEnv(env: Env, agent: string): MessagingPlan | null {
+  const encoded = env.NEMOCLAW_MESSAGING_PLAN_B64;
+  if (!encoded || encoded.trim() === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8"));
+  } catch (error) {
+    throw new Error(
+      `NEMOCLAW_MESSAGING_PLAN_B64 must be a base64-encoded messaging plan: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (
+    !isObject(parsed) ||
+    parsed.schemaVersion !== 1 ||
+    parsed.agent !== agent ||
+    !Array.isArray(parsed.channels) ||
+    !Array.isArray(parsed.agentRender) ||
+    !Array.isArray(parsed.buildSteps)
+  ) {
+    throw new Error(`NEMOCLAW_MESSAGING_PLAN_B64 must contain a ${agent} messaging plan`);
+  }
+  return parsed as MessagingPlan;
+}
+
+function activeMessagingPlanChannels(plan: MessagingPlan | null): string[] {
+  if (!plan) return [];
+  return plan.channels
+    .filter((channel) => channel.active === true && channel.disabled !== true)
+    .map((channel) => channel.channelId);
+}
+
+function isPlanChannelActive(plan: MessagingPlan, channelId: string): boolean {
+  return activeMessagingPlanChannels(plan).includes(channelId);
+}
+
+function applyMessagingAgentRender(
+  config: JsonObject,
+  plan: MessagingPlan | null,
+  target: string,
+): void {
+  if (!plan) return;
+  for (const render of plan.agentRender) {
+    if (
+      render.kind !== "json-fragment" ||
+      render.target !== target ||
+      typeof render.path !== "string" ||
+      !isPlanChannelActive(plan, render.channelId)
+    ) {
+      continue;
+    }
+    setMessagingJsonPath(config, render.path, toMessagingJsonValue(render.value));
+  }
+}
+
+function applyMessagingBuildFiles(config: JsonObject, plan: MessagingPlan | null): void {
+  if (!plan) return;
+  for (const step of plan.buildSteps) {
+    if (step.kind !== "build-file" || !isPlanChannelActive(plan, step.channelId)) continue;
+    if (step.value === undefined) {
+      if (step.required) throw new Error(`Messaging build-file output ${step.outputId} is missing`);
+      continue;
+    }
+    applyMessagingBuildFile(config, toMessagingBuildFile(step.value));
+  }
+}
+
+function applyMessagingBuildFile(
+  config: JsonObject,
+  file: { readonly path: string; readonly mode?: string; readonly content?: unknown; readonly merge?: unknown },
+): void {
+  const relativePath = normalizeMessagingBuildFilePath(file.path);
+  if (relativePath === "openclaw.json") {
+    if (file.merge !== undefined) mergeJsonObjects(config, toMessagingObject(file.merge));
+    if (file.content !== undefined) {
+      const replacement = toMessagingObject(file.content);
+      for (const key of Object.keys(config)) delete config[key];
+      mergeJsonObjects(config, replacement);
+    }
+    return;
+  }
+
+  const stateRoot = expandUser("~/.openclaw");
+  const target = resolve(stateRoot, relativePath);
+  const normalizedRoot = resolve(stateRoot);
+  if (target !== normalizedRoot && !target.startsWith(`${normalizedRoot}${sep}`)) {
+    throw new Error(`Messaging build-file path ${file.path} must stay inside ~/.openclaw`);
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  const contents = serializeMessagingBuildFileContent(file.content);
+  writeFileSync(target, contents);
+  if (file.mode) chmodSync(target, parseMessagingFileMode(file.path, file.mode));
+}
+
+function setMessagingJsonPath(root: JsonObject, pathValue: string, value: unknown): void {
+  const segments = pathValue.split(".").filter(Boolean);
+  if (segments.length === 0) throw new Error("Messaging render path must not be empty");
+  let cursor = root;
+  for (const segment of segments.slice(0, -1)) {
+    assertSafeMessagingObjectKey(segment, "Messaging render path");
+    if (!isObject(cursor[segment])) cursor[segment] = {};
+    cursor = cursor[segment] as JsonObject;
+  }
+  const finalSegment = segments[segments.length - 1] as string;
+  assertSafeMessagingObjectKey(finalSegment, "Messaging render path");
+  if (isObject(cursor[finalSegment]) && isObject(value)) {
+    mergeJsonObjects(cursor[finalSegment] as JsonObject, value as JsonObject);
+    return;
+  }
+  cursor[finalSegment] = value;
+}
+
+function mergeJsonObjects(target: JsonObject, patch: JsonObject): void {
+  for (const [key, value] of Object.entries(patch)) {
+    assertSafeMessagingObjectKey(key, "Messaging object merge");
+    const existing = target[key];
+    if (isObject(existing) && isObject(value)) {
+      mergeJsonObjects(existing as JsonObject, value as JsonObject);
+    } else if (Array.isArray(existing) && Array.isArray(value)) {
+      target[key] = unique([...existing, ...value]);
+    } else {
+      target[key] = value;
+    }
+  }
+}
+
+function toMessagingJsonValue(value: unknown): unknown {
+  if (value === undefined) throw new Error("Messaging render value is missing");
+  return value;
+}
+
+function toMessagingObject(value: unknown): JsonObject {
+  if (!isObject(value)) throw new Error("Messaging build-file merge/content must be an object");
+  return value;
+}
+
+function toMessagingBuildFile(value: unknown): {
+  readonly path: string;
+  readonly mode?: string;
+  readonly content?: unknown;
+  readonly merge?: unknown;
+} {
+  if (!isObject(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
+    throw new Error("Messaging build-file output must include a path");
+  }
+  return value as {
+    readonly path: string;
+    readonly mode?: string;
+    readonly content?: unknown;
+    readonly merge?: unknown;
+  };
+}
+
+function normalizeMessagingBuildFilePath(pathValue: string): string {
+  if (pathValue.startsWith("/") || pathValue.includes("\\") || /[\0-\x1F\x7F]/.test(pathValue)) {
+    throw new Error(`Messaging build-file path ${pathValue} must be a safe relative path`);
+  }
+  const segments = pathValue.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`Messaging build-file path ${pathValue} must not traverse directories`);
+  }
+  return pathValue;
+}
+
+function serializeMessagingBuildFileContent(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value === "string") return value.endsWith("\n") ? value : `${value}\n`;
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function parseMessagingFileMode(pathValue: string, mode: string): number {
+  if (!/^[0-7]{3,4}$/.test(mode) || (mode.length === 4 && mode[0] !== "0")) {
+    throw new Error(`Messaging build-file ${pathValue} mode must be an octal file mode`);
+  }
+  const parsed = Number.parseInt(mode, 8);
+  if ((parsed & 0o022) !== 0) {
+    throw new Error(`Messaging build-file ${pathValue} mode must not be group/world writable`);
+  }
+  return parsed;
+}
+
+function assertSafeMessagingObjectKey(key: string, context: string): void {
+  if (key === "__proto__" || key === "prototype" || key === "constructor") {
+    throw new Error(`${context} rejected unsafe object key ${key}`);
+  }
+}
 
 const KNOWN_MODEL_SETUP_AGENTS = new Set(["openclaw", "hermes"]);
 const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
@@ -833,112 +1047,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
 
-  const msgChannels = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=");
-  const allowedIds = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_ALLOWED_IDS_B64", "e30=");
-  const discordGuilds = decodeJsonEnv(env, "NEMOCLAW_DISCORD_GUILDS_B64", "e30=");
-  const telegramConfig = decodeJsonEnv(env, "NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=");
-  const slackConfig = decodeJsonEnv(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30=");
-  const rawSlackChannels = isObject(slackConfig) ? slackConfig.allowedChannels : [];
-  const slackAllowedChannels = Array.isArray(rawSlackChannels)
-    ? unique(
-        rawSlackChannels
-          .map((channel) => String(channel).replaceAll("\r", "").replaceAll("\n", "").trim())
-          .filter(Boolean),
-      )
-    : [];
-
-  const tokenKeys: Record<string, string> = {
-    discord: "token",
-    telegram: "botToken",
-    slack: "botToken",
-  };
-  const envKeys: Record<string, string> = {
-    discord: "DISCORD_BOT_TOKEN",
-    telegram: "TELEGRAM_BOT_TOKEN",
-    slack: "SLACK_BOT_TOKEN",
-  };
-
-  function placeholder(channel: string, envKey: string): string {
-    if (channel === "slack" && envKey === "SLACK_BOT_TOKEN") {
-      return `xoxb-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    if (channel === "slack" && envKey === "SLACK_APP_TOKEN") {
-      return `xapp-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    return `openshell:resolve:env:${envKey}`;
-  }
-
-  const channelConfig: JsonObject = {};
-  for (const channel of Array.isArray(msgChannels) ? msgChannels : []) {
-    const ch = String(channel);
-    if (ch === "whatsapp") {
-      channelConfig[ch] = {
-        enabled: true,
-        accounts: {
-          default: { enabled: true, healthMonitor: { enabled: false } },
-        },
-      };
-      continue;
-    }
-    if (!(ch in tokenKeys)) {
-      continue;
-    }
-    const account: JsonObject = {
-      [tokenKeys[ch]]: placeholder(ch, envKeys[ch]),
-      enabled: true,
-      healthMonitor: { enabled: false },
-    };
-    if (ch === "slack") {
-      account.appToken = placeholder(ch, "SLACK_APP_TOKEN");
-    }
-    if (ch === "telegram") {
-      account.proxy = proxyUrl;
-      account.groupPolicy = "open";
-    }
-    if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-      account.dmPolicy = "allowlist";
-      account.allowFrom = allowedIds[ch];
-      if (ch === "slack") {
-        account.groupPolicy = "allowlist";
-        account.channels = {
-          "*": {
-            enabled: true,
-            requireMention: true,
-            users: allowedIds[ch],
-          },
-        };
-      }
-    }
-    if (ch === "slack" && slackAllowedChannels.length > 0) {
-      account.groupPolicy = "allowlist";
-      const slackChannelConfig: JsonObject = {
-        enabled: true,
-        requireMention: true,
-      };
-      if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-        slackChannelConfig.users = allowedIds[ch];
-      }
-      account.channels = Object.fromEntries(
-        slackAllowedChannels.map((channelId) => [channelId, { ...slackChannelConfig }]),
-      );
-    }
-    channelConfig[ch] = { enabled: true, accounts: { default: account } };
-  }
-
-  if (
-    "discord" in channelConfig &&
-    isObject(discordGuilds) &&
-    Object.keys(discordGuilds).length > 0
-  ) {
-    Object.assign(channelConfig.discord, {
-      groupPolicy: "allowlist",
-      guilds: discordGuilds,
-    });
-  }
-
-  if ("telegram" in channelConfig && isObject(telegramConfig) && telegramConfig.requireMention) {
-    channelConfig.telegram.groups = { "*": { requireMention: true } };
-  }
+  const messagingPlan = readMessagingPlanFromEnv(env, "openclaw");
 
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
@@ -985,11 +1094,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     qqbot: { enabled: false },
     "openclaw-weixin": { enabled: true },
   };
-  for (const ch of ["discord", "slack", "telegram", "whatsapp"]) {
-    if (ch in channelConfig) {
-      pluginEntries[ch] = { enabled: true };
-    }
-  }
   const bundledProviderPlugins: Record<string, Set<string>> = {
     "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
     "amazon-bedrock-mantle": new Set(["amazon-bedrock-mantle"]),
@@ -1036,7 +1140,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const config: JsonObject = {
     agents: { defaults: agentDefaults, list: buildAgentsList(extraAgents) },
     models: { mode: "merge", providers },
-    channels: { defaults: {}, ...channelConfig },
+    channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
     plugins,
@@ -1079,6 +1183,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     };
   }
 
+  applyMessagingAgentRender(config, messagingPlan, "openclaw.json");
+
   return config;
 }
 
@@ -1108,124 +1214,15 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
   Object.assign(currentPlugins.installs, existingInstalls);
 }
 
-function hasPluginInstall(config: JsonObject, pluginId: string): boolean {
-  const plugins = config.plugins;
-  if (!isObject(plugins)) {
-    return false;
-  }
-  const installs = plugins.installs;
-  return isObject(installs) && pluginId in installs;
-}
-
-function readJsonFile(pathValue: string): unknown {
-  return JSON.parse(readFileSync(pathValue, "utf-8"));
-}
-
-function looksLikeWechatPluginMetadata(metadata: unknown, pathValue: string): boolean {
-  return (
-    isObject(metadata) &&
-    (metadata.id === "openclaw-weixin" ||
-      metadata.name === "@tencent-weixin/openclaw-weixin" ||
-      pathValue.toLowerCase().includes("openclaw-weixin"))
-  );
-}
-
-function hasInstalledWechatPluginMetadata(): boolean {
-  const stateDir = expandUser("~/.openclaw");
-  const candidates = [
-    join(stateDir, "extensions", "openclaw-weixin", "openclaw.plugin.json"),
-    join(stateDir, "extensions", "openclaw-weixin", "package.json"),
-    join(
-      stateDir,
-      "npm",
-      "node_modules",
-      "@tencent-weixin",
-      "openclaw-weixin",
-      "openclaw.plugin.json",
-    ),
-    join(stateDir, "npm", "node_modules", "@tencent-weixin", "openclaw-weixin", "package.json"),
-  ];
-  for (const candidate of candidates) {
-    try {
-      if (looksLikeWechatPluginMetadata(readJsonFile(candidate), candidate)) {
-        return true;
-      }
-    } catch {
-      // Keep scanning; stale metadata should not break config generation.
-    }
-  }
-
-  const extensionsDir = join(stateDir, "extensions");
-  if (!existsSync(extensionsDir)) {
-    return false;
-  }
-
-  const ignoredDirs = new Set(["node_modules", "plugin-runtime-deps", ".git"]);
-  const stack = [extensionsDir];
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!ignoredDirs.has(entry.name)) {
-          stack.push(join(dir, entry.name));
-        }
-        continue;
-      }
-      if (!entry.isFile() || !["openclaw.plugin.json", "package.json"].includes(entry.name)) {
-        continue;
-      }
-      const pathValue = join(dir, entry.name);
-      try {
-        if (looksLikeWechatPluginMetadata(readJsonFile(pathValue), pathValue)) {
-          return true;
-        }
-      } catch {
-        // Keep scanning; corrupt package metadata is ignored like the Python path.
-      }
-    }
-  }
-  return false;
-}
-
-function hasPreinstalledWechatPluginSignal(): boolean {
-  return ["1", "true", "yes", "on"].includes(
-    (process.env.NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED || "").trim().toLowerCase(),
-  );
-}
-
-function seedWechatAccountsIfAvailable(config: JsonObject): void {
-  if (
-    !hasPluginInstall(config, "openclaw-weixin") &&
-    !hasInstalledWechatPluginMetadata() &&
-    !hasPreinstalledWechatPluginSignal()
-  ) {
-    return;
-  }
-
-  const seedScript = resolve(SCRIPT_DIR, "seed-wechat-accounts.py");
-  const result = spawnSync("python3", [seedScript], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== null && result.status !== 0) {
-    process.exit(result.status);
-  }
-  if (result.signal) {
-    throw new Error(`${seedScript} terminated with signal ${result.signal}`);
-  }
-}
-
 export function main(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
+  const messagingPlan = readMessagingPlanFromEnv(process.env, "openclaw");
   preserveExistingPluginInstalls(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
+  applyMessagingBuildFiles(config, messagingPlan);
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
-  seedWechatAccountsIfAvailable(config);
 }
 
 function isMainModule(): boolean {

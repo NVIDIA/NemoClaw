@@ -2,19 +2,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Functional tests for scripts/openclaw-build-messaging-plugins.py.
+// Functional tests for scripts/run-openclaw-build-hooks.mts.
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
   "..",
   "scripts",
-  "openclaw-build-messaging-plugins.py",
+  "run-openclaw-build-hooks.mts",
 );
 const GENERATOR_PATH = path.join(
   import.meta.dirname,
@@ -44,13 +45,17 @@ function channelsB64(channels: string[]): string {
 }
 
 function runDryRun(envOverrides: Record<string, string> = {}) {
-  return spawnSync("python3", [SCRIPT_PATH, "--dry-run"], {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    env: {
+  const env = withLegacyMessagingPlanEnv(
+    {
       PATH: process.env.PATH || "/usr/bin:/bin",
       ...envOverrides,
     },
+    "openclaw",
+  );
+  return spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--dry-run"], {
+    encoding: "utf-8",
+    stdio: ["pipe", "pipe", "pipe"],
+    env,
     timeout: 10_000,
   });
 }
@@ -61,7 +66,7 @@ function parseDryRun(envOverrides: Record<string, string> = {}) {
   return JSON.parse(result.stdout);
 }
 
-describe("openclaw-build-messaging-plugins.py", () => {
+describe("run-openclaw-build-hooks.mts", () => {
   it("pins selected external messaging plugins to OPENCLAW_VERSION", () => {
     const payload = parseDryRun({
       OPENCLAW_VERSION: "2026.5.22",
@@ -138,14 +143,14 @@ describe("openclaw-build-messaging-plugins.py", () => {
     expect(result.stderr).toContain("OPENCLAW_VERSION is required");
   });
 
-  it("fails fast on malformed channel payloads", () => {
+  it("fails fast on malformed messaging plans", () => {
     const result = runDryRun({
       OPENCLAW_VERSION: "2026.5.22",
-      NEMOCLAW_MESSAGING_CHANNELS_B64: "not-base64-json",
+      NEMOCLAW_MESSAGING_PLAN_B64: "not-base64-json",
     });
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("NEMOCLAW_MESSAGING_CHANNELS_B64");
+    expect(result.stderr).toContain("NEMOCLAW_MESSAGING_PLAN_B64");
   });
 
   it("runs pinned installs before doctor and limits doctor env injection to the doctor command", () => {
@@ -164,10 +169,8 @@ describe("openclaw-build-messaging-plugins.py", () => {
     );
 
     try {
-      const result = spawnSync("python3", [SCRIPT_PATH], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
+      const planEnv = withLegacyMessagingPlanEnv(
+        {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_VERSION: "2026.5.22",
@@ -178,6 +181,12 @@ describe("openclaw-build-messaging-plugins.py", () => {
             "whatsapp",
           ]),
         },
+        "openclaw",
+      );
+      const result = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: planEnv,
         timeout: 10_000,
       });
 
@@ -233,21 +242,25 @@ describe("openclaw-build-messaging-plugins.py", () => {
     );
 
     try {
-      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
+      const generatorEnv = withLegacyMessagingPlanEnv(
+        {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           HOME: tmp,
           ...BASE_GENERATOR_ENV,
           NEMOCLAW_MESSAGING_CHANNELS_B64: discordChannels,
           NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
         },
+        "openclaw",
+      );
+      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: generatorEnv,
         timeout: 10_000,
       });
       expect(generatorResult.status, generatorResult.stderr).toBe(0);
 
-      const pluginResult = spawnSync("python3", [SCRIPT_PATH], {
+      const pluginResult = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         env: {
@@ -255,7 +268,7 @@ describe("openclaw-build-messaging-plugins.py", () => {
           HOME: tmp,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_VERSION: "2026.5.22",
-          NEMOCLAW_MESSAGING_CHANNELS_B64: discordChannels,
+          NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
         },
         timeout: 10_000,
       });

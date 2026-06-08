@@ -259,6 +259,25 @@ describe("MessagingWorkflowPlanner", () => {
         id: "slack.validateCredentials",
         handler: () => ({}),
       },
+      {
+        id: "wechat.seedOpenClawAccount",
+        handler: () => ({
+          outputs: {
+            openclawWeixinAccountsIndex: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts.json", content: [] },
+            },
+            openclawWeixinAccountFile: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts/cached-wechat-account.json", content: {} },
+            },
+            openclawConfigPatch: {
+              kind: "build-file",
+              value: { path: "openclaw.json", merge: {} },
+            },
+          },
+        }),
+      },
     ]);
 
     await withEnv(

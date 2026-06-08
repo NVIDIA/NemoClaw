@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import { describe, it } from "vitest";
@@ -16,7 +17,66 @@ type CommandEntry = {
   env?: Record<string, string | undefined>;
   policyContent?: string;
   policyReadError?: string;
+  dockerfileContent?: string;
+  dockerfileReadError?: string;
 };
+
+type MessagingPlanChannel = {
+  channelId?: unknown;
+  active?: unknown;
+};
+
+type MessagingPlan = {
+  channels?: MessagingPlanChannel[];
+};
+
+function readMessagingPlanFromDockerfile(dockerfileContent: string | undefined): MessagingPlan {
+  assert.ok(dockerfileContent, "expected Dockerfile content");
+  const line = dockerfileContent
+    .split("\n")
+    .find((entry) => entry.startsWith("ARG NEMOCLAW_MESSAGING_PLAN_B64="));
+  assert.ok(line, "expected messaging plan build arg in Dockerfile");
+  const prefix = "ARG NEMOCLAW_MESSAGING_PLAN_B64=";
+  return JSON.parse(Buffer.from(line.slice(prefix.length), "base64").toString("utf8"));
+}
+
+function activeChannelsFromDockerfile(dockerfileContent: string | undefined): string[] {
+  const plan = readMessagingPlanFromDockerfile(dockerfileContent);
+  return (plan.channels ?? [])
+    .filter((channel) => channel.active === true && typeof channel.channelId === "string")
+    .map((channel) => String(channel.channelId))
+    .sort();
+}
+
+function encodeTestMessagingPlan(
+  channels: ReadonlyArray<{ readonly channelId: string; readonly active: boolean }>,
+): string {
+  const plan = {
+    schemaVersion: 1,
+    sandboxName: "my-assistant",
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: channels.map(({ channelId, active }) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "none",
+      active,
+      selected: true,
+      configured: true,
+      disabled: !active,
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels: channels.filter((channel) => !channel.active).map((channel) => channel.channelId),
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+  return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
+}
 
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout.trim().split("\n").pop();
@@ -25,6 +85,8 @@ function parseStdoutJson<T>(stdout: string): T {
 }
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const requireForTest = createRequire(import.meta.url);
+const yamlModulePath = requireForTest.resolve("yaml");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
@@ -303,12 +365,12 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
       );
-      const yamlPath = JSON.stringify(path.join(repoRoot, "node_modules", "yaml"));
+      const yamlPath = JSON.stringify(yamlModulePath);
       const customDockerfileArg = JSON.stringify(customDockerfilePath);
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(customBuildDir, { recursive: true });
-      fs.writeFileSync(customDockerfilePath, "FROM scratch\n");
+      fs.writeFileSync(customDockerfilePath, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=\n");
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
         mode: 0o755,
       });
@@ -481,7 +543,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "reuses existing messaging providers during non-interactive recreate when tokens are not in the host env",
+    "does not reuse existing messaging providers during non-interactive recreate when tokens are not in the host env",
     { timeout: 60_000 },
     async () => {
       const repoRoot = path.join(import.meta.dirname, "..");
@@ -495,6 +557,10 @@ const { createSandbox } = require(${onboardPath});
       const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
       const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
       const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+      const messagingPlanB64 = encodeTestMessagingPlan([
+        { channelId: "discord", active: false },
+        { channelId: "slack", active: false },
+      ]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -603,6 +669,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           DISCORD_BOT_TOKEN: "",
           SLACK_BOT_TOKEN: "",
           SLACK_APP_TOKEN: "",
@@ -634,22 +701,13 @@ const { createSandbox } = require(${onboardPath});
       );
       assert.ok(createCommand, "expected sandbox create command");
       assert.equal(createCommand.dockerfileReadError, undefined);
-      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-slack-app/);
+      assert.doesNotMatch(createCommand.command, /--provider my-assistant-discord-bridge/);
+      assert.doesNotMatch(createCommand.command, /--provider my-assistant-slack-bridge/);
+      assert.doesNotMatch(createCommand.command, /--provider my-assistant-slack-app/);
 
-      const channelsLine = createCommand.dockerfileContent
-        ?.split("\n")
-        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-      const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
-      assert.deepEqual(channels, ["discord", "slack"]);
+      assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), []);
       assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
-      assert.deepEqual(payload.registerCalls[0]?.providerCredentialHashes, {
-        DISCORD_BOT_TOKEN: "hash-discord",
-        SLACK_BOT_TOKEN: "hash-slack-bot",
-        SLACK_APP_TOKEN: "hash-slack-app",
-      });
+      assert.equal(payload.registerCalls[0]?.providerCredentialHashes, undefined);
     },
   );
 
@@ -668,6 +726,7 @@ const { createSandbox } = require(${onboardPath});
       const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
       const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
       const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+      const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "telegram", active: false }]);
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -767,6 +826,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           TELEGRAM_BOT_TOKEN: "",
         },
       });
@@ -787,14 +847,11 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(createCommand, "expected sandbox create command");
       assert.equal(createCommand.dockerfileReadError, undefined);
 
-      const channelsLine = createCommand.dockerfileContent
-        ?.split("\n")
-        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-      const bakedChannels = JSON.parse(
-        Buffer.from(channelsLine.split("=")[1], "base64").toString(),
+      assert.deepEqual(
+        activeChannelsFromDockerfile(createCommand.dockerfileContent),
+        [],
+        "disabled channel must not be active in the image plan",
       );
-      assert.deepEqual(bakedChannels, [], "disabled channel must not be baked into the image");
       assert.doesNotMatch(
         createCommand.command,
         /--provider my-assistant-telegram-bridge/,
@@ -836,6 +893,7 @@ const { createSandbox } = require(${onboardPath});
         const credentialsPath = JSON.stringify(
           path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
         );
+        const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: true }]);
 
         fs.mkdirSync(fakeBin, { recursive: true });
         fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -932,6 +990,7 @@ const { createSandbox } = require(${onboardPath});
             HOME: tmpDir,
             PATH: `${fakeBin}:${process.env.PATH || ""}`,
             NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           },
         });
 
@@ -961,14 +1020,9 @@ const { createSandbox } = require(${onboardPath});
         assert.equal(createCommand.dockerfileReadError, undefined);
         assert.doesNotMatch(createCommand.command, /--provider \S+-bridge\b/);
 
-        const channelsLine = createCommand.dockerfileContent
-          ?.split("\n")
-          .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-        assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-        const channels = JSON.parse(
-          Buffer.from(channelsLine.split("=")[1], "base64").toString(),
-        );
-        assert.deepEqual(channels, ["whatsapp"]);
+        assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), [
+          "whatsapp",
+        ]);
         assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["whatsapp"]);
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -998,6 +1052,7 @@ const { createSandbox } = require(${onboardPath});
         const credentialsPath = JSON.stringify(
           path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
         );
+        const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: false }]);
 
         fs.mkdirSync(fakeBin, { recursive: true });
         fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1099,6 +1154,7 @@ const { createSandbox } = require(${onboardPath});
             HOME: tmpDir,
             PATH: `${fakeBin}:${process.env.PATH || ""}`,
             NEMOCLAW_NON_INTERACTIVE: "1",
+            NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanB64,
           },
         });
 
@@ -1118,14 +1174,11 @@ const { createSandbox } = require(${onboardPath});
         assert.ok(createCommand, "expected sandbox create command");
         assert.equal(createCommand.dockerfileReadError, undefined);
 
-        const channelsLine = createCommand.dockerfileContent
-          ?.split("\n")
-          .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-        assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-        const channels = JSON.parse(
-          Buffer.from(channelsLine.split("=")[1], "base64").toString(),
+        assert.deepEqual(
+          activeChannelsFromDockerfile(createCommand.dockerfileContent),
+          [],
+          "disabled QR channel must not be active in the image plan",
         );
-        assert.deepEqual(channels, [], "disabled QR channel must not be baked into the image");
         assert.deepEqual(
           payload.registerCalls[0]?.messagingChannels,
           ["whatsapp"],

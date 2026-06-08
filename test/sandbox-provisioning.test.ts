@@ -861,8 +861,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
       path.join(localLib, "generate-openclaw-config.mts"),
-      path.join(localLib, "openclaw-build-messaging-plugins.py"),
-      path.join(localLib, "seed-wechat-accounts.py"),
+      path.join(localLib, "run-openclaw-build-hooks.mts"),
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
       nestedPluginFile,
@@ -891,8 +890,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const generatorMode = (
         fs.statSync(path.join(localLib, "generate-openclaw-config.mts")).mode & 0o777
       ).toString(8);
-      const messagingPluginMode = (
-        fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
+      const buildHookRunnerMode = (
+        fs.statSync(path.join(localLib, "run-openclaw-build-hooks.mts")).mode & 0o777
       ).toString(8);
       const approvalPolicyMode = (
         fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
@@ -902,7 +901,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
-      expect(messagingPluginMode).toBe("755");
+      expect(buildHookRunnerMode).toBe("755");
       expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");

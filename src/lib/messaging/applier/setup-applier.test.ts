@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { createBuiltInChannelManifestRegistry } from "../channels";
 import { MessagingWorkflowPlanner } from "../compiler";
 import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../hooks";
-import type { ChannelHookSpec } from "../manifest";
 import type {
+  ChannelHookSpec,
   MessagingAgentId,
   MessagingSerializableObject,
   SandboxMessagingPlan,
@@ -353,14 +353,10 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
       groupPolicy: "open",
     });
-    expect(openclawConfig.channels.telegram.groups["*"]).toEqual({
-      requireMention: "{{telegramConfig.requireMention}}",
-    });
+    expect(openclawConfig.channels.telegram.groups).toBeUndefined();
     expect(result.appliedTargets).toEqual(["/sandbox/.openclaw/openclaw.json"]);
     expect(result.appliedHooks).toEqual([]);
-    expect(result.unresolvedTemplateRefs).toEqual(
-      expect.arrayContaining(["proxyUrl", "telegramConfig.requireMention"]),
-    );
+    expect(result.unresolvedTemplateRefs).toEqual([]);
   });
 
   it("excludes disabled channels at the applier boundary", async () => {
@@ -395,6 +391,7 @@ describe("MessagingSetupApplier", () => {
         (request) => `${request.channelId}:${request.hookId}`,
       ),
     ).toEqual([
+      "slack:slack-openclaw-package-install",
       "slack:slack-token-paste",
       "slack:slack-config-prompt",
       "slack:slack-credential-validation",
@@ -538,9 +535,9 @@ describe("MessagingSetupApplier", () => {
       enabled: true,
     });
     expect(result.appliedTargets).toEqual([
+      "/sandbox/.openclaw/openclaw.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts.json",
       "/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json",
-      "/sandbox/.openclaw/openclaw.json",
     ]);
     expect(result.appliedHooks).toEqual(["wechat:wechat-seed-openclaw-account"]);
   });

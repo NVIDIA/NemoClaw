@@ -71,6 +71,18 @@ export const wechatManifest = {
   policyPresets: [{ name: "wechat", policyKeys: ["wechat_bridge"] }],
   render: [
     {
+      id: "wechat-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.openclaw-weixin",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+    {
       id: "wechat-hermes-env",
       kind: "env-lines",
       agent: "hermes",
@@ -81,6 +93,18 @@ export const wechatManifest = {
         "WEIXIN_BASE_URL={{wechatConfig.baseUrl}}",
         "WEIXIN_ALLOWED_USERS={{allowedIds.wechat.csv}}",
       ],
+    },
+    {
+      id: "wechat-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.weixin",
+        value: {
+          enabled: true,
+        },
+      },
     },
   ],
   state: {
