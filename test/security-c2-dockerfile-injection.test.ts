@@ -148,11 +148,12 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         inEnvBlock = false;
       }
       if (
-        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.mts\b/.test(
+        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts\b/.test(
           line,
         )
       ) {
         expect(promoted).toBeTruthy();
+        sawGeneratorRun = true;
         return;
       }
     }

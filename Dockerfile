@@ -409,13 +409,14 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # needs to read these files to install runtime preloads under /tmp.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
-COPY scripts/run-openclaw-build-hooks.mts /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts
+COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
-        /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
-        /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts \
+        /scripts/generate-openclaw-config.mts \
+        /src/lib/messaging/applier/build/messaging-build-applier.mts \
+    && chmod -R a+rX /src/lib/messaging \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
@@ -452,7 +453,7 @@ ARG NEMOCLAW_AGENT_TIMEOUT=600
 # change at image build time. Ref: issue #2880
 ARG NEMOCLAW_AGENT_HEARTBEAT_EVERY=
 ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
-# Base64-encoded manifest hook plan for messaging build inputs and agent
+# Base64-encoded messaging build plan for messaging build inputs and agent
 # rendering. The plan contains placeholders only; secrets are resolved at
 # runtime via OpenShell providers.
 ARG NEMOCLAW_MESSAGING_PLAN_B64=
@@ -536,18 +537,26 @@ USER sandbox
 # is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
-# Generate openclaw.json from environment variables. Config generation logic
-# lives in scripts/generate-openclaw-config.mts — see that file for the full
-# list of env vars and derivation rules.
+# Generate base openclaw.json from environment variables. Messaging build
+# steps run through src/lib/messaging/applier/build/messaging-build-applier.mts.
 #
 # OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
+
+# Install the non-messaging OpenClaw diagnostics plugin when OTEL is enabled.
+# hadolint ignore=DL3059,DL4006
+RUN set -eu; \
+    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+        test -n "$OPENCLAW_VERSION"; \
+        openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
+        openclaw doctor --fix --non-interactive; \
+    fi
 
 # hadolint ignore=DL3059,DL4006
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/run-openclaw-build-hooks.mts
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install
 
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
@@ -561,8 +570,9 @@ ENV NPM_CONFIG_OFFLINE=true \
 # This must fail the image build if registration fails; otherwise the sandbox
 # can boot with a discoverable plugin manifest but without the /nemoclaw runtime
 # command registered in the active Gateway.
-# WeChat account seed files are written during config generation from
-# serialized manifest hook build-file outputs before the sandbox starts.
+# Messaging post-agent-install hooks run after the OpenClaw agent and
+# NemoClaw plugin are installed; for example, WeChat seed files are written
+# from messaging hook build-file outputs before the sandbox starts.
 # Prune non-runtime metadata from staged bundled plugin dependencies before
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
@@ -580,6 +590,10 @@ RUN openclaw plugins install /opt/nemoclaw \
             -name examples \
         \) -prune -exec rm -rf {} +; \
     fi
+
+# Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
+# hadolint ignore=DL3059,DL4006
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
 
 # Release the offline lock so the runtime sandbox can install MCP servers,
 # skills, and ad-hoc packages via the OpenShell L7 proxy.

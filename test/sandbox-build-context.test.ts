@@ -72,11 +72,12 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
+    writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
     writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
-    writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
-    writeFixture(path.join("scripts", "run-openclaw-build-hooks.mts"));
+    writeFixture(path.join("src", "lib", "messaging", "applier", "build", "messaging-build-applier.mts"));
+    writeFixture(path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
   }
@@ -245,11 +246,32 @@ describe("sandbox build context staging", () => {
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
-      expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(
-        true,
-      );
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(true);
       expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "run-openclaw-build-hooks.mts")),
+        fs.existsSync(
+          path.join(
+            buildCtx,
+            "src",
+            "lib",
+            "messaging",
+            "applier",
+            "build",
+            "messaging-build-applier.mts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            buildCtx,
+            "src",
+            "lib",
+            "messaging",
+            "hooks",
+            "common",
+            "static-outputs.ts",
+          ),
+        ),
       ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "lib", "openclaw_device_approval_policy.py")),

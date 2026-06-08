@@ -850,6 +850,11 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localBin = path.join(tmp, "usr", "local", "bin");
     const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
     const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const localSrc = path.join(tmp, "src");
+    const localScripts = path.join(tmp, "scripts");
+    const generatorPath = path.join(localScripts, "generate-openclaw-config.mts");
+    const applierPath = path.join(localSrc, "lib", "messaging", "applier", "build", "messaging-build-applier.mts");
+    const messagingHookPath = path.join(localSrc, "lib", "messaging", "channels", "fixture", "hooks", "example.ts");
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");
@@ -860,8 +865,9 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
-      path.join(localLib, "generate-openclaw-config.mts"),
-      path.join(localLib, "run-openclaw-build-hooks.mts"),
+      generatorPath,
+      applierPath,
+      messagingHookPath,
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
       nestedPluginFile,
@@ -870,7 +876,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(localScripts, { recursive: true });
       fs.mkdirSync(nestedPluginDir, { recursive: true });
+      fs.mkdirSync(path.dirname(applierPath), { recursive: true });
+      fs.mkdirSync(path.dirname(messagingHookPath), { recursive: true });
       for (const file of files) {
         fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
         fs.chmodSync(file, 0o600);
@@ -883,16 +892,15 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       )
         .replaceAll("/usr/local/bin", localBin)
         .replaceAll("/usr/local/lib/nemoclaw", localLib)
-        .replaceAll("/usr/local/share/nemoclaw", localShare);
+        .replaceAll("/usr/local/share/nemoclaw", localShare)
+        .replaceAll("/src", localSrc)
+        .replaceAll("/scripts", localScripts);
       const { result } = runLoggedDockerShell(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
-      const generatorMode = (
-        fs.statSync(path.join(localLib, "generate-openclaw-config.mts")).mode & 0o777
-      ).toString(8);
-      const buildHookRunnerMode = (
-        fs.statSync(path.join(localLib, "run-openclaw-build-hooks.mts")).mode & 0o777
-      ).toString(8);
+      const generatorMode = (fs.statSync(generatorPath).mode & 0o777).toString(8);
+      const applierMode = (fs.statSync(applierPath).mode & 0o777).toString(8);
+      const messagingHookMode = (fs.statSync(messagingHookPath).mode & 0o777).toString(8);
       const approvalPolicyMode = (
         fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
       ).toString(8);
@@ -901,7 +909,8 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
-      expect(buildHookRunnerMode).toBe("755");
+      expect(applierMode).toBe("755");
+      expect(messagingHookMode).toBe("644");
       expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");

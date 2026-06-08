@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Functional tests for scripts/run-openclaw-build-hooks.mts.
+// Functional tests for src/lib/messaging/applier/build/messaging-build-applier.mts.
 
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
@@ -14,8 +14,12 @@ import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
   "..",
-  "scripts",
-  "run-openclaw-build-hooks.mts",
+  "src",
+  "lib",
+  "messaging",
+  "applier",
+  "build",
+  "messaging-build-applier.mts",
 );
 const GENERATOR_PATH = path.join(
   import.meta.dirname,
@@ -52,7 +56,7 @@ function runDryRun(envOverrides: Record<string, string> = {}) {
     },
     "openclaw",
   );
-  return spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--dry-run"], {
+  return spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install", "--dry-run"], {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     env,
@@ -66,7 +70,7 @@ function parseDryRun(envOverrides: Record<string, string> = {}) {
   return JSON.parse(result.stdout);
 }
 
-describe("run-openclaw-build-hooks.mts", () => {
+describe("messaging-build-applier.mts: agent-install", () => {
   it("pins selected external messaging plugins to OPENCLAW_VERSION", () => {
     const payload = parseDryRun({
       OPENCLAW_VERSION: "2026.5.22",
@@ -124,23 +128,13 @@ describe("run-openclaw-build-hooks.mts", () => {
     expect(payload.installSpecs).toEqual(["npm:@openclaw/whatsapp@2026.5.18"]);
   });
 
-  it("pins the diagnostics OTEL plugin when OpenClaw OTEL is enabled", () => {
+  it("does not include non-messaging OTEL diagnostics in messaging package installs", () => {
     const payload = parseDryRun({
       OPENCLAW_VERSION: "2026.5.22",
       NEMOCLAW_OPENCLAW_OTEL: "1",
     });
 
-    expect(payload.diagnosticsOtelEnabled).toBe(true);
-    expect(payload.installSpecs).toEqual(["npm:@openclaw/diagnostics-otel@2026.5.22"]);
-  });
-
-  it("requires OPENCLAW_VERSION when OpenClaw OTEL is enabled", () => {
-    const result = runDryRun({
-      NEMOCLAW_OPENCLAW_OTEL: "1",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("OPENCLAW_VERSION is required");
+    expect(payload.installSpecs).toEqual([]);
   });
 
   it("fails fast on malformed messaging plans", () => {
@@ -153,7 +147,7 @@ describe("run-openclaw-build-hooks.mts", () => {
     expect(result.stderr).toContain("NEMOCLAW_MESSAGING_PLAN_B64");
   });
 
-  it("runs pinned installs before doctor and limits doctor env injection to the doctor command", () => {
+  it("runs pinned installs during agent-install without doctor env injection", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-message-plugins-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -183,7 +177,7 @@ describe("run-openclaw-build-hooks.mts", () => {
         },
         "openclaw",
       );
-      const result = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH], {
+      const result = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         env: planEnv,
@@ -195,22 +189,13 @@ describe("run-openclaw-build-hooks.mts", () => {
         "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/slack@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
-        [
-          "doctor",
-          "--fix",
-          "--non-interactive",
-          "",
-          "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-          "openshell:resolve:env:DISCORD_BOT_TOKEN",
-          "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        ].join("|"),
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("#4246: generated Discord config reaches the mocked OpenClaw plugin-load boundary", () => {
+  it("#4246: messaging post-agent-install render reaches the mocked OpenClaw doctor boundary", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-runtime-contract-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -260,24 +245,159 @@ describe("run-openclaw-build-hooks.mts", () => {
       });
       expect(generatorResult.status, generatorResult.stderr).toBe(0);
 
-      const pluginResult = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH], {
+      const applierEnv = {
+        PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+        HOME: tmp,
+        OPENCLAW_TRACE: tracePath,
+        OPENCLAW_VERSION: "2026.5.22",
+        NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+      };
+      const pluginResult = spawnSync(
+        "node",
+        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: applierEnv,
+          timeout: 10_000,
+        },
+      );
+      expect(pluginResult.status, pluginResult.stderr).toBe(0);
+
+      const postInstallResult = spawnSync(
+        "node",
+        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: applierEnv,
+          timeout: 10_000,
+        },
+      );
+
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
+        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|",
+        "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("applies post-agent-install WeChat build files from the compiled messaging plan", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-post-agent-install-"));
+    const channels = channelsB64(["wechat"]);
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+
+    try {
+      const generatorEnv = withLegacyMessagingPlanEnv(
+        {
+          PATH: process.env.PATH || "/usr/bin:/bin",
+          HOME: tmp,
+          ...BASE_GENERATOR_ENV,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+          NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+          NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+        },
+        "openclaw",
+      );
+      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: generatorEnv,
+        timeout: 10_000,
+      });
+      expect(generatorResult.status, generatorResult.stderr).toBe(0);
+
+      const fakeOpenclaw = path.join(tmp, "openclaw");
+      fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const postInstallResult = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"], {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         env: {
           PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
           HOME: tmp,
-          OPENCLAW_TRACE: tracePath,
-          OPENCLAW_VERSION: "2026.5.22",
           NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
         },
         timeout: 10_000,
       });
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
 
-      expect(pluginResult.status, pluginResult.stderr).toBe(0);
-      expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
-        "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|",
-        "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN",
-      ]);
+      const config = JSON.parse(fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"));
+      expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
+        source: "npm",
+        spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+        installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
+      });
+      expect(config.plugins?.load?.paths).toEqual(["/sandbox/.openclaw/extensions/openclaw-weixin"]);
+      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
+      expect(config.channels?.wechat).toBeUndefined();
+
+      const account = JSON.parse(
+        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw-weixin", "accounts", "primary.json"), "utf-8"),
+      );
+      expect(account).toMatchObject({
+        token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+        baseUrl: "https://example",
+        userId: "u1",
+      });
+      expect(
+        JSON.parse(fs.readFileSync(path.join(tmp, ".openclaw", "openclaw-weixin", "accounts.json"), "utf-8")),
+      ).toEqual(["primary"]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("applies Hermes messaging render to config.yaml and .env in post-agent-install", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-render-"));
+    try {
+      const hermesDir = path.join(tmp, ".hermes");
+      fs.mkdirSync(hermesDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(hermesDir, "config.yaml"),
+        [
+          "_config_version: 12",
+          "platform_toolsets:",
+          "  api_server:",
+          "  - web",
+          "platforms:",
+          "  api_server:",
+          "    enabled: true",
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(path.join(hermesDir, ".env"), "API_SERVER_PORT=18642\n");
+      const env = withLegacyMessagingPlanEnv(
+        {
+          PATH: process.env.PATH || "/usr/bin:/bin",
+          HOME: tmp,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram"]),
+        },
+        "hermes",
+      );
+
+      const result = spawnSync(
+        "node",
+        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "hermes", "--phase", "post-agent-install"],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env,
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const configYaml = fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8");
+      expect(configYaml).toContain("telegram:");
+      expect(configYaml).toContain("enabled: true");
+      const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
+      expect(envFile).toContain("API_SERVER_PORT=18642\n");
+      expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

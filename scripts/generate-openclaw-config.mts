@@ -14,7 +14,7 @@
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
-//   NEMOCLAW_INFERENCE_COMPAT_B64, NEMOCLAW_MESSAGING_PLAN_B64,
+//   NEMOCLAW_INFERENCE_COMPAT_B64,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
@@ -36,223 +36,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
-
-type MessagingPlan = {
-  readonly schemaVersion: 1;
-  readonly agent: string;
-  readonly channels: readonly MessagingPlanChannel[];
-  readonly agentRender: readonly MessagingRenderEntry[];
-  readonly buildSteps: readonly MessagingBuildStep[];
-};
-
-type MessagingPlanChannel = {
-  readonly channelId: string;
-  readonly active?: boolean;
-  readonly disabled?: boolean;
-};
-
-type MessagingRenderEntry = {
-  readonly channelId: string;
-  readonly agent: string;
-  readonly target: string;
-  readonly kind: "json-fragment" | "env-lines";
-  readonly path?: string;
-  readonly value?: unknown;
-};
-
-type MessagingBuildStep = {
-  readonly channelId: string;
-  readonly kind: "build-arg" | "build-file" | "package-install";
-  readonly outputId: string;
-  readonly required?: boolean;
-  readonly value?: unknown;
-};
-
-function readMessagingPlanFromEnv(env: Env, agent: string): MessagingPlan | null {
-  const encoded = env.NEMOCLAW_MESSAGING_PLAN_B64;
-  if (!encoded || encoded.trim() === "") return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(encoded, "base64").toString("utf-8"));
-  } catch (error) {
-    throw new Error(
-      `NEMOCLAW_MESSAGING_PLAN_B64 must be a base64-encoded messaging plan: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (
-    !isObject(parsed) ||
-    parsed.schemaVersion !== 1 ||
-    parsed.agent !== agent ||
-    !Array.isArray(parsed.channels) ||
-    !Array.isArray(parsed.agentRender) ||
-    !Array.isArray(parsed.buildSteps)
-  ) {
-    throw new Error(`NEMOCLAW_MESSAGING_PLAN_B64 must contain a ${agent} messaging plan`);
-  }
-  return parsed as MessagingPlan;
-}
-
-function activeMessagingPlanChannels(plan: MessagingPlan | null): string[] {
-  if (!plan) return [];
-  return plan.channels
-    .filter((channel) => channel.active === true && channel.disabled !== true)
-    .map((channel) => channel.channelId);
-}
-
-function isPlanChannelActive(plan: MessagingPlan, channelId: string): boolean {
-  return activeMessagingPlanChannels(plan).includes(channelId);
-}
-
-function applyMessagingAgentRender(
-  config: JsonObject,
-  plan: MessagingPlan | null,
-  target: string,
-): void {
-  if (!plan) return;
-  for (const render of plan.agentRender) {
-    if (
-      render.kind !== "json-fragment" ||
-      render.target !== target ||
-      typeof render.path !== "string" ||
-      !isPlanChannelActive(plan, render.channelId)
-    ) {
-      continue;
-    }
-    setMessagingJsonPath(config, render.path, toMessagingJsonValue(render.value));
-  }
-}
-
-function applyMessagingBuildFiles(config: JsonObject, plan: MessagingPlan | null): void {
-  if (!plan) return;
-  for (const step of plan.buildSteps) {
-    if (step.kind !== "build-file" || !isPlanChannelActive(plan, step.channelId)) continue;
-    if (step.value === undefined) {
-      if (step.required) throw new Error(`Messaging build-file output ${step.outputId} is missing`);
-      continue;
-    }
-    applyMessagingBuildFile(config, toMessagingBuildFile(step.value));
-  }
-}
-
-function applyMessagingBuildFile(
-  config: JsonObject,
-  file: { readonly path: string; readonly mode?: string; readonly content?: unknown; readonly merge?: unknown },
-): void {
-  const relativePath = normalizeMessagingBuildFilePath(file.path);
-  if (relativePath === "openclaw.json") {
-    if (file.merge !== undefined) mergeJsonObjects(config, toMessagingObject(file.merge));
-    if (file.content !== undefined) {
-      const replacement = toMessagingObject(file.content);
-      for (const key of Object.keys(config)) delete config[key];
-      mergeJsonObjects(config, replacement);
-    }
-    return;
-  }
-
-  const stateRoot = expandUser("~/.openclaw");
-  const target = resolve(stateRoot, relativePath);
-  const normalizedRoot = resolve(stateRoot);
-  if (target !== normalizedRoot && !target.startsWith(`${normalizedRoot}${sep}`)) {
-    throw new Error(`Messaging build-file path ${file.path} must stay inside ~/.openclaw`);
-  }
-  mkdirSync(dirname(target), { recursive: true });
-  const contents = serializeMessagingBuildFileContent(file.content);
-  writeFileSync(target, contents);
-  if (file.mode) chmodSync(target, parseMessagingFileMode(file.path, file.mode));
-}
-
-function setMessagingJsonPath(root: JsonObject, pathValue: string, value: unknown): void {
-  const segments = pathValue.split(".").filter(Boolean);
-  if (segments.length === 0) throw new Error("Messaging render path must not be empty");
-  let cursor = root;
-  for (const segment of segments.slice(0, -1)) {
-    assertSafeMessagingObjectKey(segment, "Messaging render path");
-    if (!isObject(cursor[segment])) cursor[segment] = {};
-    cursor = cursor[segment] as JsonObject;
-  }
-  const finalSegment = segments[segments.length - 1] as string;
-  assertSafeMessagingObjectKey(finalSegment, "Messaging render path");
-  if (isObject(cursor[finalSegment]) && isObject(value)) {
-    mergeJsonObjects(cursor[finalSegment] as JsonObject, value as JsonObject);
-    return;
-  }
-  cursor[finalSegment] = value;
-}
-
-function mergeJsonObjects(target: JsonObject, patch: JsonObject): void {
-  for (const [key, value] of Object.entries(patch)) {
-    assertSafeMessagingObjectKey(key, "Messaging object merge");
-    const existing = target[key];
-    if (isObject(existing) && isObject(value)) {
-      mergeJsonObjects(existing as JsonObject, value as JsonObject);
-    } else if (Array.isArray(existing) && Array.isArray(value)) {
-      target[key] = unique([...existing, ...value]);
-    } else {
-      target[key] = value;
-    }
-  }
-}
-
-function toMessagingJsonValue(value: unknown): unknown {
-  if (value === undefined) throw new Error("Messaging render value is missing");
-  return value;
-}
-
-function toMessagingObject(value: unknown): JsonObject {
-  if (!isObject(value)) throw new Error("Messaging build-file merge/content must be an object");
-  return value;
-}
-
-function toMessagingBuildFile(value: unknown): {
-  readonly path: string;
-  readonly mode?: string;
-  readonly content?: unknown;
-  readonly merge?: unknown;
-} {
-  if (!isObject(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
-    throw new Error("Messaging build-file output must include a path");
-  }
-  return value as {
-    readonly path: string;
-    readonly mode?: string;
-    readonly content?: unknown;
-    readonly merge?: unknown;
-  };
-}
-
-function normalizeMessagingBuildFilePath(pathValue: string): string {
-  if (pathValue.startsWith("/") || pathValue.includes("\\") || /[\0-\x1F\x7F]/.test(pathValue)) {
-    throw new Error(`Messaging build-file path ${pathValue} must be a safe relative path`);
-  }
-  const segments = pathValue.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
-    throw new Error(`Messaging build-file path ${pathValue} must not traverse directories`);
-  }
-  return pathValue;
-}
-
-function serializeMessagingBuildFileContent(value: unknown): string {
-  if (value === undefined) return "";
-  if (typeof value === "string") return value.endsWith("\n") ? value : `${value}\n`;
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-function parseMessagingFileMode(pathValue: string, mode: string): number {
-  if (!/^[0-7]{3,4}$/.test(mode) || (mode.length === 4 && mode[0] !== "0")) {
-    throw new Error(`Messaging build-file ${pathValue} mode must be an octal file mode`);
-  }
-  const parsed = Number.parseInt(mode, 8);
-  if ((parsed & 0o022) !== 0) {
-    throw new Error(`Messaging build-file ${pathValue} mode must not be group/world writable`);
-  }
-  return parsed;
-}
-
-function assertSafeMessagingObjectKey(key: string, context: string): void {
-  if (key === "__proto__" || key === "prototype" || key === "constructor") {
-    throw new Error(`${context} rejected unsafe object key ${key}`);
-  }
-}
 
 const KNOWN_MODEL_SETUP_AGENTS = new Set(["openclaw", "hermes"]);
 const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
@@ -1047,7 +830,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
 
-  const messagingPlan = readMessagingPlanFromEnv(env, "openclaw");
 
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
@@ -1183,7 +965,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     };
   }
 
-  applyMessagingAgentRender(config, messagingPlan, "openclaw.json");
 
   return config;
 }
@@ -1214,15 +995,17 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
   Object.assign(currentPlugins.installs, existingInstalls);
 }
 
-export function main(): void {
+export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
-  const messagingPlan = readMessagingPlanFromEnv(process.env, "openclaw");
   preserveExistingPluginInstalls(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
-  applyMessagingBuildFiles(config, messagingPlan);
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
+}
+
+export function main(): void {
+  writeOpenClawConfig();
 }
 
 function isMainModule(): boolean {

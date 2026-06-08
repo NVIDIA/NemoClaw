@@ -11,6 +11,16 @@ import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-ke
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
+const APPLIER_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "src",
+  "lib",
+  "messaging",
+  "applier",
+  "build",
+  "messaging-build-applier.mts",
+);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes", "config");
 
 const BASE_ENV: Record<string, string> = {
@@ -47,16 +57,48 @@ function encodeJson(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64");
 }
 
+function buildHermesTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
+  return withLegacyMessagingPlanEnv(
+    {
+      PATH: process.env.PATH || "/usr/bin:/bin",
+      ...BASE_ENV,
+      ...envOverrides,
+      HOME: tmpDir,
+    },
+    "hermes",
+  );
+}
+
 function runConfigScript(envOverrides: Record<string, string> = {}): {
   config: Record<string, any>;
   envFile: string;
 } {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
+  const env = buildHermesTestEnv(envOverrides);
   const result = runConfigScriptRaw(envOverrides);
 
   if (result.status !== 0) {
     throw new Error(
-      `Script failed (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      `Script failed (exit ${result.status}):
+stdout: ${result.stdout}
+stderr: ${result.stderr}`,
+    );
+  }
+
+  const applierResult = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", APPLIER_PATH, "--agent", "hermes", "--phase", "post-agent-install"],
+    {
+      encoding: "utf-8",
+      env,
+      timeout: 10_000,
+    },
+  );
+  if (applierResult.status !== 0) {
+    throw new Error(
+      `Messaging applier failed (exit ${applierResult.status}):
+stdout: ${applierResult.stdout}
+stderr: ${applierResult.stderr}`,
     );
   }
 
@@ -72,15 +114,7 @@ function runConfigScriptRaw(
   opts: { cwd?: string; scriptPath?: string } = {},
 ) {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
-  const env = withLegacyMessagingPlanEnv(
-    {
-      PATH: process.env.PATH || "/usr/bin:/bin",
-      ...BASE_ENV,
-      ...envOverrides,
-      HOME: tmpDir,
-    },
-    "hermes",
-  );
+  const env = buildHermesTestEnv(envOverrides);
   return spawnSync(
     process.execPath,
     ["--experimental-strip-types", opts.scriptPath || SCRIPT_PATH],
@@ -110,6 +144,11 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
   fs.mkdirSync(path.dirname(fixtureScriptPath), { recursive: true });
   fs.copyFileSync(SCRIPT_PATH, fixtureScriptPath);
   fs.cpSync(CONFIG_MODULE_DIR, fixtureConfigDir, { recursive: true });
+  fs.cpSync(
+    path.join(import.meta.dirname, "..", "src", "lib", "messaging"),
+    path.join(fixtureRoot, "src", "lib", "messaging"),
+    { recursive: true },
+  );
   return fixtureScriptPath;
 }
 
@@ -164,6 +203,18 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
+  it("leaves messaging render to the messaging build applier", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const hermesDir = path.join(tmpDir, ".hermes");
+    const config = YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8"));
+    const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
+    expect(config.platforms.telegram).toBeUndefined();
+    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
+  });
+
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 
