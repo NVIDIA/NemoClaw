@@ -21,6 +21,7 @@ import {
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayStateDirName,
+  resolveSandboxGatewayName,
 } from "../../../dist/lib/onboard/gateway-binding";
 
 describe("gateway-binding resolver (#4422)", () => {
@@ -44,6 +45,28 @@ describe("gateway-binding resolver (#4422)", () => {
     expect(resolveGatewayName(a)).not.toBe(resolveGatewayName(b));
     expect(resolveGatewayStateDirName(a)).not.toBe(resolveGatewayStateDirName(b));
     expect(resolveGatewayCompatContainerName(a)).not.toBe(resolveGatewayCompatContainerName(b));
+  });
+});
+
+describe("resolveSandboxGatewayName (#4422 lifecycle gap)", () => {
+  it("prefers the persisted gatewayName", () => {
+    expect(resolveSandboxGatewayName({ gatewayName: "nemoclaw-8090", gatewayPort: 8090 })).toBe(
+      "nemoclaw-8090",
+    );
+  });
+
+  it("resolves from the persisted port when no name is stored", () => {
+    expect(resolveSandboxGatewayName({ gatewayPort: 8081 })).toBe("nemoclaw-8081");
+    expect(resolveSandboxGatewayName({ gatewayPort: DEFAULT_GATEWAY_PORT })).toBe(BASE_GATEWAY_NAME);
+  });
+
+  it("falls back to the bare default for entries with neither field", () => {
+    expect(resolveSandboxGatewayName(null)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName(undefined)).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({})).toBe(BASE_GATEWAY_NAME);
+    expect(resolveSandboxGatewayName({ gatewayName: null, gatewayPort: null })).toBe(
+      BASE_GATEWAY_NAME,
+    );
   });
 });
 

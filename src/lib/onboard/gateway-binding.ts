@@ -67,6 +67,26 @@ export function resolveGatewayCompatContainerName(port: number): string {
     : `${BASE_GATEWAY_COMPAT_CONTAINER_NAME}-${port}`;
 }
 
+/**
+ * Resolve the gateway registration name bound to a specific sandbox. Sandbox
+ * lifecycle commands (connect/destroy/doctor/snapshot) must target the
+ * sandbox's own gateway — which is `nemoclaw-<port>` for any non-default
+ * `NEMOCLAW_GATEWAY_PORT` — rather than the hardcoded default `nemoclaw`.
+ * Prefer the name persisted at onboard; fall back to the persisted port, then
+ * to the bare default name for older entries that predate those fields.
+ */
+export function resolveSandboxGatewayName(
+  sb: { gatewayName?: string | null; gatewayPort?: number | null } | null | undefined,
+): string {
+  if (sb?.gatewayName) {
+    return sb.gatewayName;
+  }
+  if (typeof sb?.gatewayPort === "number") {
+    return resolveGatewayName(sb.gatewayPort);
+  }
+  return BASE_GATEWAY_NAME;
+}
+
 /** Gateway state classifiers from `state/gateway`, each bound to a gateway name. */
 export interface GatewayNameBoundClassifiers {
   hasStaleGateway(gwInfoOutput?: string): boolean;

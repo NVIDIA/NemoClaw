@@ -11,7 +11,9 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
+import * as registry from "../../state/registry";
 
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -216,9 +218,10 @@ export function reconcileMissingAgainstNamedGateway(
   sandboxName: string,
   missingLookup: SandboxGatewayState,
 ): SandboxGatewayState {
-  const lifecycle = getNamedGatewayLifecycleState();
+  const gwName = resolveSandboxGatewayName(registry.getSandbox(sandboxName));
+  const lifecycle = getNamedGatewayLifecycleState(gwName);
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", gwName], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -230,7 +233,7 @@ export function reconcileMissingAgainstNamedGateway(
       return retry;
     }
     if (retry.state === "missing") {
-      const after = getNamedGatewayLifecycleState();
+      const after = getNamedGatewayLifecycleState(gwName);
       if (after.state === "healthy_named") {
         return retry;
       }
@@ -331,6 +334,7 @@ export async function getReconciledSandboxGatewayState(
   opts: { getState?: SandboxGatewayStateLookup } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
+  const gwName = resolveSandboxGatewayName(registry.getSandbox(sandboxName));
   const lookup = await getState(sandboxName);
   if (lookup.state === "present") {
     return lookup;
@@ -340,7 +344,7 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName: gwName });
     if (recovery.recovered) {
       const retried = await getState(sandboxName);
       if (retried.state === "present" || retried.state === "missing") {
@@ -356,7 +360,7 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState();
+    const latestLifecycle = getNamedGatewayLifecycleState(gwName);
     const latestStatus = stripAnsi(latestLifecycle.status || "");
     if (/No gateway configured/i.test(latestStatus)) {
       return {
@@ -392,6 +396,7 @@ export async function ensureLiveSandboxOrExit(
   sandboxName: string,
   { allowNonReadyPhase = false }: { allowNonReadyPhase?: boolean } = {},
 ): Promise<SandboxGatewayState> {
+  const gwName = resolveSandboxGatewayName(registry.getSandbox(sandboxName));
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
@@ -421,7 +426,7 @@ export async function ensureLiveSandboxOrExit(
     process.exit(1);
   }
   if (lookup.state === "missing") {
-    const guard = getNamedGatewayLifecycleState();
+    const guard = getNamedGatewayLifecycleState(gwName);
     if (guard.state !== "healthy_named") {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.error);

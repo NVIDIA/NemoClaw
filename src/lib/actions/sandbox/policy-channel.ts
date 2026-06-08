@@ -28,6 +28,7 @@ import {
   resolveMessagingChannelConfigEnvValue,
   sanitizeMessagingChannelConfig,
 } from "../../messaging-channel-config";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { hashCredential } from "../../security/credential-hash";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
@@ -497,7 +498,9 @@ async function applyChannelAddToGatewayAndRegistry(
     token,
   }));
   if (tokenDefs.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({
+      gatewayName: resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
+    });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
@@ -539,7 +542,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
   let gatewayReachable = true;
 
   if (channelTokenKeys.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const recovery = await recoverNamedGatewayRuntime({
+      gatewayName: resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
+    });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
