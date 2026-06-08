@@ -1,0 +1,149 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "version": 1,
+  "statusValues": ["not-migrated", "bridge-probe", "covered", "retired"],
+  "deletionReadiness": {
+    "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 records an explicit retirement decision.",
+    "requires": [
+      "same relevant CI lane or approved replacement lane",
+      "required secrets, skips, and runner requirements preserved",
+      "artifact and failure evidence at least as useful as the legacy script",
+      "migration status set to covered or retired",
+      "approval recorded through #4357"
+    ]
+  },
+  "entries": [
+    {
+      "legacyScript": "test/e2e/test-full-e2e.sh",
+      "domain": "smoke-onboarding",
+      "ownerIssue": "#4348",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Do not delete until onboarding, gateway, sandbox, and inference smoke behavior has equivalent Vitest coverage."
+    },
+    {
+      "legacyScript": "test/e2e/test-cloud-onboard-e2e.sh",
+      "domain": "smoke-onboarding",
+      "ownerIssue": "#4348",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Expected to migrate with the smoke/onboarding family after repo-local CLI smoke."
+    },
+    {
+      "legacyScript": "test/e2e/test-inference-routing.sh",
+      "domain": "inference",
+      "ownerIssue": "#4349",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Provider routing and inference.local checks need typed inference/provider fixtures before deletion."
+    },
+    {
+      "legacyScript": "test/e2e/test-openclaw-inference-switch.sh",
+      "domain": "inference",
+      "ownerIssue": "#4349",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Provider switch behavior should migrate with the inference fixture family."
+    },
+    {
+      "legacyScript": "test/e2e/test-messaging-providers.sh",
+      "domain": "messaging",
+      "ownerIssue": "#4351",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Split into Telegram, Discord, Slack, fake-provider, and token-rotation Vitest scenarios before deleting."
+    },
+    {
+      "legacyScript": "test/e2e/test-token-rotation.sh",
+      "domain": "messaging",
+      "ownerIssue": "#4351",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Token rotation should migrate after provider fixtures can isolate per-provider state."
+    },
+    {
+      "legacyScript": "test/e2e/test-credential-sanitization.sh",
+      "domain": "security",
+      "ownerIssue": "#4352",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Credential redaction and sandbox-visible secret checks should migrate with the security fixture family."
+    },
+    {
+      "legacyScript": "test/e2e/test-network-policy.sh",
+      "domain": "security-policy",
+      "ownerIssue": "#4352",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Network policy checks need typed policy fixtures and preserved failure evidence."
+    },
+    {
+      "legacyScript": "test/e2e/test-sandbox-survival.sh",
+      "domain": "sandbox-lifecycle",
+      "ownerIssue": "#4355",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Sandbox survival should migrate with lifecycle fixtures and stronger cleanup evidence."
+    },
+    {
+      "legacyScript": "test/e2e/test-issue-2478-crash-loop-recovery.sh",
+      "domain": "sandbox-lifecycle",
+      "ownerIssue": "#4356",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Crash-loop recovery remains a late migration because it exercises failure timing and recovery classification."
+    },
+    {
+      "legacyScript": "test/e2e/brev-e2e.test.ts",
+      "domain": "platform-brev",
+      "ownerIssue": "#4354",
+      "status": "bridge-probe",
+      "targetVitestScenarios": [],
+      "bridgeProbes": ["test/e2e/brev-e2e.test.ts"],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Already uses Vitest, but still dispatches legacy remote shell suites; keep as a bridge until remote execution uses shared fixtures."
+    },
+    {
+      "legacyScript": "",
+      "domain": "repo-local-cli-smoke",
+      "ownerIssue": "#4941",
+      "status": "covered",
+      "targetVitestScenarios": ["test/e2e-scenario/live/ubuntu-repo-cli-smoke.test.ts"],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Foundation Vitest live scenario; does not make any legacy shell script deletion-ready."
+    }
+  ]
+}

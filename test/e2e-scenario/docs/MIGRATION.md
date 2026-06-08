@@ -82,6 +82,18 @@ Do not add migration status tables, per-legacy-script checklists, temporary
 coverage counts, or owner queues to this file. Put those in the issue or PR
 that owns the work instead.
 
+The one repo-local exception is the machine-readable deletion gate inventory at
+`test/e2e-scenario/migration/legacy-inventory.json`. Keep that file focused on
+script-level migration state that prevents accidental legacy E2E deletion:
+
+- `not-migrated`: legacy coverage still has no equivalent Vitest scenario.
+- `bridge-probe`: coverage is temporarily represented by a bridge path.
+- `covered`: equivalent Vitest live scenario coverage exists.
+- `retired`: maintainers agreed the legacy coverage is no longer required.
+
+Do not set `deletionReady: true` unless the entry is `covered` or `retired` and
+the deletion approval is recorded through #4357.
+
 ## What to migrate next
 
 When moving behavior from a legacy E2E script into the scenario framework:
