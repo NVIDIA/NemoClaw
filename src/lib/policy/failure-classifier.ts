@@ -152,6 +152,39 @@ export function classifyAccessFailure(
         confidence: "low",
       };
     }
+    if (isPolicyBlockErrorCode(code)) {
+      if (verified) {
+        // Gateway confirmed the preset is active, so a network-block code
+        // is an upstream failure (DNS hiccup, peer down, ICMP filter) —
+        // not the gateway denying egress. The verdict stays `unknown` but
+        // the wording explicitly rules out the policy-block reading the
+        // doc/context surfaces, so the agent does not chase the wrong
+        // remediation.
+        return {
+          kind: "unknown",
+          reason: `Host '${input.host}' is allowed by preset '${matched.name}' and the OpenShell gateway confirmed enforcement, so the network-block code (${code}) is an upstream connectivity failure rather than a policy block.${note}`,
+          nextStep:
+            "Inspect the upstream error and retry once the underlying condition clears.",
+          matchedPreset: matched.name,
+          confidence: "high",
+        };
+      }
+      // Registry-only or gateway-unavailable: the preset is listed locally
+      // but the OpenShell gateway is either drifting or unreachable. A
+      // network-block code on a host that *should* be allowed is the
+      // strongest signal we have that the gateway is in fact blocking
+      // egress to this host — surface it as `blocked-by-policy` so the
+      // agent's remediation matches the doc taxonomy, with the
+      // verification caveat baked into the wording and confidence
+      // downgrade.
+      return {
+        kind: "blocked-by-policy",
+        reason: `Host '${input.host}' is declared by preset '${matched.name}' but the request was refused with a network-block code (${code}) and the OpenShell gateway has not been confirmed to enforce this preset.${note}`,
+        nextStep: `Run \`${ctx.approvalPath.inspect}\` to confirm the gateway is enforcing '${matched.name}'; if drift is confirmed, re-apply the preset via \`${ctx.approvalPath.add.replace("<preset>", matched.name)}\`.`,
+        matchedPreset: matched.name,
+        confidence: "low",
+      };
+    }
     return {
       kind: "unknown",
       reason: `Host '${input.host}' is allowed by preset '${matched.name}' and the failure is not a policy block.${note}`,

@@ -1,6 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * Host-side write path for the agent-facing policy context file. The
+ * shell command construction (payload encoding, atomic mv replacement,
+ * symlink resistance) and the failure-routing contract are pinned by the
+ * unit tests in this directory. The cross-boundary runtime behaviour —
+ * the file actually appearing inside the sandbox with the expected mode,
+ * symlinks at the target being replaced rather than followed, and the
+ * refresh firing only after a successful policy mutation — is exercised
+ * end-to-end by the `network-policy-e2e` and `channels-add-remove-e2e`
+ * jobs under `test/e2e/`, which spin up a real OpenShell sandbox and run
+ * the full `policy-add`/`policy-remove`/`rebuild` flow. The unit
+ * harness intentionally stays inside the JS process; runtime regressions
+ * surface in those e2e jobs before merge.
+ */
+
 import {
   buildPolicyContext,
   type PolicyContext,

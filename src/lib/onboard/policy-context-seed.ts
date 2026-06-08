@@ -60,6 +60,17 @@ export function seedInitialPolicyContext(
   // `process.exit` for the duration of the call so any exit attempt the
   // refresh helper triggers becomes a thrown error we can swallow without
   // leaking the exit signal to the surrounding onboard run.
+  //
+  // Removal condition: this monkey-patch must stay until
+  // `src/lib/adapters/openshell/client.ts:handleSpawnError` (and the
+  // `captureSandboxSshConfigCommand` / `captureOpenshellCommand` callers
+  // in `src/lib/adapters/openshell/runtime.ts`) grow a "non-exiting"
+  // mode for best-effort callers — at which point `executeSandboxCommand`
+  // can return `null` on spawn failure rather than exiting and the seed
+  // can drop the shadow. Refresh must remain synchronous as long as the
+  // shadow is in place; an async refresh would let the surrounding
+  // `process.exit = savedExit` restoration fire before a deferred
+  // callback runs, defeating the isolation.
   const savedExit = process.exit;
   process.exit = ((code: number | undefined): never => {
     const message =
