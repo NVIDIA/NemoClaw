@@ -188,6 +188,8 @@ test/e2e-scenario/
   manually selected scenario IDs.
 - `.github/workflows/e2e-scenarios-all.yaml` fans out typed scenario dry-runs
   from the typed registry matrix.
+- `.github/workflows/e2e-vitest-scenarios.yaml` runs the opt-in Vitest live
+  scenario project and uploads `.e2e/vitest/` fixture artifacts.
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
   `regression-e2e.yaml` still run legacy live E2E scripts during the migration.

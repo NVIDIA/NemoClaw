@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Vitest Scenarios
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "Optional Vitest file/name filter for test/e2e-scenario/live"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.test_filter || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  live-scenarios:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e/vitest
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Vitest live E2E scenarios
+        env:
+          TEST_FILTER: ${{ inputs.test_filter }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TEST_FILTER}" ]; then
+            npx vitest run --project e2e-scenarios-live "${TEST_FILTER}" --silent=false --reporter=default
+          else
+            npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
+          fi
+
+      - name: Summarize artifacts
+        if: always()
+        run: |
+          {
+            echo "## Vitest E2E Scenarios"
+            echo
+            echo "- Project: \`e2e-scenarios-live\`"
+            echo "- Filter: \`${{ inputs.test_filter || 'all' }}\`"
+            echo "- Artifact root: \`${E2E_ARTIFACT_DIR}\`"
+            echo
+            if [ -d "${E2E_ARTIFACT_DIR}" ]; then
+              echo "### Captured Files"
+              find "${E2E_ARTIFACT_DIR}" -type f | sort | sed "s#${E2E_ARTIFACT_DIR}/#- #"
+            else
+              echo "No fixture artifacts were captured."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Vitest E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios
+          path: .e2e/vitest/
+          if-no-files-found: ignore
