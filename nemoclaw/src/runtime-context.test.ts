@@ -84,10 +84,10 @@ describe("getRuntimeSummary", () => {
     expect(summary.sandboxName).toBe("openclaw");
     expect(summary.sandboxPhase).toBeNull();
     expect(summary.networkLines).toContain(
-      "outbound network is deny-by-default; assume no arbitrary internet access",
+      "outbound network is deny-by-default, but allowed endpoints work, so verify by attempting a request rather than assuming a host is unreachable",
     );
     expect(summary.filesystemLines).toContain(
-      "filesystem/process access is sandboxed; do not assume host-level access",
+      "filesystem and process access are scoped to the sandbox, not the host; do not assume access to host paths outside it",
     );
   });
 
@@ -129,14 +129,21 @@ describe("registerRuntimeContext", () => {
     registerRuntimeContext(api, defaultConfig);
 
     const result = (await api._trigger("before_prompt_build", {}, {})) as {
-      prependContext: string;
+      prependSystemContext: string;
     };
 
-    expect(result.prependContext).toContain("<nemoclaw-runtime>");
-    expect(result.prependContext).toContain('OpenShell sandbox "openclaw"');
-    expect(result.prependContext).toContain("Network policy:");
-    expect(result.prependContext).toContain("Filesystem policy:");
-    expect(result.prependContext).toContain("</nemoclaw-runtime>");
+    expect(result.prependSystemContext).toContain("<nemoclaw-runtime>");
+    expect(result.prependSystemContext).toContain('OpenShell sandbox "openclaw"');
+    expect(result.prependSystemContext).toContain("Network policy:");
+    expect(result.prependSystemContext).toContain("Filesystem policy:");
+    expect(result.prependSystemContext).toContain("</nemoclaw-runtime>");
+    // Grounding directive: the agent must attempt before asserting a host is
+    // blocked rather than refusing preemptively, and report the real failure
+    // mode instead of assuming a specific status code.
+    expect(result.prependSystemContext).toContain(
+      "unless you have actually attempted it this turn",
+    );
+    expect(result.prependSystemContext).toContain("raises an operator approval request");
   });
 
   it("uses the persisted sandbox name in the injected context", async () => {
@@ -145,9 +152,9 @@ describe("registerRuntimeContext", () => {
     registerRuntimeContext(api, defaultConfig);
 
     const result = (await api._trigger("before_prompt_build", {}, {})) as {
-      prependContext: string;
+      prependSystemContext: string;
     };
 
-    expect(result.prependContext).toContain('OpenShell sandbox "my-assistant"');
+    expect(result.prependSystemContext).toContain('OpenShell sandbox "my-assistant"');
   });
 });

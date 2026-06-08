@@ -513,8 +513,15 @@ fi
 info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
-  # Source the entrypoint functions without running the full startup
-  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  # Source the entrypoint function without running the full startup. Keep the
+  # extraction whitespace-tolerant and fail closed if the function cannot be
+  # found, instead of sourcing an empty snippet.
+  APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
+  if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
+    echo "EXTRACT_FAIL apply_model_override"
+    exit 1
+  fi
+  source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
   export NEMOCLAW_MODEL_OVERRIDE="test/override-model"
   apply_model_override
   python3 -c "
@@ -544,7 +551,12 @@ fi
 
 info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
+  APPLY_MODEL_OVERRIDE_SNIPPET=$(sed -n "/^[[:space:]]*apply_model_override[[:space:]]*()[[:space:]]*{/,/^[[:space:]]*}[[:space:]]*$/p" /usr/local/bin/nemoclaw-start)
+  if [ -z "$APPLY_MODEL_OVERRIDE_SNIPPET" ]; then
+    echo "EXTRACT_FAIL apply_model_override"
+    exit 1
+  fi
+  source /dev/stdin <<<"$APPLY_MODEL_OVERRIDE_SNIPPET"
   ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")
   apply_model_override
   AFTER=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")

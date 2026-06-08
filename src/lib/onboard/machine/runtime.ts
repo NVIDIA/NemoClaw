@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonObject } from "../../core/json-types";
+import type { Session, SessionUpdates } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import type { Session, SessionUpdates, StepMutationOptions } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
+import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -24,8 +26,10 @@ export interface OnboardRuntimeDeps {
   updateSession(mutator: (session: Session) => Session | void): Session;
   markStepStarted(stepName: string, options?: StepMutationOptions): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates, options?: StepMutationOptions): Session;
+  markStepCompleteRecordOnly(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
+  markStepFailedRecordOnly(stepName: string, message?: string | null): Session;
   completeSession(updates?: SessionUpdates): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
@@ -36,8 +40,17 @@ export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
+function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+  if (conflict.field === "fromDockerfile" && value) return "<path>";
+  return value;
+}
+
 export type OnboardRuntimeUpdateOptions = {
   state?: OnboardMachineState | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type OnboardRuntimeCompleteOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
@@ -54,8 +67,10 @@ function defaultDeps(): OnboardRuntimeDeps {
     updateSession: onboardSession.updateSession,
     markStepStarted: onboardSession.markStepStarted,
     markStepComplete: onboardSession.markStepComplete,
+    markStepCompleteRecordOnly: onboardSession.markStepCompleteRecordOnly,
     markStepSkipped: onboardSession.markStepSkipped,
     markStepFailed: onboardSession.markStepFailed,
+    markStepFailedRecordOnly: onboardSession.markStepFailedRecordOnly,
     completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
     emitEvent: emitOnboardMachineEvent,
@@ -117,6 +132,10 @@ export class OnboardRuntime {
     return this.deps.markStepComplete(stepName, updates, options);
   }
 
+  async markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
+    return this.deps.markStepCompleteRecordOnly(stepName, updates);
+  }
+
   async markStepSkipped(stepName: string): Promise<Session> {
     return this.deps.markStepSkipped(stepName);
   }
@@ -127,6 +146,10 @@ export class OnboardRuntime {
     options: StepMutationOptions = {},
   ): Promise<Session> {
     return this.deps.markStepFailed(stepName, message, options);
+  }
+
+  async markStepFailedRecordOnly(stepName: string, message: string | null = null): Promise<Session> {
+    return this.deps.markStepFailedRecordOnly(stepName, message);
   }
 
   async completeSession(updates: SessionUpdates = {}): Promise<Session> {
@@ -180,7 +203,10 @@ export class OnboardRuntime {
     return updated;
   }
 
-  async complete(updates: SessionUpdates = {}): Promise<Session> {
+  async complete(
+    updates: SessionUpdates = {},
+    options: OnboardRuntimeCompleteOptions = {},
+  ): Promise<Session> {
     const current = this.ensureSession();
     const from = current.machine.state;
     assertValidOnboardMachineTransition(from, "complete");
@@ -200,18 +226,21 @@ export class OnboardRuntime {
     if (fields.length > 0) {
       this.emit("context.updated", updated, {
         state: "complete",
-        metadata: { fields },
+        metadata: { ...eventMetadata(options.metadata), fields },
       });
     }
-    this.emit("state.completed", updated, { state: from });
-    this.emit("state.entered", updated, { state: "complete" });
-    this.emit("onboard.completed", updated, { state: "complete" });
+    this.emit("state.completed", updated, { state: from, metadata: options.metadata });
+    this.emit("state.entered", updated, { state: "complete", metadata: options.metadata });
+    this.emit("onboard.completed", updated, {
+      state: "complete",
+      metadata: options.metadata,
+    });
     return updated;
   }
 
   async applyResult(result: OnboardStateResult): Promise<Session> {
     if (result.type === "complete") {
-      return this.complete(result.updates ?? {});
+      return this.complete(result.updates ?? {}, { metadata: result.metadata });
     }
     if (result.type === "failed") {
       return this.fail(result.error, {
@@ -282,20 +311,33 @@ export class OnboardRuntime {
     return session;
   }
 
-  async emitResumeConflict(options: {
-    field: string;
-    recorded?: unknown;
-    requested?: unknown;
+  async emitResultSkipped(options: {
+    reason: "already_at_target" | "source_state_mismatch";
+    currentState: OnboardMachineState;
+    targetState: OnboardMachineState;
     metadata?: Record<string, unknown> | null;
   }): Promise<Session> {
+    const session = this.ensureSession();
+    this.emit("state.result.skipped", session, {
+      state: session.machine.state,
+      metadata: {
+        ...eventMetadata(options.metadata),
+        reason: options.reason,
+        currentState: options.currentState,
+        targetState: options.targetState,
+      },
+    });
+    return session;
+  }
+
+  async emitResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {
     const session = this.ensureSession();
     this.emit("resume.conflict", session, {
       state: session.machine.state,
       metadata: {
-        ...eventMetadata(options.metadata),
-        field: options.field,
-        recorded: options.recorded ?? null,
-        requested: options.requested ?? null,
+        field: conflict.field,
+        recorded: safeResumeConflictValue(conflict, conflict.recorded),
+        requested: safeResumeConflictValue(conflict, conflict.requested),
       },
     });
     return session;

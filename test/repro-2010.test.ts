@@ -235,11 +235,23 @@ require(${JSON.stringify(CLI_PATH)});
 `;
       const scriptPath = path.join(tmpDir, "repro.js");
       fs.writeFileSync(scriptPath, script);
+      // policy-list now preflights `docker info` to classify a Docker daemon
+      // outage (#4428); stub a healthy daemon so the gateway-unreachable
+      // fallback path stays hermetic on Dockerless/Docker-stopped runners.
+      const binDir = path.join(tmpDir, "bin");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(binDir, "docker"),
+        ["#!/usr/bin/env bash", 'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi', "exit 0"].join(
+          "\n",
+        ),
+        { mode: 0o755 },
+      );
       try {
         const result = spawnSync(process.execPath, [scriptPath], {
           cwd: REPO_ROOT,
           encoding: "utf-8",
-          env: { ...process.env, HOME: tmpDir },
+          env: { ...process.env, HOME: tmpDir, PATH: `${binDir}:${process.env.PATH || ""}` },
         });
         return (result.stdout || "") + (result.stderr || "");
       } finally {

@@ -20,6 +20,8 @@
       "scripts/**/*.mjs",
       "scripts/**/*.ts",
       "test/**/*.js",
+      "test/credentials-shim.test.ts",
+      "test/runner-basic.test.ts",
       "docs/_ext/**/*.js",
       "nemoclaw/src/**/*.ts",
       "!dist",
@@ -95,6 +97,8 @@
         "scripts/**/*.js",
         "scripts/**/*.mjs",
         "test/**/*.js",
+        "test/credentials-shim.test.ts",
+        "test/runner-basic.test.ts",
         "docs/_ext/**/*.js"
       ],
       "linter": {

@@ -112,18 +112,24 @@ childProcess.spawn = (...args) => {
   return child;
 };
 
-const { createSandbox } = require(${onboardPath});
+const { createSandbox, setupMessagingChannels } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token-value";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token-value";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token-value";
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   process.env.KUBECONFIG = "/tmp/host-kubeconfig";
   process.env.SSH_AUTH_SOCK = "/tmp/host-ssh-agent.sock";
+  await setupMessagingChannels(null, null, "my-assistant");
   const sandboxName = await createSandbox(null, "gpt-5.4");
-  console.log(JSON.stringify({ sandboxName, commands }));
+  console.log(JSON.stringify({
+    sandboxName,
+    commands,
+    messagingPlanEnv: process.env.NEMOCLAW_MESSAGING_PLAN_B64,
+  }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -205,6 +211,19 @@ const { createSandbox } = require(${onboardPath});
       assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
       assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
       assert.doesNotMatch(createCommand.command, /SLACK_APP_TOKEN=/);
+      assert.doesNotMatch(createCommand.command, /NEMOCLAW_MESSAGING_PLAN_B64=/);
+
+      assert.ok(payload.messagingPlanEnv, "expected serialized messaging plan in host process env");
+      const messagingPlan = JSON.parse(
+        Buffer.from(payload.messagingPlanEnv, "base64").toString("utf8"),
+      );
+      assert.equal(messagingPlan.sandboxName, "my-assistant");
+      assert.deepEqual(
+        messagingPlan.channels.map((channel: { channelId: string }) => channel.channelId).sort(),
+        ["discord", "slack", "telegram"].sort(),
+      );
+      assert.doesNotMatch(JSON.stringify(messagingPlan), /test-discord-token-value/);
+      assert.doesNotMatch(JSON.stringify(messagingPlan), /123456:ABC-test-telegram-token/);
 
       // Verify blocked credentials are NOT in the sandbox spawn environment
       assert.ok(createCommand.env, "expected env to be captured from spawn call");
@@ -1244,6 +1263,7 @@ const { createSandbox } = require(${onboardPath});
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.DISCORD_BOT_TOKEN = "test-discord-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
+  process.env.SLACK_APP_TOKEN = "xapp-test-slack-token";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -1581,7 +1601,6 @@ const { createSandbox } = require(${onboardPath});
       const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1594,17 +1613,13 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 runner.run = () => ({ status: 0 });
 runner.runCapture = () => "";
 
-// Stub the Telegram reachability probe so this test doesn't make a real network
-// call — on networks where api.telegram.org is blocked, the non-interactive
-// preflight would otherwise abort the test.
-const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
+// Stub the manifest-driven Telegram reachability hook so this test does not
+// make a real network call.
+global.fetch = async () => ({
   ok: true,
-  httpStatus: 200,
-  curlStatus: 0,
-  body: '{"ok":true,"result":{"id":1,"is_bot":true}}',
-  stderr: "",
-  message: "",
+  status: 200,
+  json: async () => ({ ok: true, result: { id: 1, is_bot: true } }),
+  text: async () => "",
 });
 
 const { setupMessagingChannels } = require(${onboardPath});
@@ -1613,6 +1628,8 @@ const { setupMessagingChannels } = require(${onboardPath});
   // Only set telegram and slack tokens — discord should be absent
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
+  process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token";
+  process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   const result = await setupMessagingChannels();
   console.log(JSON.stringify(result));
 })().catch((error) => {
@@ -1641,6 +1658,91 @@ const { setupMessagingChannels } = require(${onboardPath});
       assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
       assert.ok(channels.includes("slack"), "expected slack in returned channels");
       assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
+    },
+  );
+
+  it(
+    "non-interactive setupMessagingChannels drops Slack when live Slack API validation rejects the token",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "messaging-slack-live-reject.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"));
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+runner.run = () => ({ status: 0 });
+runner.runCapture = () => "";
+
+const httpProbe = require(${httpProbePath});
+httpProbe.runCurlProbe = (argv) => {
+  const url = argv[argv.length - 1] || "";
+  if (String(url).includes("auth.test")) {
+    return {
+      ok: true,
+      httpStatus: 200,
+      curlStatus: 0,
+      body: '{"ok":false,"error":"invalid_auth"}',
+      stderr: "",
+      message: "",
+    };
+  }
+  return {
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: '{"ok":true}',
+    stderr: "",
+    message: "",
+  };
+};
+
+const { setupMessagingChannels } = require(${onboardPath});
+
+(async () => {
+  delete process.env.TELEGRAM_BOT_TOKEN;
+  delete process.env.DISCORD_BOT_TOKEN;
+  process.env.SLACK_BOT_TOKEN = "xoxb-fake-bot-token";
+  process.env.SLACK_APP_TOKEN = "xapp-fake-app-token";
+  const result = await setupMessagingChannels();
+  console.log(JSON.stringify(result));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const channels = parseStdoutJson<string[]>(result.stdout);
+
+      assert.ok(Array.isArray(channels), "expected an array return value");
+      assert.ok(!channels.includes("slack"), "Slack should be dropped after API rejection");
+      assert.doesNotMatch(result.stdout, /xoxb-fake-bot-token/);
+      assert.doesNotMatch(result.stderr, /xoxb-fake-bot-token/);
     },
   );
 
@@ -1675,6 +1777,7 @@ const { setupMessagingChannels } = require(${onboardPath});
   delete process.env.TELEGRAM_BOT_TOKEN;
   delete process.env.DISCORD_BOT_TOKEN;
   delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
   const result = await setupMessagingChannels();
   console.log(JSON.stringify(result));
 })().catch((error) => {
@@ -1695,6 +1798,7 @@ const { setupMessagingChannels } = require(${onboardPath});
           TELEGRAM_BOT_TOKEN: "",
           DISCORD_BOT_TOKEN: "",
           SLACK_BOT_TOKEN: "",
+          SLACK_APP_TOKEN: "",
         },
       });
 
@@ -1912,12 +2016,9 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
         !out.result.includes("slack"),
         `slack should have been dropped after invalid app token; got ${JSON.stringify(out.result)}`,
       );
-      // Bot token is persisted before the app-token prompt — that's fine, the
-      // user can retry later and the pre-saved bot token will light up as
-      // "already configured" on the next onboard.
       assert.ok(
-        out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
-        `SLACK_BOT_TOKEN should have been persisted (valid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
+        `SLACK_BOT_TOKEN should NOT be persisted until the app token also passes; saveCalls=${JSON.stringify(out.saveCalls)}`,
       );
       assert.ok(
         !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_APP_TOKEN"),

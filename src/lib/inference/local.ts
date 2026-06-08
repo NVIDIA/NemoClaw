@@ -10,8 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -23,6 +23,9 @@ import {
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
 import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import {
+  applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels,
+} from "./vllm-runtime-context";
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
@@ -39,11 +42,10 @@ import {
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
 
-const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
-const { dockerInfo } = require("../adapters/docker/info");
+const { containerCanReachHostLoopback, isWsl } = require("../platform");
+const { detectContainerRuntimeFromDockerInfo } =
+  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
 const { detectNvidiaPlatform } = require("./nim");
-
-const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -54,9 +56,7 @@ const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(
-    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
-  ) as ContainerRuntime;
+  const runtime = detectContainerRuntimeFromDockerInfo();
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
@@ -173,12 +173,40 @@ export interface GpuInfo {
   // Absent => the selector falls back to `totalMemoryMB`, preserving the
   // previous behaviour.
   availableMemoryMB?: number;
+  /**
+   * `true` for integrated/iGPU class devices whose token-generation throughput
+   * is too low to clear agent-loop timeouts on 30B-class models, even when
+   * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
+   * platforms. Drives the `computeIntensive` exclusion in the bootstrap-model
+   * selector so compute-constrained hosts are not steered onto 30B+ tags.
+   */
+  computeConstrained?: boolean;
 }
 
 export interface ValidationResult {
   ok: boolean;
   message?: string;
   diagnostic?: string;
+  /**
+   * Set when the failure points at the Ollama daemon / model runner itself,
+   * not the chosen model. Callers escape the Ollama-model loop instead of
+   * asking for another tag that would hit the same failure. (#4365)
+   */
+  daemonFailure?: boolean;
+}
+
+/**
+ * Recognises Ollama probe errors that mean the daemon's model runner crashed,
+ * stopped, or otherwise died (rather than the chosen model being unsuitable).
+ * Picking a different model would loop on the same failure, so the wizard
+ * escapes back to provider selection. (#4365)
+ */
+export function isOllamaRunnerCrash(errText: string | null | undefined): boolean {
+  const text = String(errText || "");
+  if (!text) return false;
+  return /\brunner\b[\s\S]{0,80}\b(?:stopped|terminated|crashed|exited|died|killed)\b/i.test(
+    text,
+  );
 }
 
 export interface LocalProviderHealthStatus {
@@ -327,7 +355,7 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderHealthEndpoint(provider);
-  return endpoint ? ["curl", "-sf", endpoint] : null;
+  return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
 }
 
 export function getLocalProviderLabel(provider: string): string | null {
@@ -755,6 +783,13 @@ export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
   applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
 }
 
+export function applyVllmRuntimeContextWindow(
+  modelsResponse: unknown,
+  modelId: string | null | undefined,
+): void {
+  applyVllmRuntimeContextWindowFromModels(modelsResponse, modelId);
+}
+
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
   const observed: string[] = [];
   if (status.processor) observed.push(`processor=${status.processor}`);
@@ -773,12 +808,14 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const tagsOutput = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -912,12 +949,23 @@ export function getOllamaProbeCommand(
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
+  buildValidatedCurlCommandArgs([
+    "-sS",
+    "--max-time",
+    String(timeoutSeconds),
+    "-H",
+    "Content-Type: application/json",
+    "-d",
+    payload,
+    endpoint,
+  ]);
   return [
     "curl",
     "-sS",
     "--max-time",
     String(timeoutSeconds),
-    `http://${host}:${OLLAMA_PORT}/api/generate`,
+    endpoint,
     "-H",
     "Content-Type: application/json",
     "-d",
@@ -939,10 +987,13 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
-  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
-  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
-  // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (sparkHost && probeResult.timedOut) {
+  // Cold-loading a large model from disk can routinely exceed the default 120 s
+  // probe window — on DGX Spark unified-memory hosts (#3251) and also on
+  // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
+  // during warm-up. Retry once with a 300 s budget whenever the initial probe
+  // genuinely timed out. Fast failures (connection refused, Ollama not running)
+  // keep `timedOut === false` and surface immediately.
+  if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
   }
@@ -998,6 +1049,7 @@ export function validateOllamaModel(
         return {
           ok: false,
           message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+          ...(isOllamaRunnerCrash(errText) ? { daemonFailure: true } : {}),
         };
       }
     }

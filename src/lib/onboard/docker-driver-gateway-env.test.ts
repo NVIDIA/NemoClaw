@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildDockerDriverGatewayEnv,
   buildDockerGatewayDebEnvFile,
+  startPackageManagedDockerDriverGatewayWithEnvOverride,
   writeDockerGatewayDebEnvOverride,
 } from "./docker-driver-gateway-env";
 
@@ -127,19 +128,87 @@ describe("writeDockerGatewayDebEnvOverride", () => {
 
     const existsSpy = vi
       .spyOn(fs, "existsSync")
-      .mockImplementation((candidate) => candidate === "/usr/bin/openshell-gateway");
+      .mockImplementation((candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service");
     const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
 
     try {
-      writeDockerGatewayDebEnvOverride(() => ({
+      const wrote = writeDockerGatewayDebEnvOverride(() => ({
         OPENSHELL_BIND_ADDRESS: "127.0.0.1",
-      }));
+      }), { platform: "linux" });
 
       const envFileContent = fs.readFileSync(envFile, "utf-8");
+      expect(wrote).toBe(true);
       expect(fs.statSync(envDir).mode & 0o777).toBe(0o700);
       expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
       expect(envFileContent).toContain("KEEP_ME=1\n");
       expect(envFileContent).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
+    } finally {
+      existsSpy.mockRestore();
+      homedirSpy.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write service env for standalone gateway binaries", () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation((candidate) => candidate === "/usr/bin/openshell-gateway");
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      const wrote = writeDockerGatewayDebEnvOverride(
+        () => ({
+          OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        }),
+        { platform: "linux" },
+      );
+
+      expect(wrote).toBe(false);
+      expect(fs.existsSync(path.join(tempHome, ".config", "openshell", "gateway.env"))).toBe(false);
+    } finally {
+      existsSpy.mockRestore();
+      homedirSpy.mockRestore();
+      fs.rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the service env only when package-managed startup prepares the service", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
+    const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+    const existsSpy = vi
+      .spyOn(fs, "existsSync")
+      .mockImplementation(
+        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+      );
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
+
+    try {
+      await expect(
+        startPackageManagedDockerDriverGatewayWithEnvOverride({
+          clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+          exitOnFailure: false,
+          gatewayEnv: { OPENSHELL_BIND_ADDRESS: "127.0.0.1" },
+          gatewayName: "nemoclaw",
+          hasOpenShellGatewayUserService: () => true,
+          isDockerDriverGatewayReady: async () => true,
+          registerDockerDriverGatewayEndpoint: () => true,
+          runCaptureOpenshell: (args) =>
+            args[0] === "status"
+              ? "Gateway: nemoclaw\nConnected"
+              : "Gateway: nemoclaw\nGateway endpoint: https://127.0.0.1:8080/",
+          skipSandboxBridgeReachability: false,
+          startOpenShellGatewayUserService: (opts) => {
+            opts?.prepareServiceEnv?.();
+            return { attempted: true, fallbackAllowed: false, started: true };
+          },
+          verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
+        }),
+      ).resolves.toBe(true);
+
+      expect(fs.readFileSync(envFile, "utf-8")).toContain(
+        "OPENSHELL_BIND_ADDRESS=127.0.0.1\n",
+      );
     } finally {
       existsSpy.mockRestore();
       homedirSpy.mockRestore();

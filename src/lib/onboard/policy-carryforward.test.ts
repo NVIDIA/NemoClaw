@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { decidePolicyCarryForward, shouldCarryPreviousPolicies } from "./policy-carryforward";
+import {
+  decidePolicyCarryForward,
+  decideReusePolicyPresets,
+  shouldCarryPreviousPolicies,
+} from "./policy-carryforward";
 
 describe("shouldCarryPreviousPolicies (#2675)", () => {
   it("drops previous policies when NEMOCLAW_POLICY_PRESETS overrides on recreate", () => {
@@ -68,5 +72,51 @@ describe("decidePolicyCarryForward (#2675)", () => {
     const decision = decidePolicyCarryForward(["npm"], {}, true);
     expect(decision.newPresets).toEqual(["npm"]);
     expect(decision.overrideNote).toBeNull();
+  });
+});
+
+describe("decideReusePolicyPresets (#4621)", () => {
+  it("carries the recorded selection forward on reuse", () => {
+    expect(decideReusePolicyPresets(["dns", "github"], {}, false)).toEqual(["dns", "github"]);
+  });
+
+  it("preserves an intentionally-empty selection (Restricted tier) as []", () => {
+    // decidePolicyCarryForward would collapse this to null and re-prompt Balanced.
+    expect(decideReusePolicyPresets([], {}, false)).toEqual([]);
+    expect(decideReusePolicyPresets([], {}, true)).toEqual([]);
+  });
+
+  it("returns null when there is no recorded policy state", () => {
+    expect(decideReusePolicyPresets(null, {}, false)).toBeNull();
+    expect(decideReusePolicyPresets(undefined, {}, true)).toBeNull();
+  });
+
+  it("preserves custom preset names alongside built-ins", () => {
+    expect(decideReusePolicyPresets(["github", "my-custom"], {}, false)).toEqual([
+      "github",
+      "my-custom",
+    ]);
+  });
+
+  it("defers to a non-interactive NEMOCLAW_POLICY_PRESETS override", () => {
+    expect(decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_PRESETS: "pypi" }, true)).toBeNull();
+    expect(decideReusePolicyPresets([], { NEMOCLAW_POLICY_PRESETS: "pypi" }, true)).toBeNull();
+  });
+
+  it("defers to a non-interactive explicit NEMOCLAW_POLICY_MODE override", () => {
+    expect(decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_MODE: "skip" }, true)).toBeNull();
+    expect(decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_MODE: "custom" }, true)).toBeNull();
+  });
+
+  it("ignores env overrides in interactive mode (recorded selection wins)", () => {
+    expect(
+      decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_PRESETS: "pypi" }, false),
+    ).toEqual(["dns"]);
+  });
+
+  it("carries the recorded selection under implicit non-interactive modes", () => {
+    expect(decideReusePolicyPresets(["dns"], { NEMOCLAW_POLICY_MODE: "suggested" }, true)).toEqual([
+      "dns",
+    ]);
   });
 });

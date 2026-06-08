@@ -29,14 +29,32 @@ export interface OllamaModelEntry {
   tag: string;
   requiredMemoryMB: number;
   downloadSizeBytes: number;
+  /**
+   * `true` for entries whose token-generation throughput on integrated GPUs
+   * (Jetson, Windows-on-ARM iGPU) is too low to be useful under agent-loop
+   * timeouts even when memory ostensibly fits. Compute-constrained hosts
+   * skip these entries during bootstrap-model selection regardless of the
+   * `requiredMemoryMB` headroom check.
+   */
+  computeIntensive?: boolean;
 }
 
 // Largest first. The selector walks this list, filters by available memory,
 // and reverses the result so menus render smallest-first.
 export const OLLAMA_MODEL_REGISTRY: readonly OllamaModelEntry[] = [
-  { tag: "qwen3.6:35b", requiredMemoryMB: 26_000, downloadSizeBytes: 24_000_000_000 },
-  { tag: "nemotron-3-nano:30b", requiredMemoryMB: 22_000, downloadSizeBytes: 19_000_000_000 },
-  { tag: "qwen2.5:7b", requiredMemoryMB: 8_000, downloadSizeBytes: 4_683_073_184 },
+  {
+    tag: "qwen3.6:35b",
+    requiredMemoryMB: 30_000,
+    downloadSizeBytes: 24_000_000_000,
+    computeIntensive: true,
+  },
+  {
+    tag: "nemotron-3-nano:30b",
+    requiredMemoryMB: 26_000,
+    downloadSizeBytes: 19_000_000_000,
+    computeIntensive: true,
+  },
+  { tag: "qwen3.5:9b", requiredMemoryMB: 12_000, downloadSizeBytes: 6_600_000_000 },
 ];
 
 export const SMALLEST_OLLAMA_MODEL_TAG =
@@ -76,6 +94,7 @@ export function effectiveGpuMemoryMB(gpu: GpuInfo | null): number | null {
 export function modelFitsAvailableMemory(tag: string, gpu: GpuInfo | null): boolean {
   const entry = findOllamaModelEntry(tag);
   if (!entry) return true;
+  if (entry.computeIntensive && gpu?.computeConstrained === true) return false;
   const memory = effectiveGpuMemoryMB(gpu);
   if (memory == null) return true;
   return entry.requiredMemoryMB <= memory;
@@ -101,8 +120,12 @@ export function fittableOllamaModelTags(gpu: GpuInfo | null): string[] {
   }
   const memory = effectiveGpuMemoryMB(gpu);
   if (memory == null) return fallback;
+  const computeConstrained = gpu.computeConstrained === true;
   const fitting = OLLAMA_MODEL_REGISTRY.filter(
-    (entry) => entry.requiredMemoryMB <= memory && entry.tag !== SMALLEST_OLLAMA_MODEL_TAG,
+    (entry) =>
+      entry.requiredMemoryMB <= memory &&
+      entry.tag !== SMALLEST_OLLAMA_MODEL_TAG &&
+      !(computeConstrained && entry.computeIntensive),
   );
   if (fitting.length === 0) return fallback;
   return [SMALLEST_OLLAMA_MODEL_TAG, ...fitting.map((entry) => entry.tag).reverse()];
@@ -120,7 +143,11 @@ export function anyRegistryModelFits(gpu: GpuInfo | null): boolean {
   if (!gpu || (gpu.type !== "nvidia" && gpu.type !== "apple")) return true;
   const memory = effectiveGpuMemoryMB(gpu);
   if (memory == null) return true;
-  return OLLAMA_MODEL_REGISTRY.some((entry) => entry.requiredMemoryMB <= memory);
+  const computeConstrained = gpu.computeConstrained === true;
+  return OLLAMA_MODEL_REGISTRY.some(
+    (entry) =>
+      entry.requiredMemoryMB <= memory && !(computeConstrained && entry.computeIntensive),
+  );
 }
 
 /**
