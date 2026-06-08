@@ -27,17 +27,6 @@ export type ChannelConflictRequest =
 export interface ConflictRegistryEntry {
   readonly name: string;
   readonly messaging?: { readonly plan: SandboxMessagingPlan } | null;
-  /**
-   * Deprecated pre-plan registry field. Conflict detection reads this only as a
-   * fail-closed compatibility signal for sandboxes persisted before
-   * `messaging.plan` existed; new code must not write it.
-   */
-  readonly messagingChannels?: readonly string[] | null;
-  /**
-   * Deprecated pre-plan registry field. Used only to avoid warning on stopped
-   * legacy channels while old registry rows are still possible.
-   */
-  readonly disabledChannels?: readonly string[] | null;
 }
 
 export interface ConflictRegistry {
