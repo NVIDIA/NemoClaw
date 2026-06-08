@@ -723,8 +723,7 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
     if (hostsOutput) {
       const gwLine = hostsOutput.split(/\r?\n/).find((l: string) => l.includes("host.openshell.internal"));
       if (gwLine) {
-        const ip = gwLine.trim().split(/\s+/)[0];
-        parts.push(`host-gateway resolved to: ${ip}`);
+        parts.push(`host-gateway resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
       }
     }
     parts.push(`Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times over ~${(CONTAINER_CHECK_MAX_ATTEMPTS - 1) * CONTAINER_CHECK_RETRY_DELAY_SECS}s`);

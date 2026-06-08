@@ -13,17 +13,16 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../../runtime/lib/context.sh
 . "${LIB_DIR}/context.sh"
+# shellcheck source=../../sandbox-exec.sh
+. "${SCRIPT_DIR}/../../sandbox-exec.sh"
 
 echo "inference:models-health"
 e2e_context_require E2E_SANDBOX_NAME
 
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would GET inference.local/v1/models from inside the sandbox"
-  exit 0
-fi
-
 name="$(e2e_context_get E2E_SANDBOX_NAME)"
-body="$(openshell sandbox exec --name "${name}" -- curl -fsS --max-time 30 "https://inference.local/v1/models")"
+# Orchestrator step cap is 30s; wrapper default 25s applies. Inner curl
+# --max-time keeps a hung HTTP read from consuming the whole budget.
+body="$(e2e_sandbox_exec "${name}" -- curl -fsS --max-time 20 "https://inference.local/v1/models")"
 if [[ -z "${body}" ]]; then
   echo "inference:models-health: no response from models endpoint" >&2
   exit 1

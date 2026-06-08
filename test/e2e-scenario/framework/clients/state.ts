@@ -8,8 +8,11 @@ export class StateClient {
     try {
       await fs.access(filePath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        return false;
+      }
+      throw error;
     }
   }
 
@@ -20,4 +23,12 @@ export class StateClient {
   async readJson<T = unknown>(filePath: string): Promise<T> {
     return JSON.parse(await this.readText(filePath)) as T;
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }

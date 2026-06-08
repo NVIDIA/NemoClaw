@@ -95,8 +95,9 @@ jobs:
           "run-scenario job must use the resolved runner output",
           "run-scenario job missing step: Run typed scenarios in WSL",
           "artifact upload name must include the scenarios input",
-          "artifact upload must include hidden .e2e files",
-          "artifact upload path must include .e2e/",
+          "artifact upload must set include-hidden-files: false (raw context.env must not leak)",
+          "artifact upload path must include .e2e/actions/ (redacted action evidence)",
+          "artifact upload path must include .e2e/logs/ (redacted shell-step evidence)",
         ]),
       );
     } finally {

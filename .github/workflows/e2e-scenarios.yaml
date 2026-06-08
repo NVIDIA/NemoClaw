@@ -63,6 +63,7 @@ jobs:
             [ubuntu-gateway-port-conflict-negative]=ubuntu-latest
             [ubuntu-invalid-nvidia-key-negative]=ubuntu-latest
             [ubuntu-no-docker-preflight-negative]=ubuntu-latest
+            [ubuntu-rebuild-openclaw]=ubuntu-latest
             [ubuntu-repo-cloud-hermes]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-discord]=ubuntu-latest
             [ubuntu-repo-cloud-hermes-slack]=ubuntu-latest
@@ -84,7 +85,6 @@ jobs:
           for raw in "${IDS[@]}"; do
             id="${raw//[[:space:]]/}"
             [ -n "${id}" ] || continue
-            npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${id}" --plan-only >/dev/null
             runner="${ROUTES[$id]:-}"
             if [ -z "${runner}" ]; then
               echo "::error::No runner route for scenario: ${id}" >&2
@@ -138,7 +138,7 @@ jobs:
             echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
             exit 1
           fi
-          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}"
 
       - name: Resolve workspace paths for WSL
         if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
@@ -302,7 +302,7 @@ jobs:
           export E2E_CONTEXT_DIR="`$workdir"
           npm ci --ignore-scripts
           set +e
-          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios" --dry-run
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios"
           status=`$?
           if [ -d "`$workdir/.e2e" ]; then
             rm -rf "`$checkout_dir/.e2e"
@@ -324,14 +324,14 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Append typed dry-run summary
+      - name: Append typed scenario summary
         if: always()
         shell: bash
         run: |
           {
-            echo '## E2E typed scenario dry-run'
+            echo '## E2E typed scenario run'
             echo ''
-            echo 'Mode: `test/e2e-scenario/scenarios/run.ts --dry-run`.'
+            echo 'Mode: `test/e2e-scenario/scenarios/run.ts --scenarios <id[,id...]>` (live).'
             echo ''
             if [ -f .e2e/run-plan.json ]; then
               python3 - <<'PY'
@@ -368,14 +368,25 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}
+          # Explicit subpath list, NOT a blanket .e2e/ + hidden files.
+          # The framework redacts every byte that flows from spawned
+          # children into actions/*.log, logs/*.log, and onboard.log via
+          # orchestrators/redaction.ts::pipeRedacted. Anything outside
+          # the listed paths (notably the raw context.env file) is
+          # excluded so secret-bearing key=value lines cannot leak via
+          # the artifact even if a future helper writes there.
+          # Diagnostic dumps of context use e2e_context_dump, which
+          # redacts on emit (runtime/lib/context.sh).
           path: |
             .e2e/run-plan.json
             .e2e/plan.txt
             .e2e/environment.result.json
             .e2e/onboarding.result.json
             .e2e/runtime.result.json
-            .e2e/
+            .e2e/actions/
+            .e2e/logs/
+            .e2e/onboard.log
             test/e2e/logs/
           if-no-files-found: warn
           retention-days: 14
-          include-hidden-files: true
+          include-hidden-files: false

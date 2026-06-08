@@ -27,39 +27,56 @@ export interface E2EScenarioFixtures {
   state: StateClient;
 }
 
-export const test = base
-  .extend("artifacts", async ({ task }, { onCleanup }) => {
+export const test = base.extend<E2EScenarioFixtures>({
+  artifacts: async ({ task }, use) => {
     const artifacts = createArtifactSink(task.name);
     await artifacts.ensureRoot();
-    onCleanup(async () => {
+    try {
+      await use(artifacts);
+    } finally {
       await artifacts.writeJson("artifact-summary.json", {
         test: task.name,
         rootDir: artifacts.rootDir,
       });
-    });
-    return artifacts;
-  })
-  .extend("cleanup", async ({ artifacts }, { onCleanup }) => {
-    const cleanup = new CleanupRegistry();
-    onCleanup(async () => {
+    }
+  },
+  secrets: async ({ skip }, use) => {
+    await use(new SecretStore(process.env, skip));
+  },
+  cleanup: async ({ artifacts, secrets }, use) => {
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text));
+    try {
+      await use(cleanup);
+    } finally {
       const result = await cleanup.runAll();
       await artifacts.writeJson("cleanup.json", result);
       assertCleanupPassed(result);
-    });
-    return cleanup;
-  })
-  .extend("secrets", async ({ skip }) => new SecretStore(process.env, skip))
-  .extend("shellProbe", async ({ artifacts, secrets, signal }) => {
-    return new ShellProbe({
-      artifacts,
-      redact: (text, extraValues) => secrets.redact(text, extraValues),
-      signal,
-    });
-  })
-  .extend("host", async ({ shellProbe }) => new HostCliClient(shellProbe))
-  .extend("gateway", async ({ host }) => new GatewayClient(host))
-  .extend("sandbox", async ({ shellProbe }) => new SandboxClient(shellProbe))
-  .extend("provider", async ({ shellProbe }) => new ProviderClient(shellProbe))
-  .extend("state", async () => new StateClient());
+    }
+  },
+  shellProbe: async ({ artifacts, secrets, signal }, use) => {
+    await use(
+      new ShellProbe({
+        artifacts,
+        redact: (text, extraValues) => secrets.redact(text, extraValues),
+        signal,
+      }),
+    );
+  },
+  host: async ({ shellProbe }, use) => {
+    await use(new HostCliClient(shellProbe));
+  },
+  gateway: async ({ host }, use) => {
+    await use(new GatewayClient(host));
+  },
+  sandbox: async ({ shellProbe }, use) => {
+    await use(new SandboxClient(shellProbe));
+  },
+  provider: async ({ shellProbe }, use) => {
+    await use(new ProviderClient(shellProbe));
+  },
+  state: async ({}, use) => {
+    await use(new StateClient());
+  },
+});
 
 export { expect };

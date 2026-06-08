@@ -31,10 +31,6 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../runtime/lib" && pwd)"
 
 echo "hermes-specific:history-writable"
 e2e_context_require E2E_AGENT E2E_SANDBOX_NAME
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would probe /sandbox/.hermes/.hermes_history writability under shields up/down"
-  exit 0
-fi
 
 agent="$(e2e_context_get E2E_AGENT)"
 if [[ "${agent}" != "hermes" ]]; then

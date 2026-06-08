@@ -6,13 +6,40 @@ import { spawn } from "node:child_process";
 import type { ArtifactSink } from "./artifacts.ts";
 import { redactText } from "./secrets.ts";
 
+/**
+ * Bridge-only host shell probe for the Vitest fixture migration.
+ *
+ * The end state is a shared spawn/evidence helper consumed by both this
+ * fixture layer and scenarios/orchestrators; #4988 tracks that consolidation.
+ * Until it lands, this probe mirrors the hardened shell boundary: trusted
+ * descriptors, NUL-byte rejection, explicit env by default, canonical
+ * redaction, and detached process-group termination for timeout/abort cleanup.
+ */
+
 export interface ShellProbeRunOptions {
-  args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  inheritEnv?: boolean;
   timeoutMs?: number;
+  killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+}
+
+const trustedShellCommandBrand: unique symbol = Symbol("TrustedShellCommand");
+
+export interface TrustedShellCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly reason: string;
+  readonly [trustedShellCommandBrand]: true;
+}
+
+export interface TrustedShellCommandInput {
+  command: string;
+  args?: string[];
+  reason: string;
+  validate?: (command: string, args: readonly string[]) => void;
 }
 
 export interface ShellProbeResult {
@@ -36,15 +63,61 @@ export interface ShellProbeDeps {
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_KILL_GRACE_MS = 1_000;
 
-function safeArtifactBase(command: string, explicitName?: string): string {
-  const raw = explicitName ?? command;
+function safeArtifactBase(raw: string): string {
   const safe = raw
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return safe || "shell-probe";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function redactedError(error: unknown, message: string): Error {
+  const next = new Error(message);
+  if (error instanceof Error) {
+    next.name = error.name;
+  }
+  return next;
+}
+
+function validateShellToken(value: string, label: string): string {
+  if (value.includes("\0")) {
+    throw new Error(`shell probe ${label} cannot contain NUL bytes`);
+  }
+  return value;
+}
+
+/**
+ * Declares a shell command as trusted at the fixture/helper boundary.
+ *
+ * Build descriptors from constants or typed fixture helpers. Do not pass
+ * scenario, manifest, PR, or other untrusted values as the executable command.
+ * Put command-specific argument validation in `validate` when arguments include
+ * values derived from scenario data.
+ */
+export function trustedShellCommand(input: TrustedShellCommandInput): TrustedShellCommand {
+  const command = validateShellToken(input.command.trim(), "command");
+  if (!command) {
+    throw new Error("shell probe command is required");
+  }
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("shell probe trusted command reason is required");
+  }
+  const args = (input.args ?? []).map((arg) => validateShellToken(arg, "argument"));
+  input.validate?.(command, args);
+  return {
+    command,
+    args,
+    reason,
+    [trustedShellCommandBrand]: true,
+  };
 }
 
 export class ShellProbe {
@@ -58,18 +131,27 @@ export class ShellProbe {
     this.signal = deps.signal;
   }
 
-  async run(command: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    if (!command.trim()) {
-      throw new Error("shell probe command is required");
-    }
-
-    const args = options.args ?? [];
+  async run(trustedCommand: TrustedShellCommand, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    const command = trustedCommand.command;
+    const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+    const redactionValues = options.redactionValues ?? [];
+    const redactProbeText = (text: string) => this.redact(redactText(text, redactionValues));
+    const redactedCommand = [command, ...args].map(redactProbeText);
+    const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
+    const writeArtifacts = async (result: Omit<ShellProbeResult, "artifacts">): Promise<ShellProbeResult["artifacts"]> => ({
+      stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
+      stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
+      result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
+    });
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env ?? {}) },
+      detached: true,
+      env: options.inheritEnv ? { ...process.env, ...(options.env ?? {}) } : { ...(options.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const pgid = child.pid;
 
     let stdout = "";
     let stderr = "";
@@ -84,42 +166,89 @@ export class ShellProbe {
       stderr += chunk;
     });
 
+    let killTimer: NodeJS.Timeout | undefined;
+    let terminationStarted = false;
+    const signalProcessGroup = (signal: NodeJS.Signals) => {
+      if (typeof pgid === "number") {
+        try {
+          process.kill(-pgid, signal);
+          return;
+        } catch {
+          /* fall back to the leader below */
+        }
+      }
+      try {
+        child.kill(signal);
+      } catch {
+        /* already gone */
+      }
+    };
+    const terminate = () => {
+      terminationStarted = true;
+      signalProcessGroup("SIGTERM");
+      if (killTimer) clearTimeout(killTimer);
+      killTimer = setTimeout(() => {
+        signalProcessGroup("SIGKILL");
+      }, killGraceMs);
+      killTimer.unref();
+    };
     const abort = () => {
-      child.kill("SIGTERM");
+      terminate();
     };
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      terminate();
     }, timeoutMs);
-    this.signal.addEventListener("abort", abort, { once: true });
+    if (this.signal.aborted) {
+      abort();
+    } else {
+      this.signal.addEventListener("abort", abort, { once: true });
+    }
 
-    const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
+    let childResult: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let childError: unknown;
+    try {
+      childResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
         child.on("error", reject);
         child.on("close", (code, signal) => resolve({ code, signal }));
-      },
-    );
+      });
+    } catch (error) {
+      childError = error;
+    } finally {
+      clearTimeout(timeout);
+      if (killTimer && !terminationStarted) clearTimeout(killTimer);
+      this.signal.removeEventListener("abort", abort);
+    }
 
-    clearTimeout(timeout);
-    this.signal.removeEventListener("abort", abort);
+    const redactedStdout = redactProbeText(stdout);
+    if (childError) {
+      const redactedMessage = redactProbeText(errorMessage(childError));
+      const redactedStderr = redactProbeText([stderr, redactedMessage].filter(Boolean).join("\n"));
+      await writeArtifacts({
+        command: redactedCommand,
+        exitCode: null,
+        signal: null,
+        timedOut,
+        stdout: redactedStdout,
+        stderr: redactedStderr,
+      });
+      throw redactedError(childError, redactedMessage);
+    }
 
-    const redactionValues = options.redactionValues ?? [];
-    const redactedStdout = this.redact(redactText(stdout, redactionValues));
-    const redactedStderr = this.redact(redactText(stderr, redactionValues));
-    const artifactBase = `shell/${safeArtifactBase(command, options.artifactName)}`;
+    if (!childResult) {
+      throw new Error("shell probe child process did not report a result");
+    }
+
+    const redactedStderr = redactProbeText(stderr);
     const result: Omit<ShellProbeResult, "artifacts"> = {
-      command: [command, ...args].map((part) => this.redact(redactText(part, redactionValues))),
-      exitCode: code,
-      signal,
+      command: redactedCommand,
+      exitCode: childResult.code,
+      signal: childResult.signal,
       timedOut,
       stdout: redactedStdout,
       stderr: redactedStderr,
     };
-    const artifacts = {
-      stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, redactedStdout),
-      stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, redactedStderr),
-      result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
-    };
+    const artifacts = await writeArtifacts(result);
     return { ...result, artifacts };
   }
 }

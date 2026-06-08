@@ -15,7 +15,6 @@ const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/install");
-const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e-scenario/runtime/run-scenario.sh");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", ["-c", script], {
@@ -61,51 +60,6 @@ describe("E2E shell helpers", () => {
     }
   });
 
-  it("test_should_emit_plan_only_checks_without_live_infrastructure", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-plan-"));
-    try {
-      const r = runBash(
-        `
-        set -euo pipefail
-        . "${RUNTIME_LIB}/context.sh"
-        . "${VALIDATION_SUITES}/lib/inference_routing.sh"
-        e2e_context_init
-        e2e_context_set E2E_SANDBOX_NAME sandbox-1
-        e2e_inference_routing_assert_chat_completion "post-onboard.inference-routing.inference-local-chat-completion"
-      `,
-        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
-      );
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout).toContain("post-onboard.inference-routing.inference-local-chat-completion");
-      expect(r.stdout).toMatch(/dry-run|plan/i);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("test_should_not_print_secret_values_in_helper_output", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-secret-"));
-    try {
-      const r = runBash(
-        `
-        set -euo pipefail
-        . "${RUNTIME_LIB}/context.sh"
-        . "${VALIDATION_SUITES}/lib/inference_routing.sh"
-        e2e_context_init
-        e2e_context_set E2E_SANDBOX_NAME sandbox-1
-        e2e_context_set E2E_PROVIDER_API_KEY super-secret-test-token
-        e2e_inference_routing_assert_auth_proxy "post-onboard.ollama-auth-proxy.authenticated-request-accepted" "valid"
-      `,
-        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
-      );
-      expect(r.status, r.stderr).toBe(0);
-      expect(r.stdout + r.stderr).not.toContain("super-secret-test-token");
-      expect(r.stdout + r.stderr).toMatch(/REDACTED|dry-run|plan/i);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
   it("security_policy_credentials_helper_should_load_with_context_library", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
     try {
@@ -117,7 +71,7 @@ describe("E2E shell helpers", () => {
         spc_require_context E2E_SCENARIO E2E_PROVIDER
         echo "provider=$(spc_context_get E2E_PROVIDER)"
         `,
-        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+        { E2E_CONTEXT_DIR: tmp },
       );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("provider=nvidia");
@@ -136,7 +90,7 @@ describe("E2E shell helpers", () => {
         . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
         spc_require_context E2E_PROVIDER
         `,
-        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+        { E2E_CONTEXT_DIR: tmp },
       );
       expect(r.status).not.toBe(0);
       expect(r.stderr).toContain("E2E_PROVIDER");
@@ -474,38 +428,6 @@ exit 0
     }
   });
 
-  it("scenario_dry_run_should_trace_helper_sequence_in_order", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-trace-"));
-    try {
-      const trace = path.join(tmp, "trace.log");
-      const r = spawnSync(
-        "bash",
-        [RUN_SCENARIO, "ubuntu-repo-cloud-openclaw", "--dry-run"],
-        {
-          env: {
-            ...process.env,
-            E2E_CONTEXT_DIR: tmp,
-            E2E_TRACE_FILE: trace,
-          },
-          encoding: "utf8",
-    timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
-          cwd: REPO_ROOT,
-        },
-      );
-      expect(r.status, r.stderr).toBe(0);
-      expect(fs.existsSync(trace), "trace log missing").toBe(true);
-      const contents = fs.readFileSync(trace, "utf8");
-      const order = ["env:noninteractive", "install:", "onboard:", "gateway:check", "sandbox:check"];
-      let pos = 0;
-      for (const marker of order) {
-        const idx = contents.indexOf(marker, pos);
-        expect(idx, `trace missing marker in order: ${marker}\nfull:\n${contents}`).toBeGreaterThanOrEqual(0);
-        pos = idx + marker.length;
-      }
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -600,6 +522,82 @@ describe("rebuild/upgrade validation helpers", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("policy_preset_check_should_match_endpoint_url_when_preset_name_absent", () => {
+    // The legacy assertion called `nemoclaw policy status` (a command
+    // that does not exist) and silently failed. The new assertion calls
+    // `openshell policy get --full <sandbox>` and matches preset names
+    // OR their well-known endpoint hostnames. Verify both paths: a
+    // policy output containing only endpoint URLs (no bare preset name)
+    // still passes, mirroring the behavior of the live gateway policy
+    // dump in test/e2e/test-rebuild-openclaw.sh.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-policy-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        fake_openshell() {
+          # Emit a minimal policy dump that contains the preset endpoint
+          # URLs but NOT the bare preset names. This is the realistic
+          # case: 'openshell policy get --full' renders network rules
+          # by hostname, not by preset label.
+          printf 'allow registry.npmjs.org\\nallow pypi.org\\n'
+        }
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_assert_policy_presets_preserved
+      `,
+        {
+          E2E_CONTEXT_DIR: tmp,
+          REBUILD_UPGRADE_OPENSHELL_CMD: "fake_openshell",
+          E2E_EXPECTED_POLICY_PRESETS: "npm pypi",
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("suite.rebuild.policy_presets_preserved");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("policy_preset_check_should_fail_with_diagnostic_when_preset_missing", () => {
+    // Negative case: when a declared preset is absent from the live
+    // policy dump, the assertion must fail AND emit a diagnostic line
+    // identifying the missing preset and showing the policy head. The
+    // original implementation failed silently because the underlying
+    // `nemoclaw policy status` command did not exist; the new
+    // implementation must produce actionable evidence.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-policy-miss-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        fake_openshell() {
+          # Policy dump missing 'pypi' entirely.
+          printf 'allow registry.npmjs.org\\n'
+        }
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_assert_policy_presets_preserved
+      `,
+        {
+          E2E_CONTEXT_DIR: tmp,
+          REBUILD_UPGRADE_OPENSHELL_CMD: "fake_openshell",
+          E2E_EXPECTED_POLICY_PRESETS: "npm pypi",
+        },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stdout + r.stderr).toMatch(/preset 'pypi' not in policy/);
+      expect(r.stdout + r.stderr).toMatch(/matchers: pypi/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Phase 1.A logging helpers", () => {
@@ -675,27 +673,14 @@ exec "$@"
         e2e_sandbox_exec sb1 -- false
         echo "rc=$?"
       `,
-        { PATH: `${bin}:${process.env.PATH}` },
+        // Force the openshell-direct transport so the stubbed openshell
+        // (which has no `sandbox ssh-config` subcommand) is exercised.
+        { PATH: `${bin}:${process.env.PATH}`, E2E_SANDBOX_EXEC_VIA_OPENSHELL: "1" },
       );
       expect(r.stdout).toMatch(/rc=1/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
-
-  it("sandbox_exec_should_dry_run_short_circuit_when_e2e_dry_run_set", () => {
-    // Use a PATH that has bash itself but no nemoclaw — dry-run must
-    // short-circuit before the CLI lookup.
-    const r = runBash(
-      `
-        set -euo pipefail
-        . "${VALIDATION_SUITES}/sandbox-exec.sh"
-        e2e_sandbox_exec sb1 -- rm -rf /
-      `,
-      { E2E_DRY_RUN: "1", PATH: "/usr/bin:/bin" },
-    );
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/dry[- ]run/i);
   });
 
   it("sandbox_exec_stdin_should_quote_args_safely_when_piped", () => {
@@ -717,11 +702,121 @@ exec "$@"
           . "${VALIDATION_SUITES}/sandbox-exec.sh"
           printf 'hello $TOKEN' | e2e_sandbox_exec_stdin sb1 -- cat
         `,
-        { PATH: `${bin}:${process.env.PATH}`, TOKEN: "SHOULD_NOT_EXPAND" },
+        {
+          PATH: `${bin}:${process.env.PATH}`,
+          TOKEN: "SHOULD_NOT_EXPAND",
+          // Stub only handles the openshell-direct transport.
+          E2E_SANDBOX_EXEC_VIA_OPENSHELL: "1",
+        },
       );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("hello $TOKEN");
       expect(r.stdout).not.toContain("SHOULD_NOT_EXPAND");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox_exec_should_prefer_ssh_config_transport_when_openshell_offers_one", () => {
+    // Verify the new default: when `openshell sandbox ssh-config <name>`
+    // succeeds, the wrapper routes through `ssh -F <cfg>` instead of
+    // `openshell sandbox exec`.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sbex-ssh-"));
+    try {
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin);
+      const trace = path.join(tmp, "ssh.trace");
+      fs.writeFileSync(
+        path.join(bin, "openshell"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == "sandbox" && "$2" == "ssh-config" ]]; then
+  printf 'Host openshell-%s\\n  HostName 127.0.0.1\\n  Port 2222\\n  User sandbox\\n' "$3"
+  exit 0
+fi
+echo "unexpected openshell call: $*" >&2
+exit 99
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "ssh"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "ssh-args:$*" >> "${trace}"
+remote="\${@: -1}"
+printf '%s\\n' "remote-cmd:\${remote}" >> "${trace}"
+echo ok-from-ssh
+exit 0
+`,
+        { mode: 0o755 },
+      );
+      const ctxDir = path.join(tmp, "ctx");
+      fs.mkdirSync(ctxDir);
+      const r = runBash(
+        `
+          set -euo pipefail
+          . "${VALIDATION_SUITES}/sandbox-exec.sh"
+          e2e_sandbox_exec sb1 -- echo hello
+        `,
+        {
+          PATH: `${bin}:${process.env.PATH}`,
+          E2E_CONTEXT_DIR: ctxDir,
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("ok-from-ssh");
+      const traceContents = fs.readFileSync(trace, "utf8");
+      expect(traceContents).toMatch(/ssh-args:.*-F /);
+      expect(traceContents).toContain("openshell-sb1");
+      expect(traceContents).toMatch(/remote-cmd:echo hello$/m);
+      const cfg = path.join(ctxDir, ".ssh-config-cache", "sb1.cfg");
+      expect(fs.existsSync(cfg)).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("sandbox_exec_should_fall_back_to_openshell_when_ssh_config_unavailable", () => {
+    // If `openshell sandbox ssh-config` fails, the wrapper must fall
+    // back to `openshell sandbox exec`.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sbex-fb-"));
+    try {
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        path.join(bin, "openshell"),
+        `#!/usr/bin/env bash
+set -uo pipefail
+if [[ "$1" == "sandbox" && "$2" == "ssh-config" ]]; then
+  exit 1
+fi
+if [[ "$1" == "sandbox" && "$2" == "exec" ]]; then
+  shift 2
+  while [[ "$#" -gt 0 && "$1" != "--" ]]; do shift; done
+  shift || true
+  exec "$@"
+fi
+exit 99
+`,
+        { mode: 0o755 },
+      );
+      const ctxDir = path.join(tmp, "ctx");
+      fs.mkdirSync(ctxDir);
+      const r = runBash(
+        `
+          set -euo pipefail
+          . "${VALIDATION_SUITES}/sandbox-exec.sh"
+          e2e_sandbox_exec sb1 -- echo fallback-ok
+        `,
+        {
+          PATH: `${bin}:${process.env.PATH}`,
+          E2E_CONTEXT_DIR: ctxDir,
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("fallback-ok");
+      expect(r.stderr).toMatch(/ssh-config unavailable for sb1/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -971,53 +1066,6 @@ describe("Issue #3810 messaging provider helper library", () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 1.E — Install-method dispatcher splits
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("Phase 1.E install dispatcher splits", () => {
-  function dispatchDryRun(profile: string): SpawnSyncReturns<string> {
-    return runBash(
-      `
-        set -euo pipefail
-        . "${INSTALL_DIR}/dispatch.sh"
-        e2e_install "${profile}"
-      `,
-      { E2E_DRY_RUN: "1" },
-    );
-  }
-
-  it("install_should_dispatch_to_install_repo_helper_for_repo_current_profile", () => {
-    const r = dispatchDryRun("repo-current");
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/install-repo/);
-    expect(r.stdout + r.stderr).not.toMatch(/install-curl|install-ollama|install-launchable/);
-  });
-
-  it("install_should_dispatch_to_install_curl_helper_for_public_installer_profile", () => {
-    const r = dispatchDryRun("public-installer");
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/install-curl/);
-    expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-ollama|install-launchable/);
-  });
-
-  it("install_should_dispatch_to_install_ollama_helper_for_ollama_profile", () => {
-    const r = dispatchDryRun("ollama");
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/install-ollama/);
-    expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-curl|install-launchable/);
-  });
-
-  it("install_should_dispatch_to_install_launchable_helper_for_launchable_profile", () => {
-    const r = dispatchDryRun("launchable");
-    expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/install-launchable/);
-    expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-curl|install-ollama/);
-  });
-});
-
-
-
 describe("baseline onboarding validation helper", () => {
   it("baseline_helper_should_source_under_strict_shell_options", () => {
     const r = runBash(`set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`);
@@ -1083,7 +1131,7 @@ describe("sandbox lifecycle validation helper", () => {
     try {
       const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
       fs.writeFileSync(path.join(bin, "timeout"), "#!/usr/bin/env bash\necho timed out >&2\nexit 124\n", { mode: 0o755 });
-      const r = runBash(`set -e; unset E2E_DRY_RUN; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_run_with_timeout 1 bash -c 'sleep 5'`, { PATH: `${bin}:${process.env.PATH}` });
+      const r = runBash(`set -e; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_run_with_timeout 1 bash -c 'sleep 5'`, { PATH: `${bin}:${process.env.PATH}` });
       expect(r.status).toBe(124);
       expect(r.stderr).toMatch(/timed out/);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
@@ -1096,7 +1144,7 @@ describe("sandbox lifecycle validation helper", () => {
       fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
 case "$*" in
   list) echo sb1;;
-  "sb1 status") echo 'status running gateway healthy sandbox running';;
+  "sb1 status") printf '  Sandbox: sb1\\n    Model:    nvidia/x\\n    OpenShell: 0.0.44\\n    Policies: npm\\n';;
   "sb1 logs") echo logline;;
   *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
 esac
@@ -1105,7 +1153,12 @@ esac
 echo lifecycle-ok
 `, { mode: 0o755 });
       fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
-      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox; sandbox_lifecycle_assert_status_fields_present; sandbox_lifecycle_assert_logs_available; sandbox_lifecycle_assert_openshell_exec_ok`, { E2E_CONTEXT_DIR: tmp, PATH: `${bin}:${process.env.PATH}` });
+      // Force the wrapper's openshell-exec fallback transport: this
+      // stub openshell ignores its argv and always echoes 'lifecycle-ok',
+      // which would corrupt an ssh-config materialization. The opt-out
+      // env var keeps the test exercising openshell-exec directly while
+      // production callers still pick up ssh-config-preferred routing.
+      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox; sandbox_lifecycle_assert_status_fields_present; sandbox_lifecycle_assert_logs_available; sandbox_lifecycle_assert_openshell_exec_ok`, { E2E_CONTEXT_DIR: tmp, PATH: `${bin}:${process.env.PATH}`, E2E_SANDBOX_EXEC_VIA_OPENSHELL: "1" });
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toMatch(/validation\.sandbox_operations\.sandbox_listed/);
       expect(r.stdout).toMatch(/validation\.sandbox_operations\.openshell_exec_ok/);
