@@ -201,6 +201,41 @@ describe("E2E fixture primitives", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  it("shell probe terminates pre-aborted signals immediately", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-pre-abort-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const controller = new AbortController();
+      controller.abort();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+
+      const started = Date.now();
+      const result = await probe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+          reason: "exercise pre-aborted signal termination",
+        }),
+        {
+          artifactName: "pre-abort-escalation",
+          timeoutMs: 10_000,
+          killGraceMs: 50,
+        },
+      );
+
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(result.timedOut).toBe(false);
+      expect(result.signal).toBeTruthy();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 e2eTest("fixture context captures redacted shell artifacts", async ({

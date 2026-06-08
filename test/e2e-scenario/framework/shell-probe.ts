@@ -171,7 +171,11 @@ export class ShellProbe {
       timedOut = true;
       terminate();
     }, timeoutMs);
-    this.signal.addEventListener("abort", abort, { once: true });
+    if (this.signal.aborted) {
+      abort();
+    } else {
+      this.signal.addEventListener("abort", abort, { once: true });
+    }
 
     let childResult: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     let childError: unknown;
