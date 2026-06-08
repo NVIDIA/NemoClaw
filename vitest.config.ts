@@ -3,10 +3,18 @@
 
 import { defineConfig } from "vitest/config";
 
+import { shouldRunLiveE2EScenarios } from "./test/e2e-scenario/framework/live-project-gate.ts";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
+const runInstallerIntegration =
+  process.env.CI === "true" ||
+  process.env.CI === "1" ||
+  process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1";
+const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
+const runBranchValidationE2E = !!process.env.BREV_API_KEY || !!process.env.BREV_API_TOKEN;
 
 export default defineConfig({
   test: {
@@ -36,17 +44,15 @@ export default defineConfig({
       {
         test: {
           name: "installer-integration",
-          include: [
-            "test/install-preflight.test.ts",
-            "test/install-openshell-version-check.test.ts",
-          ],
+          include: runInstallerIntegration
+            ? [
+                "test/install-preflight.test.ts",
+                "test/install-openshell-version-check.test.ts",
+              ]
+            : [],
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly: npx vitest run --project installer-integration
           // Excluded from pre-commit/pre-push to avoid flaky timeouts.
-          enabled:
-            process.env.CI === "true" ||
-            process.env.CI === "1" ||
-            process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1",
         },
       },
       {
@@ -64,8 +70,18 @@ export default defineConfig({
       },
       {
         test: {
+          name: "e2e-scenarios-live",
+          testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
+          include: runLiveE2EScenarios ? ["test/e2e-scenario/live/**/*.test.ts"] : [],
+          // Live scenario tests are opt-in because they install, onboard, and
+          // mutate real NemoClaw/OpenShell state. Run explicitly with:
+          //   NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live
+        },
+      },
+      {
+        test: {
           name: "e2e-branch-validation",
-          include: ["test/e2e/brev-e2e.test.ts"],
+          include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
           // Branch validation E2E: rsyncs the branch over a Brev instance
           // provisioned from the published NemoClaw launchable image and
           // runs the selected test suites. Only run when explicitly
@@ -76,11 +92,9 @@ export default defineConfig({
           // is essential for debugging Brev provisioning timing and the
           // overall suite runs in a single `describe` block, so there's no
           // test chatter to suppress anyway.
-          silent: false,
           // Gate on the new long-lived API key secret. Historically this was
           // BREV_API_TOKEN (short-lived refresh token); renamed in the
           // nightly-enable PR to match the new `brev login --api-key` flow.
-          enabled: !!process.env.BREV_API_KEY || !!process.env.BREV_API_TOKEN,
         },
       },
     ],
