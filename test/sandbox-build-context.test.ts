@@ -80,6 +80,19 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
+    writeFixture(path.join("scripts", "patch-openclaw-slack-deny-feedback.mts"));
+  }
+
+  function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
+    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
+    const copiedScripts = [...dockerfile.matchAll(/^COPY\s+scripts\/(\S+)/gm)].map(
+      ([, relativePath]) => relativePath,
+    );
+    expect(copiedScripts).not.toHaveLength(0);
+
+    for (const relativePath of copiedScripts) {
+      expect(fs.existsSync(path.join(buildCtx, "scripts", relativePath))).toBe(true);
+    }
   }
 
   function expectStagedNemoclawModes(buildCtx: string) {
@@ -211,7 +224,8 @@ describe("sandbox build context staging", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-opt-"));
 
     try {
-      const { buildCtx } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+      const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
+      expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -265,6 +279,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-slack-deny-feedback.mts")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {
