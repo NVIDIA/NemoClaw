@@ -17,8 +17,19 @@ import {
 import {
   conflictReasonForPair,
   conflictReasonForRequest,
+  detectAllOverlapsInEntries,
+  findConflictsInEntries,
   hasStoredChannelInEntry,
+  type ConflictRegistryEntry,
 } from "./conflict-detection";
+
+function legacyEntry(
+  name: string,
+  messagingChannels: readonly string[],
+  disabledChannels: readonly string[] = [],
+): ConflictRegistryEntry {
+  return { name, messagingChannels, disabledChannels };
+}
 
 describe("hasStoredChannelInEntry", () => {
   it("returns true for an active channel in a plan-backed entry", () => {
@@ -41,6 +52,16 @@ describe("hasStoredChannelInEntry", () => {
         planEntry("sb", makePlan("sb", { channels: [tgChannel(false, false)] })),
         "telegram",
       ),
+    ).toBe(false);
+  });
+
+  it("returns true for active legacy registry channels", () => {
+    expect(hasStoredChannelInEntry(legacyEntry("sb", ["telegram"]), "telegram")).toBe(true);
+  });
+
+  it("returns false for disabled legacy registry channels", () => {
+    expect(
+      hasStoredChannelInEntry(legacyEntry("sb", ["telegram"], ["telegram"]), "telegram"),
     ).toBe(false);
   });
 });
@@ -107,6 +128,24 @@ describe("conflictReasonForRequest", () => {
       conflictReasonForRequest(entry, {
         channel: "whatsapp",
         credentialHashes: {},
+      }),
+    ).toBeNull();
+  });
+
+  it("fails closed with unknown-token for active legacy entries", () => {
+    expect(
+      conflictReasonForRequest(legacyEntry("alice", ["telegram"]), {
+        channel: "telegram",
+        credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      }),
+    ).toBe("unknown-token");
+  });
+
+  it("ignores disabled legacy entries", () => {
+    expect(
+      conflictReasonForRequest(legacyEntry("alice", ["telegram"], ["telegram"]), {
+        channel: "telegram",
+        credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
       }),
     ).toBeNull();
   });
@@ -187,5 +226,48 @@ describe("conflictReasonForPair", () => {
     const alice = planEntry("alice", makePlan("alice", { channels: [whatsappChannel()] }));
     const bob = planEntry("bob", makePlan("bob", { channels: [whatsappChannel()] }));
     expect(conflictReasonForPair("whatsapp", alice, bob)).toBeNull();
+  });
+
+  it("fails closed for mixed legacy and plan-backed entries", () => {
+    const alice = legacyEntry("alice", ["telegram"]);
+    const bob = planEntry(
+      "bob",
+      makePlan("bob", { channels: [tgChannel()], credentialBindings: [tgBinding("hash-b")] }),
+    );
+    expect(conflictReasonForPair("telegram", alice, bob)).toBe("unknown-token");
+  });
+});
+
+describe("findConflictsInEntries", () => {
+  it("includes active legacy entries as unknown-token conflicts", () => {
+    expect(
+      findConflictsInEntries(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" } }],
+        [legacyEntry("alice", ["telegram"])],
+      ),
+    ).toEqual([{ channel: "telegram", sandbox: "alice", reason: "unknown-token" }]);
+  });
+
+  it("does not include disabled legacy entries", () => {
+    expect(
+      findConflictsInEntries(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" } }],
+        [legacyEntry("alice", ["telegram"], ["telegram"])],
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("detectAllOverlapsInEntries", () => {
+  it("reports mixed legacy and plan-backed overlaps as unknown-token", () => {
+    const bob = planEntry(
+      "bob",
+      makePlan("bob", { channels: [tgChannel()], credentialBindings: [tgBinding("hash-b")] }),
+    );
+    expect(detectAllOverlapsInEntries([legacyEntry("alice", ["telegram"]), bob])).toEqual([
+      { channel: "telegram", sandboxes: ["alice", "bob"], reason: "unknown-token" },
+    ]);
   });
 });
