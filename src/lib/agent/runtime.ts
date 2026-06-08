@@ -146,31 +146,68 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
-const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
+export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
   "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
+const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)";
+const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
+
+function buildHermesBoundaryKillSnippet(): string {
+  return [
+    `pkill -TERM -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
+    `pkill -TERM -f ${shellQuote(HERMES_DASHBOARD_PROC_PATTERN)} 2>/dev/null || true;`,
+    "sleep 1;",
+    `pkill -KILL -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
+    `pkill -KILL -f ${shellQuote(HERMES_DASHBOARD_PROC_PATTERN)} 2>/dev/null || true;`,
+  ].join(" ");
+}
 
 /**
- * Build the shell snippet that re-enforces the documented Hermes secret
- * boundary before any in-sandbox Hermes process is relaunched by the host-side
- * recovery path. The startup entrypoint already runs this validator, but
+ * Build the shell snippet that re-runs the documented Hermes secret-boundary
+ * check against `/sandbox/.hermes/.env` before any in-sandbox Hermes process is
+ * relaunched. The startup entrypoint already runs this validator, but
  * `sandbox recover` / `connect --probe-only` does not re-enter the entrypoint,
  * so without this guard the boundary would only apply on cold start.
  *
- * The guard refuses with `SECRET_BOUNDARY_REFUSED` on any violation and tolerates
- * a missing validator (older sandbox images) with a warning so a partial upgrade
- * does not break recovery; production images bake the validator in.
+ * On any violation — including a missing validator script — the guard kills any
+ * currently-running Hermes gateway and dashboard so `/health` cannot keep
+ * answering with the poisoned configuration, then refuses with
+ * `SECRET_BOUNDARY_REFUSED` (or `SECRET_BOUNDARY_VALIDATOR_MISSING`) and exits 1.
  */
-function buildHermesSecretBoundaryGuard(): string {
+function buildHermesEnvFileBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
+  const kill = buildHermesBoundaryKillSnippet();
   return [
-    `if [ -f ${shellQuote(validator)} ]; then`,
-    `  python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env || { echo SECRET_BOUNDARY_REFUSED; exit 1; };`,
-    `  python3 ${shellQuote(validator)} runtime-env || { echo SECRET_BOUNDARY_REFUSED; exit 1; };`,
-    "else",
-    '  echo "[gateway-recovery] WARNING: secret-boundary validator missing on this image; skipping" >&2;',
-    "fi;",
+    `if [ ! -f ${shellQuote(validator)} ]; then ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
+    `if ! python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
   ].join(" ");
 }
+
+/**
+ * Build the shell snippet that runs the Hermes runtime-env boundary validator
+ * against the recovery shell's environment. Wire this in AFTER any preload env
+ * file (e.g. `/tmp/nemoclaw-proxy-env.sh`) has been sourced and BEFORE the
+ * launch command, so the final environment the relaunched gateway will inherit
+ * is the one checked.
+ *
+ * Same fail-closed semantics as the env-file guard: missing validator or any
+ * violation kills running Hermes processes and refuses the relaunch.
+ */
+function buildHermesRuntimeEnvBoundaryGuard(): string {
+  const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
+  const kill = buildHermesBoundaryKillSnippet();
+  return [
+    `if [ ! -f ${shellQuote(validator)} ]; then ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
+    `if ! python3 ${shellQuote(validator)} runtime-env; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
+  ].join(" ");
+}
+
+export const __testing = {
+  buildHermesEnvFileBoundaryGuard,
+  buildHermesRuntimeEnvBoundaryGuard,
+  buildHermesBoundaryKillSnippet,
+  HERMES_GATEWAY_PROC_PATTERN,
+  HERMES_DASHBOARD_PROC_PATTERN,
+};
 
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;
@@ -200,8 +237,9 @@ export function buildHermesDashboardProcessRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     "export HERMES_HOME=/sandbox/.hermes;",
-    buildHermesSecretBoundaryGuard(),
+    buildHermesEnvFileBoundaryGuard(),
     'if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;',
+    buildHermesRuntimeEnvBoundaryGuard(),
     'AGENT_BIN=/usr/local/bin/hermes; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v hermes)"; fi;',
     'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
     ...buildHermesDashboardRecoveryLines(config),
@@ -286,7 +324,7 @@ export function buildRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     hermesHome,
-    ...(isHermes ? [buildHermesSecretBoundaryGuard()] : []),
+    ...(isHermes ? [buildHermesEnvFileBoundaryGuard()] : []),
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),
@@ -297,6 +335,7 @@ export function buildRecoveryScript(
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
     '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
     '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    ...(isHermes ? [buildHermesRuntimeEnvBoundaryGuard()] : []),
     launchCommand,
     "GPID=$!; sleep 2;",
     'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; exit 1; fi',
@@ -332,5 +371,8 @@ export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: 
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
-  return `${buildGatewayLogSelection()} ${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
+  const boundaryGuards = isHermes
+    ? `${buildHermesEnvFileBoundaryGuard()} ${buildHermesRuntimeEnvBoundaryGuard()} `
+    : "";
+  return `${buildGatewayLogSelection()} ${boundaryGuards}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
 }

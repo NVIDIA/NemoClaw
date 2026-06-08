@@ -356,64 +356,6 @@ describe("buildRecoveryScript", () => {
   });
 });
 
-describe("Hermes secret-boundary guard on recovery", () => {
-  const VALIDATOR_PATH =
-    "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
-
-  it("invokes the env-file validator before launching the Hermes gateway", () => {
-    const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).not.toBeNull();
-    expect(script).toContain(VALIDATOR_PATH);
-    expect(script).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
-  });
-
-  it("invokes the runtime-env validator before launching the Hermes gateway", () => {
-    const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).toContain(`python3 '${VALIDATOR_PATH}' runtime-env`);
-  });
-
-  it("refuses the relaunch with SECRET_BOUNDARY_REFUSED on validator failure", () => {
-    const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).toContain("SECRET_BOUNDARY_REFUSED");
-    expect(script).toContain("exit 1");
-  });
-
-  it("runs the boundary guard before the gateway health probe and launch", () => {
-    const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).not.toBeNull();
-    const guardIdx = script!.indexOf("validate-hermes-env-secret-boundary.py");
-    const probeIdx = script!.indexOf("ALREADY_RUNNING");
-    const launchIdx = script!.indexOf("nohup");
-    expect(guardIdx).toBeGreaterThanOrEqual(0);
-    expect(probeIdx).toBeGreaterThanOrEqual(0);
-    expect(launchIdx).toBeGreaterThanOrEqual(0);
-    expect(guardIdx).toBeLessThan(probeIdx);
-    expect(probeIdx).toBeLessThan(launchIdx);
-  });
-
-  it("tolerates an older sandbox image where the validator script is absent", () => {
-    const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).toContain("secret-boundary validator missing on this image");
-  });
-
-  it("does not gate non-Hermes recovery on the Hermes-specific validator", () => {
-    const script = buildRecoveryScript(minimalAgent, 19000);
-    expect(script).not.toContain("validate-hermes-env-secret-boundary.py");
-    expect(script).not.toContain("SECRET_BOUNDARY_REFUSED");
-  });
-
-  it("also guards the dashboard-only recovery path", () => {
-    const script = buildHermesDashboardProcessRecoveryScript({
-      publicPort: 9119,
-      internalPort: 19119,
-      tuiEnabled: false,
-    });
-    expect(script).toContain(VALIDATOR_PATH);
-    expect(script).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
-    expect(script).toContain("SECRET_BOUNDARY_REFUSED");
-  });
-});
-
 describe("buildManualRecoveryCommand (#2426)", () => {
   it("backgrounds non-Hermes gateways with nohup and the requested port", () => {
     const cmd = buildManualRecoveryCommand(minimalAgent, 19000);

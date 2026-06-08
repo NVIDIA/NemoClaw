@@ -199,14 +199,13 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # Resolve the standalone secret-boundary validator. The container ships it at
 # the installed path; the dev fallback resolves against the script directory so
-# unit tests and ad-hoc bash invocations work without copying the file. Honour a
-# caller-supplied override so test harnesses can point at the repo copy without
-# touching production defaults.
-if [ -z "${_HERMES_BOUNDARY_VALIDATOR:-}" ]; then
-  _HERMES_BOUNDARY_VALIDATOR="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
-  if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
-    _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
-  fi
+# ad-hoc bash invocations from a checkout work without copying the file. The
+# path is set unconditionally so a caller-supplied _HERMES_BOUNDARY_VALIDATOR
+# carried in via the entrypoint env wrapper cannot redirect this security check
+# at an attacker-controlled script.
+_HERMES_BOUNDARY_VALIDATOR="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
+if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
+  _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
 fi
 
 truthy_env() {
