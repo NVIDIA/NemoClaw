@@ -300,16 +300,17 @@ function providerExistsInGateway(name, _runOpenshell) {
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
-    const deleteResult = _runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (deleteResult.status !== 0) {
-      const output =
-        compactText(redact(`${deleteResult.stderr || ""}`)) ||
-        compactText(redact(`${deleteResult.stdout || ""}`)) ||
+    const { deleteProviderWithRecovery } = require("./sandbox-provider-cleanup");
+    const r = deleteProviderWithRecovery(name, { runOpenshell: _runOpenshell });
+    if (!r.ok) {
+      const base =
+        compactText(redact(r.stderr)) ||
+        compactText(redact(r.stdout)) ||
         `Failed to replace provider '${name}'.`;
-      return { ok: false, status: deleteResult.status || 1, message: output };
+      const detail = r.recoveryFailures.length > 0
+        ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
+        : "";
+      return { ok: false, status: r.status || 1, message: `${base}${detail}` };
     }
   }
   const action = exists && !options.replaceExisting ? "update" : "create";

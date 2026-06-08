@@ -120,6 +120,7 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
+const { runSandboxProviderPreDeleteCleanup } = require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -3169,6 +3170,7 @@ async function createSandbox(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
+    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     if (previousEntry?.imageTag) {
       const rmiResult = dockerRmi(previousEntry.imageTag, {
@@ -3341,10 +3343,7 @@ async function createSandbox(
   ];
 
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  // The recreate path above just deleted the previous sandbox, so any
-  // attached providers are detached and safe to delete+create. That's
-  // required for the legacy Brave generic→brave type migration since
-  // `openshell provider update` cannot change `--type` (#3626).
+  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true });
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
