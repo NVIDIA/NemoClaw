@@ -272,13 +272,28 @@ export function runHostCmd(
   });
 }
 
+function resolveProbeEvidencePath(ctx: ProbeContext): string {
+  const root = path.resolve(ctx.contextDir);
+  const rawTarget = path.isAbsolute(ctx.evidencePath)
+    ? ctx.evidencePath
+    : path.join(root, ctx.evidencePath);
+  const target = path.resolve(rawTarget);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`probe evidence path escapes context dir: ${ctx.evidencePath}`);
+  }
+  return target;
+}
+
 /**
  * Best-effort write of structured probe evidence. Every built-in
  * probe writes its structured outcome to ProbeContext.evidencePath
  * via this helper so the artifact bundle has a uniform JSON layout.
+ * Evidence paths are validated under ProbeContext.contextDir so a
+ * malformed step cannot write outside the scenario artifact root.
  */
-export function writeProbeEvidence(evidencePath: string, payload: unknown): void {
+export function writeProbeEvidence(ctx: ProbeContext, payload: unknown): void {
   try {
+    const evidencePath = resolveProbeEvidencePath(ctx);
     fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
     fs.writeFileSync(evidencePath, JSON.stringify(payload, null, 2));
   } catch {

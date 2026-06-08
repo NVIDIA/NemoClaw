@@ -92,7 +92,7 @@ export const networkPolicyProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     stdoutTail: result.stdout,
     stderrTail: result.stderr,
   };
-  writeProbeEvidence(ctx.evidencePath, evidence);
+  writeProbeEvidence(ctx, evidence);
 
   if (result.signal === "SIGTERM") {
     return {

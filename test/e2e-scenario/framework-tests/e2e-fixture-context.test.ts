@@ -13,6 +13,26 @@ import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
 import { ShellProbe, trustedShellCommand, type TrustedShellCommand } from "../framework/shell-probe.ts";
 
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function expectProcessToExit(pid: number, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return;
+    await delay(25);
+  }
+  throw new Error(`process ${pid} was still alive after ${timeoutMs}ms`);
+}
+
 describe("E2E fixture primitives", () => {
   it("artifact sink writes under its root and rejects traversal", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-artifacts-"));
@@ -70,6 +90,7 @@ describe("E2E fixture primitives", () => {
   });
 
   it("secret store redacts sensitive env values and skips missing required secrets", () => {
+    const canonicalToken = `${"nv"}${"api"}-${"a".repeat(24)}`;
     const store = new SecretStore(
       { NVIDIA_API_KEY: "nv-secret", PLAIN_VALUE: "visible" },
       (note?: string): never => {
@@ -79,6 +100,8 @@ describe("E2E fixture primitives", () => {
 
     expect(store.optional("PLAIN_VALUE")).toBe("visible");
     expect(store.redact("token=nv-secret plain=visible")).toBe("token=[REDACTED] plain=visible");
+    expect(store.redact(`printed ${canonicalToken}`)).toContain("<REDACTED>");
+    expect(store.redact(`printed ${canonicalToken}`)).not.toContain(canonicalToken);
     expect(() => store.required("MISSING_SECRET")).toThrow(/missing required E2E secret/);
   });
 
@@ -233,6 +256,46 @@ describe("E2E fixture primitives", () => {
       expect(result.timedOut).toBe(false);
       expect(result.signal).toBeTruthy();
     } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("shell probe reaps timed-out command process groups", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-pgid-"));
+    let grandchildPid: number | undefined;
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const controller = new AbortController();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+      const pidFile = path.join(tmp, "sleep.pid");
+
+      const result = await probe.run(
+        trustedShellCommand({
+          command: "bash",
+          args: ["-c", 'sleep 30 & echo "$!" > "$1"; wait', "e2e-shell-probe", pidFile],
+          reason: "exercise process-group timeout cleanup",
+        }),
+        {
+          artifactName: "process-group-timeout",
+          timeoutMs: 200,
+          killGraceMs: 50,
+        },
+      );
+
+      grandchildPid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      expect(Number.isInteger(grandchildPid)).toBe(true);
+      expect(result.timedOut).toBe(true);
+      expect(result.signal).toBeTruthy();
+      await expectProcessToExit(grandchildPid);
+    } finally {
+      if (grandchildPid && isProcessAlive(grandchildPid)) {
+        process.kill(grandchildPid, "SIGKILL");
+      }
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });

@@ -114,7 +114,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   evidence.statusExitCode = statusResult.exitCode;
   evidence.statusStdoutTail = statusResult.stdout;
   if (statusResult.signal === "SIGTERM") {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       classifier: "runner-infra",
@@ -122,7 +122,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     };
   }
   if (statusResult.exitCode !== 0) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: 'nemoclaw shields status' exited ${statusResult.exitCode}; stderr: ${statusResult.stderr.slice(-300)}`,
@@ -131,14 +131,14 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   const observed = classifyStatus(statusResult.stdout);
   evidence.observed = observed;
   if (!observed) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: status output did not report a recognized Shields state; tail: ${statusResult.stdout.slice(-200)}`,
     };
   }
   if (evidence.expected && evidence.expected !== observed) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: expected shields '${evidence.expected}', observed '${observed}'`,
@@ -148,7 +148,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   // --- Step 2: in-sandbox stat of the config file ---
   const configPath = configPathFor(ctx.contextEnv.E2E_AGENT);
   if (!configPath) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: unsupported E2E_AGENT '${ctx.contextEnv.E2E_AGENT}'`,
@@ -161,7 +161,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     { perCallSeconds: SANDBOX_STAT_PER_CALL_SECONDS },
   );
   if (statResult.exitCode !== 0) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       classifier: statResult.signal === "SIGTERM" ? "gateway-transient" : undefined,
@@ -174,21 +174,21 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   evidence.mode = mode ?? null;
   evidence.owner = owner ?? null;
   if (!mode || !owner) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: could not parse stat output: '${permsLine}'`,
     };
   }
   if (!permissionsOk(observed, mode, owner)) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `shieldsConfigProbe: shields are '${observed}' but ${configPath} permissions are '${permsLine}'`,
     };
   }
 
-  writeProbeEvidence(ctx.evidencePath, evidence);
+  writeProbeEvidence(ctx, evidence);
   return {
     status: "passed",
     message: `shieldsConfigProbe: shields=${observed} ${configPath}=${permsLine}`,

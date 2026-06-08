@@ -102,7 +102,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
   evidence.echoStderrTail = echoResult.stderr;
 
   if (echoResult.exitCode !== 0) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       classifier: echoResult.signal === "SIGTERM" ? "gateway-transient" : undefined,
@@ -112,7 +112,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
 
   evidence.payloadPreservedLiterally = echoResult.stdout.includes(payload);
   if (!evidence.payloadPreservedLiterally) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `injectionBlockedProbe: payload was not preserved literally; stdout tail: ${echoResult.stdout.slice(-300)}`,
@@ -139,7 +139,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
     perCallSeconds: PER_CALL_SECONDS,
   });
 
-  writeProbeEvidence(ctx.evidencePath, evidence);
+  writeProbeEvidence(ctx, evidence);
 
   if (!evidence.markerAbsent) {
     return {

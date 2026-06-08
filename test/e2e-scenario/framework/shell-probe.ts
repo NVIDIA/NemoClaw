@@ -6,6 +6,16 @@ import { spawn } from "node:child_process";
 import type { ArtifactSink } from "./artifacts.ts";
 import { redactText } from "./secrets.ts";
 
+/**
+ * Bridge-only host shell probe for the Vitest fixture migration.
+ *
+ * The end state is a shared spawn/evidence helper consumed by both this
+ * fixture layer and scenarios/orchestrators; #4988 tracks that consolidation.
+ * Until it lands, this probe mirrors the hardened shell boundary: trusted
+ * descriptors, NUL-byte rejection, explicit env by default, canonical
+ * redaction, and detached process-group termination for timeout/abort cleanup.
+ */
+
 export interface ShellProbeRunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -137,9 +147,11 @@ export class ShellProbe {
     });
     const child = spawn(command, args, {
       cwd: options.cwd,
+      detached: true,
       env: options.inheritEnv ? { ...process.env, ...(options.env ?? {}) } : { ...(options.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const pgid = child.pid;
 
     let stdout = "";
     let stderr = "";
@@ -155,14 +167,30 @@ export class ShellProbe {
     });
 
     let killTimer: NodeJS.Timeout | undefined;
+    let terminationStarted = false;
+    const signalProcessGroup = (signal: NodeJS.Signals) => {
+      if (typeof pgid === "number") {
+        try {
+          process.kill(-pgid, signal);
+          return;
+        } catch {
+          /* fall back to the leader below */
+        }
+      }
+      try {
+        child.kill(signal);
+      } catch {
+        /* already gone */
+      }
+    };
     const terminate = () => {
-      child.kill("SIGTERM");
+      terminationStarted = true;
+      signalProcessGroup("SIGTERM");
       if (killTimer) clearTimeout(killTimer);
       killTimer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
-        }
+        signalProcessGroup("SIGKILL");
       }, killGraceMs);
+      killTimer.unref();
     };
     const abort = () => {
       terminate();
@@ -188,7 +216,7 @@ export class ShellProbe {
       childError = error;
     } finally {
       clearTimeout(timeout);
-      if (killTimer) clearTimeout(killTimer);
+      if (killTimer && !terminationStarted) clearTimeout(killTimer);
       this.signal.removeEventListener("abort", abort);
     }
 

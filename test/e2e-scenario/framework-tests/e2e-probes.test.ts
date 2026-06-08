@@ -14,6 +14,7 @@ import {
 } from "../scenarios/probes/registry.ts";
 import type { ProbeContext, ProbeOutcome } from "../scenarios/probes/types.ts";
 import { registerBuiltinProbes } from "../scenarios/probes/builtin.ts";
+import { writeProbeEvidence } from "../scenarios/probes/util.ts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -82,6 +83,37 @@ describe("probe registry", () => {
     expect(registered).toContain("shieldsConfigProbe");
     expect(registered).toContain("networkPolicyProbe");
     expect(registered).toContain("injectionBlockedProbe");
+  });
+});
+
+describe("probe evidence writer", () => {
+  it("writes evidence under the context dir and ignores escape paths", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "probe-evidence-root-"));
+    const contextDir = path.join(tmp, "ctx");
+    fs.mkdirSync(contextDir, { recursive: true });
+    try {
+      const insidePath = path.join(contextDir, "nested", "evidence.json");
+      const insideCtx: ProbeContext = {
+        contextDir,
+        evidencePath: insidePath,
+        contextEnv: {},
+        sandboxName: null,
+        gatewayUrl: null,
+        repoRoot: REPO_ROOT,
+      };
+      writeProbeEvidence(insideCtx, { ok: true });
+      expect(JSON.parse(fs.readFileSync(insidePath, "utf8"))).toEqual({ ok: true });
+
+      const outsidePath = path.join(tmp, "escape.json");
+      const escapingCtx: ProbeContext = {
+        ...insideCtx,
+        evidencePath: outsidePath,
+      };
+      writeProbeEvidence(escapingCtx, { ok: false });
+      expect(fs.existsSync(outsidePath)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
