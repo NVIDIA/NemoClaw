@@ -144,6 +144,10 @@ npx tsx test/e2e-scenario/scenarios/run.ts --list
 npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
 npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+
+# Opt-in Vitest live scenario path
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
 ```
 
 Override the runtime context directory with `E2E_CONTEXT_DIR=<path>` (default

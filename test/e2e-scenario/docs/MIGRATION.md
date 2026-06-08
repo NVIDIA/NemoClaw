@@ -119,6 +119,10 @@ bash test/e2e-scenario/runtime/run-scenario.sh <id>
 # Metadata and framework validation
 bash test/e2e-scenario/runtime/coverage-report.sh
 npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
+
+# Opt-in live Vitest scenarios
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
 ```
 
 ## Cleanup rules

@@ -4,6 +4,13 @@
 import { expect, test as base } from "vitest";
 
 import { createArtifactSink, type ArtifactSink } from "./artifacts.ts";
+import {
+  GatewayClient,
+  HostCliClient,
+  ProviderClient,
+  SandboxClient,
+  StateClient,
+} from "./clients/index.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
@@ -13,6 +20,11 @@ export interface E2EScenarioFixtures {
   cleanup: CleanupRegistry;
   secrets: SecretStore;
   shellProbe: ShellProbe;
+  host: HostCliClient;
+  gateway: GatewayClient;
+  sandbox: SandboxClient;
+  provider: ProviderClient;
+  state: StateClient;
 }
 
 export const test = base.extend<E2EScenarioFixtures>({
@@ -42,11 +54,28 @@ export const test = base.extend<E2EScenarioFixtures>({
     }
   },
   shellProbe: async ({ artifacts, secrets, signal }, use) => {
-    await use(new ShellProbe({
-      artifacts,
-      redact: (text, extraValues) => secrets.redact(text, extraValues),
-      signal,
-    }));
+    await use(
+      new ShellProbe({
+        artifacts,
+        redact: (text, extraValues) => secrets.redact(text, extraValues),
+        signal,
+      }),
+    );
+  },
+  host: async ({ shellProbe }, use) => {
+    await use(new HostCliClient(shellProbe));
+  },
+  gateway: async ({ host }, use) => {
+    await use(new GatewayClient(host));
+  },
+  sandbox: async ({ shellProbe }, use) => {
+    await use(new SandboxClient(shellProbe));
+  },
+  provider: async ({ shellProbe }, use) => {
+    await use(new ProviderClient(shellProbe));
+  },
+  state: async ({}, use) => {
+    await use(new StateClient());
   },
 });
 
