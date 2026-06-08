@@ -95,6 +95,19 @@ COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 
+# Wrap the hermes CLI so the runtime env secret boundary is enforced for
+# `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
+# a direct `docker exec ... hermes gateway run` able to start the gateway with
+# raw secret-shaped env vars (#4975). Relocate the real binary and install the
+# wrapper in its place; the wrapper reuses the same validator and execs the real
+# binary for every non-gateway subcommand. Re-assert --version through the
+# wrapper so a broken relocation fails the build.
+COPY agents/hermes/hermes-wrapper.sh /usr/local/lib/nemoclaw/hermes-wrapper.sh
+RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
+    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.sh /usr/local/bin/hermes \
+    && chmod 755 /usr/local/bin/hermes.real \
+    && /usr/local/bin/hermes --version
+
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
