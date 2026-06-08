@@ -144,7 +144,7 @@ jobs:
           TEST_FILTER: \${{ inputs.test_filter }}
         run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
       - name: Summarize artifacts
-        run: echo "\${{ inputs.test_filter }}"
+        run: echo "\${{ github.event.inputs['test_filter'] }}"
       - name: Upload Vitest E2E artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -162,6 +162,7 @@ jobs:
           "checkout action must be pinned to a full commit SHA",
           "checkout step must set persist-credentials=false",
           "setup-node action must be pinned to a full commit SHA",
+          "run-scenario job missing step: Build CLI",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
           "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
           "summary step must pass display filter through FILTER_LABEL env",

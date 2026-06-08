@@ -85,7 +85,7 @@ function requireNoDispatchInputInterpolation(
   errors: string[],
   steps: readonly WorkflowStep[],
 ): void {
-  const expressionPattern = /\$\{\{\s*(inputs|github\.event\.inputs)\./;
+  const expressionPattern = /\$\{\{\s*(?:inputs|github\.event\.inputs)\s*(?:\.|\[)/;
   for (const step of steps) {
     if (expressionPattern.test(stringValue(step.run))) {
       errors.push(
@@ -250,6 +250,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode) errors.push("live-scenarios job missing step: Set up Node");
   requireFullShaAction(errors, setupNode, "setup-node");
+
+  const buildCli = requireStep(errors, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireStep(errors, steps, "Run Vitest live E2E scenarios");
   const runVitestEnv = asRecord(runVitest?.env);
