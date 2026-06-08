@@ -16,6 +16,7 @@ import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryT
 import {
   EmptyOnboardStateHandlerResultError,
   MissingOnboardStateHandlerError,
+  OnboardMachineResultSequenceOwnershipError,
   OnboardMachineResultSequenceSourceError,
   OnboardMachineTransitionLimitError,
   type OnboardStateHandlers,
@@ -185,8 +186,35 @@ describe("runOnboardMachine", () => {
     await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
   });
 
-  it("propagates invalid transitions after earlier sequence results apply", async () => {
+  it("rejects multi-result handler sequences that cross states outside the handler ownership", async () => {
     const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: {
+          init: () => [
+            advanceTo("preflight", { metadata: { state: "init" } }),
+            advanceTo("gateway", { metadata: { state: "preflight" } }),
+          ],
+        },
+      }),
+    ).rejects.toThrow(OnboardMachineResultSequenceOwnershipError);
+    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
+  });
+
+  it("propagates invalid transitions after earlier sequence results apply", async () => {
+    const runtime = createRuntime(
+      createSession({
+        machine: {
+          version: MACHINE_SNAPSHOT_VERSION,
+          state: "provider_selection",
+          stateEnteredAt: "2026-05-28T00:00:00.000Z",
+          revision: 1,
+        },
+      }),
+    );
     const updateContext = vi.fn(({ context, state }) => ({
       ...context,
       visited: [...context.visited, state],
@@ -197,16 +225,16 @@ describe("runOnboardMachine", () => {
         context: { attempts: 0, visited: [] } as RunnerContext,
         runtime,
         handlers: {
-          init: () => [
-            advanceTo("preflight", { metadata: { state: "init" } }),
-            advanceTo("sandbox", { metadata: { state: "preflight" } }),
+          provider_selection: () => [
+            advanceTo("inference", { metadata: { state: "provider_selection" } }),
+            advanceTo("policies", { metadata: { state: "inference" } }),
           ],
         },
         updateContext,
       }),
     ).rejects.toThrow("Invalid onboarding machine transition");
     expect(updateContext).toHaveBeenCalledOnce();
-    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
+    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "inference" } });
   });
 
   it("stops applying handler sequences after terminal results", async () => {

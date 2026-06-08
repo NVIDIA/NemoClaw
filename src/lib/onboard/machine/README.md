@@ -77,7 +77,9 @@ A handler should not:
 Handlers may return a result sequence only when one composite handler deliberately owns the
 covered state transitions, such as provider selection plus inference retry. Every result in a
 sequence must declare its source state in `metadata.state`, and that source must match the
-machine's current state when the result is applied. Terminal results (`complete` or `failed`) end
+machine's current state when the result is applied. The runner also checks the handler's sequence
+ownership allowlist; add a new entry in `DEFAULT_SEQUENCE_OWNERSHIP` before introducing another
+composite handler that crosses into a later state. Terminal results (`complete` or `failed`) end
 the sequence immediately.
 
 ## Runtime responsibilities

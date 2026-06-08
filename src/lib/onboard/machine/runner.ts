@@ -16,6 +16,10 @@ export type OnboardStateHandlers<Context> = Partial<
   Record<OnboardNonTerminalMachineState, OnboardStateHandler<Context>>
 >;
 
+export type OnboardStateSequenceOwnership = Partial<
+  Record<OnboardNonTerminalMachineState, readonly OnboardMachineState[]>
+>;
+
 export interface OnboardMachineRunnerRuntime {
   session(): Promise<Session>;
   applyResult(result: OnboardStateResult): Promise<Session>;
@@ -30,6 +34,13 @@ export interface OnboardMachineRunnerOptions<Context> {
    * retry loops, but the runner refuses to apply unbounded transitions.
    */
   maxTransitions?: number;
+  /**
+   * Non-terminal states that each handler may cover in a multi-result sequence.
+   *
+   * The handler's own state is always covered. Add entries only for composite
+   * handlers that deliberately own a later state boundary.
+   */
+  sequenceOwnership?: OnboardStateSequenceOwnership;
   updateContext?(input: {
     context: Context;
     state: OnboardMachineState;
@@ -95,7 +106,34 @@ export class OnboardMachineResultSequenceSourceError extends Error {
   }
 }
 
+export class OnboardMachineResultSequenceOwnershipError extends Error {
+  readonly allowedSourceStates: readonly OnboardMachineState[];
+  readonly handlerState: OnboardNonTerminalMachineState;
+  readonly resultIndex: number;
+  readonly sourceState: OnboardMachineState;
+
+  constructor(options: {
+    allowedSourceStates: readonly OnboardMachineState[];
+    handlerState: OnboardNonTerminalMachineState;
+    resultIndex: number;
+    sourceState: OnboardMachineState;
+  }) {
+    const ordinal = options.resultIndex + 1;
+    super(
+      `Onboarding machine result sequence item ${ordinal} source state '${options.sourceState}' is not owned by handler '${options.handlerState}'`,
+    );
+    this.name = "OnboardMachineResultSequenceOwnershipError";
+    this.allowedSourceStates = options.allowedSourceStates;
+    this.handlerState = options.handlerState;
+    this.resultIndex = options.resultIndex;
+    this.sourceState = options.sourceState;
+  }
+}
+
 const DEFAULT_MAX_TRANSITIONS = 100;
+const DEFAULT_SEQUENCE_OWNERSHIP = {
+  provider_selection: ["inference"],
+} as const satisfies OnboardStateSequenceOwnership;
 
 function normalizeMaxTransitions(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) return DEFAULT_MAX_TRANSITIONS;
@@ -112,7 +150,7 @@ function assertResultSourceState(
   currentState: OnboardMachineState,
   resultIndex: number,
   requireSourceState: boolean,
-): void {
+): OnboardMachineState | null {
   const sourceState = resultSourceState(result);
   if (!sourceState) {
     if (requireSourceState) {
@@ -122,7 +160,7 @@ function assertResultSourceState(
         sourceState,
       });
     }
-    return;
+    return null;
   }
   if (!isOnboardMachineState(sourceState) || sourceState !== currentState) {
     throw new OnboardMachineResultSequenceSourceError({
@@ -131,6 +169,29 @@ function assertResultSourceState(
       sourceState,
     });
   }
+  return sourceState;
+}
+
+function sequenceSourceStatesForHandler(
+  handlerState: OnboardNonTerminalMachineState,
+  sequenceOwnership: OnboardStateSequenceOwnership,
+): readonly OnboardMachineState[] {
+  return [handlerState, ...(sequenceOwnership[handlerState] ?? [])];
+}
+
+function assertSequenceOwnership(
+  sourceState: OnboardMachineState,
+  handlerState: OnboardNonTerminalMachineState,
+  allowedSourceStates: readonly OnboardMachineState[],
+  resultIndex: number,
+): void {
+  if (allowedSourceStates.includes(sourceState)) return;
+  throw new OnboardMachineResultSequenceOwnershipError({
+    allowedSourceStates,
+    handlerState,
+    resultIndex,
+    sourceState,
+  });
 }
 
 export async function runOnboardMachine<Context>({
@@ -138,34 +199,56 @@ export async function runOnboardMachine<Context>({
   runtime,
   handlers,
   maxTransitions,
+  sequenceOwnership: customSequenceOwnership = {},
   updateContext,
 }: OnboardMachineRunnerOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   let context = initialContext;
   let session = await runtime.session();
   let transitions = 0;
   const transitionLimit = normalizeMaxTransitions(maxTransitions);
+  const sequenceOwnership = {
+    ...DEFAULT_SEQUENCE_OWNERSHIP,
+    ...customSequenceOwnership,
+  };
 
   while (!isTerminalOnboardMachineState(session.machine.state)) {
     if (transitions >= transitionLimit) {
       throw new OnboardMachineTransitionLimitError(transitionLimit);
     }
     const state = session.machine.state;
-    const handler = handlers[state as OnboardNonTerminalMachineState];
-    if (!handler) throw new MissingOnboardStateHandlerError(state as OnboardNonTerminalMachineState);
+    const handlerState = state as OnboardNonTerminalMachineState;
+    const handler = handlers[handlerState];
+    if (!handler) throw new MissingOnboardStateHandlerError(handlerState);
 
     const handlerResult = await handler(context);
     const results = Array.isArray(handlerResult) ? handlerResult : [handlerResult];
     if (results.length === 0) {
-      throw new EmptyOnboardStateHandlerResultError(state as OnboardNonTerminalMachineState);
+      throw new EmptyOnboardStateHandlerResultError(handlerState);
     }
     const requireSourceState = results.length > 1;
+    const allowedSequenceSourceStates = requireSourceState
+      ? sequenceSourceStatesForHandler(handlerState, sequenceOwnership)
+      : [];
 
     for (const [resultIndex, result] of results.entries()) {
       if (transitions >= transitionLimit) {
         throw new OnboardMachineTransitionLimitError(transitionLimit);
       }
       const resultState = session.machine.state;
-      assertResultSourceState(result, resultState, resultIndex, requireSourceState);
+      const sourceState = assertResultSourceState(
+        result,
+        resultState,
+        resultIndex,
+        requireSourceState,
+      );
+      if (sourceState && requireSourceState) {
+        assertSequenceOwnership(
+          sourceState,
+          handlerState,
+          allowedSequenceSourceStates,
+          resultIndex,
+        );
+      }
       session = await runtime.applyResult(result);
       transitions += 1;
       context = updateContext
