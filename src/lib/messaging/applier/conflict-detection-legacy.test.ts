@@ -5,9 +5,8 @@
 // Hash-precise plan-backed tests are split across conflict-detection-entry, conflict-detection-overlap, and conflict-detection-multi-credential tests
 
 import { describe, expect, it, vi } from "vitest";
-
-import type { SandboxEntry } from "../../state/registry";
 import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
+import type { SandboxEntry } from "../../state/registry";
 import {
   backfillMessagingChannels,
   findAllOverlaps,

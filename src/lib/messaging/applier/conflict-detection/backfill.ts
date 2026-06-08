@@ -1,34 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { PROVIDER_SUFFIXES } from "./conflict-detection-manifest";
+import { PROVIDER_SUFFIXES } from "./manifest-metadata";
 import type {
   ConflictRegistry,
   ConflictRegistryEntry,
   MessagingConflictProbe,
-  MessagingConflictProbeGatewayDeps,
   ProbeResult,
-} from "./conflict-detection-types";
-
-/**
- * Build a tri-state `MessagingConflictProbe` from plain openshell runner deps.
- *
- * The liveness result is cached so `sandbox list` is issued at most once per
- * probe instance. A transient gateway failure returns error instead of absent,
- * preventing a flaky gateway from being persisted as no providers.
- */
-export function createMessagingConflictProbe(
-  deps: MessagingConflictProbeGatewayDeps,
-): MessagingConflictProbe {
-  let alive: boolean | null = null;
-  return {
-    providerExists: (name) => {
-      if (alive === null) alive = deps.checkGatewayLiveness();
-      if (!alive) return "error";
-      return deps.providerExists(name) ? "present" : "absent";
-    },
-  };
-}
+} from "./types";
 
 /**
  * For pre-plan entries missing `messagingChannels`, probe OpenShell to infer

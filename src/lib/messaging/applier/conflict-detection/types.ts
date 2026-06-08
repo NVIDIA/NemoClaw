@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../manifest";
+import type { SandboxMessagingPlan } from "../../manifest";
 
 export type ProbeResult = "present" | "absent" | "error";
 export type ConflictReason = "matching-token" | "unknown-token";
 
 export interface MessagingConflictProbe {
-  // Tri-state keeps transient gateway errors distinct from missing providers.
+  // Tri-state: "error" is distinct from "absent" so a transient gateway
+  // failure does not get collapsed into "provider not attached" and then
+  // persisted as bogus empty messagingChannels.
   providerExists: (name: string) => ProbeResult;
 }
 
