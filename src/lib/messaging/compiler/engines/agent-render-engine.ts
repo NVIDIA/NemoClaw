@@ -3,7 +3,6 @@
 
 import {
   createBuiltInMessagingHookRegistry,
-  MessagingHookRegistry,
   runMessagingHook,
 } from "../../hooks";
 import { COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID } from "../../hooks/common/static-outputs";
