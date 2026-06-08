@@ -283,6 +283,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)"
     }
   ],
+  "sandbox:policy:explain": [
+    {
+      "group": "Policy Presets",
+      "order": 20,
+      "description": "Explain the active policy context for an agent (redacted)",
+      "flags": "(--json, --write)"
+    }
+  ],
   "sandbox:policy:list": [
     {
       "group": "Policy Presets",

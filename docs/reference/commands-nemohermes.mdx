@@ -698,6 +698,37 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
+### `nemohermes <name> policy-explain`
+
+Print a redacted summary of the active policy context for a sandbox so an agent or operator can reason about what is allowed, what is blocked, and how to request a change.
+The output covers the recorded tier, the applied presets (built-in and custom) with their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
+Raw policy YAML, rule bodies, and credential metadata are deliberately not included.
+
+```bash
+nemohermes my-assistant policy-explain
+```
+
+Pass `--json` to emit the same context as a structured object for agent consumption:
+
+```bash
+nemohermes my-assistant policy-explain --json
+```
+
+NemoClaw refreshes the rendered context inside the sandbox at `/sandbox/.openclaw/workspace/POLICY.md` whenever a preset is added or removed, and once at the end of the onboarding policy step.
+Pass `--write` to refresh that file on demand without changing the policy:
+
+```bash
+nemohermes my-assistant policy-explain --write
+```
+
+The context also documents how a failed host or integration attempt should be classified.
+The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, and `unknown`, so the agent can pick a remediation step instead of surfacing a lower-level network error.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit the policy context as a structured JSON object for agent consumption |
+| `--write` | Refresh `/sandbox/.openclaw/workspace/POLICY.md` inside the sandbox in addition to printing |
+
 ### `nemohermes <name> hosts-add`
 
 Add a host alias to the sandbox pod template.
