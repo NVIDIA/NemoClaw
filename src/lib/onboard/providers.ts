@@ -300,10 +300,29 @@ function providerExistsInGateway(name, _runOpenshell) {
 function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
   if (exists && options.replaceExisting) {
-    const deleteResult = _runOpenshell(["provider", "delete", name], {
+    let deleteResult = _runOpenshell(["provider", "delete", name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (deleteResult.status !== 0) {
+      // Recovery: OpenShell rejects `provider delete` with FailedPrecondition
+      // when the provider is still attached to a (possibly already-pruned)
+      // sandbox. Parse the attached-sandbox list out of the error, force a
+      // detach for each entry, and retry the delete. Covers the resume case
+      // where the local pre-delete cleanup couldn't reach the now-missing
+      // sandbox.
+      const { parseAttachedSandboxes, recoverAttachedProvider } =
+        require("./sandbox-provider-cleanup");
+      const rawDiagnostic = `${deleteResult.stderr || ""}${deleteResult.stdout || ""}`;
+      const attachedSandboxes = parseAttachedSandboxes(rawDiagnostic);
+      if (attachedSandboxes.length > 0) {
+        recoverAttachedProvider(name, attachedSandboxes, { runOpenshell: _runOpenshell });
+        deleteResult = _runOpenshell(["provider", "delete", name], {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
+    }
     if (deleteResult.status !== 0) {
       const output =
         compactText(redact(`${deleteResult.stderr || ""}`)) ||

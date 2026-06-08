@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SANDBOX_PROVIDER_SUFFIXES,
   detachSandboxProviders,
+  parseAttachedSandboxes,
+  recoverAttachedProvider,
   runSandboxProviderPreDeleteCleanup,
 } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
 
@@ -218,5 +220,72 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
     );
     expect(detachCount).toBe(SANDBOX_PROVIDER_SUFFIXES.length);
     expect(deleteIndex).toBeGreaterThan(detachCount - 1);
+  });
+});
+
+describe("parseAttachedSandboxes", () => {
+  it("parses a single sandbox name from a FailedPrecondition diagnostic", () => {
+    const output =
+      'Error: × status: FailedPrecondition, message: "provider \'spark-nemo-telegram-bridge\' is attached to sandbox(es): spark-nemo"';
+    expect(parseAttachedSandboxes(output)).toEqual(["spark-nemo"]);
+  });
+
+  it("parses multiple sandbox names from the same diagnostic", () => {
+    const output =
+      "provider 'x' is attached to sandbox(es): alpha, beta, gamma";
+    expect(parseAttachedSandboxes(output)).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  it("returns empty when the diagnostic has no attached-to list", () => {
+    expect(parseAttachedSandboxes("some unrelated error message")).toEqual([]);
+  });
+});
+
+describe("recoverAttachedProvider", () => {
+  it("calls detach for each attached sandbox and reports the cleared ones", () => {
+    const { runOpenshell, calls } = buildRunOpenshell(new Map());
+
+    const result = recoverAttachedProvider("orphan-provider", ["sandbox-a", "sandbox-b"], {
+      runOpenshell,
+    });
+
+    expect(result.detached).toEqual(["sandbox-a", "sandbox-b"]);
+    expect(result.failures).toEqual([]);
+    expect(calls).toEqual([
+      ["sandbox", "provider", "detach", "sandbox-a", "orphan-provider"],
+      ["sandbox", "provider", "detach", "sandbox-b", "orphan-provider"],
+    ]);
+  });
+
+  it("treats NotAttached / provider-not-found as already-cleared (not failure)", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach ghost orphan-provider",
+        { status: 1, stderr: "status: NotAttached, provider 'orphan-provider' is not bound" },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = recoverAttachedProvider("orphan-provider", ["ghost"], { runOpenshell });
+
+    expect(result.detached).toEqual(["ghost"]);
+    expect(result.failures).toEqual([]);
+  });
+
+  it("returns non-tolerated detach failures for the caller to surface", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach alpha orphan-provider",
+        { status: 1, stderr: "Error: status: Internal, gateway timeout" },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = recoverAttachedProvider("orphan-provider", ["alpha"], { runOpenshell });
+
+    expect(result.detached).toEqual([]);
+    expect(result.failures).toEqual([
+      { sandbox: "alpha", output: "Error: status: Internal, gateway timeout" },
+    ]);
   });
 });

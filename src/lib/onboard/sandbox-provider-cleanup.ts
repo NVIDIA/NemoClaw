@@ -38,6 +38,9 @@ export type SandboxProviderSuffix = (typeof SANDBOX_PROVIDER_SUFFIXES)[number];
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
+const ATTACHED_TO_SANDBOX_RE =
+  /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
+
 const MAX_WARNING_OUTPUT_CHARS = 500;
 
 function bufferOrStringToText(value: string | Buffer | null | undefined): string {
@@ -111,6 +114,61 @@ export function detachSandboxProviders(
       continue;
     }
     failures.push({ name, output: output.trim() });
+  }
+  return { detached, failures };
+}
+
+/**
+ * Parse the sandbox names from an OpenShell `provider delete` FailedPrecondition
+ * diagnostic of the shape
+ *   `provider 'X' is attached to sandbox(es): A, B`
+ * Returns an empty array when the input has no recognisable list.
+ */
+export function parseAttachedSandboxes(output: string): string[] {
+  const match = ATTACHED_TO_SANDBOX_RE.exec(output);
+  if (!match) return [];
+  return match[1]
+    .split(/[,\s]+/)
+    .map((s) => s.trim().replace(/[.'"`]+$/u, ""))
+    .filter((s) => s.length > 0);
+}
+
+export type RecoverProviderResult = {
+  detached: string[];
+  failures: Array<{ sandbox: string; output: string }>;
+};
+
+/**
+ * Recovery path for `provider delete` failures whose attachment list points
+ * at a sandbox that the local recreate / destroy pass could not reach (the
+ * resume-after-prune case: sandbox already gone, but the gateway still
+ * tracks the orphaned attachment). Issues `sandbox provider detach
+ * <sandbox> <provider>` for each listed sandbox, then returns the per-name
+ * outcome so the caller can retry the original delete.
+ */
+export function recoverAttachedProvider(
+  providerName: string,
+  attachedSandboxes: string[],
+  deps: DetachSandboxProvidersDeps = {},
+): RecoverProviderResult {
+  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
+  const detached: string[] = [];
+  const failures: Array<{ sandbox: string; output: string }> = [];
+  for (const sandbox of attachedSandboxes) {
+    const result = runOpenshell(
+      ["sandbox", "provider", "detach", sandbox, providerName],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (result.status === 0) {
+      detached.push(sandbox);
+      continue;
+    }
+    const out = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
+    if (TOLERATED_DETACH_OUTPUT_RE.test(out)) {
+      detached.push(sandbox);
+      continue;
+    }
+    failures.push({ sandbox, output: out.trim() });
   }
   return { detached, failures };
 }
