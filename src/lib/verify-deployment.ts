@@ -19,6 +19,7 @@
 
 import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
+import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -124,6 +125,7 @@ function defaultSleep(ms: number): Promise<void> {
 // HTTP status codes that indicate the gateway process is alive.
 // 401 = device auth is enabled but the gateway is running.
 const GATEWAY_ALIVE_CODES = new Set([200, 401]);
+const TOKENLESS_MESSAGING_CHANNELS = new Set(["whatsapp"]);
 
 // Gateway-failure hint: cover both layers the probe could be failing at.
 // The probe runs curl inside the sandbox against the in-sandbox OpenClaw
@@ -317,7 +319,12 @@ function verifyMessagingBridges(
   }
   const missingProviders: string[] = [];
   for (const channel of channels) {
-    if (!deps.providerExistsInGateway(channel)) {
+    const providerNames = getMessagingProviderNamesForChannel(sandboxName, channel);
+    if (providerNames.length === 0 && TOKENLESS_MESSAGING_CHANNELS.has(channel)) {
+      continue;
+    }
+    const expectedProviders = providerNames.length > 0 ? providerNames : [channel];
+    if (!expectedProviders.every((providerName) => deps.providerExistsInGateway(providerName))) {
       missingProviders.push(channel);
     }
   }
