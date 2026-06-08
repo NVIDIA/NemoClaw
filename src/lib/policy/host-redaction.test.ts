@@ -69,6 +69,11 @@ describe("isInternalHost", () => {
     "::",
     "::1",
     "fe80::1",
+    "fe80:1234::5678",
+    "fe90::1",
+    "fea0::1",
+    "feb0::cafe",
+    "febf::1",
     "fc00::1",
     "fd00::abcd",
     "ff02::1",
@@ -100,6 +105,11 @@ describe("isInternalHost", () => {
     "1.1.1.1",
     "github.com",
     "registry.npmjs.org",
+    // fec0::/10 is the deprecated site-local block. It sits immediately
+    // above the fe80::/10 link-local range and must not be matched by the
+    // link-local detector.
+    "fec0::1",
+    "2001:db8::1",
   ];
   for (const host of external) {
     it(`treats ${host} as external`, () => {

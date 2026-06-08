@@ -24,6 +24,7 @@ import {
   mergeRequiredOpenclawOtelPolicyPresets,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
+import { seedInitialPolicyContext } from "./policy-context-seed";
 import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
@@ -291,27 +292,6 @@ export async function setupPoliciesWithSelection(
   );
   seedInitialPolicyContext(sandboxName);
   return chosen;
-}
-
-/**
- * Best-effort seed of the in-sandbox policy context file after the onboard
- * policy step. The refresh helper already classifies the outcome and warns
- * on failed writes; everything else (including the dynamic require) is
- * caught here so a regression in the require/build/render path is logged
- * once on stderr instead of dropping the onboard run, but is never silently
- * swallowed.
- */
-function seedInitialPolicyContext(sandboxName: string): void {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const refresh = require("../actions/sandbox/policy-context-refresh") as {
-      refreshSandboxPolicyContextFile: (name: string) => unknown;
-    };
-    refresh.refreshSandboxPolicyContextFile(sandboxName);
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`  [onboard] Could not seed sandbox policy context: ${message}`);
-  }
 }
 
 async function setupPoliciesWithSelectionInner(

@@ -10,8 +10,9 @@
  *   syntax) to a bare host stem suitable for redaction comparison.
  * - {@link isInternalHost} reports whether the canonical stem points at an
  *   address NemoClaw must not surface to the agent: RFC1918, loopback,
- *   link-local, cloud metadata, CGNAT, benchmarking, IPv6 ULA/link-local,
- *   multicast, reserved zero, and the well-known internal DNS suffixes.
+ *   link-local, cloud metadata, CGNAT, benchmarking, IPv6 ULA, the full
+ *   `fe80::/10` IPv6 link-local range (`fe80` through `febf`), multicast,
+ *   reserved zero, and the well-known internal DNS suffixes.
  *
  * Both helpers must run on the redaction-write path before any string
  * reaches the agent (markdown render or sandbox write). The canonicaliser
@@ -158,13 +159,30 @@ function looksLikeInternalIPv4(host: string): boolean {
   return false;
 }
 
+function firstHextet(value: string): string | null {
+  // Extract the first hextet of an IPv6 literal so we can match the whole
+  // fe80::/10 link-local range — first 10 bits set, so the leading hextet
+  // ranges from fe80 through febf inclusive. `::` (loopback / unspecified)
+  // has no leading hextet and is handled separately by the caller.
+  if (value.startsWith("::")) return null;
+  const head = value.split(":", 1)[0] ?? "";
+  if (!/^[0-9a-f]{1,4}$/.test(head)) return null;
+  return head;
+}
+
 function looksLikeInternalIPv6(host: string): boolean {
   if (!host.includes(":")) return false;
   const normalised = host.toLowerCase();
   if (normalised === "::" || normalised === "::1") return true;
-  if (normalised.startsWith("fe80:") || normalised.startsWith("fe80::")) return true;
-  if (normalised.startsWith("fc") || normalised.startsWith("fd")) return true;
-  if (normalised.startsWith("ff")) return true;
+  const head = firstHextet(normalised);
+  if (head !== null) {
+    const headValue = Number.parseInt(head, 16);
+    if (Number.isFinite(headValue) && headValue >= 0xfe80 && headValue <= 0xfebf) {
+      return true;
+    }
+    if (head.startsWith("fc") || head.startsWith("fd")) return true;
+    if (head.startsWith("ff")) return true;
+  }
   // Catch IPv4-compatible IPv6 forms that survived canonicalisation
   // (`::a.b.c.d`).
   if (normalised.startsWith("::") && IPV4_PATTERN.test(normalised.slice(2))) {
