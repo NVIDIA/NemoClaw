@@ -45,6 +45,9 @@ const trustedActionDirs = [
   ".github/actions/ci-plugin-coverage",
 ] as const;
 
+const cliShardMatrix = [1, 2, 3, 4, 5] as const;
+const cliShardCount = String(cliShardMatrix.length);
+
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
   const steps = "runs" in jobOrAction ? jobOrAction.runs.steps : (jobOrAction.steps ?? []);
   return steps.flatMap((step) => (step.run ? [step.run] : []));
@@ -243,19 +246,30 @@ describe("pull request and main workflow contracts", () => {
     expect(prWorkflow.jobs["cli-test-shards"].strategy?.["fail-fast"]).toBe(false);
     expect(mainWorkflow.jobs["cli-test-shards"].strategy?.["fail-fast"]).toBe(false);
     expect(prWorkflow.jobs["cli-test-shards"].strategy?.matrix?.shard).toEqual([
-      1, 2, 3,
+      ...cliShardMatrix,
     ]);
     expect(mainWorkflow.jobs["cli-test-shards"].strategy?.matrix?.shard).toEqual([
-      1, 2, 3,
+      ...cliShardMatrix,
     ]);
-    expect(
-      requiredWorkflowStep(prWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard")
-        .with?.shard,
-    ).toBe("${{ matrix.shard }}");
-    expect(
-      requiredWorkflowStep(mainWorkflow.jobs["cli-test-shards"], "Run CLI coverage shard")
-        .with?.shard,
-    ).toBe("${{ matrix.shard }}");
+    for (const [workflowName, workflow] of [
+      ["pull_request", prWorkflow],
+      ["main", mainWorkflow],
+    ] as const) {
+      const shardStep = requiredWorkflowStep(
+        workflow.jobs["cli-test-shards"],
+        "Run CLI coverage shard",
+      );
+      const mergeStep = requiredWorkflowStep(workflow.jobs["cli-tests"], "Merge CLI coverage");
+      expect(shardStep.with?.shard, `${workflowName} shard input`).toBe(
+        "${{ matrix.shard }}",
+      );
+      expect(shardStep.with?.["shard-count"], `${workflowName} shard-count input`).toBe(
+        cliShardCount,
+      );
+      expect(mergeStep.with?.["shard-count"], `${workflowName} merge shard-count`).toBe(
+        cliShardCount,
+      );
+    }
   });
 
   it("preserves the shared static, build, and coverage gates", () => {
@@ -431,6 +445,13 @@ describe("pull request and main workflow contracts", () => {
   });
 
   it("runs CLI coverage in shards and merges coverage before ratcheting", () => {
+    expect(sharedActions.cliCoverageShard.inputs?.["shard-count"]?.default).toBe(
+      cliShardCount,
+    );
+    expect(sharedActions.cliCoverageMerge.inputs?.["shard-count"]?.default).toBe(
+      cliShardCount,
+    );
+
     const shardUploadStep = requiredStep(
       sharedActions.cliCoverageShard,
       "Upload CLI shard blob report",

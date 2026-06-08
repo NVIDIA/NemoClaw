@@ -52,6 +52,7 @@ export type RunnerWorkflow = {
 };
 
 export type CompositeAction = {
+  inputs?: Record<string, { default?: unknown }>;
   runs: {
     steps: WorkflowStep[];
   };
