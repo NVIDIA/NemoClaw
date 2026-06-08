@@ -156,7 +156,7 @@ export class ProviderClient {
     return this.runner.run(
       trustedShellCommand({
         command: "curl",
-        args: ["-fsSL", endpoint.url],
+        args: ["-fsS", endpoint.url],
         reason: "fetch trusted provider endpoint",
       }),
       {

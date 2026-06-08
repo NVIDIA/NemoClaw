@@ -149,12 +149,26 @@ describe("E2E fixture clients", () => {
     await expect(provider.getJson(trustedProviderEndpoint("http://127.0.0.1:8080/health"))).resolves.toEqual({ ok: true });
     expect(runner.calls[0]).toEqual({
       command: "curl",
-      args: ["-fsSL", "http://127.0.0.1:8080/health"],
+      args: ["-fsS", "http://127.0.0.1:8080/health"],
       options: {
         artifactName: "curl-http-127.0.0.1-8080-health",
         redactionValues: [],
       },
     });
+  });
+
+  it("provider client does not follow redirects after endpoint validation", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = JSON.stringify({ ok: true });
+    const provider = new ProviderClient(runner);
+    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models", {
+      allowedHosts: ["api.example.test"],
+    });
+
+    await provider.getJson(endpoint);
+
+    expect(runner.calls[0]?.args).toEqual(["-fsS", "https://api.example.test/v1/models"]);
+    expect(runner.calls[0]?.args).not.toContain("-L");
   });
 
   it("provider endpoint rejects unsafe schemes, hosts, and userinfo", () => {
