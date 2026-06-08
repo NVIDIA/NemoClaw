@@ -304,6 +304,7 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    let recoveryFailureSummary = "";
     if (deleteResult.status !== 0) {
       // Recovery: OpenShell rejects `provider delete` with FailedPrecondition
       // when the provider is still attached to a (possibly already-pruned)
@@ -316,7 +317,14 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
       const rawDiagnostic = `${deleteResult.stderr || ""}${deleteResult.stdout || ""}`;
       const attachedSandboxes = parseAttachedSandboxes(rawDiagnostic);
       if (attachedSandboxes.length > 0) {
-        recoverAttachedProvider(name, attachedSandboxes, { runOpenshell: _runOpenshell });
+        const recoveryResult = recoverAttachedProvider(name, attachedSandboxes, {
+          runOpenshell: _runOpenshell,
+        });
+        if (recoveryResult.failures.length > 0) {
+          recoveryFailureSummary = recoveryResult.failures
+            .map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`)
+            .join("; ");
+        }
         deleteResult = _runOpenshell(["provider", "delete", name], {
           ignoreError: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -324,10 +332,13 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
       }
     }
     if (deleteResult.status !== 0) {
-      const output =
+      const baseOutput =
         compactText(redact(`${deleteResult.stderr || ""}`)) ||
         compactText(redact(`${deleteResult.stdout || ""}`)) ||
         `Failed to replace provider '${name}'.`;
+      const output = recoveryFailureSummary
+        ? `${baseOutput} (detach failures: ${recoveryFailureSummary})`
+        : baseOutput;
       return { ok: false, status: deleteResult.status || 1, message: output };
     }
   }

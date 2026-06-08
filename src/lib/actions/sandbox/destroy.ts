@@ -23,6 +23,7 @@ import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import {
   SANDBOX_PROVIDER_SUFFIXES,
+  emitProviderDetachResidualHint,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
 import { redact } from "../../security/redact";
@@ -453,11 +454,6 @@ export async function destroySandbox(
       opts?: Record<string, unknown>,
     ) => { status: number | null; stdout?: string; stderr?: string };
   };
-  // Detach attached messaging and search providers before deleting the
-  // sandbox: OpenShell `sandbox delete` does not auto-detach providers,
-  // and the post-delete `provider delete` loop in `cleanupSandboxServices`
-  // suppresses errors. Without the explicit detach a stale provider
-  // attachment survives destroy and blocks the next onboard.
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
     runOpenshell,
     redact,
@@ -526,14 +522,8 @@ export async function destroySandbox(
       `  Sandbox '${sandboxName}' was already absent from the live gateway.`,
     );
   }
-  if (detachOutcome.failures.length > 0) {
-    const residualNames = detachOutcome.failures.map((f) => f.name).join(", ");
-    console.warn(
-      `  ${YW}⚠${R} Residual provider state may remain in the OpenShell gateway: ${residualNames}.`,
-    );
-    console.warn(
-      "  Re-run 'openshell provider delete <name>' for each to clean up before the next onboard.",
-    );
-  }
+  emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (m) =>
+    console.warn(`  ${YW}⚠${R}${m}`),
+  );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }

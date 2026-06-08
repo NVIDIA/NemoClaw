@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SANDBOX_PROVIDER_SUFFIXES,
   detachSandboxProviders,
+  emitProviderDetachResidualHint,
   parseAttachedSandboxes,
   recoverAttachedProvider,
   runSandboxProviderPreDeleteCleanup,
@@ -114,6 +115,23 @@ describe("detachSandboxProviders", () => {
         output: "Error: status: NotFound, sandbox 'zulu' not found",
       },
     ]);
+  });
+
+  it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach phantom phantom-telegram-bridge",
+        { status: 1, stderr: "Error: status: NotFound, sandbox 'phantom' not found" },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = detachSandboxProviders("phantom", {
+      runOpenshell,
+      tolerateMissingSandbox: true,
+    });
+
+    expect(result.failures).toEqual([]);
   });
 
   it("collects non-tolerated failures without aborting the loop", () => {
@@ -287,5 +305,31 @@ describe("recoverAttachedProvider", () => {
     expect(result.failures).toEqual([
       { sandbox: "alpha", output: "Error: status: Internal, gateway timeout" },
     ]);
+  });
+});
+
+describe("emitProviderDetachResidualHint", () => {
+  it("emits nothing when there are no failures", () => {
+    const warn = vi.fn();
+    emitProviderDetachResidualHint("alpha", [], warn);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("emits a detach-then-delete sequence keyed to the sandbox name", () => {
+    const warn = vi.fn();
+    emitProviderDetachResidualHint(
+      "alpha",
+      [
+        { name: "alpha-telegram-bridge", output: "gateway timeout" },
+        { name: "alpha-brave-search", output: "internal error" },
+      ],
+      warn,
+    );
+    expect(warn).toHaveBeenCalledTimes(2);
+    const lines = warn.mock.calls.map((c) => c[0] as string);
+    expect(lines[0]).toContain("alpha-telegram-bridge");
+    expect(lines[0]).toContain("alpha-brave-search");
+    expect(lines[1]).toContain("openshell sandbox provider detach alpha <name>");
+    expect(lines[1]).toContain("openshell provider delete <name>");
   });
 });

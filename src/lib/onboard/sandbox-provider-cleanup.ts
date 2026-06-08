@@ -12,6 +12,13 @@ export type SandboxProviderRunOpenshell = (
 
 export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
+  /**
+   * Treat OpenShell `sandbox not found` outputs as success-equivalent. Used
+   * by the resume-after-prune call site where the sandbox is expected to be
+   * gone — the call exists only to clear any stale gateway-side attachment
+   * record, so a missing-sandbox response means there is nothing to clean.
+   */
+  tolerateMissingSandbox?: boolean;
 };
 
 export type DetachSandboxProvidersResult = {
@@ -37,6 +44,9 @@ export type SandboxProviderSuffix = (typeof SANDBOX_PROVIDER_SUFFIXES)[number];
 
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
+
+const MISSING_SANDBOX_OUTPUT_RE =
+  /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
 const ATTACHED_TO_SANDBOX_RE =
   /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
@@ -111,6 +121,9 @@ export function detachSandboxProviders(
     }
     const output = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
     if (TOLERATED_DETACH_OUTPUT_RE.test(output)) {
+      continue;
+    }
+    if (deps.tolerateMissingSandbox && MISSING_SANDBOX_OUTPUT_RE.test(output)) {
       continue;
     }
     failures.push({ name, output: output.trim() });
@@ -204,7 +217,10 @@ export function runSandboxProviderPreDeleteCleanup(
   sandboxName: string,
   deps: SandboxRecreateCleanupDeps = {},
 ): DetachSandboxProvidersResult {
-  const result = detachSandboxProviders(sandboxName, { runOpenshell: deps.runOpenshell });
+  const result = detachSandboxProviders(sandboxName, {
+    runOpenshell: deps.runOpenshell,
+    tolerateMissingSandbox: deps.tolerateMissingSandbox,
+  });
   if (result.failures.length === 0) return result;
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   const redact = deps.redact ?? identityRedact;
@@ -215,4 +231,25 @@ export function runSandboxProviderPreDeleteCleanup(
     );
   }
   return result;
+}
+
+/**
+ * Emit a destroy-time residual cleanup hint when non-tolerated detach
+ * failures left providers stuck attached. The hint guides the user through
+ * the detach-then-delete sequence that OpenShell requires.
+ */
+export function emitProviderDetachResidualHint(
+  sandboxName: string,
+  failures: Array<{ name: string; output: string }>,
+  warn?: (message: string) => void,
+): void {
+  if (failures.length === 0) return;
+  const emit = warn ?? ((m: string) => console.warn(m));
+  const names = failures.map((f) => f.name).join(", ");
+  emit(
+    `  Residual provider state may remain in the OpenShell gateway: ${names}.`,
+  );
+  emit(
+    `  Run 'openshell sandbox provider detach ${sandboxName} <name>' then 'openshell provider delete <name>' for each before the next onboard.`,
+  );
 }
