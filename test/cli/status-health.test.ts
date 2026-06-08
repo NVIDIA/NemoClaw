@@ -43,9 +43,6 @@ describe("CLI dispatch", () => {
             policies: ["npm"],
             agent: "openclaw",
             dashboardPort: 18789,
-            providerCredentialHashes: {
-              OPENAI_API_KEY: "sk-should-not-render-000000000000",
-            },
             messagingChannels: ["slack"],
             dashboardUrl: "http://127.0.0.1:18789/?token=dashboard-secret",
             logs: "Bearer should-not-render xoxb-should-not-render-000000",
@@ -125,7 +122,7 @@ describe("CLI dispatch", () => {
         ],
       });
       expect(r.out).not.toMatch(
-        /Bearer|nvapi-|sk-|xoxb-|xapp-|password|api[-_]?key|providerCredentialHashes|dashboard-secret|should-not-render/i,
+        /Bearer|nvapi-|sk-|xoxb-|xapp-|password|api[-_]?key|dashboard-secret|should-not-render/i,
       );
     } finally {
       fs.rmSync(serviceDir, { recursive: true, force: true });

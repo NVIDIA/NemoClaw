@@ -60,6 +60,7 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
+import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
@@ -194,6 +195,7 @@ export async function addSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
+  refreshSandboxPolicyContextFile(sandboxName);
 }
 
 /**
@@ -247,6 +249,7 @@ async function applyExternalPreset(
       // Custom presets share the registry slot with built-ins (customPolicies
       // in policy/index.ts:684), so they need the same session-sync.
       syncSessionPolicyPresetsWithRegistry(sandboxName, loaded.presetName, "add");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
   } catch (err: unknown) {
@@ -358,7 +361,7 @@ function bridgeProviderName(sandboxName: string, channelName: string, envKey: st
   return `${sandboxName}-${channelName}-bridge`;
 }
 
-// Tri-state gateway probe for cross-sandbox messaging-conflict backfill,
+// Tri-state gateway probe for cross-sandbox messaging conflict backfill,
 // mirroring onboard.ts makeConflictProbe(). An upfront liveness check keeps a
 // transient gateway failure ("error") from being mis-recorded as "no
 // providers" ("absent"), which would permanently suppress backfill retries.
@@ -385,30 +388,34 @@ function makeChannelsConflictProbe() {
 // Detect whether another sandbox already uses one of this channel's
 // credentials. Mirrors the onboard.ts conflict check. Returns true if the
 // caller should PROCEED with the add, false if it should abort. Never logs
-// credential values — only the non-secret hashes computed inline are passed
-// to findChannelConflicts. Probe/backfill failures are swallowed
-// (non-fatal): backfillMessagingChannels already skips sandboxes whose probe
-// errors, so a flaky gateway degrades to "no conflict found" rather than
-// blocking the add.
+// credential values. Backfill probe failures are non-fatal, but core
+// conflict-detection errors fail closed unless --force is set.
 async function checkChannelAddConflict(
   sandboxName: string,
   channelName: string,
   acquired: Record<string, string>,
   force: boolean,
 ): Promise<boolean> {
-  // QR-paired / tokenless adds have empty `acquired` and no host-side
-  // credential to hash. Skip — there is no credential to collide on, and
-  // findChannelConflicts with empty credentialHashes would only ever report
-  // "unknown-token" noise against every other sandbox holding the channel.
+  // Build credential hashes from the manifest's declared providerEnvKey values.
+  // This scopes the lookup to the channel's known credential keys, mirroring
+  // what planToConflictChannelRequests() produces from bindings. QR-only
+  // channels (e.g. WhatsApp) have no manifest credentials → early exit with no
+  // conflict possible. Unknown channelName → also exits early.
+  const channelManifest = createBuiltInChannelManifestRegistry()
+    .list()
+    .find((m) => m.id === channelName);
+  if (!channelManifest || channelManifest.credentials.length === 0) return true;
+
   const credentialHashes: Record<string, string> = {};
-  for (const [envKey, token] of Object.entries(acquired)) {
-    const hash = hashCredential(token);
-    if (hash) credentialHashes[envKey] = hash;
+  for (const cred of channelManifest.credentials) {
+    const token = acquired[cred.providerEnvKey];
+    const hash = token ? hashCredential(token) : null;
+    if (hash) credentialHashes[cred.providerEnvKey] = hash;
   }
   if (Object.keys(credentialHashes).length === 0) return true;
 
   const { backfillMessagingChannels, findChannelConflicts } =
-    require("../../messaging-conflict") as typeof import("../../messaging-conflict");
+    require("../../messaging/applier") as typeof import("../../messaging/applier");
 
   try {
     backfillMessagingChannels(registry, makeChannelsConflictProbe());
@@ -418,9 +425,32 @@ async function checkChannelAddConflict(
 
   let conflicts: ReturnType<typeof findChannelConflicts>;
   try {
-    conflicts = findChannelConflicts(sandboxName, [{ channel: channelName, credentialHashes }], registry);
-  } catch {
-    return true;
+    conflicts = findChannelConflicts(
+      sandboxName,
+      [{ channel: channelName, credentialHashes }],
+      registry,
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  Could not verify messaging channel conflicts for ${channelName}: ${message}`);
+    if (force) {
+      console.log("  --force: proceeding without a completed messaging channel conflict check.");
+      return true;
+    }
+    if (isNonInteractive()) {
+      console.error(
+        `  Aborting: rerun with --force to skip the messaging channel conflict check for ${channelName}.`,
+      );
+      process.exit(1);
+    }
+    const answer = (
+      await askPrompt("  Continue without a completed conflict check? [y/N]: ")
+    )
+      .trim()
+      .toLowerCase();
+    if (answer === "y" || answer === "yes") return true;
+    console.log("  Aborting channel add.");
+    return false;
   }
   if (conflicts.length === 0) return true;
 
@@ -489,16 +519,9 @@ async function applyChannelAddToGatewayAndRegistry(
     const enabled = new Set(entry.messagingChannels || []);
     enabled.add(channelName);
     const disabled = (entry.disabledChannels || []).filter((c: string) => c !== channelName);
-    const providerCredentialHashes = { ...(entry.providerCredentialHashes || {}) };
-    for (const [envKey, token] of Object.entries(acquired)) {
-      const hash = hashCredential(token);
-      if (hash) providerCredentialHashes[envKey] = hash;
-    }
     registry.updateSandbox(sandboxName, {
       messagingChannels: Array.from(enabled).sort(),
       disabledChannels: disabled,
-      providerCredentialHashes:
-        Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     });
   }
 }
@@ -609,15 +632,7 @@ async function applyChannelRemoveToGatewayAndRegistry(
   const entry = registry.getSandbox(sandboxName);
   if (entry) {
     const enabled = (entry.messagingChannels || []).filter((c: string) => c !== channelName);
-    const providerCredentialHashes = { ...(entry.providerCredentialHashes || {}) };
-    for (const envKey of channelTokenKeys) {
-      delete providerCredentialHashes[envKey];
-    }
-    registry.updateSandbox(sandboxName, {
-      messagingChannels: enabled,
-      providerCredentialHashes:
-        Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
-    });
+    registry.updateSandbox(sandboxName, { messagingChannels: enabled });
   }
 
   return { ok: residual.length === 0, residual };
@@ -1090,9 +1105,6 @@ export async function addSandboxChannel(
     ? [...priorEntry.messagingChannels]
     : [];
   const wasAlreadyEnabled = priorMessagingChannels.includes(canonical);
-  const priorHashes: Record<string, string> = {
-    ...((priorEntry?.providerCredentialHashes as Record<string, string>) || {}),
-  };
   const channelTokenKeys = getChannelTokenKeys(channelDef);
   const priorCreds: Record<string, string> = {};
   for (const key of channelTokenKeys) {
@@ -1112,7 +1124,6 @@ export async function addSandboxChannel(
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorMessagingChannels,
-      priorHashes,
       priorCreds,
     });
     process.exit(1);
@@ -1132,7 +1143,6 @@ async function rollbackChannelAdd(
   snapshot: {
     wasAlreadyEnabled: boolean;
     priorMessagingChannels: string[];
-    priorHashes: Record<string, string>;
     priorCreds: Record<string, string>;
   },
 ): Promise<{ ok: boolean; residual: string[] }> {
@@ -1142,8 +1152,6 @@ async function rollbackChannelAdd(
     );
     registry.updateSandbox(sandboxName, {
       messagingChannels: snapshot.priorMessagingChannels,
-      providerCredentialHashes:
-        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
     });
     clearChannelTokens(channel);
     if (Object.keys(snapshot.priorCreds).length > 0) {
@@ -1192,7 +1200,7 @@ async function rollbackChannelAdd(
   return result;
 }
 
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1205,6 +1213,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
       return false;
     }
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "add");
+    refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1323,7 +1332,7 @@ function syncSessionPolicyPresetsWithRegistry(
 // api.telegram.org / discord.com / slack.com should follow). Warns but does
 // not abort the remove flow — the bridge teardown has already succeeded;
 // the operator can run `policy-remove <channel>` manually if cleanup falters.
-function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
+export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
@@ -1344,6 +1353,7 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
       );
     } else {
       syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1580,4 +1590,5 @@ export async function removeSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
+  refreshSandboxPolicyContextFile(sandboxName);
 }

@@ -166,15 +166,18 @@ export class MessagingWorkflowPlanner {
     sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
-    const hashes = sandboxEntry?.providerCredentialHashes;
-    if (!hashes || Object.keys(hashes).length === 0) return undefined;
+    const plan = sandboxEntry?.messaging?.plan;
+    if (!plan) return undefined;
 
     const availability: Record<string, boolean> = {};
     for (const channelId of channelIds) {
       const manifest = this.registry.get(channelId);
       if (!manifest) continue;
       for (const credential of manifest.credentials) {
-        if (!hashes[credential.providerEnvKey]) continue;
+        const binding = plan.credentialBindings.find(
+          (b) => b.channelId === channelId && b.providerEnvKey === credential.providerEnvKey,
+        );
+        if (!binding?.credentialAvailable) continue;
         availability[credential.sourceInput] = true;
         availability[`${manifest.id}.${credential.sourceInput}`] = true;
         availability[credential.id] = true;
@@ -191,7 +194,6 @@ export interface MessagingWorkflowPlannerSandboxEntry {
   readonly agent?: string | null;
   readonly messagingChannels?: readonly MessagingChannelId[] | null;
   readonly disabledChannels?: readonly MessagingChannelId[] | null;
-  readonly providerCredentialHashes?: Readonly<Record<string, string>> | null;
   readonly messaging?: {
     readonly schemaVersion: 1;
     readonly plan: SandboxMessagingPlan;
