@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -32,7 +30,7 @@ import {
 } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT, shellQuote } from "../../runner";
+import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -46,6 +44,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   isDockerRuntimeDown,
@@ -752,148 +751,6 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
-// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
-// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
-// approving allowlisted requests in slow-mode for hours after startup; this
-// pass covers the case where the watcher has exited or is otherwise stuck
-// when the user runs `nemoclaw <sandbox> connect`. The script sources
-// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
-// in-sandbox `openclaw devices list` invocation targets the running gateway
-// with its token. Approvals then use OpenClaw's local fallback by removing
-// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
-// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
-// modes. Unknown clients are ignored, not approved.
-//
-// Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
-// semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
-// scope-upgrade can request the upgraded scopes for its own connection and
-// return the pending-scope failure it is trying to resolve. Remove this local
-// fallback path when OpenClaw approve can complete scope upgrades through the
-// gateway using only operator.pairing.
-//
-// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
-// unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
-// attempts) fit within the outer spawnSync cap, so a partial-completion
-// mid-loop kill cannot strand allowlisted requests within a normal batch.
-const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
-const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
-const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
-  ROOT,
-  "scripts",
-  "lib",
-  "openclaw_device_approval_policy.py",
-);
-
-function readConnectAutoPairPolicyModule(): string | null {
-  try {
-    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
-  } catch {
-    // The approval pass is best-effort, so a packaging/layout regression must
-    // not block connect. Build-context and package `files` coverage keep this
-    // helper present in supported installs.
-    return null;
-  }
-}
-
-function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  const approvalPolicyModule = readConnectAutoPairPolicyModule();
-  if (!approvalPolicyModule) {
-    return;
-  }
-  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
-  const script = `
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
-command -v openclaw >/dev/null 2>&1 || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
-OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
-import base64
-import json
-import os
-import subprocess
-import sys
-
-try:
-    policy_source = base64.b64decode(
-        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
-    ).decode('utf-8')
-    policy_globals = {}
-    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
-    approval_request_decision = policy_globals['approval_request_decision']
-    gateway_approval_env = policy_globals['gateway_approval_env']
-except Exception:
-    sys.exit(0)
-
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
-
-try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=2,
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(0)
-if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(0)
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    sys.exit(0)
-if not isinstance(data, dict):
-    sys.exit(0)
-pending = data.get('pending')
-if not isinstance(pending, list):
-    sys.exit(0)
-approved_count = 0
-attempted_count = 0
-seen_request_ids = set()
-for device in pending:
-    if attempted_count >= MAX_APPROVALS:
-        break
-    if not isinstance(device, dict):
-        continue
-    request_id = device.get('requestId')
-    if not request_id or request_id in seen_request_ids:
-        continue
-    decision = approval_request_decision(device)
-    if not decision['allowed']:
-        continue
-    seen_request_ids.add(request_id)
-    approve_env = gateway_approval_env(os.environ)
-    attempted_count += 1
-    try:
-        approve_proc = subprocess.run(
-            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
-        )
-        if approve_proc.returncode == 0:
-            approved_count += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        continue
-PYAPPROVE
-exit 0
-`;
-  try {
-    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
-    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
-    // startup slack) so a wedged sandbox can never block the connect flow.
-    spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-      },
-    );
-  } catch {
-    /* defense-in-depth — never throw from the connect path */
-  }
-}
-
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   if (
     !sb ||
@@ -1117,8 +974,10 @@ export async function connectSandbox(
   // slow-mode keepalive, a brief approval pass before opening SSH
   // catches any pending allowlisted CLI/webchat scope upgrades that
   // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention).
-  runConnectAutoPairApprovalPass(sandboxName);
+  // deadline exhausted, multi-sandbox gateway contention). The same pass
+  // is reachable without SSH via `doctor --fix` for dashboard-only users
+  // (#4616).
+  runSandboxAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
