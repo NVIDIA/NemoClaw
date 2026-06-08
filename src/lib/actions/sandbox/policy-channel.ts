@@ -53,6 +53,7 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
+import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
@@ -187,6 +188,7 @@ export async function addSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
+  refreshSandboxPolicyContextFile(sandboxName);
 }
 
 /**
@@ -240,6 +242,7 @@ async function applyExternalPreset(
       // Custom presets share the registry slot with built-ins (customPolicies
       // in policy/index.ts:684), so they need the same session-sync.
       syncSessionPolicyPresetsWithRegistry(sandboxName, loaded.presetName, "add");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
     return result !== false;
   } catch (err: unknown) {
@@ -1090,7 +1093,7 @@ async function rollbackChannelAdd(
   return result;
 }
 
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1103,6 +1106,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
       return false;
     }
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "add");
+    refreshSandboxPolicyContextFile(sandboxName);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1221,7 +1225,7 @@ function syncSessionPolicyPresetsWithRegistry(
 // api.telegram.org / discord.com / slack.com should follow). Warns but does
 // not abort the remove flow — the bridge teardown has already succeeded;
 // the operator can run `policy-remove <channel>` manually if cleanup falters.
-function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
+export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
@@ -1242,6 +1246,7 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
       );
     } else {
       syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
+      refreshSandboxPolicyContextFile(sandboxName);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1477,4 +1482,5 @@ export async function removeSandboxPolicy(
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "remove");
+  refreshSandboxPolicyContextFile(sandboxName);
 }

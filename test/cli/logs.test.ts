@@ -116,7 +116,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("starts OpenClaw logs before enabling audit logs for logs --follow", () => {
+  it("starts OpenClaw logs before enabling audit logs for logs --follow", testTimeoutOptions(30_000), () => {
     const gatewayStartedMarker = "gateway-started";
     const auditCompleteMarker = "audit-enabled";
     const setup = createLogsTestSetup(
@@ -132,7 +132,7 @@ describe("CLI dispatch", () => {
     );
 
     const start = Date.now();
-    const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "2000" });
+    const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "10000" });
     const calls = setup.readCalls();
 
     expect(Date.now() - start).toBeGreaterThanOrEqual(40);

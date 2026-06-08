@@ -1,32 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../manifest";
-import { CHANNEL_CREDENTIAL_ENV_KEYS } from "./conflict-detection-manifest";
-import {
-  getActiveChannelIdsFromPlan,
-  getCredentialHashesFromPlan,
-  planToConflictChannelRequests,
-} from "./conflict-detection-plan";
+import { CHANNEL_CREDENTIAL_ENV_KEYS } from "./manifest-metadata";
+import { getActiveChannelIdsFromPlan, getCredentialHashesFromPlan } from "./plan";
 import type {
-  ChannelConflictRequest,
   ConflictMatch,
   ConflictReason,
-  ConflictRegistry,
   ConflictRegistryEntry,
   ConflictRequest,
-} from "./conflict-detection-types";
-
-function normalizeRequest(request: ChannelConflictRequest): ConflictRequest | null {
-  if (typeof request === "string") {
-    return request ? { channel: request, credentialHashes: {} } : null;
-  }
-  if (!request || typeof request.channel !== "string" || request.channel.length === 0) return null;
-  return request;
-}
+} from "./types";
 
 /**
- * Return the active channel IDs for a registry entry.
+ * Return the active (non-disabled) channel IDs for a registry entry.
  *
  * Returns `null` when the entry has no compiled messaging plan.
  */
@@ -39,6 +24,12 @@ export function resolveActiveChannelsFromEntry(
   return null;
 }
 
+/**
+ * Return credential hashes scoped to `channelId` for a registry entry.
+ * Plan-backed entries return channel-scoped hashes from `getCredentialHashesFromPlan`.
+ * Legacy entries without a plan return an empty map, which falls through to
+ * conservative `"unknown-token"` detection in the callers.
+ */
 function resolveChannelHashesFromEntry(
   entry: ConflictRegistryEntry,
   channelId: string,
@@ -50,9 +41,9 @@ function resolveChannelHashesFromEntry(
 }
 
 /**
- * True when `channel` is active in `entry`.
+ * True when `channel` is active (present and not disabled) in `entry`.
  * Disabled channels must not block another sandbox from claiming the same
- * token because the bridge is paused.
+ * token: the bridge is paused so the credential is not in use.
  */
 export function hasStoredChannelInEntry(
   entry: ConflictRegistryEntry,
@@ -61,20 +52,15 @@ export function hasStoredChannelInEntry(
   return resolveActiveChannelsFromEntry(entry)?.includes(channel) ?? false;
 }
 
-function comparisonKeys(
-  channel: string,
-  storedHashes: Record<string, string>,
-  requestedHashes: Record<string, string | null | undefined>,
-): string[] {
-  const manifestKeys = CHANNEL_CREDENTIAL_ENV_KEYS[channel];
-  if (manifestKeys && manifestKeys.length > 0) return [...manifestKeys];
-  if (Object.keys(storedHashes).length > 0) return Object.keys(storedHashes);
-  return Object.keys(requestedHashes);
-}
-
 /**
- * Determine the conflict reason between stored entry state and a new channel
- * request, or `null` if there is no conflict.
+ * Determine the conflict reason between `entry`'s stored state and a new
+ * channel request, or `null` if there is no conflict.
+ *
+ * Comparison keys are taken from manifest-declared credentials for the channel
+ * so that a missing hash for one of multiple required credentials (e.g. Slack's
+ * SLACK_APP_TOKEN when only SLACK_BOT_TOKEN differs) conservatively marks the
+ * result as "unknown-token" rather than silently returning null. Falls back to
+ * the union of present stored/requested keys for channels not in the manifest.
  */
 export function conflictReasonForRequest(
   entry: ConflictRegistryEntry,
@@ -83,7 +69,13 @@ export function conflictReasonForRequest(
   if (!hasStoredChannelInEntry(entry, request.channel)) return null;
   const requestedHashes = request.credentialHashes ?? {};
   const storedHashes = resolveChannelHashesFromEntry(entry, request.channel);
-  const keys = comparisonKeys(request.channel, storedHashes, requestedHashes);
+  const manifestKeys = CHANNEL_CREDENTIAL_ENV_KEYS[request.channel];
+  const keys =
+    manifestKeys && manifestKeys.length > 0
+      ? [...manifestKeys]
+      : Object.keys(storedHashes).length > 0
+        ? Object.keys(storedHashes)
+        : Object.keys(requestedHashes);
   if (keys.length === 0) return null;
 
   let sawUnknown = false;
@@ -100,8 +92,13 @@ export function conflictReasonForRequest(
 }
 
 /**
- * Determine the conflict reason between two registry entries sharing a channel,
- * or `null` if there is no conflict.
+ * Determine the conflict reason between two registry entries sharing `channel`,
+ * or `null` if there is no conflict. Returns each pair at most once (the
+ * caller is responsible for ordered iteration).
+ *
+ * Comparison keys are taken from manifest-declared credentials for the channel
+ * so that a missing hash on either side conservatively produces "unknown-token"
+ * rather than null for multi-credential channels like Slack.
  */
 export function conflictReasonForPair(
   channel: string,
@@ -134,8 +131,9 @@ export function conflictReasonForPair(
 }
 
 /**
- * Return every requested channel where another sandbox already has a matching
- * credential hash or insufficient hash metadata to prove it differs.
+ * Return every (channel, other-sandbox) pair where another entry already has
+ * one of the requested channels in use with either a matching credential hash
+ * or insufficient hash metadata to prove it differs.
  */
 export function findConflictsInEntries(
   currentSandbox: string | null,
@@ -155,28 +153,10 @@ export function findConflictsInEntries(
   );
 }
 
-export function findChannelConflicts(
-  currentSandbox: string | null,
-  enabledChannels: ChannelConflictRequest[],
-  registry: ConflictRegistry,
-): ConflictMatch[] {
-  if (!Array.isArray(enabledChannels) || enabledChannels.length === 0) return [];
-  const requests = enabledChannels
-    .map(normalizeRequest)
-    .filter((request): request is ConflictRequest => request !== null);
-  if (requests.length === 0) return [];
-  const { sandboxes } = registry.listSandboxes();
-  return findConflictsInEntries(currentSandbox, requests, sandboxes);
-}
-
-export function findChannelConflictsFromPlan(
-  currentSandbox: string | null,
-  plan: SandboxMessagingPlan,
-  registry: ConflictRegistry,
-): ConflictMatch[] {
-  return findChannelConflicts(currentSandbox, planToConflictChannelRequests(plan), registry);
-}
-
+/**
+ * Detect overlaps across all entries, returning each pair at most once.
+ * Used by `nemoclaw status` to surface sandboxes that already share a token.
+ */
 export function detectAllOverlapsInEntries(
   entries: readonly ConflictRegistryEntry[],
 ): Array<{ channel: string; sandboxes: [string, string]; reason: ConflictReason }> {
@@ -212,11 +192,4 @@ export function detectAllOverlapsInEntries(
     }
   }
   return overlaps;
-}
-
-export function findAllOverlaps(
-  registry: ConflictRegistry,
-): Array<{ channel: string; sandboxes: [string, string]; reason: ConflictReason }> {
-  const { sandboxes } = registry.listSandboxes();
-  return detectAllOverlapsInEntries(sandboxes);
 }

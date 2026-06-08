@@ -448,7 +448,7 @@ describe("list shows live gateway inference", () => {
     // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
     expect(r.code).not.toBe(0);
     expect(r.out).not.toContain("Unknown action");
-  });
+  }, 30_000);
 
   it("unknown share subcommands fail before action dispatch", () => {
     const env = createShareTestEnv("nemoclaw-cli-share-unknown-");

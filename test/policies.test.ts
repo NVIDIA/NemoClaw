@@ -732,7 +732,7 @@ exit 1
 
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation((message) => { if (typeof message === "string" && message.includes("Widening sandbox egress")) throw new Error("__disclosure_logged__"); });
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
         throw new Error("exit");

@@ -776,6 +776,11 @@ function applyPresetContent(
     return false;
   }
 
+  const endpoints = getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
+  }
+
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
@@ -792,11 +797,6 @@ function applyPresetContent(
     return false;
   }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
-
-  const endpoints = getPresetEndpoints(presetContent);
-  if (endpoints.length > 0) {
-    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
-  }
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
