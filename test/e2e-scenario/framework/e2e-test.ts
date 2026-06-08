@@ -15,34 +15,39 @@ export interface E2EScenarioFixtures {
   shellProbe: ShellProbe;
 }
 
-export const test = base
-  .extend("artifacts", async ({ task }, { onCleanup }) => {
+export const test = base.extend<E2EScenarioFixtures>({
+  artifacts: async ({ task }, use) => {
     const artifacts = createArtifactSink(task.name);
     await artifacts.ensureRoot();
-    onCleanup(async () => {
+    try {
+      await use(artifacts);
+    } finally {
       await artifacts.writeJson("artifact-summary.json", {
         test: task.name,
         rootDir: artifacts.rootDir,
       });
-    });
-    return artifacts;
-  })
-  .extend("secrets", async ({ skip }) => new SecretStore(process.env, skip))
-  .extend("cleanup", async ({ artifacts, secrets }, { onCleanup }) => {
+    }
+  },
+  secrets: async ({ skip }, use) => {
+    await use(new SecretStore(process.env, skip));
+  },
+  cleanup: async ({ artifacts, secrets }, use) => {
     const cleanup = new CleanupRegistry((text) => secrets.redact(text));
-    onCleanup(async () => {
+    try {
+      await use(cleanup);
+    } finally {
       const result = await cleanup.runAll();
       await artifacts.writeJson("cleanup.json", result);
       assertCleanupPassed(result);
-    });
-    return cleanup;
-  })
-  .extend("shellProbe", async ({ artifacts, secrets, signal }) => {
-    return new ShellProbe({
+    }
+  },
+  shellProbe: async ({ artifacts, secrets, signal }, use) => {
+    await use(new ShellProbe({
       artifacts,
       redact: (text, extraValues) => secrets.redact(text, extraValues),
       signal,
-    });
-  });
+    }));
+  },
+});
 
 export { expect };
