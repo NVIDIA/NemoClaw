@@ -5,13 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../framework/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../framework/cleanup.ts";
 import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
-import { ShellProbe } from "../framework/shell-probe.ts";
+import { ShellProbe, trustedShellCommand, type TrustedShellCommand } from "../framework/shell-probe.ts";
 
 describe("E2E fixture primitives", () => {
   it("artifact sink writes under its root and rejects traversal", async () => {
@@ -82,6 +82,23 @@ describe("E2E fixture primitives", () => {
     expect(() => store.required("MISSING_SECRET")).toThrow(/missing required E2E secret/);
   });
 
+  it("shell probe requires trusted command descriptors", () => {
+    expectTypeOf<Parameters<ShellProbe["run"]>[0]>().toEqualTypeOf<TrustedShellCommand>();
+    expect(() =>
+      trustedShellCommand({
+        command: "node",
+        reason: "",
+      }),
+    ).toThrow(/trusted command reason is required/);
+    expect(() =>
+      trustedShellCommand({
+        command: "node",
+        args: ["bad\0arg"],
+        reason: "validate arguments",
+      }),
+    ).toThrow(/argument cannot contain NUL bytes/);
+  });
+
   it("shell probe cleans up and redacts missing command failures", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-"));
     try {
@@ -120,12 +137,18 @@ describe("E2E fixture primitives", () => {
 
       let thrown: unknown;
       try {
-        await probe.run(`missing-command-${secret}`, {
-          args: [secret],
-          artifactName: "spawn-error",
-          redactionValues: [secret],
-          timeoutMs: 10_000,
-        });
+        await probe.run(
+          trustedShellCommand({
+            command: `missing-command-${secret}`,
+            args: [secret],
+            reason: "exercise redacted spawn failure handling",
+          }),
+          {
+            artifactName: "spawn-error",
+            redactionValues: [secret],
+            timeoutMs: 10_000,
+          },
+        );
       } catch (error) {
         thrown = error;
       }
@@ -138,6 +161,42 @@ describe("E2E fixture primitives", () => {
       expect(abortRemoves).toBe(1);
       expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.result.json"), "utf8")).not.toContain(secret);
       expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.stderr.txt"), "utf8")).toContain("[REDACTED]");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("shell probe escalates abort-triggered termination", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-abort-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const controller = new AbortController();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+
+      const started = Date.now();
+      const run = probe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+          reason: "exercise abort escalation",
+        }),
+        {
+          artifactName: "abort-escalation",
+          timeoutMs: 10_000,
+          killGraceMs: 50,
+        },
+      );
+      setTimeout(() => controller.abort(), 50);
+      const result = await run;
+
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(result.timedOut).toBe(false);
+      expect(result.signal).toBe("SIGKILL");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -155,17 +214,23 @@ e2eTest("fixture context captures redacted shell artifacts", async ({
   });
 
   const secret = "shell-probe-secret-value";
-  const result = await shellProbe.run(process.execPath, {
-    args: [
-      "-e",
-      "console.log(process.env.NEMOCLAW_TEST_TOKEN); console.error(process.argv[1]);",
-      secret,
-    ],
-    artifactName: "redaction-proof",
-    env: { NEMOCLAW_TEST_TOKEN: secret },
-    redactionValues: [secret],
-    timeoutMs: 5_000,
-  });
+  const result = await shellProbe.run(
+    trustedShellCommand({
+      command: process.execPath,
+      args: [
+        "-e",
+        "console.log(process.env.NEMOCLAW_TEST_TOKEN); console.error(process.argv[1]);",
+        secret,
+      ],
+      reason: "exercise fixture shell artifact redaction",
+    }),
+    {
+      artifactName: "redaction-proof",
+      env: { NEMOCLAW_TEST_TOKEN: secret },
+      redactionValues: [secret],
+      timeoutMs: 5_000,
+    },
+  );
 
   expect(fs.readFileSync(marker, "utf8")).toBe("fixture-ready");
   expect(result.exitCode).toBe(0);
@@ -183,16 +248,22 @@ e2eTest("shell probe uses explicit env and escalates ignored timeouts", async ({
   const oldParentSecret = process.env[parentSecretName];
   process.env[parentSecretName] = parentSecret;
   try {
-    const envResult = await shellProbe.run(process.execPath, {
-      args: [
-        "-e",
-        `console.log(process.env.${parentSecretName} ?? "missing"); console.log(process.env.NEMOCLAW_TEST_TOKEN);`,
-      ],
-      artifactName: "minimal-env",
-      env: { NEMOCLAW_TEST_TOKEN: explicitSecret },
-      redactionValues: [explicitSecret, parentSecret],
-      timeoutMs: 5_000,
-    });
+    const envResult = await shellProbe.run(
+      trustedShellCommand({
+        command: process.execPath,
+        args: [
+          "-e",
+          `console.log(process.env.${parentSecretName} ?? "missing"); console.log(process.env.NEMOCLAW_TEST_TOKEN);`,
+        ],
+        reason: "exercise explicit shell probe environment",
+      }),
+      {
+        artifactName: "minimal-env",
+        env: { NEMOCLAW_TEST_TOKEN: explicitSecret },
+        redactionValues: [explicitSecret, parentSecret],
+        timeoutMs: 5_000,
+      },
+    );
 
     expect(envResult.exitCode).toBe(0);
     expect(envResult.stdout).toContain("missing");
@@ -209,12 +280,18 @@ e2eTest("shell probe uses explicit env and escalates ignored timeouts", async ({
   }
 
   const started = Date.now();
-  const timeoutResult = await shellProbe.run(process.execPath, {
-    args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
-    artifactName: "timeout-escalation",
-    timeoutMs: 50,
-    killGraceMs: 50,
-  });
+  const timeoutResult = await shellProbe.run(
+    trustedShellCommand({
+      command: process.execPath,
+      args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+      reason: "exercise timeout escalation",
+    }),
+    {
+      artifactName: "timeout-escalation",
+      timeoutMs: 50,
+      killGraceMs: 50,
+    },
+  );
 
   expect(Date.now() - started).toBeLessThan(2_000);
   expect(timeoutResult.timedOut).toBe(true);

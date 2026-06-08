@@ -7,7 +7,6 @@ import type { ArtifactSink } from "./artifacts.ts";
 import { redactText } from "./secrets.ts";
 
 export interface ShellProbeRunOptions {
-  args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   inheritEnv?: boolean;
@@ -15,6 +14,22 @@ export interface ShellProbeRunOptions {
   killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+}
+
+const trustedShellCommandBrand: unique symbol = Symbol("TrustedShellCommand");
+
+export interface TrustedShellCommand {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly reason: string;
+  readonly [trustedShellCommandBrand]: true;
+}
+
+export interface TrustedShellCommandInput {
+  command: string;
+  args?: string[];
+  reason: string;
+  validate?: (command: string, args: readonly string[]) => void;
 }
 
 export interface ShellProbeResult {
@@ -61,6 +76,40 @@ function redactedError(error: unknown, message: string): Error {
   return next;
 }
 
+function validateShellToken(value: string, label: string): string {
+  if (value.includes("\0")) {
+    throw new Error(`shell probe ${label} cannot contain NUL bytes`);
+  }
+  return value;
+}
+
+/**
+ * Declares a shell command as trusted at the fixture/helper boundary.
+ *
+ * Build descriptors from constants or typed fixture helpers. Do not pass
+ * scenario, manifest, PR, or other untrusted values as the executable command.
+ * Put command-specific argument validation in `validate` when arguments include
+ * values derived from scenario data.
+ */
+export function trustedShellCommand(input: TrustedShellCommandInput): TrustedShellCommand {
+  const command = validateShellToken(input.command.trim(), "command");
+  if (!command) {
+    throw new Error("shell probe command is required");
+  }
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new Error("shell probe trusted command reason is required");
+  }
+  const args = (input.args ?? []).map((arg) => validateShellToken(arg, "argument"));
+  input.validate?.(command, args);
+  return {
+    command,
+    args,
+    reason,
+    [trustedShellCommandBrand]: true,
+  };
+}
+
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly redact: (text: string, extraValues?: string[]) => string;
@@ -72,12 +121,9 @@ export class ShellProbe {
     this.signal = deps.signal;
   }
 
-  async run(command: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    if (!command.trim()) {
-      throw new Error("shell probe command is required");
-    }
-
-    const args = options.args ?? [];
+  async run(trustedCommand: TrustedShellCommand, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    const command = trustedCommand.command;
+    const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     const redactionValues = options.redactionValues ?? [];
@@ -108,18 +154,22 @@ export class ShellProbe {
       stderr += chunk;
     });
 
-    const abort = () => {
-      child.kill("SIGTERM");
-    };
     let killTimer: NodeJS.Timeout | undefined;
-    const timeout = setTimeout(() => {
-      timedOut = true;
+    const terminate = () => {
       child.kill("SIGTERM");
+      if (killTimer) clearTimeout(killTimer);
       killTimer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) {
           child.kill("SIGKILL");
         }
       }, killGraceMs);
+    };
+    const abort = () => {
+      terminate();
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      terminate();
     }, timeoutMs);
     this.signal.addEventListener("abort", abort, { once: true });
 
