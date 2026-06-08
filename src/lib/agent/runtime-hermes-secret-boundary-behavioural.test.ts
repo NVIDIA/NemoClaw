@@ -321,6 +321,55 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     }
   });
 
+  it("refuses before /health can accept an already-serving poisoned gateway", () => {
+    const harness = prepareRecoveryHarness("health-already-serving");
+    const envFile = path.join(harness.tmp, "hermes-dot-env");
+    const curlLog = path.join(harness.tmp, "curl.log");
+    const realValidator = path.join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "agents",
+      "hermes",
+      "validate-env-secret-boundary.py",
+    );
+    fs.writeFileSync(
+      envFile,
+      "API_SERVER_PORT=18642\nTELEGRAM_BOT_TOKEN=1234567890:AAExample-RawSecretValueHere\n",
+    );
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+    writeStub(
+      harness.stubsDir,
+      "curl",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(curlLog)}\nprintf "200"\nexit 0`,
+    );
+
+    try {
+      const result = runRecovery({
+        ...harness,
+        validatorPath: realValidator,
+        envFilePath: envFile,
+      });
+      // Unit-level HEALTH_DOWN evidence for #4957: the boundary refusal wins
+      // before recovery can trust a still-serving /health endpoint.
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
+      expect(result.stdout).not.toContain("ALREADY_RUNNING");
+      expect(fs.existsSync(curlLog)).toBe(false);
+      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(false);
+      const pkillCalls = fs.readFileSync(harness.pkillLog, "utf-8");
+      expect(pkillCalls).toContain("[h]ermes");
+      expect(pkillCalls).toContain("gateway");
+      const log = fs.readFileSync(harness.recoveryLogPath, "utf-8");
+      expect(log).toContain("[SECURITY] Refusing Hermes startup");
+      expect(log).toContain("TELEGRAM_BOT_TOKEN");
+      expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
+    } finally {
+      fs.rmSync(harness.tmp, { recursive: true, force: true });
+    }
+  });
+
   it("refuses on runtime-env violation after sourcing proxy-env (stubbed python3)", () => {
     const harness = prepareRecoveryHarness("runtime-env-stub");
     const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
