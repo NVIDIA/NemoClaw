@@ -31,47 +31,66 @@ export interface ExplainPolicyDeps {
 export interface WritePolicyContextResult {
   written: boolean;
   reason?: string;
+  /**
+   * Set to `unexpected-loader` when the executor loader caught an
+   * import/resolve error (cycle, missing module, process-recovery
+   * regression). Callers use this to distinguish a legitimate
+   * `sandbox unreachable` from a code regression that needs surfacing.
+   */
+  failure?: "loader-vitest" | "no-runtime" | "unexpected-loader" | "sandbox-unreachable" | "exec-failed";
+  /** Error captured by the loader, if any. */
+  errorMessage?: string;
 }
+
+type ExecutorLoad =
+  | { kind: "ok"; exec: SandboxExec }
+  | { kind: "vitest" }
+  | { kind: "no-runtime" }
+  | { kind: "crashed"; error: Error };
 
 /**
  * Lazy executor loader. The seed runs from policy mutation hooks and from
  * the onboard policy step, both of which can be called from contexts that
  * have no OpenShell binary (unit tests, host-side dev shells before the
- * runtime is installed). We gate three boundary conditions explicitly:
+ * runtime is installed). The loader returns a tagged union so callers can
+ * distinguish three expected boundary conditions from a regression:
  *
- * - Vitest: return null so test runs never spawn OpenShell. Vitest sets
- *   `process.env.VITEST === "true"` automatically; honouring it keeps the
- *   seed inert in the test process without requiring every consumer test
- *   to mock {@link writePolicyContextToSandbox}.
- * - OpenShell unresolvable: `resolveOpenshell()` does an X_OK check, so a
- *   missing binary or a stale path returns null here instead of letting
- *   `getOpenshellBinary()` call `process.exit(1)` on spawn.
- * - Lazy require failure: any require error (cycle, missing module,
- *   transient build state) is swallowed and we return null. Refresh
- *   callers treat null as `sandbox unreachable`; the onboard wrapper
- *   surfaces unexpected throws separately.
+ * - `vitest`: `process.env.VITEST === "true"`. Tests never spawn
+ *   OpenShell. The seed is silently inert in the test process without
+ *   requiring every consumer test to mock {@link writePolicyContextToSandbox}.
+ * - `no-runtime`: `resolveOpenshell()` returned null (no binary on PATH,
+ *   stale path, X_OK fail). The sandbox surface genuinely cannot spawn
+ *   OpenShell; treat as `sandbox unreachable` and warn at most once per
+ *   call site at the caller's discretion.
+ * - `crashed`: require/resolve threw. Either an import cycle, a missing
+ *   module, or a process-recovery regression. Callers must route this
+ *   through the refresh helper's `unexpected` sink so a code regression
+ *   is not silently treated as `sandbox unreachable`.
  *
- * Once the seed has a real executor, ownership of the actual subprocess
- * call lives in `process-recovery`'s {@link executeSandboxCommand}, which
- * is the single source of truth for sandbox SSH spawning. This function
+ * Once the loader returns `ok`, ownership of the actual subprocess call
+ * lives in `process-recovery`'s {@link executeSandboxCommand}, which is
+ * the single source of truth for sandbox SSH spawning. This function
  * does not invent a parallel spawn pipeline.
  */
-function loadExecutor(): SandboxExec | null {
-  if (process.env.VITEST === "true") return null;
+function loadExecutor(): ExecutorLoad {
+  if (process.env.VITEST === "true") return { kind: "vitest" };
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const resolve = require("../../adapters/openshell/resolve") as {
       resolveOpenshell?: () => string | null;
     };
     const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
-    if (!resolved) return null;
+    if (!resolved) return { kind: "no-runtime" };
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const recovery = require("./process-recovery") as {
       executeSandboxCommand: SandboxExec;
     };
-    return recovery.executeSandboxCommand;
-  } catch {
-    return null;
+    return { kind: "ok", exec: recovery.executeSandboxCommand };
+  } catch (error: unknown) {
+    return {
+      kind: "crashed",
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
   }
 }
 
@@ -109,21 +128,37 @@ export function writePolicyContextToSandbox(
 ): WritePolicyContextResult {
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
-  const exec = deps.exec ?? loadExecutor();
+  let exec: SandboxExec | undefined = deps.exec;
   if (!exec) {
-    return { written: false, reason: "sandbox unreachable" };
+    const load = loadExecutor();
+    if (load.kind === "vitest") {
+      return { written: false, reason: "sandbox unreachable", failure: "loader-vitest" };
+    }
+    if (load.kind === "no-runtime") {
+      return { written: false, reason: "sandbox unreachable", failure: "no-runtime" };
+    }
+    if (load.kind === "crashed") {
+      return {
+        written: false,
+        reason: `policy-context executor failed to load: ${load.error.message}`,
+        failure: "unexpected-loader",
+        errorMessage: load.error.message,
+      };
+    }
+    exec = load.exec;
   }
   const ctx = build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
   const result = exec(sandboxName, command);
   if (result === null) {
-    return { written: false, reason: "sandbox unreachable" };
+    return { written: false, reason: "sandbox unreachable", failure: "sandbox-unreachable" };
   }
   if (result.status !== 0) {
     return {
       written: false,
       reason: `write failed (status ${String(result.status)}): ${result.stderr || "(no stderr)"}`,
+      failure: "exec-failed",
     };
   }
   return { written: true };

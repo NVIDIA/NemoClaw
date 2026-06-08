@@ -9,6 +9,7 @@ import {
   listPresets,
   loadPreset,
 } from ".";
+import { hostStemsFromEndpoints } from "./host-redaction";
 import { getTier } from "./tiers";
 
 interface PresetInfo {
@@ -72,134 +73,14 @@ export interface PolicyContext {
   generatedAt: string;
 }
 
-export type AccessFailureKind =
-  | "blocked-by-policy"
-  | "missing-approval"
-  | "unsupported"
-  | "unknown";
-
-export interface AccessFailureCapability {
-  supported: boolean;
-  reason?: string;
-}
-
-export interface AccessFailureInput {
-  sandboxName: string;
-  host: string;
-  port?: number;
-  error?: { code?: string; status?: number; message?: string };
-  capability?: AccessFailureCapability;
-}
-
-export interface AccessFailureClassification {
-  kind: AccessFailureKind;
-  reason: string;
-  nextStep: string;
-  matchedPreset?: string;
-  /**
-   * `high` when the underlying signal unambiguously maps to {@link kind};
-   * `low` when the same signal is consistent with another bucket and the
-   * agent should treat the verdict as advisory (typical case: HTTP 403 on
-   * a host that an active preset allows — could be auth failure or a
-   * finer-grained policy denial from OpenShell).
-   */
-  confidence: "high" | "low";
-}
-
 const POLICY_DOC_URL = "docs/network-policy/customize-network-policy.mdx";
-
-const POLICY_BLOCK_ERROR_CODES: ReadonlySet<string> = new Set([
-  "EAI_AGAIN",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-  "ECONNREFUSED",
-  "ETIMEDOUT",
-  "ENOTFOUND",
-]);
-
-const MISSING_APPROVAL_STATUS_CODES: ReadonlySet<number> = new Set([401, 403]);
-
-function normaliseHost(value: string): string {
-  return value.trim().toLowerCase().replace(/\.$/, "");
-}
-
-const INTERNAL_DNS_SUFFIXES: ReadonlyArray<string> = [
-  ".local",
-  ".internal",
-  ".lan",
-  ".home",
-  ".home.arpa",
-  ".corp",
-  ".intra",
-  ".intranet",
-  ".localdomain",
-];
-
-const RESERVED_HOSTS: ReadonlySet<string> = new Set([
-  "localhost",
-  "localhost.localdomain",
-  "ip6-localhost",
-  "ip6-loopback",
-  "broadcasthost",
-]);
-
-function looksLikeInternalIPv4(host: string): boolean {
-  const octets = host.split(".");
-  if (octets.length !== 4) return false;
-  const parsed = octets.map((octet) => Number(octet));
-  if (parsed.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
-  const [a, b] = parsed;
-  if (a === 10) return true;
-  if (a === 127) return true;
-  if (a === 0) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a === 198 && (b === 18 || b === 19)) return true;
-  if (a === 192 && b === 0 && parsed[2] === 0) return true;
-  if (a >= 224) return true;
-  return false;
-}
-
-function looksLikeInternalIPv6(host: string): boolean {
-  if (!host.includes(":")) return false;
-  const normalised = host.toLowerCase();
-  if (normalised === "::" || normalised === "::1") return true;
-  if (normalised.startsWith("fe80:") || normalised.startsWith("fe80::")) return true;
-  if (normalised.startsWith("fc") || normalised.startsWith("fd")) return true;
-  if (normalised.startsWith("ff")) return true;
-  return false;
-}
-
-function isInternalHost(host: string): boolean {
-  if (!host) return false;
-  if (RESERVED_HOSTS.has(host)) return true;
-  if (looksLikeInternalIPv4(host)) return true;
-  if (looksLikeInternalIPv6(host)) return true;
-  for (const suffix of INTERNAL_DNS_SUFFIXES) {
-    if (host === suffix.slice(1) || host.endsWith(suffix)) return true;
-  }
-  return false;
-}
 
 function hostStemsFromContent(content: string | null | undefined): {
   public: string[];
   redactedCount: number;
 } {
   if (!content) return { public: [], redactedCount: 0 };
-  const stems = new Set<string>();
-  let redactedCount = 0;
-  for (const host of getPresetEndpoints(content)) {
-    const normalised = normaliseHost(host);
-    if (!normalised) continue;
-    if (isInternalHost(normalised)) {
-      redactedCount += 1;
-      continue;
-    }
-    stems.add(normalised);
-  }
-  return { public: Array.from(stems).sort(), redactedCount };
+  return hostStemsFromEndpoints(getPresetEndpoints(content));
 }
 
 function presetEntry(
@@ -509,110 +390,10 @@ export function renderPolicyContextMarkdown(ctx: PolicyContext): string {
   return lines.join("\n") + "\n";
 }
 
-function findMatchingPreset(
-  host: string,
-  presets: readonly PolicyContextPreset[],
-): PolicyContextPreset | null {
-  const normalised = normaliseHost(host);
-  if (!normalised) return null;
-  for (const preset of presets) {
-    for (const candidate of preset.allowedHostCategories) {
-      if (normalised === candidate || normalised.endsWith(`.${candidate}`)) {
-        return preset;
-      }
-    }
-  }
-  return null;
-}
-
-function isPolicyBlockErrorCode(code: string | undefined): boolean {
-  if (!code) return false;
-  return POLICY_BLOCK_ERROR_CODES.has(code);
-}
-
-export function classifyAccessFailure(
-  input: AccessFailureInput,
-): AccessFailureClassification {
-  if (input.capability && input.capability.supported === false) {
-    const reason = input.capability.reason ?? "capability is not offered for this sandbox";
-    return {
-      kind: "unsupported",
-      reason: `Host '${input.host}' is unreachable because the capability is unsupported: ${reason}.`,
-      nextStep:
-        "Surface the limitation to the user; do not retry. Choose an alternative provider or sandbox configuration that supports the capability.",
-      confidence: "high",
-    };
-  }
-  const ctx = buildPolicyContext(input.sandboxName, { skipGatewayProbe: true });
-  const matched = findMatchingPreset(input.host, ctx.activePresets);
-  const status = input.error?.status;
-  const code = input.error?.code;
-
-  if (matched) {
-    if (status === 401) {
-      return {
-        kind: "missing-approval",
-        reason: `Host '${input.host}' is allowed by preset '${matched.name}' but the request returned 401; credentials are missing or invalid.`,
-        nextStep: "Confirm the API token and scopes for this integration; the network path is open.",
-        matchedPreset: matched.name,
-        confidence: "high",
-      };
-    }
-    if (status === 403) {
-      return {
-        kind: "missing-approval",
-        reason: `Host '${input.host}' is allowed by preset '${matched.name}' but the request returned 403, which is ambiguous: it can mean missing credentials/scope or a finer-grained OpenShell denial (method, path, protocol, or binary).`,
-        nextStep:
-          "Confirm the API token and scopes first. If credentials look correct, run `${ctx.approvalPath.inspect}` and `openshell policy get` to check whether OpenShell is denying the specific method/path; widen the preset or adjust the call as needed.".replace(
-            "${ctx.approvalPath.inspect}",
-            ctx.approvalPath.inspect,
-          ),
-        matchedPreset: matched.name,
-        confidence: "low",
-      };
-    }
-    return {
-      kind: "unknown",
-      reason: `Host '${input.host}' is allowed by preset '${matched.name}' and the failure is not a policy block.`,
-      nextStep: "Inspect the upstream error and retry once the underlying condition clears.",
-      matchedPreset: matched.name,
-      confidence: "high",
-    };
-  }
-
-  const knownPreset = findMatchingPreset(input.host, ctx.knownUnappliedPresets);
-  if (knownPreset) {
-    return {
-      kind: "blocked-by-policy",
-      reason: `Host '${input.host}' is declared by preset '${knownPreset.name}' but that preset is not applied to sandbox '${input.sandboxName}'.`,
-      nextStep: `Run \`${ctx.approvalPath.add.replace("<preset>", knownPreset.name)}\` to allow this host.`,
-      matchedPreset: knownPreset.name,
-      confidence: "high",
-    };
-  }
-
-  if (status === 403 || isPolicyBlockErrorCode(code)) {
-    return {
-      kind: "blocked-by-policy",
-      reason: `Host '${input.host}' is not declared by any preset known to NemoClaw and the request was refused (${code ?? `HTTP ${String(status ?? "unknown")}`}).`,
-      nextStep: `Add a custom preset that allows this host or change the sandbox tier; see ${ctx.approvalPath.documentation}.`,
-      confidence: "high",
-    };
-  }
-
-  if (status !== undefined && MISSING_APPROVAL_STATUS_CODES.has(status)) {
-    return {
-      kind: "missing-approval",
-      reason: `Host '${input.host}' is not declared by any active preset and the request returned ${String(status)}.`,
-      nextStep: "Add a preset that allows this host, then supply credentials.",
-      confidence: "low",
-    };
-  }
-
-  return {
-    kind: "unknown",
-    reason: `Host '${input.host}' did not match any preset and the failure is not a known policy or approval signal.`,
-    nextStep: `Inspect the upstream error and consult ${ctx.approvalPath.documentation}.`,
-    confidence: "high",
-  };
-}
+export {
+  type AccessFailureCapability,
+  type AccessFailureClassification,
+  type AccessFailureInput,
+  type AccessFailureKind,
+  classifyAccessFailure,
+} from "./failure-classifier";

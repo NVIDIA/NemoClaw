@@ -70,4 +70,47 @@ describe("refreshSandboxPolicyContextFile", () => {
     expect(arg instanceof Error ? arg.message : String(arg)).toContain("import regression");
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("treats loader crashes from writePolicyContextToSandbox as `crashed` even when the write returns instead of throwing", () => {
+    const warn = vi.fn();
+    const unexpected = vi.fn();
+    const write = vi.fn(() => ({
+      written: false,
+      reason: "policy-context executor failed to load: missing module",
+      failure: "unexpected-loader" as const,
+      errorMessage: "missing module",
+    }));
+
+    const outcome = refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write });
+
+    expect(outcome.outcome).toBe("crashed");
+    expect(unexpected).toHaveBeenCalledTimes(1);
+    const arg = unexpected.mock.calls[0][0];
+    expect(arg instanceof Error ? arg.message : String(arg)).toContain("missing module");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("treats `loader-vitest` and `no-runtime` loader signals as non-warning `unreachable` outcomes", () => {
+    const warn = vi.fn();
+    const unexpected = vi.fn();
+    const writeVitest = vi.fn(() => ({
+      written: false,
+      reason: "sandbox unreachable",
+      failure: "loader-vitest" as const,
+    }));
+    const writeNoRuntime = vi.fn(() => ({
+      written: false,
+      reason: "sandbox unreachable",
+      failure: "no-runtime" as const,
+    }));
+
+    expect(refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeVitest }).outcome).toBe(
+      "unreachable",
+    );
+    expect(
+      refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeNoRuntime }).outcome,
+    ).toBe("unreachable");
+    expect(warn).not.toHaveBeenCalled();
+    expect(unexpected).not.toHaveBeenCalled();
+  });
 });

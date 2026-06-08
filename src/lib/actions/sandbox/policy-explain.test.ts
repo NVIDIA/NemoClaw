@@ -162,7 +162,9 @@ describe("writePolicyContextToSandbox", () => {
 
     const result = writePolicyContextToSandbox("alpha", { build, render, exec });
 
-    expect(result).toEqual({ written: false, reason: "sandbox unreachable" });
+    expect(result.written).toBe(false);
+    expect(result.reason).toBe("sandbox unreachable");
+    expect(result.failure).toBe("sandbox-unreachable");
   });
 
   it("returns a descriptive reason when the sandbox command exits non-zero", () => {

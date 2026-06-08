@@ -65,7 +65,18 @@ export function refreshSandboxPolicyContextFile(
   if (result.written) {
     return { ...result, outcome: "ok" };
   }
-  if (result.reason === "sandbox unreachable") {
+  if (result.failure === "unexpected-loader") {
+    unexpected(
+      new Error(result.errorMessage ?? result.reason ?? "policy-context executor failed to load"),
+    );
+    return { ...result, outcome: "crashed" };
+  }
+  if (
+    result.failure === "loader-vitest" ||
+    result.failure === "no-runtime" ||
+    result.failure === "sandbox-unreachable" ||
+    result.reason === "sandbox unreachable"
+  ) {
     return { ...result, outcome: "unreachable" };
   }
   warn(

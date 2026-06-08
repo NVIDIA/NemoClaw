@@ -364,7 +364,13 @@ The rules are evaluated in order so HTTP 403 has a single interpretation per cal
 4. `blocked-by-policy` — the host is **not** allowed by any applied preset and either an existing built-in or custom preset declares it (apply that preset), or the request is refused with a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`) or HTTP 403.
 5. `unknown` — none of the above apply; the agent should surface the underlying error.
 
-Each classification also carries a `confidence` field set to `high` or `low`. Low-confidence verdicts (notably 403 on an active host) mean the agent should report multiple possibilities to the user instead of treating the next-step recommendation as authoritative.
+Each classification also carries a `confidence` field set to `high` or `low`. Low-confidence verdicts mean the agent should report multiple possibilities to the user instead of treating the next-step recommendation as authoritative. Common low-confidence triggers are:
+
+- HTTP 403 on an active host (ambiguous between missing credentials and a finer-grained OpenShell denial by method, path, protocol, or binary).
+- The matched preset is `registry-only` (the registry lists it but the gateway does not enforce it) — the agent must not assume the host is reachable.
+- The matched preset is `gateway-unavailable` (no live gateway snapshot was available) — the verdict is registry-derived and advisory.
+
+Callers that already hold a verified gateway snapshot can pass it to the classifier so verdicts about hosts on verified presets stay high-confidence.
 
 Use the classification to pick the next step.
 For `blocked-by-policy`, run `$$nemoclaw <name> policy-add <preset>` or author a [custom preset](#custom-preset-files).

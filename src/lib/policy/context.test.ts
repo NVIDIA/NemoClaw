@@ -279,7 +279,7 @@ describe("renderPolicyContextMarkdown", () => {
 });
 
 describe("classifyAccessFailure", () => {
-  it("returns high-confidence missing-approval when the host is allowed and credentials return 401", () => {
+  it("returns high-confidence missing-approval when the host is on a gateway-verified preset and credentials return 401", () => {
     resetMocks();
     mockBuiltinPresets();
     stubTier();
@@ -289,11 +289,49 @@ describe("classifyAccessFailure", () => {
       sandboxName: SANDBOX,
       host: "api.slack.com",
       error: { status: 401 },
+      gatewayPresets: ["slack"],
     });
 
     expect(result.kind).toBe("missing-approval");
     expect(result.matchedPreset).toBe("slack");
     expect(result.confidence).toBe("high");
+  });
+
+  it("downgrades a matched 401 to low confidence when the preset is registry-only (gateway disagrees)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      error: { status: 401 },
+      gatewayPresets: [],
+    });
+
+    expect(result.kind).toBe("missing-approval");
+    expect(result.matchedPreset).toBe("slack");
+    expect(result.confidence).toBe("low");
+    expect(result.reason).toContain("drift");
+    expect(result.nextStep).toContain("policy-list");
+  });
+
+  it("downgrades a matched 401 to low confidence when the gateway is unavailable", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      error: { status: 401 },
+      gatewayPresets: null,
+    });
+
+    expect(result.confidence).toBe("low");
+    expect(result.reason).toContain("registry-derived");
   });
 
   it("returns low-confidence missing-approval when an active host returns 403 (ambiguous policy denial vs auth)", () => {
