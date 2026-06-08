@@ -10,6 +10,7 @@ vi.mock("../state/registry", () => ({
 
 vi.mock(".", () => ({
   getPresetEndpoints: vi.fn(),
+  getGatewayPresets: vi.fn(() => null),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
@@ -99,6 +100,8 @@ function resetMocks() {
   vi.mocked(policies.listCustomPresets).mockReset();
   vi.mocked(policies.loadPreset).mockReset();
   vi.mocked(policies.getPresetEndpoints).mockReset();
+  vi.mocked(policies.getGatewayPresets).mockReset();
+  vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
   vi.mocked(getTier).mockReset();
 }
 
@@ -123,11 +126,73 @@ describe("buildPolicyContext", () => {
       "slack.com",
     ]);
     expect(ctx.activePresets[0].source).toBe("builtin");
+    expect(ctx.activePresets[0].redactedHostCount).toBe(0);
+    expect(ctx.activePresets[0].verification).toBe("gateway-unavailable");
     expect(ctx.knownUnappliedPresets.map((p) => p.name)).toEqual(["github"]);
-    expect(ctx.approvalPath.inspect).toBe(`nemoclaw ${SANDBOX} policy list`);
-    expect(ctx.approvalPath.add).toBe(`nemoclaw ${SANDBOX} policy add <preset>`);
+    expect(ctx.approvalPath.inspect).toBe(`nemoclaw ${SANDBOX} policy-list`);
+    expect(ctx.approvalPath.add).toBe(`nemoclaw ${SANDBOX} policy-add <preset>`);
+    expect(ctx.approvalPath.remove).toBe(`nemoclaw ${SANDBOX} policy-remove <preset>`);
     expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement"))
       .toBe(true);
+  });
+
+  it("marks active presets as `verified` when the gateway agrees and `registry-only` when it disagrees", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack", "github"], policyTier: "balanced" });
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["slack"] });
+
+    const slack = ctx.activePresets.find((p) => p.name === "slack");
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    expect(slack?.verification).toBe("verified");
+    expect(github?.verification).toBe("registry-only");
+  });
+
+  it("surfaces presets enforced by the gateway but missing from the registry as `gateway-only` actives", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: [], policyTier: "balanced" });
+
+    const ctx = buildPolicyContext(SANDBOX, { gatewayPresets: ["github"] });
+
+    const github = ctx.activePresets.find((p) => p.name === "github");
+    expect(github?.verification).toBe("gateway-only");
+    expect(ctx.knownUnappliedPresets.some((p) => p.name === "github")).toBe(false);
+  });
+
+  it("redacts internal hostnames and IP ranges from allowedHostCategories and counts the drop", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    vi.mocked(policies.listCustomPresets).mockReturnValue([
+      { file: "internal.yaml", name: "internal", description: "internal API" },
+    ]);
+    vi.mocked(registry.getCustomPolicies).mockReturnValue([
+      {
+        name: "internal",
+        content:
+          "preset:\n  name: internal\nnetwork_policies:\n  internal:\n    endpoints:\n" +
+          "      - host: 10.0.0.1\n" +
+          "      - host: 192.168.1.10\n" +
+          "      - host: 172.20.0.1\n" +
+          "      - host: 127.0.0.1\n" +
+          "      - host: 169.254.169.254\n" +
+          "      - host: localhost\n" +
+          "      - host: api.internal\n" +
+          "      - host: gateway.local\n" +
+          "      - host: shared.corp\n" +
+          "      - host: public.example.com\n",
+      },
+    ]);
+    vi.mocked(getTier).mockReturnValue(null);
+    stubRegistry({ policies: ["internal"], policyTier: undefined });
+
+    const ctx = buildPolicyContext(SANDBOX);
+    const internal = ctx.activePresets.find((p) => p.name === "internal");
+    expect(internal?.allowedHostCategories).toEqual(["public.example.com"]);
+    expect(internal?.redactedHostCount).toBeGreaterThanOrEqual(9);
   });
 
   it("handles a sandbox with no recorded tier and no applied presets", () => {
@@ -199,10 +264,22 @@ describe("renderPolicyContextMarkdown", () => {
     expect(md).not.toMatch(/enforcement:|websocket_credential_rewrite|binaries:/);
     expect(md).not.toMatch(/network_policies:/);
   });
+
+  it("renders the verification status alongside each active preset", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const md = renderPolicyContextMarkdown(
+      buildPolicyContext(SANDBOX, { gatewayPresets: ["slack"] }),
+    );
+    expect(md).toContain("status: verified");
+  });
 });
 
 describe("classifyAccessFailure", () => {
-  it("returns missing-approval when the host is allowed but credentials are refused", () => {
+  it("returns high-confidence missing-approval when the host is allowed and credentials return 401", () => {
     resetMocks();
     mockBuiltinPresets();
     stubTier();
@@ -216,6 +293,25 @@ describe("classifyAccessFailure", () => {
 
     expect(result.kind).toBe("missing-approval");
     expect(result.matchedPreset).toBe("slack");
+    expect(result.confidence).toBe("high");
+  });
+
+  it("returns low-confidence missing-approval when an active host returns 403 (ambiguous policy denial vs auth)", () => {
+    resetMocks();
+    mockBuiltinPresets();
+    stubTier();
+    stubRegistry({ policies: ["slack"], policyTier: "balanced" });
+
+    const result = classifyAccessFailure({
+      sandboxName: SANDBOX,
+      host: "api.slack.com",
+      error: { status: 403 },
+    });
+
+    expect(result.kind).toBe("missing-approval");
+    expect(result.matchedPreset).toBe("slack");
+    expect(result.confidence).toBe("low");
+    expect(result.nextStep).toContain("openshell policy get");
   });
 
   it("returns blocked-by-policy when a known preset declares the host but is not applied", () => {
@@ -232,7 +328,7 @@ describe("classifyAccessFailure", () => {
 
     expect(result.kind).toBe("blocked-by-policy");
     expect(result.matchedPreset).toBe("github");
-    expect(result.nextStep).toContain("policy add github");
+    expect(result.nextStep).toContain("policy-add github");
   });
 
   it("returns blocked-by-policy when no preset declares the host and the request is refused", () => {

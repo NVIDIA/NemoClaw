@@ -60,22 +60,10 @@ import {
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
 } from "./gateway-failure-classifier";
-import {
-  POLICY_CONTEXT_SANDBOX_PATH,
-  writePolicyContextToSandbox,
-} from "./policy-explain";
+import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
-
-function refreshSandboxPolicyContextFile(sandboxName: string): void {
-  const result = writePolicyContextToSandbox(sandboxName);
-  if (!result.written && result.reason && result.reason !== "sandbox unreachable") {
-    console.error(
-      `  Could not refresh ${POLICY_CONTEXT_SANDBOX_PATH} for sandbox '${sandboxName}': ${result.reason}`,
-    );
-  }
-}
 
 type ChannelMutationOptions = {
   channel?: string;

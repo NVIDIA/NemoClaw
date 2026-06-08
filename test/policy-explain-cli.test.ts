@@ -136,8 +136,8 @@ describe("nemoclaw <sandbox> policy-explain (E2E)", () => {
     expect(active).toBeDefined();
     expect(active?.allowedHostCategories).toContain("api.github.com");
     expect(parsed.knownUnappliedPresets.some((p) => p.name === "slack")).toBe(true);
-    expect(parsed.approvalPath.inspect).toBe("nemoclaw policy-explain-json policy list");
-    expect(parsed.approvalPath.add).toBe("nemoclaw policy-explain-json policy add <preset>");
+    expect(parsed.approvalPath.inspect).toBe("nemoclaw policy-explain-json policy-list");
+    expect(parsed.approvalPath.add).toBe("nemoclaw policy-explain-json policy-add <preset>");
     expect(parsed.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
       true,
     );

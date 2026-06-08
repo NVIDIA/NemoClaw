@@ -33,6 +33,29 @@ export interface WritePolicyContextResult {
   reason?: string;
 }
 
+/**
+ * Lazy executor loader. The seed runs from policy mutation hooks and from
+ * the onboard policy step, both of which can be called from contexts that
+ * have no OpenShell binary (unit tests, host-side dev shells before the
+ * runtime is installed). We gate three boundary conditions explicitly:
+ *
+ * - Vitest: return null so test runs never spawn OpenShell. Vitest sets
+ *   `process.env.VITEST === "true"` automatically; honouring it keeps the
+ *   seed inert in the test process without requiring every consumer test
+ *   to mock {@link writePolicyContextToSandbox}.
+ * - OpenShell unresolvable: `resolveOpenshell()` does an X_OK check, so a
+ *   missing binary or a stale path returns null here instead of letting
+ *   `getOpenshellBinary()` call `process.exit(1)` on spawn.
+ * - Lazy require failure: any require error (cycle, missing module,
+ *   transient build state) is swallowed and we return null. Refresh
+ *   callers treat null as `sandbox unreachable`; the onboard wrapper
+ *   surfaces unexpected throws separately.
+ *
+ * Once the seed has a real executor, ownership of the actual subprocess
+ * call lives in `process-recovery`'s {@link executeSandboxCommand}, which
+ * is the single source of truth for sandbox SSH spawning. This function
+ * does not invent a parallel spawn pipeline.
+ */
 function loadExecutor(): SandboxExec | null {
   if (process.env.VITEST === "true") return null;
   try {
@@ -52,6 +75,23 @@ function loadExecutor(): SandboxExec | null {
   }
 }
 
+/**
+ * Render the in-sandbox write command. Three explicit safety guarantees:
+ *
+ * - The markdown payload is base64-encoded before it is interpolated into
+ *   the shell string, so anything in the rendered context — quotes,
+ *   semicolons, backticks, command substitutions, redirections, newlines —
+ *   reaches `base64 -d` as inert data rather than the parent shell. The
+ *   hostile-markdown negative test in policy-explain.test.ts guards this.
+ * - The destination path is the module-scoped constant
+ *   {@link POLICY_CONTEXT_SANDBOX_PATH}. We do not accept user-controlled
+ *   paths here; any future caller that wants a variable path must
+ *   shell-quote it before reaching this helper.
+ * - The intermediate `mkdir -p` and `chmod 0644` reuse the same constant
+ *   path so the command never mixes interpolated user data with shell
+ *   tokens. The `dir` derivation is a string operation on the constant
+ *   path and never sees external input.
+ */
 function buildWriteCommand(markdown: string, targetPath: string): string {
   const encoded = Buffer.from(markdown, "utf-8").toString("base64");
   const dir = targetPath.replace(/\/[^/]+$/, "") || "/";
