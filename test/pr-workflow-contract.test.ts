@@ -137,6 +137,9 @@ describe("pull request workflow contract", () => {
     expect(cliShardRun).toContain("--shard=${{ matrix.shard }}/3");
     expect(cliShardRun).toContain("--reporter=github-actions");
     expect(cliShardRun).toContain("--reporter=blob");
+    expect(cliShardRun).toContain(
+      "--outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json",
+    );
     expect(cliShardRun).toContain("--coverage.reportsDirectory=coverage/cli/shard-${{ matrix.shard }}");
     expect(cliShardRun).not.toContain("scripts/check-coverage-ratchet.ts");
     expect(cliTestRun).toContain("npm run build:cli");
@@ -197,6 +200,10 @@ describe("pull request workflow contract", () => {
     const downloadStep = mergeJob.steps?.find(
       (step) => step.name === "Download CLI shard blob reports",
     );
+    const verifyStep = mergeJob.steps?.find(
+      (step) => step.name === "Verify CLI shard blob reports",
+    );
+    const verifyRun = verifyStep?.run ?? "";
 
     expect(shardJob.needs).toBe("changes");
     expect(shardJob.if).toBe("needs.changes.outputs.code == 'true'");
@@ -204,6 +211,9 @@ describe("pull request workflow contract", () => {
     expect(shardJob.strategy?.matrix?.shard).toEqual([1, 2, 3]);
     expect(shardRuns).toContain("--shard=${{ matrix.shard }}/3");
     expect(shardRuns).toContain("--reporter=blob");
+    expect(shardRuns).toContain(
+      "--outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json",
+    );
     expect(shardRuns).toContain("--coverage");
     expect(shardRuns).not.toContain("--outputFile.json=coverage/cli/vitest-results.json");
     expect(shardRuns).not.toContain("scripts/check-coverage-ratchet.ts");
@@ -214,11 +224,19 @@ describe("pull request workflow contract", () => {
     expect(shardUploadStep?.with?.path).toBe(
       ".vitest-reports/blob-${{ matrix.shard }}-3.json",
     );
+    expect(shardUploadStep?.with?.["if-no-files-found"]).toBe("error");
     expect(shardUploadStep?.with?.["retention-days"]).toBe(1);
 
     expect(mergeJob.needs).toEqual(["changes", "cli-test-shards"]);
     expect(mergeJob.if).toBe("${{ always() && needs.changes.outputs.code == 'true' }}");
     expect(mergeRuns).toContain("CLI_SHARD_RESULT");
+    expect(verifyRun).toContain("for shard in 1 2 3");
+    expect(verifyRun).toContain('blob=".vitest-reports/blob-${shard}-3.json"');
+    expect(verifyRun).toContain('[ ! -s "$blob" ]');
+    expect(verifyRun).toContain(
+      "find .vitest-reports -maxdepth 1 -type f -name 'blob-*-3.json'",
+    );
+    expect(verifyRun).toContain("Expected 3 blob reports");
     expect(mergeRuns).toContain("npx vitest --mergeReports .vitest-reports");
     expect(mergeRuns).toContain("--outputFile.json=coverage/cli/vitest-results.json");
     expect(mergeRuns).toContain("--coverage.reportsDirectory=coverage/cli");

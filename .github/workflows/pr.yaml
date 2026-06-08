@@ -205,6 +205,7 @@ jobs:
             --shard=${{ matrix.shard }}/3 \
             --reporter=github-actions \
             --reporter=blob \
+            --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json \
             --coverage \
             --coverage.reporter=json-summary \
             --coverage.reportsDirectory=coverage/cli/shard-${{ matrix.shard }} \
@@ -219,7 +220,7 @@ jobs:
         with:
           name: cli-blob-report-${{ matrix.shard }}
           path: .vitest-reports/blob-${{ matrix.shard }}-3.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 1
 
   cli-tests:
@@ -265,6 +266,23 @@ jobs:
           pattern: cli-blob-report-*
           path: .vitest-reports
           merge-multiple: true
+
+      - name: Verify CLI shard blob reports
+        run: |
+          set -euo pipefail
+          for shard in 1 2 3; do
+            blob=".vitest-reports/blob-${shard}-3.json"
+            if [ ! -s "$blob" ]; then
+              echo "::error title=Missing CLI shard blob::Expected non-empty ${blob}"
+              exit 1
+            fi
+          done
+          blob_count=$(find .vitest-reports -maxdepth 1 -type f -name 'blob-*-3.json' | wc -l | tr -d ' ')
+          if [ "$blob_count" != "3" ]; then
+            echo "::error title=Unexpected CLI shard blob count::Expected 3 blob reports, found ${blob_count}"
+            find .vitest-reports -maxdepth 1 -type f -print
+            exit 1
+          fi
 
       - name: Merge CLI coverage
         run: |
