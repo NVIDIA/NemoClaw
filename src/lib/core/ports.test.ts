@@ -26,58 +26,30 @@ describe("parsePort", () => {
     delete process.env[ENV_KEY];
   });
 
-  it("returns fallback when env var is unset", () => {
-    expect(parsePort(ENV_KEY, 8080)).toBe(8080);
+  it.each([
+    ["an unset env var", undefined, 8080],
+    ["an empty env var", "", 8080],
+    ["a valid port", "9000", 9000],
+    ["surrounding whitespace", "  3000  ", 3000],
+    ["the lower bound", "1024", 1024],
+    ["the upper bound", "65535", 65535],
+  ] as const)("parses %s", (_label, value, expected) => {
+    if (value !== undefined) {
+      process.env[ENV_KEY] = value;
+    }
+
+    expect(parsePort(ENV_KEY, 8080)).toBe(expected);
   });
 
-  it("returns fallback when env var is empty", () => {
-    process.env[ENV_KEY] = "";
-    expect(parsePort(ENV_KEY, 8080)).toBe(8080);
-  });
-
-  it("parses a valid port", () => {
-    process.env[ENV_KEY] = "9000";
-    expect(parsePort(ENV_KEY, 8080)).toBe(9000);
-  });
-
-  it("trims whitespace", () => {
-    process.env[ENV_KEY] = "  3000  ";
-    expect(parsePort(ENV_KEY, 8080)).toBe(3000);
-  });
-
-  it("rejects non-numeric input", () => {
-    process.env[ENV_KEY] = "abc";
-    expect(() => parsePort(ENV_KEY, 8080)).toThrow("Invalid port");
-  });
-
-  it("rejects mixed alphanumeric input", () => {
-    process.env[ENV_KEY] = "80a80";
-    expect(() => parsePort(ENV_KEY, 8080)).toThrow("Invalid port");
-  });
-
-  it("rejects port below 1024", () => {
-    process.env[ENV_KEY] = "80";
-    expect(() => parsePort(ENV_KEY, 8080)).toThrow("1024 and 65535");
-  });
-
-  it("rejects port above 65535", () => {
-    process.env[ENV_KEY] = "70000";
-    expect(() => parsePort(ENV_KEY, 8080)).toThrow("1024 and 65535");
-  });
-
-  it("accepts port 1024 (lower bound)", () => {
-    process.env[ENV_KEY] = "1024";
-    expect(parsePort(ENV_KEY, 8080)).toBe(1024);
-  });
-
-  it("accepts port 65535 (upper bound)", () => {
-    process.env[ENV_KEY] = "65535";
-    expect(parsePort(ENV_KEY, 8080)).toBe(65535);
-  });
-
-  it("rejects special characters that could break pgrep patterns", () => {
-    process.env[ENV_KEY] = ".*";
-    expect(() => parsePort(ENV_KEY, 8080)).toThrow("Invalid port");
+  it.each([
+    ["non-numeric input", "abc", "Invalid port"],
+    ["mixed alphanumeric input", "80a80", "Invalid port"],
+    ["a port below 1024", "80", "1024 and 65535"],
+    ["a port above 65535", "70000", "1024 and 65535"],
+    ["special characters that could break pgrep patterns", ".*", "Invalid port"],
+  ] as const)("rejects %s", (_label, value, expectedMessage) => {
+    process.env[ENV_KEY] = value;
+    expect(() => parsePort(ENV_KEY, 8080)).toThrow(expectedMessage);
   });
 });
 
