@@ -16,6 +16,22 @@ const DEFAULT_PROXY_HOST = "10.200.0.1";
 const DEFAULT_PROXY_PORT = "3128";
 
 type RenderTemplateValue = MessagingSerializableValue | undefined;
+const UNRESOLVED_TEMPLATE = Symbol("unresolved-template");
+type TemplateReferenceResult = RenderTemplateValue | typeof UNRESOLVED_TEMPLATE;
+type TemplateReferenceResolver = (
+  reference: string,
+  context: RenderTemplateContext,
+) => TemplateReferenceResult;
+
+const TEMPLATE_REFERENCE_RESOLVERS: Record<string, TemplateReferenceResolver> = {
+  allowedIds: resolveAllowedIdsTemplateReference,
+  discord: resolveDiscordTemplateReference,
+  discordProxyUrl: resolveDiscordProxyUrlTemplateReference,
+  proxyUrl: resolveProxyUrlTemplateReference,
+  slackConfig: resolveSlackConfigTemplateReference,
+  telegramConfig: resolveTelegramConfigTemplateReference,
+  wechatConfig: resolveWechatConfigTemplateReference,
+};
 
 type DiscordGuildConfig = {
   readonly enabled: true;
@@ -162,38 +178,91 @@ function resolveTemplateReference(
   reference: string,
   context: RenderTemplateContext,
 ): RenderTemplateValue {
-  if (reference === "proxyUrl") return proxyUrl(context.env);
-  if (reference === "discordProxyUrl") return undefined;
-  if (reference === "discord.guilds") return nonEmptyObject(discordGuilds(context));
-  if (reference === "discord.hasGuilds") return Object.keys(discordGuilds(context)).length > 0;
-  if (reference === "discord.guildIds.csv") return nonEmptyCsv(Object.keys(discordGuilds(context)));
-  if (reference === "discord.allowedUsers.values") return nonEmptyArray(discordAllowedUsers(context));
-  if (reference === "discord.allowedUsers.csv") return nonEmptyCsv(discordAllowedUsers(context));
-  if (reference === "discord.allowedUsers.dmPolicy") {
-    return discordAllowedUsers(context).length > 0 ? "allowlist" : undefined;
+  const resolver = TEMPLATE_REFERENCE_RESOLVERS[templateReferenceKey(reference)];
+  if (!resolver) return "{{" + reference + "}}";
+  const resolved = resolver(reference, context);
+  return resolved === UNRESOLVED_TEMPLATE ? "{{" + reference + "}}" : resolved;
+}
+
+function templateReferenceKey(reference: string): string {
+  const separator = reference.indexOf(".");
+  return separator === -1 ? reference : reference.slice(0, separator);
+}
+
+function resolveProxyUrlTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  return reference === "proxyUrl" ? proxyUrl(context.env) : UNRESOLVED_TEMPLATE;
+}
+
+function resolveDiscordProxyUrlTemplateReference(reference: string): TemplateReferenceResult {
+  return reference === "discordProxyUrl" ? undefined : UNRESOLVED_TEMPLATE;
+}
+
+function resolveDiscordTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  switch (reference) {
+    case "discord.guilds":
+      return nonEmptyObject(discordGuilds(context));
+    case "discord.hasGuilds":
+      return Object.keys(discordGuilds(context)).length > 0;
+    case "discord.guildIds.csv":
+      return nonEmptyCsv(Object.keys(discordGuilds(context)));
+    case "discord.allowedUsers.values":
+      return nonEmptyArray(discordAllowedUsers(context));
+    case "discord.allowedUsers.csv":
+      return nonEmptyCsv(discordAllowedUsers(context));
+    case "discord.allowedUsers.dmPolicy":
+      return discordAllowedUsers(context).length > 0 ? "allowlist" : undefined;
+    case "discord.allowAllUsers":
+      return Object.keys(discordGuilds(context)).length > 0 &&
+        discordAllowedUsers(context).length === 0
+        ? true
+        : undefined;
+    case "discord.requireMention":
+      return discordRequireMention(context);
+    default:
+      return UNRESOLVED_TEMPLATE;
   }
-  if (reference === "discord.allowAllUsers") {
-    return Object.keys(discordGuilds(context)).length > 0 && discordAllowedUsers(context).length === 0
-      ? true
-      : undefined;
-  }
-  if (reference === "discord.requireMention") return discordRequireMention(context);
+}
 
-  const allowedIds = reference.match(/^allowedIds\.([A-Za-z0-9_-]+)\.(values|csv|dmPolicy|groupPolicy|channels)$/);
-  if (allowedIds?.[1] && allowedIds[2]) {
-    return resolveAllowedIdsTemplate(allowedIds[1], allowedIds[2], context);
-  }
+function resolveAllowedIdsTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  const allowedIds = reference.match(
+    /^allowedIds[.]([A-Za-z0-9_-]+)[.](values|csv|dmPolicy|groupPolicy|channels)$/,
+  );
+  if (!allowedIds?.[1] || !allowedIds[2]) return UNRESOLVED_TEMPLATE;
+  return resolveAllowedIdsTemplate(allowedIds[1], allowedIds[2], context);
+}
 
-  if (reference === "telegramConfig.requireMention") {
-    return parseBoolean(stateValue(context, "telegramConfig.requireMention"));
-  }
+function resolveTelegramConfigTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  if (reference !== "telegramConfig.requireMention") return UNRESOLVED_TEMPLATE;
+  return parseBoolean(stateValue(context, "telegramConfig.requireMention"));
+}
 
-  const wechatConfig = reference.match(/^wechatConfig\.(accountId|baseUrl|userId)$/);
-  if (wechatConfig?.[1]) return nonEmptyString(stateValue(context, `wechatConfig.${wechatConfig[1]}`));
+function resolveWechatConfigTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  const wechatConfig = reference.match(/^wechatConfig[.](accountId|baseUrl|userId)$/);
+  if (!wechatConfig?.[1]) return UNRESOLVED_TEMPLATE;
+  return nonEmptyString(stateValue(context, "wechatConfig." + wechatConfig[1]));
+}
 
-  if (reference === "slackConfig.allowedChannels.csv") return nonEmptyCsv(slackAllowedChannels(context));
-
-  return `{{${reference}}}`;
+function resolveSlackConfigTemplateReference(
+  reference: string,
+  context: RenderTemplateContext,
+): TemplateReferenceResult {
+  if (reference !== "slackConfig.allowedChannels.csv") return UNRESOLVED_TEMPLATE;
+  return nonEmptyCsv(slackAllowedChannels(context));
 }
 
 function resolveAllowedIdsTemplate(
