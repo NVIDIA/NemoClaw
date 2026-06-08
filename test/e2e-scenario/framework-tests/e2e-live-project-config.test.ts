@@ -24,6 +24,13 @@ interface RootConfig {
   };
 }
 
+const INSTALLER_INTEGRATION_TESTS = [
+  "test/install-preflight.test.ts",
+  "test/install-openshell-version-check.test.ts",
+];
+const LIVE_E2E_SCENARIO_TESTS = ["test/e2e-scenario/live/**/*.test.ts"];
+const BRANCH_VALIDATION_E2E_TESTS = ["test/e2e/brev-e2e.test.ts"];
+
 type BranchValidationWorkflow = {
   jobs?: {
     "e2e-branch-validation"?: {
@@ -42,10 +49,16 @@ function projectConfig(name: string): ProjectConfig {
 }
 
 describe("gated E2E Vitest projects", () => {
-  it("keeps opt-in projects present but empty by default", () => {
-    expect(projectConfig("installer-integration").test?.include).toEqual([]);
-    expect(projectConfig("e2e-scenarios-live").test?.include).toEqual([]);
-    expect(projectConfig("e2e-branch-validation").test?.include).toEqual([]);
+  it("selects gated project includes from the current process environment", () => {
+    expect(projectConfig("installer-integration").test?.include).toEqual(
+      shouldRunInstallerIntegration() ? INSTALLER_INTEGRATION_TESTS : [],
+    );
+    expect(projectConfig("e2e-scenarios-live").test?.include).toEqual(
+      shouldRunLiveE2EScenarios() ? LIVE_E2E_SCENARIO_TESTS : [],
+    );
+    expect(projectConfig("e2e-branch-validation").test?.include).toEqual(
+      shouldRunBranchValidationE2E() ? BRANCH_VALIDATION_E2E_TESTS : [],
+    );
   });
 
   it("enables installer integration only in CI or with the installer opt-in env var", () => {
