@@ -187,6 +187,7 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     const stubsDir = path.join(tmp, "bin");
     const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
     const pkillLog = path.join(tmp, "pkill.log");
+    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
     fs.mkdirSync(stubsDir, { recursive: true });
     if (opts.validatorExists) {
       fs.mkdirSync(validatorRoot, { recursive: true });
@@ -198,7 +199,7 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     writeStub(
       stubsDir,
       "python3",
-      `printf 'python3 %s\\n' "$*" >&2\nexit ${opts.pythonExit}`,
+      `printf '[SECURITY] stub validator stderr for %s\\n' "$*" >&2\nexit ${opts.pythonExit}`,
     );
     writeStub(stubsDir, "pkill", `printf '%s\\n' "$*" >> ${JSON.stringify(pkillLog)}\nexit 0`);
     writeStub(stubsDir, "sleep", "exit 0");
@@ -208,16 +209,17 @@ describe("Hermes secret-boundary guard — behavioural", () => {
       validatorRoot,
       "validate-hermes-env-secret-boundary.py",
     );
+    const guardWithStubs = opts.guard
+      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath);
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -u",
         `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`,
-        opts.guard.replace(
-          new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"),
-          validatorPath,
-        ),
+        guardWithStubs,
+        'wait',
         'printf "REACHED_LAUNCH\\n"',
       ].join("\n"),
       { mode: 0o700 },
@@ -236,13 +238,16 @@ describe("Hermes secret-boundary guard — behavioural", () => {
         pkillCalls: fs.existsSync(pkillLog)
           ? fs.readFileSync(pkillLog, "utf-8").trim().split("\n").filter(Boolean)
           : [],
+        recoveryLog: fs.existsSync(recoveryLogPath)
+          ? fs.readFileSync(recoveryLogPath, "utf-8")
+          : "",
       };
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
 
-  it("env-file guard exits 1 and kills hermes processes when python validator fails", () => {
+  it("env-file guard exits 1, kills hermes processes, and persists [SECURITY] to the recovery log when python validator fails", () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 1,
@@ -255,6 +260,8 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     const dashboardKills = result.pkillCalls.filter((line) => line.includes("[h]ermes") && line.includes("dashboard"));
     expect(gatewayKills.length).toBeGreaterThanOrEqual(2);
     expect(dashboardKills.length).toBeGreaterThanOrEqual(2);
+    expect(result.recoveryLog).toContain("[SECURITY]");
+    expect(result.stderr).toContain("[SECURITY]");
   });
 
   it("env-file guard passes through and lets the launch proceed when python validator succeeds", () => {
@@ -269,7 +276,7 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     expect(result.pkillCalls.length).toBe(0);
   });
 
-  it("env-file guard refuses with SECRET_BOUNDARY_VALIDATOR_MISSING when the script is absent", () => {
+  it("env-file guard refuses with SECRET_BOUNDARY_VALIDATOR_MISSING + logs the diagnostic when the script is absent", () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 0,
@@ -279,9 +286,11 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     expect(result.stdout).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
     expect(result.stdout).not.toContain("REACHED_LAUNCH");
     expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
+    expect(result.recoveryLog).toContain("validator script");
+    expect(result.recoveryLog).toContain("missing on this sandbox image");
   });
 
-  it("runtime-env guard exits 1 on python validator failure and kills hermes processes", () => {
+  it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", () => {
     const result = runGuard({
       guard: __testing.buildHermesRuntimeEnvBoundaryGuard(),
       pythonExit: 1,
@@ -291,5 +300,68 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
     expect(result.stdout).not.toContain("REACHED_LAUNCH");
     expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
+    expect(result.recoveryLog).toContain("[SECURITY]");
+  });
+
+  it("full Hermes recovery script exits 1, kills processes, and never reaches the gateway launch when env-file is poisoned", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-recovery-full-"));
+    const stubsDir = path.join(tmp, "bin");
+    const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
+    const pkillLog = path.join(tmp, "pkill.log");
+    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
+    const hermesLaunchMarker = path.join(tmp, "hermes-launched");
+    fs.mkdirSync(stubsDir, { recursive: true });
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n",
+    );
+
+    writeStub(
+      stubsDir,
+      "python3",
+      'printf "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env contains raw secret-shaped values.\\n" >&2\nprintf "[SECURITY]   TELEGRAM_BOT_TOKEN (line 2)\\n" >&2\nexit 1',
+    );
+    writeStub(stubsDir, "pkill", `printf '%s\\n' "$*" >> ${JSON.stringify(pkillLog)}\nexit 0`);
+    writeStub(stubsDir, "pgrep", "exit 1");
+    writeStub(stubsDir, "sleep", "exit 0");
+    writeStub(stubsDir, "curl", 'printf "000"\nexit 0');
+    writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\nexit 0`);
+
+    const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
+    const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
+    expect(recoveryScript).not.toBeNull();
+    const stubbed = recoveryScript!
+      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath);
+
+    const scriptPath = path.join(tmp, "recovery.sh");
+    fs.writeFileSync(
+      scriptPath,
+      ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`, stubbed].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 15000,
+        env: { PATH: `${stubsDir}:/usr/bin:/bin`, HOME: tmp },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
+      expect(result.stdout).not.toContain("GATEWAY_PID=");
+      expect(result.stdout).not.toContain("ALREADY_RUNNING");
+      expect(fs.existsSync(hermesLaunchMarker)).toBe(false);
+      const pkillCalls = fs.readFileSync(pkillLog, "utf-8");
+      expect(pkillCalls).toContain("[h]ermes");
+      expect(pkillCalls).toContain("gateway");
+      expect(pkillCalls).toContain("dashboard");
+      const log = fs.readFileSync(recoveryLogPath, "utf-8");
+      expect(log).toContain("[SECURITY] Refusing Hermes startup");
+      expect(log).toContain("TELEGRAM_BOT_TOKEN (line 2)");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

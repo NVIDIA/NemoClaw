@@ -150,6 +150,7 @@ export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
   "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
 const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)";
 const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
+const HERMES_BOUNDARY_RECOVERY_LOG = "/tmp/gateway-recovery.log";
 
 function buildHermesBoundaryKillSnippet(): string {
   return [
@@ -159,6 +160,25 @@ function buildHermesBoundaryKillSnippet(): string {
     `pkill -KILL -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
     `pkill -KILL -f ${shellQuote(HERMES_DASHBOARD_PROC_PATTERN)} 2>/dev/null || true;`,
   ].join(" ");
+}
+
+/**
+ * Pipe a validator invocation's stderr through `tee` so the detailed `[SECURITY]`
+ * lines emitted by `validate-env-secret-boundary.py` are persisted to
+ * `/tmp/gateway-recovery.log` inside the sandbox AND mirrored back onto stderr.
+ * The recovery caller currently treats the command result as a boolean, so without
+ * this duplication the documented `[SECURITY] Refusing Hermes startup ...` log
+ * line and the offending key never surface anywhere a user can inspect after the
+ * sandbox recovers — failing the issue's log-acceptance clause even when relaunch
+ * is correctly refused.
+ */
+function buildHermesValidatorInvocation(args: string): string {
+  return `python3 ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
+}
+
+function buildHermesValidatorMissingLog(): string {
+  const message = `[SECURITY] Refusing Hermes recovery: validator script ${HERMES_SECRET_BOUNDARY_VALIDATOR_PATH} missing on this sandbox image; the secret-boundary check cannot be verified.`;
+  return `printf '%s\\n' ${shellQuote(message)} | tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2;`;
 }
 
 /**
@@ -172,13 +192,18 @@ function buildHermesBoundaryKillSnippet(): string {
  * currently-running Hermes gateway and dashboard so `/health` cannot keep
  * answering with the poisoned configuration, then refuses with
  * `SECRET_BOUNDARY_REFUSED` (or `SECRET_BOUNDARY_VALIDATOR_MISSING`) and exits 1.
+ * The validator's detailed `[SECURITY]` lines are appended to
+ * `/tmp/gateway-recovery.log` so a user inspecting the sandbox after a refused
+ * recovery can identify the offending key.
  */
 function buildHermesEnvFileBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
   const kill = buildHermesBoundaryKillSnippet();
+  const missingLog = buildHermesValidatorMissingLog();
+  const invocation = buildHermesValidatorInvocation("env-file /sandbox/.hermes/.env");
   return [
-    `if [ ! -f ${shellQuote(validator)} ]; then ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
-    `if ! python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
+    `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
+    `if ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
   ].join(" ");
 }
 
@@ -195,9 +220,11 @@ function buildHermesEnvFileBoundaryGuard(): string {
 function buildHermesRuntimeEnvBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
   const kill = buildHermesBoundaryKillSnippet();
+  const missingLog = buildHermesValidatorMissingLog();
+  const invocation = buildHermesValidatorInvocation("runtime-env");
   return [
-    `if [ ! -f ${shellQuote(validator)} ]; then ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
-    `if ! python3 ${shellQuote(validator)} runtime-env; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
+    `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
+    `if ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
   ].join(" ");
 }
 

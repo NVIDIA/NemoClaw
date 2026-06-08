@@ -65,6 +65,12 @@ def _emit_violations(prefix: str, violations: Iterable[str]) -> None:
 
 
 def validate_env_file(path: str) -> int:
+    if os.path.islink(path):
+        print(
+            f"[SECURITY] Refusing Hermes startup because {path} is a symlink",
+            file=sys.stderr,
+        )
+        return 1
     violations: list[str] = []
     try:
         with open(path, encoding="utf-8") as fh:
@@ -137,9 +143,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.mode == "env-file":
         return validate_env_file(args.path)
-    if args.mode == "runtime-env":
-        return validate_runtime_env()
-    return 2
+    assert args.mode == "runtime-env", f"unreachable: argparse subparsers are required ({args.mode!r})"
+    return validate_runtime_env()
 
 
 if __name__ == "__main__":
