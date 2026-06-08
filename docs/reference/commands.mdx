@@ -899,7 +899,8 @@ Pass `--write` to refresh that file on demand without changing the policy:
 $$nemoclaw my-assistant policy-explain --write
 ```
 
-The context also documents how a failed host or integration attempt should be classified — `blocked-by-policy`, `missing-approval`, `unsupported`, or `unknown` — so the agent can pick a remediation step instead of surfacing a lower-level network error.
+The context also documents how a failed host or integration attempt should be classified.
+The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, and `unknown`, so the agent can pick a remediation step instead of surfacing a lower-level network error.
 
 | Flag | Description |
 |------|-------------|

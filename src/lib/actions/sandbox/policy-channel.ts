@@ -1343,12 +1343,10 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    refreshSandboxPolicyContextFile(sandboxName);
     return;
   }
   if (!policies.getAppliedPresets(sandboxName).includes(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");
-    refreshSandboxPolicyContextFile(sandboxName);
     return;
   }
   try {

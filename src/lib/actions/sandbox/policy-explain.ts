@@ -33,8 +33,23 @@ export interface WritePolicyContextResult {
   reason?: string;
 }
 
-function loadExecutor(): SandboxExec {
-  return require("./process-recovery").executeSandboxCommand as SandboxExec;
+function loadExecutor(): SandboxExec | null {
+  if (process.env.VITEST === "true") return null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const resolve = require("../../adapters/openshell/resolve") as {
+      resolveOpenshell?: () => string | null;
+    };
+    const resolved = resolve.resolveOpenshell ? resolve.resolveOpenshell() : null;
+    if (!resolved) return null;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const recovery = require("./process-recovery") as {
+      executeSandboxCommand: SandboxExec;
+    };
+    return recovery.executeSandboxCommand;
+  } catch {
+    return null;
+  }
 }
 
 function buildWriteCommand(markdown: string, targetPath: string): string {
@@ -55,6 +70,9 @@ export function writePolicyContextToSandbox(
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
   const exec = deps.exec ?? loadExecutor();
+  if (!exec) {
+    return { written: false, reason: "sandbox unreachable" };
+  }
   const ctx = build(sandboxName);
   const markdown = render(ctx);
   const command = buildWriteCommand(markdown, POLICY_CONTEXT_SANDBOX_PATH);
