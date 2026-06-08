@@ -117,8 +117,11 @@ def validate_env_file(path: str) -> int:
         if fd != -1:
             try:
                 os.close(fd)
-            except OSError:
-                pass
+            except OSError as exc:
+                print(
+                    f"[WARN] Failed to close {path}: {exc}",
+                    file=sys.stderr,
+                )
     if not violations:
         return 0
     _emit_violations(
