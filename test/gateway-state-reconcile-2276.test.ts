@@ -57,8 +57,6 @@ const STATUS_MALFORMED = "??? garbage output ???";
 const SANDBOX_GET_READY =
   "Sandbox:\n\n  Id: abc\n  Name: my-assistant\n  Namespace: openshell\n  Phase: Ready\n";
 const SANDBOX_GET_NOT_FOUND = "Error:   × Not Found: sandbox not found";
-const SANDBOX_GET_TRANSPORT_ERROR =
-  "Error:   × transport error\n  ╰─▶ Connection reset by peer (os error 104)";
 
 interface ScenarioScript {
   // sandbox get responses, one per call (cycled / stops at last)

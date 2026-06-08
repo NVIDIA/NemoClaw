@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # NemoClaw — prek hook configuration
 # prek: https://github.com/j178/prek — single binary, no Python required for the runner
 # Installed as an npm devDependency (@j178/prek) — available after `npm install`.
@@ -302,6 +305,14 @@ repos:
         language: system
         pass_filenames: false
         files: ^(test/|scripts/find-source-shape-tests\.ts$|ci/source-shape-test-budget\.json$)
+        priority: 20
+
+      - id: test-file-size-budget
+        name: Test file size budget
+        entry: npm run test-size:check
+        language: system
+        pass_filenames: false
+        files: ^(test/|src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|nemoclaw/src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|scripts/check-test-file-size-budget\.ts$|ci/test-file-size-budget\.json$)
         priority: 20
 
       - id: test-skills-yaml

@@ -1,17 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+// Legacy-field (messagingChannels / disabledChannels) conflict tests.
+// Hash-precise plan-backed tests are split across conflict-detection-entry, conflict-detection-overlap, and conflict-detection-multi-credential tests
 
-import type { SandboxEntry } from "./state/registry";
+import { describe, expect, it, vi } from "vitest";
+import { makePlan } from "../../../../test/helpers/messaging-conflict-fixtures";
+import type { SandboxEntry } from "../../state/registry";
 import {
   backfillMessagingChannels,
   findAllOverlaps,
   findChannelConflicts,
-} from "./messaging-conflict";
+  type MessagingConflictProbe,
+} from "./conflict-detection";
 
-type ConflictProbe = Parameters<typeof backfillMessagingChannels>[1];
-type ProviderExists = ConflictProbe["providerExists"];
+type ProviderExists = MessagingConflictProbe["providerExists"];
 
 function makeRegistry(sandboxes: SandboxEntry[]) {
   const store = new Map(sandboxes.map((s) => [s.name, { ...s }]));
@@ -40,18 +43,10 @@ describe("findChannelConflicts", () => {
     ]);
   });
 
-  it("returns conflicts only when the same channel credential hash matches", () => {
+  it("returns unknown-token for any legacy entry sharing the channel (no hash data)", () => {
     const registry = makeRegistry([
-      {
-        name: "alice",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
-      {
-        name: "carol",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-c" },
-      },
+      { name: "alice", messagingChannels: ["telegram"] },
+      { name: "carol", messagingChannels: ["telegram"] },
     ]);
     expect(
       findChannelConflicts(
@@ -59,24 +54,10 @@ describe("findChannelConflicts", () => {
         [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" } }],
         registry,
       ),
-    ).toEqual([{ channel: "telegram", sandbox: "alice", reason: "matching-token" }]);
-  });
-
-  it("allows multiple telegram sandboxes with distinct token hashes", () => {
-    const registry = makeRegistry([
-      {
-        name: "alice",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
+    ).toEqual([
+      { channel: "telegram", sandbox: "alice", reason: "unknown-token" },
+      { channel: "telegram", sandbox: "carol", reason: "unknown-token" },
     ]);
-    expect(
-      findChannelConflicts(
-        "bob",
-        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" } }],
-        registry,
-      ),
-    ).toEqual([]);
   });
 
   it("excludes the current sandbox from its own conflicts", () => {
@@ -100,7 +81,6 @@ describe("findChannelConflicts", () => {
         name: "alice",
         messagingChannels: ["telegram"],
         disabledChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
       },
     ]);
     expect(
@@ -138,40 +118,6 @@ describe("findAllOverlaps", () => {
     ]);
   });
 
-  it("does not report overlaps when same-channel credential hashes differ", () => {
-    const registry = makeRegistry([
-      {
-        name: "alice",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
-      {
-        name: "bob",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-b" },
-      },
-    ]);
-    expect(findAllOverlaps(registry)).toEqual([]);
-  });
-
-  it("reports matching-token overlaps when same-channel credential hashes match", () => {
-    const registry = makeRegistry([
-      {
-        name: "alice",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
-      {
-        name: "bob",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
-    ]);
-    expect(findAllOverlaps(registry)).toEqual([
-      { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
-    ]);
-  });
-
   it("returns empty when channels do not overlap", () => {
     const registry = makeRegistry([
       { name: "alice", messagingChannels: ["telegram"] },
@@ -186,13 +132,8 @@ describe("findAllOverlaps", () => {
         name: "alice",
         messagingChannels: ["telegram"],
         disabledChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
       },
-      {
-        name: "bob",
-        messagingChannels: ["telegram"],
-        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
-      },
+      { name: "bob", messagingChannels: ["telegram"] },
     ]);
     expect(findAllOverlaps(registry)).toEqual([]);
   });
@@ -201,7 +142,7 @@ describe("findAllOverlaps", () => {
 describe("backfillMessagingChannels", () => {
   it("fills in missing messagingChannels by probing OpenShell", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>((name) =>
         name === "alice-telegram-bridge" ? "present" : "absent",
       ),
@@ -217,11 +158,8 @@ describe("backfillMessagingChannels", () => {
   });
 
   it("backfills wechat when only the wechat bridge provider is present", () => {
-    // The probe-by-suffix mechanism relies on every channel having an entry
-    // in PROVIDER_SUFFIXES; if wechat were ever dropped from that map, this
-    // test starts catching the absent provider.
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>((name) =>
         name === "alice-wechat-bridge" ? "present" : "absent",
       ),
@@ -244,7 +182,22 @@ describe("backfillMessagingChannels", () => {
 
   it("leaves entries with existing messagingChannels alone", () => {
     const registry = makeRegistry([{ name: "alice", messagingChannels: ["telegram"] }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
+      providerExists: vi.fn<ProviderExists>(() => "present"),
+    };
+    backfillMessagingChannels(registry, probe);
+    expect(registry.updateSandbox).not.toHaveBeenCalled();
+    expect(probe.providerExists).not.toHaveBeenCalled();
+  });
+
+  it("skips plan-backed entries without legacy messagingChannels", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messaging: { schemaVersion: 1, plan: makePlan("alice") },
+      } as unknown as SandboxEntry,
+    ]);
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>(() => "present"),
     };
     backfillMessagingChannels(registry, probe);
@@ -254,7 +207,7 @@ describe("backfillMessagingChannels", () => {
 
   it("writes an empty array when all probes return absent", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>(() => "absent"),
     };
     backfillMessagingChannels(registry, probe);
@@ -262,11 +215,8 @@ describe("backfillMessagingChannels", () => {
   });
 
   it("does NOT persist when a probe returns error (retry on next call)", () => {
-    // "error" is distinct from "absent": a transient gateway failure must not
-    // be collapsed into "provider not attached" and persisted, because that
-    // would prevent all future backfill retries and hide real overlaps.
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>((name) => {
         if (name.endsWith("-telegram-bridge")) return "error";
         return name.endsWith("-discord-bridge") ? "present" : "absent";
@@ -278,7 +228,7 @@ describe("backfillMessagingChannels", () => {
 
   it("also treats a thrown probe as error (defensive; callers should return 'error' instead)", () => {
     const registry = makeRegistry([{ name: "alice" }]);
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>(() => {
         throw new Error("unexpected");
       }),
@@ -290,7 +240,7 @@ describe("backfillMessagingChannels", () => {
   it("re-attempts backfill on a subsequent call after a prior error", () => {
     const registry = makeRegistry([{ name: "alice" }]);
     let firstPass = true;
-    const probe: ConflictProbe = {
+    const probe: MessagingConflictProbe = {
       providerExists: vi.fn<ProviderExists>((name) => {
         if (name.endsWith("-telegram-bridge") && firstPass) {
           firstPass = false;

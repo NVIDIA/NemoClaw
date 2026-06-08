@@ -331,6 +331,23 @@ function downloadModel(
   });
 }
 
+// Build the `docker run` command for the long-lived vLLM inference container.
+// Exported for testing. `--restart unless-stopped` makes the container come
+// back after a host reboot or Docker daemon restart (#4886); without a restart
+// policy the container stays down after a reboot and `nemoclaw inference get`
+// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+export function buildVllmRunCommand(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runFlags: string,
+): string {
+  const extra = runFlags ? ` ${runFlags}` : "";
+  return (
+    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  );
+}
+
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -352,9 +369,7 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`;
+  const cmd = buildVllmRunCommand(profile, model, flags);
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,

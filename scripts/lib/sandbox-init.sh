@@ -220,6 +220,34 @@ lock_config_after_write() {
   done
 }
 
+# ── Resource limits (RLIMITs) ────────────────────────────────────
+# Harden RLIMITs at PID 1 (root) so the caps are inherited by every descendant
+# and cannot be raised after the privilege step-down. nproc (#809) prevents
+# fork bombs; nofile (#4527) caps open file descriptors so the sandbox no
+# longer inherits the Docker daemon default (~1048576), which can exceed the
+# host runtime limit. Best-effort: some container runtimes (e.g. brev, Docker
+# Desktop, WSL) reject ulimit changes with "Invalid argument"; warn but do not
+# block startup. Set the soft limit before the hard limit (ordering matters;
+# see #951). Hard==soft makes the cap unraisable: raising the hard RLIMIT
+# requires CAP_SYS_RESOURCE, which the unprivileged stepped-down agent never
+# holds. NOTE: this only covers the PID 1 entrypoint process tree (gateway +
+# agent); 'openshell sandbox connect' shells are spawned outside this tree and
+# still inherit the runtime default (NVIDIA/OpenShell#1452).
+harden_resource_limits() {
+  if ! ulimit -Su 512 2>/dev/null; then
+    echo "[SECURITY] Could not set soft nproc limit (container runtime may restrict ulimit)" >&2
+  fi
+  if ! ulimit -Hu 512 2>/dev/null; then
+    echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
+  fi
+  if ! ulimit -Sn 65536 2>/dev/null; then
+    echo "[SECURITY] Could not set soft nofile limit (container runtime may restrict ulimit)" >&2
+  fi
+  if ! ulimit -Hn 65536 2>/dev/null; then
+    echo "[SECURITY] Could not set hard nofile limit (container runtime may restrict ulimit)" >&2
+  fi
+}
+
 # ── Capability dropping ──────────────────────────────────────────
 # CIS Docker Benchmark 5.3: containers should not run with default caps.
 # OpenShell manages the container runtime so we cannot pass --cap-drop=ALL

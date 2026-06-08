@@ -1,0 +1,17 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "defaultMaxLines": 1500,
+  "legacyMaxLines": {
+    "nemoclaw/src/commands/migration-state.test.ts": 1566,
+    "src/lib/inference/nim.test.ts": 2079,
+    "src/lib/onboard/preflight.test.ts": 1905,
+    "test/channels-add-preset.test.ts": 1901,
+    "test/generate-openclaw-config.test.ts": 2106,
+    "test/install-preflight.test.ts": 4397,
+    "test/nemoclaw-start.test.ts": 5300,
+    "test/onboard-messaging.test.ts": 2110,
+    "test/onboard-selection.test.ts": 7757,
+    "test/onboard.test.ts": 4887,
+    "test/policies.test.ts": 2763
+  }
+}

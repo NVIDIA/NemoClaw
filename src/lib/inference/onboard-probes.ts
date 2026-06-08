@@ -15,7 +15,6 @@ const {
 const {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,
-  shouldForceCompletionsApi,
 } = require("../validation");
 
 const {

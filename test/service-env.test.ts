@@ -309,6 +309,87 @@ describe("service environment", () => {
     });
   });
 
+  describe("runtime npm online state", () => {
+    it("entrypoint exports npm_config_offline=false and NPM_CONFIG_OFFLINE=false at PID 1", () => {
+      const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+      const start = src.indexOf("_TOOL_REDIRECTS=(");
+      const end = src.indexOf("done", src.indexOf("for _redir", start));
+      if (start === -1 || end === -1 || end <= start) {
+        throw new Error("Failed to extract _TOOL_REDIRECTS block from scripts/nemoclaw-start.sh");
+      }
+      const block = `${src.slice(start, end)}done`;
+      const tmpFile = join(
+        tmpdir(),
+        `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`,
+      );
+      try {
+        writeFileSync(
+          tmpFile,
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            block,
+            'printf "npm_config_offline=%s\\n" "${npm_config_offline:-unset}"',
+            'printf "NPM_CONFIG_OFFLINE=%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        expect(out).toContain("npm_config_offline=false");
+        expect(out).toContain("NPM_CONFIG_OFFLINE=false");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+
+    it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
+      const persistBlock = extractRuntimeShellEnvSnippet();
+      const toolRedirects = execFileSync(
+        "sed",
+        ["-n", "/^_TOOL_REDIRECTS=/,/^done$/p", NEMOCLAW_START_SCRIPT],
+        { encoding: "utf-8" },
+      ).trimEnd();
+      const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
+      const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-connect-npm-online-"));
+      const tmpFile = join(tmpdir(), `nemoclaw-connect-npm-online-${process.pid}.sh`);
+      try {
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          sandboxInitSource,
+          toolRedirects,
+          'PROXY_HOST="10.200.0.1"',
+          'PROXY_PORT="3128"',
+          '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
+          '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
+          'export OPENCLAW_GATEWAY_TOKEN="probe-token"',
+          persistBlock.replaceAll(
+            "/tmp/nemoclaw-proxy-env.sh",
+            `${fakeDataDir}/proxy-env.sh`,
+          ),
+          `env -i HOME=/tmp bash --noprofile --norc -c 'source ${fakeDataDir}/proxy-env.sh; printf "%s\\n" "$npm_config_offline" "$NPM_CONFIG_OFFLINE"'`,
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+        const out = execFileSync("bash", [tmpFile], { encoding: "utf-8" }).trim();
+        expect(out.split("\n")).toEqual(["false", "false"]);
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+        try {
+          execFileSync("rm", ["-rf", fakeDataDir]);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
   describe("XDG and tool cache redirects (issue #804)", () => {
     it("entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions", () => {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
@@ -521,6 +602,12 @@ describe("service environment", () => {
         expect(envFile).toContain("GNUPGHOME=/tmp/.gnupg");
         expect(envFile).toContain("PYTHON_HISTORY=/tmp/.python_history");
         expect(envFile).toContain("npm_config_prefix=/tmp/npm-global");
+        // Pin npm online for connect sessions and PID 1 so a leaked
+        // build-time NPM_CONFIG_OFFLINE=true cannot force `only-if-cached`
+        // mode on dashboard-driven MCP installs, skill installers, or
+        // ad-hoc `npx -y` invocations inside the sandbox.
+        expect(envFile).toContain("npm_config_offline=false");
+        expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
         // Permission should be 444 (hardened via emit_sandbox_sourced_file)
         // Cross-platform: Linux uses stat -c '%a', macOS uses stat -f '%Lp'
         let perms: string;

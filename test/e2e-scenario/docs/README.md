@@ -8,9 +8,15 @@ It combines typed scenario builders, product-facing setup manifests, YAML
 runtime metadata, and reusable shell suites while the older live E2E scripts
 continue to run in parallel.
 
+This hybrid model is transitional. The target architecture for #3588 is a
+single scenario runner that owns scenario resolution, orchestration, evidence
+collection, redaction, and assertion dispatch. Shell scripts should be kept to
+the smallest practical set of system-boundary probes or command fixtures, not a
+second planning or assertion-control runtime.
+
 ## Current sources of truth
 
-Use the source that matches the task:
+Use the source that matches the task while the migration is in progress:
 
 | Task | Current source |
 | --- | --- |
@@ -20,10 +26,36 @@ Use the source that matches the task:
 | Reusable live suite assertions | `test/e2e-scenario/validation_suites/` |
 | Existing nightly and platform E2E coverage | legacy `test/e2e/test-*.sh` scripts and their workflows |
 
-The migration goal is to keep these surfaces aligned while progressively moving
-coverage into scenario contracts and suites. Do not add new legacy-style
-`test/e2e/test-*.sh` entrypoints unless there is a specific maintainer-approved
-reason.
+The near-term migration goal is to keep these surfaces aligned while coverage is
+being moved into scenario contracts and suites. The long-term goal is to remove
+the split between typed planning and shell execution. Do not add new
+legacy-style `test/e2e/test-*.sh` entrypoints unless there is a specific
+maintainer-approved reason.
+
+## Target runner model
+
+Future scenario coverage should move toward one runner with these properties:
+
+- the runner compiles one typed plan for each scenario and treats that plan as
+  the source of truth for setup, onboarding, expected state, suites, assertions,
+  evidence paths, and expected failures;
+- product-facing manifests remain declarative setup inputs, not executable test
+  programs;
+- assertion modules prefer TypeScript probes and typed client helpers;
+- shell is used only when the system under test is a shell command, host
+  process, container command, or platform-specific probe;
+- every shell call goes through a controlled spawn boundary with scoped
+  environment, timeout, redaction, artifact capture, and command/argument
+  validation;
+- bridge work that expands the YAML/bash runner must also identify how that
+  behavior will move into the single runner before legacy runner paths are
+  removed.
+
+The #4347-#4357 audit-phase issues should be read as acceptance coverage
+requirements, not as a permanent requirement to keep YAML resolver or bash
+runner deliverables. If a phase issue names YAML or shell-runner artifacts, map
+that requirement to equivalent single-runner behavior unless maintainers
+explicitly decide to keep a bridge path for the current migration step.
 
 ## Layered scenario model
 
@@ -37,7 +69,7 @@ base environment
         → post-onboard suites
 ```
 
-The YAML shell runner expresses this through:
+The current YAML shell runner expresses this through:
 
 - `base_scenarios`: platform + install + runtime
 - `onboarding_profiles`: user onboarding choices
@@ -46,7 +78,9 @@ The YAML shell runner expresses this through:
 - `onboarding_assertions`: setup/onboarding checks that run before suites
 
 The typed scenario registry expresses the same intent as deterministic code and
-is used by the scenario workflow matrix and dry-run plan artifacts.
+is used by the scenario workflow matrix and dry-run plan artifacts. The target
+single runner should collapse these parallel expressions into one executable
+plan model.
 
 ## How to run
 

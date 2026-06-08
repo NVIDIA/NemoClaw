@@ -583,6 +583,37 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
     expect(violations.length).toBe(0);
   });
 
+  it("accepts a large archive whose verbose listing exceeds Node's default spawn buffer", async () => {
+    const { rejectHardLinks } = await loadSandboxState();
+    const entries = Array.from({ length: 20_000 }, (_, index) => ({
+      path: `workspace/file-${index.toString().padStart(5, "0")}.txt`,
+      content: "x",
+    }));
+
+    const violations = rejectHardLinks(buildTar(entries));
+
+    expect(violations).toEqual([]);
+  });
+
+  it("accepts a large archive whose path listing exceeds Node's default spawn buffer", async () => {
+    const { validateTarEntries } = await loadSandboxState();
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-large-listing-"));
+    try {
+      const entries = Array.from({ length: 20_000 }, (_, index) => ({
+        path: `workspace/${index.toString().padStart(5, "0")}-${"segment".repeat(10)}.txt`,
+        content: "x",
+      }));
+
+      const result = validateTarEntries(buildTar(entries), targetDir);
+
+      expect(result.safe).toBe(true);
+      expect(result.violations).toEqual([]);
+      expect(result.entries).toHaveLength(entries.length);
+    } finally {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
+
   it("safeTarExtract rejects archive containing hard links", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hardlink-"));

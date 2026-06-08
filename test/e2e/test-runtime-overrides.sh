@@ -48,10 +48,76 @@ info "Logging Docker stderr to: $LOG_FILE"
 # The entrypoint patches config and starts the gateway — we only need the
 # config patch, so we override CMD to just cat the config and exit.
 # Docker stderr is captured to the log file for CI artifact visibility.
+#
+# The entrypoint redirects stdout through a tee process substitution. For
+# short-lived one-shot commands, container teardown can race tee's flush to
+# Docker stdout; write captured payloads to fd 3 to bypass that pipe (#4924).
 run_override() {
   local env_args=("$@")
   docker run --rm "${env_args[@]}" "$IMAGE" \
-    bash -c 'cat /sandbox/.openclaw/openclaw.json; printf "\n"' 2>>"$LOG_FILE"
+    bash -c 'cat /sandbox/.openclaw/openclaw.json >&3; printf "\n" >&3' 2>>"$LOG_FILE"
+}
+
+run_config_hash_check() {
+  local env_args=("$@")
+  docker run --rm "${env_args[@]}" "$IMAGE" \
+    bash -c 'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\n" >&3; else printf "FAIL\n" >&3; fi' 2>>"$LOG_FILE"
+}
+
+valid_config() {
+  jq -e '
+    type == "object"
+    and (.agents.defaults.model.primary | type == "string" and length > 0)
+    and (.models.providers | type == "object" and length > 0)
+    and ((.models.providers | to_entries[0].value.models[0].contextWindow) | type == "number")
+    and ((.models.providers | to_entries[0].value.models[0].maxTokens) | type == "number")
+    and ((.models.providers | to_entries[0].value.models[0].reasoning) | type == "boolean")
+    and (.gateway.controlUi.allowedOrigins | type == "array")
+  ' >/dev/null || return 1
+}
+
+capture_config() {
+  local label="$1"
+  shift
+  local cfg=""
+  local attempt=1
+  local run_rc=0
+  local valid_rc=0
+
+  while [ "$attempt" -le 3 ]; do
+    set +e
+    cfg=$(run_override "$@")
+    run_rc=$?
+    if [ "$run_rc" -eq 0 ]; then
+      printf '%s' "$cfg" | valid_config 2>>"$LOG_FILE"
+      valid_rc=$?
+    else
+      valid_rc=1
+    fi
+    set -e
+
+    if [ "$run_rc" -eq 0 ] && [ "$valid_rc" -eq 0 ]; then
+      printf '%s\n' "$cfg"
+      return 0
+    fi
+
+    if [ "$attempt" -lt 3 ]; then
+      printf '%b\n' "${YELLOW}TEST${NC}: ${label} config capture attempt ${attempt} returned invalid output; retrying" >&2
+      sleep "$attempt"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  printf '%b\n' "${RED}FAIL${NC}: ${label} config capture failed after 3 attempts; Docker stderr tail follows" >&2
+  tail -80 "$LOG_FILE" >&2 || true
+  return 1
+}
+
+jq_config() {
+  local cfg="$1"
+  local filter="$2"
+  printf '%s' "$cfg" | jq -r \
+    "[$filter] | if length == 0 or .[0] == null then error(\"missing required config field\") else .[0] end"
 }
 
 # Helper: run entrypoint with env vars and capture stderr for validation messages.
@@ -82,24 +148,24 @@ fi
 # ── Capture baseline config ──────────────────────────────────────
 
 info "Capturing baseline config (no overrides)"
-if ! BASELINE=$(run_override); then
+if ! BASELINE=$(capture_config "baseline"); then
   fail "baseline container failed before config capture"
   info "Docker stderr tail:"
   tail -80 "$LOG_FILE" || true
   exit 1
 fi
-BASELINE_MODEL=$(echo "$BASELINE" | jq -r '.agents.defaults.model.primary')
-BASELINE_CTX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
-BASELINE_MAX=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
-BASELINE_REASONING=$(echo "$BASELINE" | jq -r '.models.providers | to_entries[0].value.models[0].reasoning')
-BASELINE_ORIGINS=$(echo "$BASELINE" | jq -r '.gateway.controlUi.allowedOrigins | length')
+BASELINE_MODEL=$(jq_config "$BASELINE" '.agents.defaults.model.primary')
+BASELINE_CTX=$(jq_config "$BASELINE" '.models.providers | to_entries[0].value.models[0].contextWindow')
+BASELINE_MAX=$(jq_config "$BASELINE" '.models.providers | to_entries[0].value.models[0].maxTokens')
+BASELINE_REASONING=$(jq_config "$BASELINE" '.models.providers | to_entries[0].value.models[0].reasoning')
+BASELINE_ORIGINS=$(jq_config "$BASELINE" '.gateway.controlUi.allowedOrigins | length')
 
 info "Baseline: model=$BASELINE_MODEL ctx=$BASELINE_CTX max=$BASELINE_MAX reasoning=$BASELINE_REASONING origins=$BASELINE_ORIGINS"
 
 # ── Test 1: No-op baseline ───────────────────────────────────────
 
 info "1. No overrides — config matches build-time defaults"
-HASH_CHECK=$(docker run --rm "$IMAGE" bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>>"$LOG_FILE")
+HASH_CHECK=$(run_config_hash_check)
 if [ "$HASH_CHECK" = "OK" ]; then
   pass "baseline config hash valid"
 else
@@ -110,8 +176,8 @@ fi
 
 info "2. NEMOCLAW_MODEL_OVERRIDE patches model"
 OVERRIDE_MODEL="anthropic/claude-sonnet-4-6"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL")
-ACTUAL=$(echo "$CFG" | jq -r '.agents.defaults.model.primary')
+CFG=$(capture_config "model override" -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL")
+ACTUAL=$(jq_config "$CFG" '.agents.defaults.model.primary')
 if [ "$ACTUAL" = "$OVERRIDE_MODEL" ]; then
   pass "model overridden to $OVERRIDE_MODEL"
 else
@@ -119,8 +185,7 @@ else
 fi
 
 # Verify hash was recomputed
-HASH_CHECK=$(docker run --rm -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" "$IMAGE" \
-  bash -c 'cd /sandbox/.openclaw && sha256sum -c .config-hash --status && echo OK || echo FAIL' 2>>"$LOG_FILE")
+HASH_CHECK=$(run_config_hash_check -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL")
 if [ "$HASH_CHECK" = "OK" ]; then
   pass "config hash valid after model override"
 else
@@ -132,8 +197,8 @@ fi
 # (standalone values are baked at build time). Ref: #2653 Phase 2.
 
 info "3. NEMOCLAW_CONTEXT_WINDOW patches contextWindow (with model override)"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_CONTEXT_WINDOW=32768")
-ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
+CFG=$(capture_config "context window override" -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_CONTEXT_WINDOW=32768")
+ACTUAL=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].contextWindow')
 if [ "$ACTUAL" = "32768" ]; then
   pass "contextWindow overridden to 32768"
 else
@@ -143,8 +208,8 @@ fi
 # ── Test 4: Max tokens override ──────────────────────────────────
 
 info "4. NEMOCLAW_MAX_TOKENS patches maxTokens (with model override)"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_MAX_TOKENS=16384")
-ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
+CFG=$(capture_config "max tokens override" -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_MAX_TOKENS=16384")
+ACTUAL=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].maxTokens')
 if [ "$ACTUAL" = "16384" ]; then
   pass "maxTokens overridden to 16384"
 else
@@ -154,8 +219,8 @@ fi
 # ── Test 5: Reasoning override ───────────────────────────────────
 
 info "5. NEMOCLAW_REASONING=true patches reasoning (with model override)"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_REASONING=true")
-ACTUAL=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].reasoning')
+CFG=$(capture_config "reasoning override" -e "NEMOCLAW_MODEL_OVERRIDE=$OVERRIDE_MODEL" -e "NEMOCLAW_REASONING=true")
+ACTUAL=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].reasoning')
 if [ "$ACTUAL" = "true" ]; then
   pass "reasoning overridden to true"
 else
@@ -166,9 +231,9 @@ fi
 
 info "6. NEMOCLAW_CORS_ORIGIN adds to allowedOrigins"
 CORS="https://custom.example.com:9999"
-CFG=$(run_override -e "NEMOCLAW_CORS_ORIGIN=$CORS")
+CFG=$(capture_config "CORS origin override" -e "NEMOCLAW_CORS_ORIGIN=$CORS")
 HAS_ORIGIN=$(echo "$CFG" | jq --arg o "$CORS" '.gateway.controlUi.allowedOrigins | index($o) != null')
-NEW_LEN=$(echo "$CFG" | jq '.gateway.controlUi.allowedOrigins | length')
+NEW_LEN=$(jq_config "$CFG" '.gateway.controlUi.allowedOrigins | length')
 if [ "$HAS_ORIGIN" = "true" ] && [ "$NEW_LEN" -gt "$BASELINE_ORIGINS" ]; then
   pass "CORS origin added: $CORS"
 else
@@ -179,16 +244,16 @@ fi
 # ── Test 7: Combined overrides ───────────────────────────────────
 
 info "7. Multiple overrides applied together"
-CFG=$(run_override \
+CFG=$(capture_config "combined overrides" \
   -e "NEMOCLAW_MODEL_OVERRIDE=nvidia/llama-3.3-nemotron-super-49b-v1.5" \
   -e "NEMOCLAW_CONTEXT_WINDOW=65536" \
   -e "NEMOCLAW_MAX_TOKENS=8192" \
   -e "NEMOCLAW_REASONING=true" \
   -e "NEMOCLAW_CORS_ORIGIN=https://multi.example.com")
-M=$(echo "$CFG" | jq -r '.agents.defaults.model.primary')
-C=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
-T=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].maxTokens')
-R=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].reasoning')
+M=$(jq_config "$CFG" '.agents.defaults.model.primary')
+C=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].contextWindow')
+T=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].maxTokens')
+R=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].reasoning')
 O=$(echo "$CFG" | jq --arg o "https://multi.example.com" '.gateway.controlUi.allowedOrigins | index($o) != null')
 if [ "$M" = "nvidia/llama-3.3-nemotron-super-49b-v1.5" ] \
   && [ "$C" = "65536" ] && [ "$T" = "8192" ] \
@@ -251,9 +316,9 @@ fi
 # ── Test 14: Original config unchanged after rejected override ───
 
 info "14. Config unchanged after rejected override"
-CFG=$(run_override -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
-ACTUAL_CTX=$(echo "$CFG" | jq -r '.models.providers | to_entries[0].value.models[0].contextWindow')
-ACTUAL_MODEL=$(echo "$CFG" | jq -r '.agents.defaults.model.primary')
+CFG=$(capture_config "rejected override" -e "NEMOCLAW_MODEL_OVERRIDE=test" -e "NEMOCLAW_CONTEXT_WINDOW=notanumber")
+ACTUAL_CTX=$(jq_config "$CFG" '.models.providers | to_entries[0].value.models[0].contextWindow')
+ACTUAL_MODEL=$(jq_config "$CFG" '.agents.defaults.model.primary')
 if [ "$ACTUAL_CTX" = "$BASELINE_CTX" ] && [ "$ACTUAL_MODEL" = "$BASELINE_MODEL" ]; then
   pass "config unchanged after rejected override"
 else

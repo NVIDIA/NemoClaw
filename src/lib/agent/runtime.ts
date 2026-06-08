@@ -12,6 +12,10 @@ import { shellQuote } from "../runner";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { loadAgent, type AgentDefinition } from "./defs";
+import {
+  buildHermesEnvFileBoundaryGuard,
+  buildHermesRuntimeEnvBoundaryGuard,
+} from "./hermes-recovery-boundary";
 
 /**
  * Resolve the agent for a sandbox. Checks the per-sandbox registry first
@@ -146,6 +150,7 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
+
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;
   internalPort: number;
@@ -174,7 +179,9 @@ export function buildHermesDashboardProcessRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     "export HERMES_HOME=/sandbox/.hermes;",
+    buildHermesEnvFileBoundaryGuard(),
     'if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;',
+    buildHermesRuntimeEnvBoundaryGuard(),
     'AGENT_BIN=/usr/local/bin/hermes; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v hermes)"; fi;',
     'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
     ...buildHermesDashboardRecoveryLines(config),
@@ -259,6 +266,7 @@ export function buildRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     hermesHome,
+    ...(isHermes ? [buildHermesEnvFileBoundaryGuard()] : []),
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),
@@ -269,6 +277,7 @@ export function buildRecoveryScript(
     'if [ "$_PE_MISSING" = "0" ]; then case "${NODE_OPTIONS:-}" in *nemoclaw-sandbox-safety-net*) _SN_MISSING=0 ;; *) _SN_MISSING=1 ;; esac; case "${NODE_OPTIONS:-}" in *nemoclaw-ciao-network-guard*) _CIAO_MISSING=0 ;; *) _CIAO_MISSING=1 ;; esac; if [ "$_SN_MISSING" = "0" ] && [ "$_CIAO_MISSING" = "0" ]; then _GUARDS_MISSING=0; else _GUARDS_MISSING=1; fi; else _GUARDS_MISSING=0; fi;',
     '[ "$_PE_MISSING" = "1" ] && { _W="[gateway-recovery] WARNING: /tmp/nemoclaw-proxy-env.sh missing - gateway launching without library guards (#2478)"; echo "$_W" >&2; echo "$_W" >> "$_GATEWAY_LOG"; };',
     '[ "$_PE_MISSING" = "0" ] && [ "$_GUARDS_MISSING" = "1" ] && { _E="[gateway-recovery] ERROR: /tmp/nemoclaw-proxy-env.sh present but NODE_OPTIONS missing safety-net preload or ciao preload - refusing unguarded gateway relaunch (#2478)"; echo "$_E" >&2; echo "$_E" >> "$_GATEWAY_LOG"; exit 1; };',
+    ...(isHermes ? [buildHermesRuntimeEnvBoundaryGuard()] : []),
     launchCommand,
     "GPID=$!; sleep 2;",
     'if kill -0 "$GPID" 2>/dev/null; then echo "GATEWAY_PID=$GPID"; else echo GATEWAY_FAILED; tail -5 "$_GATEWAY_LOG" 2>/dev/null; exit 1; fi',
@@ -304,5 +313,8 @@ export function buildManualRecoveryCommand(agent: AgentDefinition | null, port: 
   const isHermes = agent?.name === "hermes";
   const envPrefix = isHermes ? `${hermesGatewayEnvPrefix()} ` : "";
   const portFlag = isHermes ? "" : ` --port ${port}`;
-  return `${buildGatewayLogSelection()} ${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
+  const boundaryGuards = isHermes
+    ? `${buildHermesEnvFileBoundaryGuard()} ${buildHermesRuntimeEnvBoundaryGuard()} `
+    : "";
+  return `${buildGatewayLogSelection()} ${boundaryGuards}${envPrefix}nohup ${gatewayCmd}${portFlag} >> "$_GATEWAY_LOG" 2>&1 &`;
 }

@@ -144,11 +144,7 @@ function readTextFileIfPresent(filePath: string): string {
   }
 }
 
-export function writeDockerGatewayDebEnvOverride(
-  getOverride: () => Record<string, string>,
-  opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
-): boolean {
-  if (!hasOpenShellGatewayUserService(opts)) return false;
+function writeDockerGatewayDebEnvOverrideFile(getOverride: () => Record<string, string>): void {
   const override = getOverride();
   const envDir = path.join(os.homedir(), ".config", "openshell");
   const envFile = path.join(envDir, "gateway.env");
@@ -160,6 +156,14 @@ export function writeDockerGatewayDebEnvOverride(
     mode: 0o600,
   });
   fs.chmodSync(envFile, 0o600);
+}
+
+export function writeDockerGatewayDebEnvOverride(
+  getOverride: () => Record<string, string>,
+  opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
+): boolean {
+  if (!hasOpenShellGatewayUserService(opts)) return false;
+  writeDockerGatewayDebEnvOverrideFile(getOverride);
   return true;
 }
 
@@ -179,6 +183,6 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride({
   return startPackageManagedDockerDriverGateway({
     ...options,
     prepareOpenShellGatewayUserServiceEnv: () =>
-      writeDockerGatewayDebEnvOverrideOrThrow(() => gatewayEnv),
+      writeDockerGatewayDebEnvOverrideFile(() => gatewayEnv),
   });
 }

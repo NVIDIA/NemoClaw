@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -32,7 +30,7 @@ import {
 } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT, shellQuote } from "../../runner";
+import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -46,6 +44,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
+import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   isDockerRuntimeDown,
@@ -74,7 +73,7 @@ type SandboxListProbe = {
   output: string;
 };
 
-type SandboxInferenceRouteProbe = {
+export type SandboxInferenceRouteProbe = {
   healthy: boolean;
   broken: boolean;
   detail: string;
@@ -88,6 +87,54 @@ type SandboxInferenceRouteEnsureResult = {
 type InferenceRouteProbeOptions = {
   attempts?: number;
   delayMs?: number;
+};
+
+export type SandboxInferenceRouteRepairResult = {
+  healthy: boolean;
+  repairAttempted: boolean;
+  detail: string;
+};
+
+export type SandboxInferenceRouteRepairDeps = {
+  isRepairDisabled?: () => boolean;
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => SandboxInferenceRouteProbe;
+  shouldApplyVmDnsMonkeypatch: (sb: SandboxEntry | null) => boolean;
+  applyVmDnsMonkeypatch: (
+    sandboxName: string,
+    sb: SandboxEntry | null,
+  ) => { ok: boolean; reason?: string };
+  reapplyVmInferenceRoute: (
+    sandboxName: string,
+    sb: SandboxEntry | null,
+  ) => SandboxInferenceRouteProbe | null;
+  repairLegacyDnsProxy: (
+    sandboxName: string,
+    quiet: boolean,
+  ) => { exitCode: number; message?: string | null };
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+};
+
+export type ManagedInferenceRouteResetDeps = {
+  verifyLocalInferenceRouteDependencies: (
+    provider: string,
+    options: { quiet?: boolean },
+  ) => boolean;
+  runInferenceSet: (provider: string, model: string) => { status: number | null };
+  probe: (
+    sandboxName: string,
+    options?: InferenceRouteProbeOptions,
+  ) => SandboxInferenceRouteProbe;
+  printUnrecoverableInferenceRoute: (
+    sandboxName: string,
+    sb: SandboxEntry,
+    detail: string,
+  ) => void;
+  log?: (message: string) => void;
+  error?: (message: string) => void;
 };
 
 const INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS = 3;
@@ -182,6 +229,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
   spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms})`], {
     stdio: "ignore",
     timeout: ms + 1_000,
@@ -327,15 +375,18 @@ function reapplyVmInferenceRoute(
   return probeSandboxInferenceRoute(sandboxName);
 }
 
-function repairSandboxInferenceRouteIfNeeded(
+export function repairSandboxInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry | null,
   { quiet = false }: { quiet?: boolean } = {},
-): { healthy: boolean; repairAttempted: boolean; detail: string } {
-  if (process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1") {
+  deps: SandboxInferenceRouteRepairDeps,
+): SandboxInferenceRouteRepairResult {
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
+  if (deps.isRepairDisabled?.()) {
     return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
   }
-  const initialProbe = probeSandboxInferenceRoute(sandboxName);
+  const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
@@ -344,21 +395,21 @@ function repairSandboxInferenceRouteIfNeeded(
   }
 
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
-    if (shouldApplyVmDnsMonkeypatch(sb)) {
+    if (deps.shouldApplyVmDnsMonkeypatch(sb)) {
       if (!quiet) {
-        console.log("");
-        console.log(
+        log("");
+        log(
           `  inference.local is unavailable inside '${sandboxName}'. Applying OpenShell VM DNS monkeypatch...`,
         );
       }
-      const patch = applyOpenShellVmDnsMonkeypatch(sandboxName, sb);
-      const patchedProbe = patch.ok ? probeSandboxInferenceRoute(sandboxName, {
+      const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
+      const patchedProbe = patch.ok ? deps.probe(sandboxName, {
         attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
         delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
       }) : null;
       if (patchedProbe?.healthy) {
         if (!quiet) {
-          console.log("  inference.local route repaired.");
+          log("  inference.local route repaired.");
         }
         return {
           healthy: true,
@@ -368,11 +419,11 @@ function repairSandboxInferenceRouteIfNeeded(
       }
       if (!quiet) {
         if (!patch.ok && patch.reason) {
-          console.error(
+          error(
             `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
           );
         } else if (patchedProbe?.broken) {
-          console.error(
+          error(
             "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
           );
         }
@@ -380,15 +431,15 @@ function repairSandboxInferenceRouteIfNeeded(
     }
 
     if (!quiet) {
-      console.log("");
-      console.log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
+      log("");
+      log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
     }
-    const finalProbe = reapplyVmInferenceRoute(sandboxName, sb);
+    const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
     if (!quiet) {
       if (finalProbe?.healthy) {
-        console.log("  inference.local route repaired.");
+        log("  inference.local route repaired.");
       } else if (finalProbe?.broken) {
-        console.error(
+        error(
           `  Warning: inference.local is still unavailable through the OpenShell ${sb?.openshellDriver || "non-legacy"} gateway path.`,
         );
       }
@@ -415,17 +466,14 @@ function repairSandboxInferenceRouteIfNeeded(
   }
 
   if (!quiet) {
-    console.log("");
-    console.log(`  inference.local is unavailable inside '${sandboxName}'. Repairing sandbox DNS proxy...`);
+    log("");
+    log(`  inference.local is unavailable inside '${sandboxName}'. Repairing sandbox DNS proxy...`);
   }
-  const repair = runSetupDnsProxy(
-    { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName },
-    { log: quiet ? () => undefined : console.log },
-  );
+  const repair = deps.repairLegacyDnsProxy(sandboxName, quiet);
   if (repair.exitCode !== 0) {
     if (!quiet) {
-      console.error("  Warning: failed to repair sandbox DNS proxy.");
-      if (repair.message) console.error(`  ${repair.message}`);
+      error("  Warning: failed to repair sandbox DNS proxy.");
+      if (repair.message) error(`  ${repair.message}`);
     }
     return {
       healthy: false,
@@ -434,15 +482,15 @@ function repairSandboxInferenceRouteIfNeeded(
     };
   }
 
-  const repairedProbe = probeSandboxInferenceRoute(sandboxName, {
+  const repairedProbe = deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (!quiet) {
     if (repairedProbe.healthy) {
-      console.log("  inference.local route repaired.");
+      log("  inference.local route repaired.");
     } else if (repairedProbe.broken) {
-      console.error("  Warning: inference.local is still unavailable after DNS proxy repair.");
+      error("  Warning: inference.local is still unavailable after DNS proxy repair.");
     }
   }
   if (!repairedProbe.healthy && !repairedProbe.broken) {
@@ -457,6 +505,30 @@ function repairSandboxInferenceRouteIfNeeded(
     repairAttempted: true,
     detail: repairedProbe.detail,
   };
+}
+
+function repairSandboxInferenceRouteIfNeeded(
+  sandboxName: string,
+  sb: SandboxEntry | null,
+  { quiet = false }: { quiet?: boolean } = {},
+): SandboxInferenceRouteRepairResult {
+  return repairSandboxInferenceRouteWithDeps(
+    sandboxName,
+    sb,
+    { quiet },
+    {
+      isRepairDisabled: () => process.env.NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR === "1",
+      probe: probeSandboxInferenceRoute,
+      shouldApplyVmDnsMonkeypatch,
+      applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
+      reapplyVmInferenceRoute,
+      repairLegacyDnsProxy: (name, isQuiet) =>
+        runSetupDnsProxy(
+          { gatewayName: NEMOCLAW_GATEWAY_NAME, sandboxName: name },
+          { log: isQuiet ? () => undefined : console.log },
+        ),
+    },
+  );
 }
 
 function verifyLocalInferenceRouteDependencies(
@@ -510,68 +582,90 @@ function printUnrecoverableInferenceRoute(
   console.error("  Connect is stopping because the sandbox inference route is known to be broken.");
 }
 
-function resetManagedInferenceRoute(
+export function resetManagedInferenceRouteWithDeps(
   sandboxName: string,
   sb: SandboxEntry,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
+  deps: ManagedInferenceRouteResetDeps,
 ): boolean {
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
   if (!sb.provider || !sb.model) return false;
 
-  if (!verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
     if (!quiet) {
-      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
     }
     return false;
   }
 
   if (!quiet) {
-    console.log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
+    log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
   }
-  const resetResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
-    ignoreError: true,
-    timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-  });
+  const resetResult = deps.runInferenceSet(sb.provider, sb.model);
   if (resetResult.status !== 0) {
-    const finalProbe = probeSandboxInferenceRoute(sandboxName, {
+    const finalProbe = deps.probe(sandboxName, {
       attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
       delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
     });
     if (finalProbe.healthy) {
       if (!quiet) {
-        console.log("  inference.local route repaired.");
+        log("  inference.local route repaired.");
       }
       return true;
     }
 
     if (!quiet) {
-      console.error("  Error: failed to reset the OpenShell inference route.");
-      printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
+      error("  Error: failed to reset the OpenShell inference route.");
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
     }
     return false;
   }
 
-  if (!verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
     if (!quiet) {
-      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
     }
     return false;
   }
 
-  const finalProbe = probeSandboxInferenceRoute(sandboxName, {
+  const finalProbe = deps.probe(sandboxName, {
     attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (finalProbe.healthy) {
     if (!quiet) {
-      console.log("  inference.local route repaired.");
+      log("  inference.local route repaired.");
     }
     return true;
   }
 
   if (!quiet) {
-    printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
+    deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
   }
   return false;
+}
+
+function resetManagedInferenceRoute(
+  sandboxName: string,
+  sb: SandboxEntry,
+  { detail, quiet = false }: { detail: string; quiet?: boolean },
+): boolean {
+  return resetManagedInferenceRouteWithDeps(
+    sandboxName,
+    sb,
+    { detail, quiet },
+    {
+      verifyLocalInferenceRouteDependencies,
+      runInferenceSet: (provider, model) =>
+        runOpenshell(buildInferenceSetArgs(provider, model), {
+          ignoreError: true,
+          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+        }),
+      probe: probeSandboxInferenceRoute,
+      printUnrecoverableInferenceRoute,
+    },
+  );
 }
 
 function ensureSandboxInferenceRoute(
@@ -655,148 +749,6 @@ function ensureSandboxInferenceRouteOrExit(
     process.exit(1);
   }
   return result.sandbox;
-}
-
-// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
-// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
-// approving allowlisted requests in slow-mode for hours after startup; this
-// pass covers the case where the watcher has exited or is otherwise stuck
-// when the user runs `nemoclaw <sandbox> connect`. The script sources
-// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
-// in-sandbox `openclaw devices list` invocation targets the running gateway
-// with its token. Approvals then use OpenClaw's local fallback by removing
-// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
-// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
-// modes. Unknown clients are ignored, not approved.
-//
-// Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
-// semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
-// scope-upgrade can request the upgraded scopes for its own connection and
-// return the pending-scope failure it is trying to resolve. Remove this local
-// fallback path when OpenClaw approve can complete scope upgrades through the
-// gateway using only operator.pairing.
-//
-// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
-// unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
-// attempts) fit within the outer spawnSync cap, so a partial-completion
-// mid-loop kill cannot strand allowlisted requests within a normal batch.
-const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
-const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
-const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
-  ROOT,
-  "scripts",
-  "lib",
-  "openclaw_device_approval_policy.py",
-);
-
-function readConnectAutoPairPolicyModule(): string | null {
-  try {
-    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
-  } catch {
-    // The approval pass is best-effort, so a packaging/layout regression must
-    // not block connect. Build-context and package `files` coverage keep this
-    // helper present in supported installs.
-    return null;
-  }
-}
-
-function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  const approvalPolicyModule = readConnectAutoPairPolicyModule();
-  if (!approvalPolicyModule) {
-    return;
-  }
-  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
-  const script = `
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
-command -v openclaw >/dev/null 2>&1 || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
-OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
-import base64
-import json
-import os
-import subprocess
-import sys
-
-try:
-    policy_source = base64.b64decode(
-        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
-    ).decode('utf-8')
-    policy_globals = {}
-    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
-    approval_request_decision = policy_globals['approval_request_decision']
-    gateway_approval_env = policy_globals['gateway_approval_env']
-except Exception:
-    sys.exit(0)
-
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
-
-try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=2,
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(0)
-if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(0)
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    sys.exit(0)
-if not isinstance(data, dict):
-    sys.exit(0)
-pending = data.get('pending')
-if not isinstance(pending, list):
-    sys.exit(0)
-approved_count = 0
-attempted_count = 0
-seen_request_ids = set()
-for device in pending:
-    if attempted_count >= MAX_APPROVALS:
-        break
-    if not isinstance(device, dict):
-        continue
-    request_id = device.get('requestId')
-    if not request_id or request_id in seen_request_ids:
-        continue
-    decision = approval_request_decision(device)
-    if not decision['allowed']:
-        continue
-    seen_request_ids.add(request_id)
-    approve_env = gateway_approval_env(os.environ)
-    attempted_count += 1
-    try:
-        approve_proc = subprocess.run(
-            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
-        )
-        if approve_proc.returncode == 0:
-            approved_count += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        continue
-PYAPPROVE
-exit 0
-`;
-  try {
-    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
-    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
-    // startup slack) so a wedged sandbox can never block the connect flow.
-    spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-      },
-    );
-  } catch {
-    /* defense-in-depth — never throw from the connect path */
-  }
 }
 
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
@@ -1022,8 +974,10 @@ export async function connectSandbox(
   // slow-mode keepalive, a brief approval pass before opening SSH
   // catches any pending allowlisted CLI/webchat scope upgrades that
   // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention).
-  runConnectAutoPairApprovalPass(sandboxName);
+  // deadline exhausted, multi-sandbox gateway contention). The same pass
+  // is reachable without SSH via `doctor --fix` for dashboard-only users
+  // (#4616).
+  runSandboxAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,

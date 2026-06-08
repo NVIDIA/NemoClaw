@@ -51,6 +51,11 @@ export function resolveHermesDashboardOnboardState({
       if (fail) return fail(message);
       throw new Error(message);
     }
+    if (config.internalPort === effectivePort) {
+      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
+      if (fail) return fail(message);
+      throw new Error(message);
+    }
   }
 
   return { config, enabled: config.enabled === true };

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
@@ -29,7 +28,14 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { readCloudflaredState } from "../../tunnel/services";
+import { runSandboxAutoPairApprovalPass, wrapSandboxShellScript } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
+import {
+  buildGatewayInspectFailureChecks,
+  type GatewayInspectOptions,
+} from "./doctor-gateway-fallback";
+import { captureHostCommand } from "./doctor-host-command";
+import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
@@ -53,13 +59,6 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
-type CommandCapture = {
-  status: number;
-  stdout: string;
-  stderr: string;
-  error?: Error;
-};
-
 function pushInferenceHealthCheck(
   checks: DoctorCheck[],
   probe: ProviderHealthStatus,
@@ -78,26 +77,6 @@ function pushInferenceHealthCheck(
     detail: probe.ok ? `${probe.endpoint} reachable` : probe.detail,
     hint: probe.ok ? undefined : "check network access or provider credentials",
   });
-}
-
-function captureHostCommand(
-  command: string,
-  args: string[],
-  timeout = 5000,
-): CommandCapture {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    env: process.env,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout,
-  });
-  return {
-    status: result.status ?? (result.error ? 1 : 0),
-    stdout: String(result.stdout || ""),
-    stderr: String(result.stderr || ""),
-    error: result.error,
-  };
 }
 
 function oneLine(value = ""): string {
@@ -189,7 +168,10 @@ function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   return doctorReportExitCode(report);
 }
 
-function dockerInspectGateway(containerName: string): DoctorCheck[] {
+function dockerInspectGateway(
+  containerName: string,
+  options: GatewayInspectOptions = {},
+): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const inspect = captureHostCommand(
     "docker",
@@ -202,14 +184,7 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
     5000,
   );
   if (inspect.status !== 0) {
-    checks.push({
-      group: "Gateway",
-      label: "Docker container",
-      status: "fail",
-      detail: `${containerName} not found or not inspectable`,
-      hint: `run \`docker ps --filter name=${containerName}\``,
-    });
-    return checks;
+    return buildGatewayInspectFailureChecks(containerName, options);
   }
 
   const [runningRaw, healthRaw, imageRaw] = inspect.stdout.trim().split("\t");
@@ -549,7 +524,8 @@ export async function runSandboxDoctor(
   const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
     console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
-    console.log(`  --fix   Restore the mutable OpenClaw config permission contract if it was tightened`);
+    console.log(`  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`);
+    console.log(`          and approve pending allowlisted dashboard/CLI tool-scope upgrades`);
     return;
   }
   if (unknown.length > 0) {
@@ -570,6 +546,10 @@ export async function runSandboxDoctor(
 
   const sb = registry.getSandbox(sandboxName);
   const checks: DoctorCheck[] = [];
+  // Tracks whether the named sandbox is present-and-Ready, so live-only probes
+  // (e.g. the #4616 dashboard tool-scope diagnostic) only run when they can
+  // actually reach the sandbox via `openshell sandbox exec`.
+  let sandboxReachable = false;
 
   checks.push({
     group: "Host",
@@ -607,10 +587,6 @@ export async function runSandboxDoctor(
     hint: openshellBin ? undefined : "install OpenShell before using sandbox commands",
   });
 
-  if (shouldInspectLegacyGatewayContainer(sb)) {
-    checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
-  }
-
   let openshellConnected = false;
   if (openshellBin) {
     const recovery = await recoverNamedGatewayRuntime();
@@ -628,6 +604,14 @@ export async function runSandboxDoctor(
     });
   }
 
+  if (shouldInspectLegacyGatewayContainer(sb)) {
+    checks.push(
+      ...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, {
+        namedGatewayConnected: openshellConnected,
+      }),
+    );
+  }
+
   if (openshellBin && openshellConnected) {
     const list = captureOpenshell(["sandbox", "list"], {
       ignoreError: true,
@@ -637,6 +621,7 @@ export async function runSandboxDoctor(
     const present = list.status === 0 && liveNames.has(sandboxName);
     const line = findSandboxListLine(list.output || "", sandboxName);
     const ready = inferSandboxReadyFromLine(line);
+    sandboxReachable = present && ready === true;
     checks.push({
       group: "Sandbox",
       label: "Live sandbox",
@@ -802,6 +787,30 @@ export async function runSandboxDoctor(
     );
     const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabledChannels);
     if (runtimeCheck) checks.push(runtimeCheck);
+  }
+
+  // #4616: surface (and, with --fix, repair) late OpenClaw dashboard/tool-call
+  // device-scope approvals. Dashboard-only users never run `connect`, so a
+  // pending tool-scope upgrade — visible as a gateway 1006 close, a "scope
+  // upgrade pending approval" error, and a loopback policy denial — has no
+  // recovery path. The probe is read-only; `--fix` runs the same narrow
+  // allowlisted approval pass that `connect` runs. Only run it when the sandbox
+  // is actually reachable so a stopped sandbox doesn't add noise, and only for
+  // OpenClaw — the `openclaw devices`/auto-pair scope-upgrade mechanism is
+  // OpenClaw-specific. Hermes (device_pairing: false) uses a different tool
+  // gateway, so probing it would emit an inaccurate OpenClaw-only check.
+  // Legacy registry entries with no recorded agent default to OpenClaw.
+  if (sb && sandboxReachable && (sb.agent ?? "openclaw") === "openclaw") {
+    const toolScopeChecks = buildToolScopeChecks(sandboxName, CLI_NAME, wantsFix, {
+      // OpenShell exec rejects multi-line args, so base64-wrap the probe payload.
+      exec: (name, script) =>
+        executeSandboxCommandForVerification(name, wrapSandboxShellScript(script)),
+      runApprovalPass: (name) => {
+        const result = runSandboxAutoPairApprovalPass(name, { capture: true });
+        return { reported: result.reported, approved: result.approved };
+      },
+    });
+    for (const check of toolScopeChecks) checks.push(check);
   }
 
   checks.push(ollamaDoctorCheck(currentProvider));

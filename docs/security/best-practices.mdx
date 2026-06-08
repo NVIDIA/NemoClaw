@@ -346,6 +346,21 @@ This behavior is best effort: if the container runtime restricts `ulimit` modifi
 | Risk if relaxed | Removing or raising the limit makes the sandbox vulnerable to fork-bomb attacks, where a runaway process spawns children until the host runs out of resources. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nproc limit`), the container runs without process limits. |
 | Recommendation | Keep the default at 512. If the agent runs workloads that spawn many child processes (such as parallel test runners), increase to 1024 and monitor host resource usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
 
+### Open File Descriptor Limit
+
+An open file descriptor limit caps the number of files, sockets, and pipes the
+sandbox user can hold open at once. The entrypoint sets both soft and hard
+limits using `ulimit -n 65536`. This is best-effort: if the container runtime
+restricts `ulimit` modification, the entrypoint logs a security warning and
+continues without the limit.
+
+| Aspect | Detail |
+|---|---|
+| Default | 65536 open files, soft and hard (`ulimit -n 65536`), best-effort. |
+| What you can change | Increase or decrease the limit with `--ulimit nofile=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
+| Risk if relaxed | Without this cap the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them — a denial-of-service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
+| Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
+
 ### Non-Root User
 
 The sandbox runs agent processes as a dedicated `sandbox` user and group.

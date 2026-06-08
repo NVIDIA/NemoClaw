@@ -60,7 +60,6 @@ export interface SandboxEntry {
   agent?: string | null;
   agentVersion?: string | null;
   imageTag?: string | null;
-  providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
   messaging?: SandboxMessagingState;
@@ -257,7 +256,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
-      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
       messagingChannelConfig:
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
