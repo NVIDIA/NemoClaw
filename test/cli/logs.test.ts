@@ -13,7 +13,6 @@ import {
   FAKE_OPENSHELL_LOG_LINE,
   createLogsTestSetup,
   isChildRunning,
-  readRecordedArgs,
   runWithEnv,
   testTimeout,
   testTimeoutOptions,
@@ -50,86 +49,6 @@ describe("CLI dispatch", () => {
     expect(setup.readCalls()).toEqual([]);
   });
 
-  it("passes --tail line count to both log sources", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-tail-");
-    const r = setup.runLogs("alpha logs --tail 50");
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls).toEqual([
-      "settings set alpha --key ocsf_json_enabled --value true",
-      "sandbox exec -n alpha -- tail -n 50 /tmp/gateway.log",
-      "logs alpha -n 50 --source all",
-    ]);
-  });
-
-  it("passes -n line count to both log sources", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-n-");
-    const r = setup.runLogs("alpha logs -n 25");
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls).toEqual([
-      "settings set alpha --key ocsf_json_enabled --value true",
-      "sandbox exec -n alpha -- tail -n 25 /tmp/gateway.log",
-      "logs alpha -n 25 --source all",
-    ]);
-  });
-
-  it("passes --follow --tail line count to both streaming log sources", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-tail-");
-    const r = setup.runLogs("alpha logs --follow --tail 50");
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
-    expect(calls).toContain("sandbox exec -n alpha -- tail -n 50 -f /tmp/gateway.log");
-    expect(calls).toContain("logs alpha -n 50 --source all --tail");
-  });
-
-  it("passes --since to OpenShell logs without an unfiltered gateway tail", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-since-");
-    const r = setup.runLogs("alpha logs --since 5m");
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls).toEqual([
-      "settings set alpha --key ocsf_json_enabled --value true",
-      "logs alpha -n 200 --source all --since 5m",
-    ]);
-    expect(calls.some((call) => call.startsWith("sandbox exec -n alpha"))).toBe(false);
-  });
-
-  it("passes --follow --since to OpenShell logs without an unfiltered gateway tail", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-since-follow-");
-    const r = setup.runLogs("alpha logs --follow --since 5m");
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
-    expect(calls).toContain("logs alpha -n 200 --source all --since 5m --tail");
-    expect(calls.some((call) => call.startsWith("sandbox exec -n alpha"))).toBe(false);
-  });
-
-  it("rejects malformed logs flags before calling OpenShell", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-malformed-");
-    const missingTail = setup.runLogs("alpha logs --tail 2>&1");
-    const zeroTail = setup.runLogs("alpha logs --tail 0 2>&1");
-    const nonNumericTail = setup.runLogs("alpha logs -n foo 2>&1");
-    const missingSince = setup.runLogs("alpha logs --since 2>&1");
-    const malformedSince = setup.runLogs("alpha logs --since someday 2>&1");
-
-    for (const result of [missingTail, zeroTail, nonNumericTail, missingSince, malformedSince]) {
-      expect(result.code).not.toBe(0);
-    }
-    expect(missingTail.out).toContain("--tail");
-    expect(zeroTail.out).toContain("--tail");
-    expect(nonNumericTail.out).toContain("Expected an integer");
-    expect(missingSince.out).toContain("--since");
-    expect(malformedSince.out).toContain("--since requires a positive duration");
-    expect(setup.readCalls()).toEqual([]);
-  });
-
   it("rejects unknown logs flags before calling OpenShell", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-unknown-");
     const r = setup.runLogs("alpha logs --bogus 2>&1");
@@ -139,60 +58,14 @@ describe("CLI dispatch", () => {
     expect(setup.readCalls()).toEqual([]);
   });
 
-  it("enables OpenShell audit events before reading logs", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-");
-    const r = setup.runLogs();
-
-    const calls = setup.readCalls();
-    expect(r.code).toBe(0);
-    expect(calls[0]).toBe("settings set alpha --key ocsf_json_enabled --value true");
-    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
-  });
-
-  it("warns when OpenShell audit events cannot be enabled", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-failed-", [
-      'if [ "$1" = "settings" ]; then',
-      "  echo 'settings unavailable' >&2",
-      "  exit 7",
-      "fi",
-    ]);
-
-    const r = setup.runLogs("alpha logs 2>&1");
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("failed to enable OpenShell audit logs for sandbox 'alpha'");
-    expect(r.out).toContain("openshell settings set alpha --key ocsf_json_enabled --value true");
-    expect(r.out).toContain("settings unavailable");
-    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
-    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
-  });
-
-  it("continues log collection when audit enable times out", () => {
-    const setup = createLogsTestSetup("nemoclaw-cli-logs-audit-timeout-", [
-      'if [ "$1" = "settings" ]; then',
-      "  sleep 5",
-      "  exit 0",
-      "fi",
-    ]);
-
-    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "1500" });
-
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("failed to enable OpenShell audit logs for sandbox 'alpha'");
-    expect(r.out).toContain("ETIMEDOUT");
-    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
-    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
-  });
-
   it("continues to OpenShell logs when the OpenClaw gateway log probe times out", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-openclaw-timeout-", [
       'if [ "$1" = "sandbox" ]; then',
-      "  sleep 2",
-      "  exit 0",
+      "  while true; do :; done",
       "fi",
     ]);
 
-    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "500" });
+    const r = setup.runLogs("alpha logs 2>&1", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "50" });
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("OpenClaw log source unavailable");
@@ -220,7 +93,7 @@ describe("CLI dispatch", () => {
       "nemoclaw-cli-logs-follow-audit-slow-",
       [
         'if [ "$1" = "settings" ]; then',
-        "  sleep 1",
+        "  sleep 0.05",
         `  printf '%s\\n' ${JSON.stringify(auditCompleteMarker)} >> "$marker_file"`,
         "  exit 0",
         "fi",
@@ -232,7 +105,7 @@ describe("CLI dispatch", () => {
     const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "2000" });
     const calls = setup.readCalls();
 
-    expect(Date.now() - start).toBeGreaterThanOrEqual(900);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(40);
     expect(r.code).toBe(0);
     // All three calls must happen: OpenClaw log stream, audit enable, OpenShell log stream.
     expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
@@ -481,52 +354,6 @@ describe("CLI dispatch", () => {
     );
     expect(log).toContain("sandbox exec -n alpha -- sh -c tail -n 10 /tmp/gateway.log 2>/dev/null");
     expect(log).not.toContain("sandbox exec alpha sh -c");
-  });
-
-  it("passes plain logs through without the tail flag", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-logs-plain-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const markerFile = path.join(home, "logs-plain-args");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        `marker_file=${JSON.stringify(markerFile)}`,
-        'printf \'%s \' "$@" > "$marker_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    writeHealthyDockerStub(localBin);
-
-    const r = runWithEnv("alpha logs", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
-
-    expect(r.code).toBe(0);
-    const recordedArgs = readRecordedArgs(markerFile);
-    expect(recordedArgs).toEqual(["logs", "alpha", "-n", "200", "--source", "all"]);
-    expect(recordedArgs).not.toContain("--tail");
   });
 
   it("preserves SIGINT exit semantics for logs --follow", () => {

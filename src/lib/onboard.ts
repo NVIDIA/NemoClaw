@@ -90,6 +90,7 @@ const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFro
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
+const { repairResumeMachineSnapshot }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
 const {
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
@@ -413,6 +414,7 @@ const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policie
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
+const { advanceTo }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
 const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
@@ -557,9 +559,7 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
 
-import type {
-  JsonObject as LooseObject,
-} from "./core/json-types";
+import type { JsonObject as LooseObject } from "./core/json-types";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -686,7 +686,6 @@ const selectOnboardAgent = createSelectOnboardAgent({
   isNonInteractive,
   note,
 });
-
 
 const { getTransportRecoveryMessage } = validationRecovery;
 
@@ -859,7 +858,6 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-
 function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
@@ -949,7 +947,6 @@ const {
   isAffirmativeAnswer,
 });
 
-
 const {
   ensureValidatedBraveSearchCredential,
   configureWebSearch,
@@ -961,7 +958,6 @@ const {
   cliName,
   runCaptureOpenshell,
 });
-
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 
@@ -986,7 +982,6 @@ const {
   agentProductName,
   promptValidationRecovery,
 });
-
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
@@ -5846,6 +5841,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
+  stepMutationOptions: { updateMachine: false },
 });
 
 const sandboxCancelRollback = installSandboxCancelRollback({ runOpenshell, registry, clearOnboardSession: onboardSession.clearSession }); // #4614
@@ -6101,6 +6097,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
       onboardSession.updateSession((current: Session) => {
+        repairResumeMachineSnapshot(current);
         current.mode = isNonInteractive() ? "non-interactive" : "interactive";
         current.failure = null;
         current.status = "in_progress";
@@ -6144,6 +6141,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       );
     }
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
+    await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
     // Backstop for the resume path: a session may exist (so the early guard
     // skipped because resume === true) but never have recorded a sandboxName
     // — sandbox creation could have failed before that step ran. Without a
@@ -6410,7 +6408,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    session = (await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility([...providerInferenceResult.retryStateResults, providerInferenceResult.stateResult]), providerInferenceResult.session);
+    await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(providerInferenceResult.stateResults);
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
@@ -6428,7 +6426,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       fresh,
       resumeAgentChanged,
-      session,
+      session: providerInferenceResult.session,
       sandboxName,
       model,
       provider,

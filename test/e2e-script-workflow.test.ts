@@ -117,6 +117,9 @@ describe("E2E reusable workflow contract", () => {
     expect(authStep?.env?.DOCKERHUB_USERNAME).toBe("${{ secrets.DOCKERHUB_USERNAME }}");
     expect(authStep?.env?.DOCKERHUB_TOKEN).toBe("${{ secrets.DOCKERHUB_TOKEN }}");
     expect(authStep?.run).toContain("docker login docker.io");
+    expect(authStep?.run).toContain("for attempt in 1 2 3");
+    expect(authStep?.run).toContain("timeout 30s docker login");
+    expect(authStep?.run).toContain("Docker Hub login failed after 3 attempts");
     expect(authStep?.run).toContain("continuing with anonymous pulls");
   });
 
@@ -163,6 +166,9 @@ describe("E2E reusable workflow contract", () => {
         "${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}",
       );
       expect(authStep?.run, name).toContain("docker login docker.io");
+      expect(authStep?.run, name).toContain("for attempt in 1 2 3");
+      expect(authStep?.run, name).toContain("timeout 30s docker login");
+      expect(authStep?.run, name).toContain("Docker Hub login failed after 3 attempts");
       expect(authStep?.run, name).not.toContain("persist-credentials:");
       expect(authStep?.run, name).not.toContain("uses:");
       expect(authStep?.run, name).not.toContain("with:");

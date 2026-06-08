@@ -230,6 +230,7 @@ function runSandboxConnectProbe(sandboxName: string): void {
 
 function sleepSync(ms: number): void {
   if (ms <= 0) return;
+  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
   spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${ms})`], {
     stdio: "ignore",
     timeout: ms + 1_000,

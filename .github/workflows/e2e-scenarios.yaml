@@ -324,14 +324,44 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Append plan summary
+      - name: Append typed dry-run summary
         if: always()
         shell: bash
         run: |
-          if [ -f .e2e/plan.txt ]; then
-            echo '## E2E scenario plan' >> "$GITHUB_STEP_SUMMARY"
-            cat .e2e/plan.txt >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo '## E2E typed scenario dry-run'
+            echo ''
+            echo 'Mode: `test/e2e-scenario/scenarios/run.ts --dry-run`.'
+            echo ''
+            if [ -f .e2e/run-plan.json ]; then
+              python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          plans = json.loads(Path('.e2e/run-plan.json').read_text(encoding='utf-8'))
+          print('| Scenario | Manifest | Expected state | Suites | Phases |')
+          print('| --- | --- | --- | --- | --- |')
+          for plan in plans:
+              suites = ', '.join(f"`{suite}`" for suite in plan.get('suiteIds', [])) or '_none_'
+              phases = ', '.join(f"`{phase.get('name')}`" for phase in plan.get('phases', [])) or '_none_'
+              print(
+                  '| `{scenario}` | `{manifest}` | `{state}` | {suites} | {phases} |'.format(
+                      scenario=plan.get('scenarioId', ''),
+                      manifest=plan.get('manifestPath') or '_none_',
+                      state=plan.get('expectedStateId') or '_none_',
+                      suites=suites,
+                      phases=phases,
+                  )
+              )
+          PY
+            elif [ -f .e2e/plan.txt ]; then
+              echo '```text'
+              cat .e2e/plan.txt
+              echo '```'
+            else
+              echo '_No typed scenario plan artifact was produced._'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload scenario artifacts
         if: always()
