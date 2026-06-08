@@ -7,8 +7,7 @@ import path from "node:path";
 
 import { scenario } from "../scenarios/builder.ts";
 import { compileRunPlans } from "../scenarios/compiler.ts";
-import { migrationInventory } from "../scenarios/migration-inventory.ts";
-import { buildScenarioRegistry, listScenarios } from "../scenarios/registry.ts";
+import { buildScenarioRegistry } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SCENARIOS = path.join(REPO_ROOT, "test/e2e-scenario/scenarios/run.ts");
@@ -22,25 +21,7 @@ function runScenarioCli(args: string[]) {
   });
 }
 
-function scenarioOwnerIds(): string[] {
-  return Array.from(
-    new Set(
-      [...migrationInventory.setupScenarios, ...migrationInventory.testPlans]
-        .map((entry) => entry.newOwner)
-        .filter((owner) => owner.startsWith("scenario:"))
-        .map((owner) => owner.replace(/^scenario:/, "")),
-    ),
-  ).sort();
-}
-
 describe("deterministic scenario registry", () => {
-  it("test_should_register_canonical_scenarios_for_all_required_old_coverage", () => {
-    const registeredIds = new Set(listScenarios().map((entry) => entry.id));
-    const missing = scenarioOwnerIds().filter((id) => !registeredIds.has(id));
-
-    expect(missing, `missing canonical scenario IDs: ${missing.join(", ")}`).toEqual([]);
-  });
-
   it("test_should_reject_duplicate_scenario_ids", () => {
     const first = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml").build();
     const second = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml").build();

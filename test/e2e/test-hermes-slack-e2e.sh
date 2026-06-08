@@ -52,6 +52,12 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 run_with_timeout() {
   local seconds="$1"
@@ -159,6 +165,11 @@ export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX=1
 export SLACK_BOT_TOKEN="$SLACK_BOT"
 export SLACK_APP_TOKEN="$SLACK_APP"
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && { is_fake_slack_token "$SLACK_BOT" || is_fake_slack_token "$SLACK_APP"; }; then
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
+fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
@@ -327,8 +338,14 @@ config_text = Path("/sandbox/.hermes/config.yaml").read_text(encoding="utf-8")
 cfg = yaml.safe_load(config_text) or {}
 errors = []
 platforms = cfg.get("platforms")
-if isinstance(platforms, dict) and "slack" in platforms:
-    errors.append("platforms.slack present")
+if not isinstance(platforms, dict):
+    errors.append("platforms map missing or not a mapping")
+else:
+    slack = platforms.get("slack")
+    if not isinstance(slack, dict):
+        errors.append("platforms.slack missing or not a mapping")
+    elif slack.get("enabled") is not True:
+        errors.append(f"platforms.slack.enabled is not true ({slack!r})")
 if "SLACK_BOT_TOKEN" in config_text or "SLACK_APP_TOKEN" in config_text:
     errors.append("config.yaml contains Slack token env keys")
 if errors:
@@ -339,7 +356,7 @@ PY
 )
 
 if [ "$config_probe" = "OK" ]; then
-  pass "config.yaml has no generic platforms.slack block or Slack token keys"
+  pass "config.yaml enables platforms.slack and contains no Slack token keys"
 else
   fail "config.yaml check failed: ${config_probe:0:400}"
 fi
@@ -366,6 +383,69 @@ if [ "$env_probe" = "OK" ]; then
   pass ".hermes/.env contains Slack SDK-shaped resolver placeholders"
 else
   fail ".hermes/.env check failed: ${env_probe:0:400}"
+fi
+
+secret_boundary_probe=$(
+  sandbox_exec_stdin "python3 -" <<'PY'
+import re
+from pathlib import Path
+
+secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
+slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
+allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
+env_path = Path("/sandbox/.hermes/.env")
+
+
+def unquote(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+if env_path.is_symlink():
+    print("FAIL .hermes/.env is a symlink")
+    raise SystemExit
+if not env_path.is_file():
+    print("FAIL .hermes/.env missing")
+    raise SystemExit
+
+violations = []
+for lineno, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitlines(), 1):
+    stripped = raw_line.strip()
+    if not stripped or stripped.startswith("#") or "=" not in stripped:
+        continue
+    if stripped.startswith("export "):
+        stripped = stripped[len("export ") :].lstrip()
+    key, value = stripped.split("=", 1)
+    key = key.strip()
+    if key in allowed_nonsecret_keys:
+        continue
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+        continue
+    if not secret_key_re.search(key):
+        continue
+    value = unquote(value)
+    if (
+        value in allowed_literals
+        or value.startswith("openshell:resolve:env:")
+        or slack_alias_re.fullmatch(value)
+    ):
+        continue
+    violations.append(f"{key} line {lineno}")
+
+if violations:
+    print("FAIL raw secret-shaped Hermes .env values: " + ", ".join(violations))
+else:
+    print("OK")
+PY
+)
+
+if [ "$secret_boundary_probe" = "OK" ]; then
+  pass "Hermes Slack .env contains only resolver placeholders for secret-shaped keys"
+else
+  fail "Hermes Slack secret-boundary scan failed: ${secret_boundary_probe:0:400}"
 fi
 
 token_file_hits=$(printf '%s\n%s\n' "$SLACK_BOT" "$SLACK_APP" | sandbox_exec_stdin 'grep -Fq -f - /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /tmp/nemoclaw-start.log /tmp/gateway.log 2>/dev/null && echo LEAK || echo OK')

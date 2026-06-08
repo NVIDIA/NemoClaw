@@ -91,6 +91,80 @@ describe("http-probe helpers", () => {
     expect(fs.existsSync(path.dirname(outputPath))).toBe(false);
   });
 
+  it("lets the process wrapper outlive curl --max-time", () => {
+    let timeout: number | undefined;
+    const result = runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
+      spawnSyncImpl: (_command, args, options) => {
+        timeout = options.timeout;
+        const outputPath = args[args.indexOf("-o") + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, "{}");
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(timeout).toBe(65_000);
+  });
+
+  it("uses the last curl --max-time when the flag is repeated", () => {
+    let timeout: number | undefined;
+    runCurlProbe(
+      ["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"],
+      {
+        spawnSyncImpl: (_command, args, options) => {
+          timeout = options.timeout;
+          const outputPath = args[args.indexOf("-o") + 1];
+          if (typeof outputPath === "string") {
+            fs.writeFileSync(outputPath, "{}");
+          }
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    expect(timeout).toBe(125_000);
+  });
+
+  it("honors an explicit process timeout over inferred curl --max-time", () => {
+    let timeout: number | undefined;
+    runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
+      timeoutMs: 12_345,
+      spawnSyncImpl: (_command, args, options) => {
+        timeout = options.timeout;
+        const outputPath = args[args.indexOf("-o") + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, "{}");
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(timeout).toBe(12_345);
+  });
+
   it("reports spawn errors as curl failures", () => {
     const result = runCurlProbe(["-sS", "https://example.test/models"], {
       spawnSyncImpl: () => {
@@ -111,6 +185,181 @@ describe("http-probe helpers", () => {
     expect(result.curlStatus).toBe(1);
     expect(result.message).toContain("curl failed");
     expect(result.stderr).toContain("spawn ENOENT");
+  });
+
+  it("reports spawnSync ETIMEDOUT as a timeout status", () => {
+    const result = runCurlProbe(["-sS", "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        const error = Object.assign(new Error("spawnSync curl ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+          errno: -60,
+        });
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: null,
+          signal: null,
+          error,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(-110);
+    expect(result.message).toContain("ETIMEDOUT");
+  });
+
+  it("rejects non-http probe URLs before spawning curl", () => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", "file:///etc/passwd"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("curl probe URL must use http or https");
+  });
+
+  it("rejects curl probe request bodies that read from local files", () => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", "--data-binary", "@/etc/passwd", "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must not read request data from a file");
+  });
+
+  it.each([
+    ["--upload-file", ["--upload-file", "/etc/passwd"]],
+    ["-T", ["-T/etc/passwd"]],
+    ["--netrc", ["--netrc"]],
+    ["--data-urlencode", ["--data-urlencode", "payload@/etc/passwd"]],
+    ["-K", ["-K/etc/passwd"]],
+    ["-b", ["-b/etc/passwd"]],
+    ["--cert", ["--cert", "/tmp/client.pem"]],
+    ["--key", ["--key=/tmp/client.key"]],
+    ["--proxy-cert", ["--proxy-cert", "/tmp/proxy.pem"]],
+    ["--proxy-key", ["--proxy-key=/tmp/proxy.key"]],
+  ])("rejects file-reading curl option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["-H", ["-H", "@/etc/passwd"]],
+    ["-H inline", ["-H@/etc/passwd"]],
+    ["--header", ["--header=@/etc/passwd"]],
+  ])("rejects file-backed curl header option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("must not read headers from a file");
+  });
+
+  it("applies file-read validation to streaming probe wrappers", () => {
+    let spawned = false;
+    const spawnSyncImpl = () => {
+      spawned = true;
+      throw new Error("should not spawn");
+    };
+
+    const chat = runChatCompletionsStreamingProbe(
+      ["-sS", "--header", "@/etc/passwd", "https://example.test/v1/chat/completions"],
+      { spawnSyncImpl },
+    );
+    const responses = runStreamingEventProbe(
+      ["-sS", "--cert", "/tmp/client.pem", "https://example.test/v1/responses"],
+      { spawnSyncImpl },
+    );
+
+    expect(spawned).toBe(false);
+    expect(chat.ok).toBe(false);
+    expect(responses.ok).toBe(false);
+  });
+
+  it.each([
+    ["extra URL", ["https://evil.example/steal"]],
+    ["multi-transfer --next", ["--next"]],
+  ])("rejects %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["--data", ["--data"]],
+    ["-H", ["-H"]],
+    ["--max-time", ["--max-time"]],
+    ["--config", ["--config"]],
+  ])("rejects missing value for curl option %s before spawning", (_label, args) => {
+    let spawned = false;
+    const result = runCurlProbe(["-sS", ...args, "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        spawned = true;
+        throw new Error("should not spawn");
+      },
+    });
+
+    expect(spawned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows explicit trusted curl config files", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    let spawnedArgs: readonly string[] = [];
+    const result = runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+      trustedConfigFiles: [configPath],
+      spawnSyncImpl: (_command, args) => {
+        spawnedArgs = args;
+        const outputPath = args[args.indexOf("-o") + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, "{}");
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(spawnedArgs).toContain(configPath);
   });
 });
 
@@ -161,6 +410,33 @@ describe("runChatCompletionsStreamingProbe", () => {
 
     expect(result.ok).toBe(false);
     expect(result.curlStatus).toBe(28);
+  });
+
+  it("reports chat streaming spawnSync ETIMEDOUT as a timeout status", () => {
+    const result = runChatCompletionsStreamingProbe(
+      ["-sS", "--max-time", "120", "https://example.test/v1/chat/completions"],
+      {
+        spawnSyncImpl: () => {
+          const error = Object.assign(new Error("spawnSync curl ETIMEDOUT"), {
+            code: "ETIMEDOUT",
+            errno: -60,
+          });
+          return {
+            pid: 1,
+            output: [],
+            stdout: "",
+            stderr: "",
+            status: null,
+            signal: null,
+            error,
+          };
+        },
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(-110);
+    expect(result.message).toContain("ETIMEDOUT");
   });
 
   it("does not treat a lone DONE frame as successful streaming data", () => {
@@ -314,6 +590,39 @@ describe("runStreamingEventProbe", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("Streaming probe failed");
+  });
+
+  it("records normalized timeout status for responses streaming spawnSync ETIMEDOUT", () => {
+    withTraceFile((traceFile) => {
+      const result = runStreamingEventProbe(["-sS", "https://example.test/v1/responses"], {
+        spawnSyncImpl: () => {
+          const error = Object.assign(new Error("spawnSync curl ETIMEDOUT"), {
+            code: "ETIMEDOUT",
+            errno: -60,
+          });
+          return {
+            pid: 1,
+            output: [],
+            stdout: "",
+            stderr: "",
+            status: null,
+            signal: null,
+            error,
+          };
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      flushTrace();
+      const artifact = JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+      const span = artifact.resource_spans[0].scope_spans[0].spans.find(
+        (entry) => entry.name === "nemoclaw.inference.curl_streaming_event_probe",
+      );
+      expect(span?.events[0].attributes).toMatchObject({
+        ok: false,
+        curl_status: -110,
+      });
+    });
   });
 
   it("cleans up temp files after probe", () => {

@@ -34,6 +34,7 @@ import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
+import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -237,27 +238,18 @@ function rejectSymlinksOnPath(targetPath: string): void {
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
-  const result = spawnSync("tar", ["-tf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
+  const entries: string[] = [];
+  const listingFailure = runTarListing(tarBuffer, ["-tf", "-"], "tar listing", (line) => {
+    entries.push(line);
   });
-
-  if (result.status !== 0) {
+  if (listingFailure) {
     return {
       safe: false,
       entries: [],
-      violations: [
-        `tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`,
-      ],
+      violations: [listingFailure],
     };
   }
 
-  const entries = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((e) => e.length > 0);
   const violations: string[] = [];
 
   for (const entry of entries) {
@@ -371,30 +363,15 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * files outside the extraction root.
  */
 export function rejectHardLinks(tarBuffer: Buffer): string[] {
-  const result = spawnSync("tar", ["-tvf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-  });
-
-  if (result.status !== 0) {
-    return [`tar verbose listing failed (exit ${result.status})`];
-  }
-
   const violations: string[] = [];
-  const lines = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((l) => l.length > 0);
-
-  for (const line of lines) {
+  const listingFailure = runTarListing(tarBuffer, ["-tvf", "-"], "tar verbose listing", (line) => {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
     // and include " link to " in the line.
     if (line.startsWith("h") || / link to /.test(line)) {
       violations.push(`hard link: ${line.trim()}`);
     }
-  }
+  });
+  if (listingFailure) return [listingFailure];
 
   return violations;
 }

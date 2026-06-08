@@ -3,6 +3,7 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { HermesAuthMethod, SessionUpdates } from "../state/onboard-session";
 
 export interface OnboardSessionUpdateInput {
@@ -18,6 +19,7 @@ export interface OnboardSessionUpdateInput {
   policyPresets?: string[] | null;
   messagingChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
+  messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
 }
 
@@ -57,6 +59,7 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (updates.messagingChannelConfig !== undefined) {
     normalized.messagingChannelConfig = updates.messagingChannelConfig;
   }
+  if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;
   return normalized;

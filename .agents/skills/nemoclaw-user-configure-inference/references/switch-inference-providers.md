@@ -1,9 +1,9 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Switch Inference Models at Runtime
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 Change the active inference model while the sandbox is running.
-No restart is required.
+You do not need to restart the sandbox.
 
 ## Prerequisites
 
@@ -12,99 +12,131 @@ No restart is required.
 
 ## Switch to a Different Model
 
+<AgentOnly variant="openclaw">
 Use `nemoclaw inference set` with the provider and model that match the upstream you want to use.
 The command updates the OpenShell inference route and synchronizes the running agent config.
 For OpenClaw, it updates `agents.defaults.model.primary` and the matching provider namespace.
-For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, and `model.provider: custom`) without rebuilding or restarting Hermes.
-
+</AgentOnly>
+<AgentOnly variant="hermes">
+Use `nemoclaw inference set` with the provider and model that match the upstream you want to use.
+The command updates the OpenShell inference route and synchronizes the running agent config.
+For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) without rebuilding or restarting Hermes.
 Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
-Under `nemohermes`, pass `--sandbox <name>` when more than one Hermes sandbox is registered.
+Under `nemoclaw`, pass `--sandbox <name>` when you have registered more than one Hermes sandbox.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
+</AgentOnly>
 
 ### NVIDIA Endpoints
 
-```console
-$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+```bash
+nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 ### OpenAI
 
-```console
-$ nemoclaw inference set --provider openai-api --model gpt-5.4
+```bash
+nemoclaw inference set --provider openai-api --model gpt-5.4
 ```
 
 ### Anthropic
 
-```console
-$ nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6
+```bash
+nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6
 ```
 
 ### Google Gemini
 
-```console
-$ nemoclaw inference set --provider gemini-api --model gemini-2.5-flash
+```bash
+nemoclaw inference set --provider gemini-api --model gemini-2.5-flash
 ```
 
 ### Compatible Endpoints
 
 If you onboarded a custom compatible endpoint, switch models with the provider created for that endpoint:
 
-```console
-$ nemoclaw inference set --provider compatible-endpoint --model <model-name>
+```bash
+nemoclaw inference set --provider compatible-endpoint --model <model-name>
 ```
 
-```console
-$ nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
+```bash
+nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
+
+<AgentOnly variant="hermes">
 
 ### Hermes Provider
 
 For a NemoClaw-managed Hermes sandbox, use the Hermes alias with the registered Hermes Provider route:
 
-```console
-$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
+```bash
+nemoclaw inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
+
+</AgentOnly>
+
+### API Family Sync
+
+Before patching the in-sandbox config, NemoClaw resolves the target route's API family: OpenAI chat completions, Anthropic Messages, or OpenAI Responses.
+For OpenClaw, `inference set` syncs the provider API family and primary model reference into the running config.
+For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
+Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
+
+Amazon Bedrock Runtime routes created through `compatible-anthropic-endpoint` are the exception.
+When you switch within the same Bedrock Runtime compatible provider, NemoClaw keeps the route OpenAI-compatible and does not set Hermes to Anthropic Messages mode.
 
 #### Switching from Responses API to Chat Completions
 
-If onboarding selected `/v1/responses` but the agent fails at runtime (for
-example, because the backend does not emit the streaming events OpenClaw
-requires), re-run onboarding so the wizard re-probes the endpoint and bakes
-the correct API path into the image:
+If onboarding selected `/v1/responses` but the agent fails at runtime, re-run onboarding so the wizard re-probes the endpoint and bakes the correct API path into the image.
+This can happen when the backend does not emit the streaming events OpenClaw requires.
 
-```console
-$ nemoclaw onboard
+```bash
+nemoclaw onboard
 ```
 
 Select the same provider and endpoint again.
-The updated streaming probe will detect incomplete `/v1/responses` support
-and select `/v1/chat/completions` automatically.
+The updated streaming probe detects incomplete `/v1/responses` support and selects `/v1/chat/completions` automatically.
 
-For the compatible-endpoint provider, NemoClaw uses `/v1/chat/completions` by
-default, so no env var is required to keep the safe path.
-To opt in to `/v1/responses` for a backend you have verified end to end, set
-`NEMOCLAW_PREFERRED_API` before onboarding:
+For the compatible-endpoint provider, NemoClaw uses `/v1/chat/completions` by default, so you do not need an environment variable to keep the safe path.
+To opt in to `/v1/responses` for a backend you have verified end to end, set `NEMOCLAW_PREFERRED_API` before onboarding:
 
-```console
-$ NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
+```bash
+NEMOCLAW_PREFERRED_API=openai-responses nemoclaw onboard
 ```
 
 **Note:**
 
-`NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but
-does not update the Dockerfile ARG baked into the image.
-If you recreate the sandbox without the override env var, the image reverts to
-the original API path.
+`NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but does not update the Dockerfile ARG baked into the image.
+If you recreate the sandbox without the override environment variable, the image reverts to the original API path.
 A fresh `nemoclaw onboard` is the reliable fix because it updates both the
 session and the baked image.
 
 ## Cross-Provider Switching
 
+<AgentOnly variant="openclaw">
 Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) also uses `nemoclaw inference set`.
 The command updates both the gateway route and the OpenClaw provider namespace in the running sandbox config.
+If the in-sandbox config sync fails after the gateway route is updated, NemoClaw keeps the host registry aligned with the gateway and prints a rebuild hint.
+Run the rebuild before relying on the running agent if the warning says the image config could not be patched.
 
-```console
-$ nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
+```bash
+nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+Switching to a different provider family (for example, from NVIDIA Endpoints to Anthropic) also uses `nemoclaw inference set`.
+The command updates both the gateway route and `/sandbox/.hermes/config.yaml`.
+If the Hermes config sync fails after the gateway route is updated, NemoClaw keeps the host registry aligned with the gateway and prints a rebuild hint.
+Run the rebuild before relying on the running agent if the warning says the image config could not be patched.
+
+```bash
+nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
+```
+
+</AgentOnly>
 
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 
@@ -122,26 +154,42 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_AGENT_TIMEOUT` | Positive integer (seconds) | `600` |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | Go-style duration (`30m`, `1h`, `0m` to disable) | `unset` (OpenClaw default) |
 
-Invalid values are ignored, and the default bakes into the image.
+NemoClaw ignores invalid values and bakes the default into the image.
+For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
+For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
+During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name looks multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
+Non-interactive onboarding uses the environment value or the default `text` setting.
 
-```console
-$ export NEMOCLAW_CONTEXT_WINDOW=65536
-$ export NEMOCLAW_MAX_TOKENS=8192
-$ export NEMOCLAW_REASONING=true
-$ export NEMOCLAW_INFERENCE_INPUTS=text,image
-$ export NEMOCLAW_AGENT_TIMEOUT=1800
-$ export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
-$ nemoclaw onboard
+```bash
+export NEMOCLAW_CONTEXT_WINDOW=65536
+export NEMOCLAW_MAX_TOKENS=8192
+export NEMOCLAW_REASONING=true
+export NEMOCLAW_INFERENCE_INPUTS=text,image
+export NEMOCLAW_AGENT_TIMEOUT=1800
+export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
+nemoclaw onboard
 ```
 
-`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into
-`agents.defaults.timeoutSeconds`. Increase it for slow local inference (for
-example, CPU-only Ollama or vLLM on modest hardware). NemoClaw writes this
-value into `openclaw.json` during onboarding. The default sandbox may keep that
-file writable for agent state, but direct in-sandbox edits are not the supported
-or durable way to change NemoClaw-managed defaults. Rebuild the sandbox via
-`nemoclaw onboard` to apply a new value.
+<AgentOnly variant="openclaw">
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into `agents.defaults.timeoutSeconds`.
+Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
+NemoClaw writes this value into `openclaw.json` during onboarding.
+The default sandbox can keep that file writable for agent state, but direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
+Rebuild the sandbox with `nemoclaw onboard` to apply a new value.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into the Hermes sandbox image.
+Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
+Direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
+Rebuild the sandbox with `nemoclaw onboard` to apply a new value.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
 
 `NEMOCLAW_AGENT_HEARTBEAT_EVERY` sets `agents.defaults.heartbeat.every`.
 This controls OpenClaw's periodic main-session agent turn.
@@ -150,15 +198,22 @@ The OpenClaw default is 30 minutes (1 hour for Anthropic OAuth / Claude CLI reus
 Tune the cadence with a duration string like `5m` or `2h`, or set `0m` to disable the periodic turns entirely.
 Disabling also drops `HEARTBEAT.md` from normal-run bootstrap context per upstream behavior, so the model no longer sees heartbeat-only instructions.
 NemoClaw writes this value into `openclaw.json` during onboarding.
-The in-sandbox `openclaw config set` command is not the supported path for
-NemoClaw-managed build-time defaults, and direct file edits are overwritten by a
-rebuild. Rebuild the sandbox via `nemoclaw onboard --resume` to apply a new value.
+The in-sandbox `openclaw config set` command is not the supported path for NemoClaw-managed build-time defaults, and a rebuild overwrites direct file edits.
+Rebuild the sandbox with `nemoclaw onboard --resume` to apply a new value.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes does not use OpenClaw's `HEARTBEAT.md` wake-up mechanism.
+Rebuild the sandbox with `nemoclaw onboard --resume` to apply build-time inference metadata changes.
+
+</AgentOnly>
 
 These variables are build-time settings.
 If you change them on an existing sandbox, recreate the sandbox so the new values bake into the image:
 
-```console
-$ nemoclaw onboard --resume --recreate-sandbox
+```bash
+nemoclaw onboard --resume --recreate-sandbox
 ```
 
 ## Verify the Active Model
@@ -187,13 +242,15 @@ Run `nemoclaw onboard` to configure one.
 
 Run the status command when you also need sandbox, service, and messaging health:
 
-```console
-$ nemoclaw <name> status
+```bash
+nemoclaw <name> status
 ```
 
 The status output includes the active provider, model, and endpoint with the rest of the sandbox state.
 
 ## Notes
+
+<AgentOnly variant="openclaw">
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
@@ -201,6 +258,17 @@ The status output includes the active provider, model, and endpoint with the res
 - Use `nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- The host keeps provider credentials.
+- The sandbox continues to use `inference.local`.
+- `nemoclaw inference set` patches the selected running Hermes sandbox config and recomputes its config hash.
+- Use `nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
+
+</AgentOnly>
+
 ## Related Topics
 
-- Inference Options (use the `nemoclaw-user-configure-inference` skill) for the full list of providers available during onboarding.
+- [Inference Options](inference-options.md) for the full list of providers available during onboarding.

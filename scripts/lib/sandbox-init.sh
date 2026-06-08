@@ -28,6 +28,7 @@ _SANDBOX_INIT_LOADED=1
 # /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
+# /tmp/nemoclaw-plugin-refresh.log sandbox 600   sandbox  sandbox   no (OpenClaw refresh output)
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.cache/                 sandbox    755   sandbox  sandbox   no (tool data)
 # /tmp/.config/                sandbox    755   sandbox  sandbox   no (tool data)
@@ -119,15 +120,41 @@ validate_tmp_permissions() {
   done
 
   # Restricted log files — gateway.log may be 600 (Hermes) or 644 (OpenClaw,
-  # world-readable for diagnostics). auto-pair.log is 600.
-  for f in /tmp/gateway.log /tmp/auto-pair.log; do
-    [ -f "$f" ] || continue
-    local perms
+  # world-readable for diagnostics). auto-pair.log is 600. The plugin-refresh
+  # log is written after privilege drop as sandbox, so keep it private and
+  # reject symlinks/non-regular files before launching services. OpenClaw's
+  # entrypoint sets PLUGIN_REFRESH_LOG; shared tests can override it while
+  # production keeps the fixed /tmp path.
+  local plugin_refresh_log="${PLUGIN_REFRESH_LOG:-/tmp/nemoclaw-plugin-refresh.log}"
+  for f in /tmp/gateway.log /tmp/auto-pair.log "$plugin_refresh_log"; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if [ -L "$f" ]; then
+      echo "[SECURITY] $f is a symlink (expected regular log file)" >&2
+      failed=1
+      continue
+    fi
+    if [ ! -f "$f" ]; then
+      echo "[SECURITY] $f is not a regular file" >&2
+      failed=1
+      continue
+    fi
+    local perms owner
     perms="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo "unknown")"
+    owner="$(stat -c '%U' "$f" 2>/dev/null || stat -f '%Su' "$f" 2>/dev/null || echo "unknown")"
     case "$f" in
       */gateway.log)
         if [ "$perms" != "600" ] && [ "$perms" != "644" ]; then
           echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600 or 644)" >&2
+          failed=1
+        fi
+        ;;
+      */nemoclaw-plugin-refresh.log)
+        if [ "$perms" != "600" ]; then
+          echo "[SECURITY] $f has unexpected permissions: mode=$perms (expected 600)" >&2
+          failed=1
+        fi
+        if [ "$(id -u)" -eq 0 ] && [ "$owner" != "sandbox" ]; then
+          echo "[SECURITY] $f has unsafe owner: owner=$owner (expected sandbox)" >&2
           failed=1
         fi
         ;;
@@ -214,12 +241,44 @@ lock_config_after_write() {
 #   cap_kill — sandbox user signals gateway-user processes via the UID
 #     separation enforced by the entrypoint (see test 13 in
 #     e2e-gateway-isolation.sh).
+# When the runtime cannot drop the bounding set (no CAP_SETPCAP, or capsh
+# missing), the default is to warn and continue. Set NEMOCLAW_REQUIRE_CAP_DROP=1
+# to make that case fail-closed instead — see enforce_cap_drop_if_required.
+#
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/797
 #      https://github.com/NVIDIA/NemoClaw/issues/3280
+#      https://github.com/NVIDIA/OpenShell/issues/1452 (connect-shell scope)
 #
 # Usage:
 #   drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 #
+# Single source of truth for the dangerous capabilities the entrypoint drops
+# and (in strict mode) verifies are gone. "bit:name" pairs; bit numbers per
+# /usr/include/linux/capability.h. Both the capsh --drop list and
+# dangerous_caps_in_capbnd() derive from this array, so the drop-set and the
+# strict-mode verify-set cannot drift apart (issue #3280).
+DANGEROUS_CAPS=(
+  "21:cap_sys_admin"
+  "19:cap_sys_ptrace"
+  "13:cap_net_raw"
+  "1:cap_dac_override"
+  "18:cap_sys_chroot"
+  "4:cap_fsetid"
+  "31:cap_setfcap"
+  "27:cap_mknod"
+  "29:cap_audit_write"
+  "10:cap_net_bind_service"
+)
+
+# Comma-separated capability names for `capsh --drop`, derived from DANGEROUS_CAPS.
+dangerous_caps_drop_list() {
+  local entry out=""
+  for entry in "${DANGEROUS_CAPS[@]}"; do
+    out="${out:+$out,}${entry#*:}"
+  done
+  printf '%s' "$out"
+}
+
 # The first argument is the absolute path to the entrypoint script to
 # re-exec via capsh. Remaining arguments are forwarded.
 drop_capabilities() {
@@ -232,14 +291,102 @@ drop_capabilities() {
     if capsh --has-p=cap_setpcap 2>/dev/null; then
       export NEMOCLAW_CAPS_DROPPED=1
       exec capsh \
-        --drop=cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
+        --drop="$(dangerous_caps_drop_list)" \
         -- -c "exec $entrypoint \"\$@\"" -- "$@"
-    else
-      report_residual_capabilities
     fi
+    # CAP_SETPCAP missing (or the exec above failed): the drop could not run.
+    # Surface the residual bounding-set caps in the log.
+    report_residual_capabilities || true
   elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
     echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
   fi
+
+  # Opt-in fail-closed gate (issue #3280). Deliberately runs on EVERY path,
+  # including when NEMOCLAW_CAPS_DROPPED is already set: it verifies the actual
+  # bounding set rather than trusting that sentinel, so an inherited marker
+  # cannot mask a drop that never happened.
+  enforce_cap_drop_if_required
+}
+
+# Pure decode: given a CapBnd hex string, echo the comma-separated list of the
+# dangerous capabilities present (empty string if none). Factored out so the
+# residual diagnostic, the strict-mode gate, and the unit tests all share one
+# implementation instead of re-deriving the bit math.
+#
+# Bash arithmetic handles 64-bit ints on 64-bit platforms; CAP_LAST_CAP is ~41
+# today, well within range. Avoids a gawk-strtonum dependency.
+#
+# Returns nonzero with no output if the hex is empty or malformed, so callers
+# can treat "could not parse" the same as "could not read" instead of silently
+# treating an unparseable bounding set as clean (issue #3280).
+dangerous_caps_in_capbnd() {
+  local cap_bnd_hex="$1" val entry bit name present=""
+  case "$cap_bnd_hex" in
+    "" | *[!0-9A-Fa-f]*) return 1 ;;
+  esac
+  val=$((16#$cap_bnd_hex))
+  for entry in "${DANGEROUS_CAPS[@]}"; do
+    bit="${entry%%:*}"
+    name="${entry#*:}"
+    if [ $(((val >> bit) & 1)) -ne 0 ]; then
+      present="${present:+$present,}$name"
+    fi
+  done
+  printf '%s' "$present"
+}
+
+# Opt-in fail-closed enforcement (issue #3280). When NEMOCLAW_REQUIRE_CAP_DROP=1
+# the sandbox refuses to start unless the bounding set is provably free of the
+# dangerous capabilities. It verifies by reading the ACTUAL CapBnd — NOT by
+# trusting the NEMOCLAW_CAPS_DROPPED sentinel, which an inherited environment
+# could forge to bypass the gate.
+#
+# DEFAULT (unset) IS WARN-AND-CONTINUE — no host loses the ability to boot. This
+# is the lesson of #4266/#4341: a default-fail-closed drop broke EVERY host that
+# does not grant CAP_SETPCAP (GitHub runners, Brev shadecloud, Colossus Ubuntu
+# 24.04, Docker Desktop, WSL) and was reverted within hours. Inverting the
+# default to opt-in keeps that regression off by default.
+#
+# Scope: the AGENT process tree only. A `nemoclaw connect` shell is spawned by
+# the container runtime outside that tree and inherits the container's OCI
+# bounding set; tightening that requires cap_drop at sandbox create, tracked
+# upstream in NVIDIA/OpenShell#1452.
+#
+# Test seam: NEMOCLAW_PROC_STATUS overrides the status source so unit tests can
+# feed a known CapBnd fixture without a real /proc.
+enforce_cap_drop_if_required() {
+  [ "${NEMOCLAW_REQUIRE_CAP_DROP:-}" = "1" ] || return 0
+
+  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
+  local cap_bnd_hex present reason=""
+  cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null || true)
+  if [ -z "$cap_bnd_hex" ]; then
+    # Cannot verify → in strict mode, refuse rather than assume safety.
+    reason="could not read bounding set from ${status_path} — cannot verify drop"
+  elif ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    # Non-empty but unparseable CapBnd is equally unverifiable → refuse.
+    reason="could not parse bounding set (CapBnd=${cap_bnd_hex}) — cannot verify drop"
+  elif [ -n "$present" ]; then
+    reason="dangerous caps remain in bounding set (CapBnd=${cap_bnd_hex}): ${present}"
+  fi
+  [ -n "$reason" ] || return 0
+
+  cat >&2 <<'EOF'
+
+┌─ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed ──
+│
+│ NEMOCLAW_REQUIRE_CAP_DROP=1 is set, so NemoClaw refuses to start a sandbox
+│ that still holds dangerous bounding-set capabilities. The runtime could not
+│ drop them (capsh or CAP_SETPCAP unavailable on this host), so they remain.
+│
+│ To run anyway with the weaker (warn-only) posture, unset the variable:
+│   unset NEMOCLAW_REQUIRE_CAP_DROP
+│
+│ Tracking: https://github.com/NVIDIA/NemoClaw/issues/3280
+└──────────────────────────────────────────────────────────────────────────────
+EOF
+  echo "[SECURITY] ${reason}" >&2
+  exit 1
 }
 
 # Emit a loud diagnostic when capsh-based dropping is unavailable so that
@@ -249,31 +396,19 @@ drop_capabilities() {
 report_residual_capabilities() {
   echo "[SECURITY] CAP_SETPCAP not available — cannot drop bounding-set caps via capsh" >&2
 
-  local cap_bnd_hex val name bit present_caps=""
-  if ! cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' /proc/self/status 2>/dev/null) \
+  local status_path="${NEMOCLAW_PROC_STATUS:-/proc/self/status}"
+  local cap_bnd_hex present
+  if ! cap_bnd_hex=$(awk '/^CapBnd:/{print $2}' "$status_path" 2>/dev/null) \
     || [ -z "$cap_bnd_hex" ]; then
-    echo "[SECURITY] Could not read /proc/self/status — residual caps unknown" >&2
+    echo "[SECURITY] Could not read ${status_path} — residual caps unknown" >&2
     return 0
   fi
   echo "[SECURITY] Residual CapBnd=${cap_bnd_hex}" >&2
 
-  # Bash arithmetic handles 64-bit ints on 64-bit platforms; CAP_LAST_CAP
-  # is ~41 today, well within range. Avoids a gawk-strtonum dependency.
-  val=$((16#$cap_bnd_hex))
-  for entry in \
-    "21:cap_sys_admin" \
-    "19:cap_sys_ptrace" \
-    "13:cap_net_raw" \
-    "1:cap_dac_override" \
-    "10:cap_net_bind_service"; do
-    bit="${entry%%:*}"
-    name="${entry#*:}"
-    if [ $(((val >> bit) & 1)) -ne 0 ]; then
-      present_caps="${present_caps:+$present_caps,}$name"
-    fi
-  done
-  if [ -n "$present_caps" ]; then
-    echo "[SECURITY] Dangerous caps remain in bounding set: ${present_caps}" >&2
+  if ! present="$(dangerous_caps_in_capbnd "$cap_bnd_hex")"; then
+    echo "[SECURITY] Could not parse CapBnd=${cap_bnd_hex} — residual caps unknown" >&2
+  elif [ -n "$present" ]; then
+    echo "[SECURITY] Dangerous caps remain in bounding set: ${present}" >&2
   fi
 }
 
@@ -328,16 +463,23 @@ init_step_down_prefixes() {
     # and break mutateConfigFile / control-UI config edits with EACCES.
     # --init-groups matches gosu's setgroups+initgroups behavior and
     # restores exactly the groups defined in /etc/group for the target user.
+    #
+    # NOTE (#4538): to verify the group-write contract as the gateway UID, use
+    # the image's installed step-down mechanism — `setpriv --reuid=gateway
+    # --regid=gateway --init-groups` (or `gosu gateway`). Do NOT probe with
+    # `su -s /bin/sh gateway ...`: su does not run init_groups the same way and
+    # will not reflect the gateway's sandbox-group membership, so a group-write
+    # probe can spuriously EACCES even though the mutable contract is intact.
     local drop="-setuid,-setgid,-fowner,-chown,-kill"
     # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
     STEP_DOWN_PREFIX_SANDBOX=(
-      setpriv --reuid=sandbox --regid=sandbox --init-groups
-      --bounding-set="$drop" --
+      setpriv "--reuid=sandbox" "--regid=sandbox" --init-groups
+      "--bounding-set=$drop" --
     )
     # shellcheck disable=SC2034  # consumed by entrypoint scripts (cross-file)
     STEP_DOWN_PREFIX_GATEWAY=(
-      setpriv --reuid=gateway --regid=gateway --init-groups
-      --bounding-set="$drop" --
+      setpriv "--reuid=gateway" "--regid=gateway" --init-groups
+      "--bounding-set=$drop" --
     )
   else
     echo "[SECURITY WARNING] setpriv or CAP_SETPCAP unavailable — falling back to gosu (bounding set will retain cap_setuid/setgid/fowner/chown/kill — issue #3280)" >&2

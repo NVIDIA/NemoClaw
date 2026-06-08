@@ -28,25 +28,34 @@ RUN npm ci && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG OPENCLAW_VERSION=2026.5.22
-ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
+ARG OPENCLAW_VERSION=2026.5.27
+ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
+# filesystem transform cache so source fragments that mention provider marker
+# names do not persist under /tmp/jiti inside the sandbox.
+ENV JITI_FS_CACHE=false
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
-# procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
-# conditional install keeps stale bases usable while fresh bases skip apt.
-# Refs: #2343, shields-up chattr hardening
+# procps/e2fsprogs/tmux additions, leaving ps/chattr/tmux absent or auto-marked.
+# The conditional install keeps stale bases usable while fresh bases skip apt.
+# tmux is required by OpenClaw's bundled tmux-session flow (#4513); a stale base
+# without it makes that flow fail with `tmux: command not found`.
+# Refs: #2343, #4513, shields-up chattr hardening
 # hadolint ignore=DL3001
 RUN set -eu; \
-    apt-mark manual procps e2fsprogs 2>/dev/null || true; \
+    apt-mark manual procps e2fsprogs tmux 2>/dev/null || true; \
     (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
         netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
     apt-get autoremove --purge -y; \
     needs_ps=0; \
     needs_chattr=0; \
+    needs_tmux=0; \
     if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
     if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
-    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ]; then \
+    if ! command -v tmux >/dev/null 2>&1; then needs_tmux=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ] || [ "$needs_tmux" = "1" ]; then \
         apt-get update; \
         if [ "$needs_ps" = "1" ]; then \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
@@ -54,10 +63,14 @@ RUN set -eu; \
         if [ "$needs_chattr" = "1" ]; then \
             apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
         fi; \
+        if [ "$needs_tmux" = "1" ]; then \
+            apt-get install -y --no-install-recommends tmux=3.5a-3; \
+        fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \
     ps --version; \
-    command -v chattr >/dev/null
+    command -v chattr >/dev/null; \
+    command -v tmux >/dev/null
 
 
 # Copy built plugin and blueprint into the sandbox
@@ -102,7 +115,7 @@ RUN set -eu; \
         echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
     fi; \
     EXPECTED_INTEGRITY=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
     if [ -n "$EXPECTED_INTEGRITY" ]; then \
         REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
         if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
@@ -279,7 +292,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
-    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # Reviewed against openclaw@2026.5.27 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
@@ -371,7 +384,7 @@ RUN set -eu; \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Patch OpenClaw's pinned 2026.5.22 compiled selection runtime to expose a
+# Patch OpenClaw's pinned 2026.5.27 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
@@ -388,19 +401,25 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
+COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install runtime preloads under /tmp.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
+COPY scripts/openclaw-build-messaging-plugins.py /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
-        /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
+        /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py \
         /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
+    && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
+        /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
@@ -463,6 +482,13 @@ ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
 # Channel IDs scope Slack channel @mention handling. User allowlists still come
 # from NEMOCLAW_MESSAGING_ALLOWED_IDS_B64. Default: empty map.
 ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
+# Base64-encoded JSON array of secondary OpenClaw agent config entries
+# (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
+# "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
+# Each entry is appended to agents.list[] after the canonical "main" entry, so
+# the primary agent always remains the default. See generate-openclaw-config.mts
+# for the validator. Default: empty array (W10= == base64("[]")).
+ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -488,10 +514,14 @@ ARG NEMOCLAW_PROXY_PORT=3128
 # The actual API key is injected at runtime via openshell:resolve:env, never
 # baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_OPENCLAW_OTEL=0
+ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
+ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
+ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
 
-# SECURITY: Promote build-args to env vars so the Python script reads them
-# via os.environ, never via string interpolation into Python source code.
-# Direct ARG interpolation into python3 -c is a code injection vector (C-2).
+# SECURITY: Promote build-args to env vars so the TypeScript script reads them
+# via process.env, never via string interpolation into executable source code.
+# Direct ARG interpolation into inline source is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
@@ -511,11 +541,16 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
     NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
-    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
+    NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
+    NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
+    NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
 
 WORKDIR /sandbox
 USER sandbox
@@ -533,20 +568,22 @@ USER sandbox
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Generate openclaw.json from environment variables. Config generation logic
-# lives in scripts/generate-openclaw-config.py — see that file for the full
+# lives in scripts/generate-openclaw-config.mts — see that file for the full
 # list of env vars and derivation rules.
 #
 # OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 
 # hadolint ignore=DL3059,DL4006
-RUN openclaw doctor --fix --non-interactive
+RUN python3 /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 
-# Lock down npm: no further registry traffic in this image. Everything past
-# this point must resolve from local sources only.
+# Lock down npm for the next RUN: the local OpenClaw plugin install must
+# resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without
+# touching the registry. Reset to false after that RUN so the runtime image
+# does not propagate `only-if-cached` mode to in-sandbox `npx` / `npm install`.
 ENV NPM_CONFIG_OFFLINE=true \
     NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false
@@ -576,6 +613,10 @@ RUN openclaw plugins install /opt/nemoclaw \
         \) -prune -exec rm -rf {} +; \
     fi
 
+# Release the offline lock so the runtime sandbox can install MCP servers,
+# skills, and ad-hoc packages via the OpenShell L7 proxy.
+ENV NPM_CONFIG_OFFLINE=false
+
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
 # entrypoint (generate_gateway_token) and never stored in openclaw.json.
@@ -592,7 +633,7 @@ proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
 cfg['proxy'] = { \
     'enabled': True, \
     'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'proxy', \
+    'loopbackMode': 'gateway-only', \
 }; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
@@ -823,11 +864,43 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
     fi
 
+# Temporary workaround for OpenTelemetry JS OTLP/HTTP proxy handling.
+# When diagnostics OTEL is enabled, patch the bundled exporter so Node's
+# NODE_USE_ENV_PROXY=1 handling can apply instead of forcing the default agent.
+# Remove once https://github.com/open-telemetry/opentelemetry-js/issues/6638
+# is fixed in @opentelemetry/otlp-exporter-base.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+        target="$(find /sandbox/.openclaw \
+            -path '*/@opentelemetry/otlp-exporter-base/build/src/transport/http-transport-utils.js' \
+            -print -quit 2>/dev/null || true)"; \
+        if [ -z "$target" ]; then \
+            echo "ERROR: NEMOCLAW_OPENCLAW_OTEL=1 but otlp-exporter-base transport was not found" >&2; \
+            exit 1; \
+        fi; \
+        if grep -q 'NODE_USE_ENV_PROXY' "$target"; then \
+            echo "INFO: OpenTelemetry OTLP proxy patch already present in $target"; \
+        else \
+            owner="$(stat -c '%u:%g' "$target")"; \
+            mode="$(stat -c '%a' "$target")"; \
+            cp -p "$target" "$target.bak"; \
+            sed -i "0,/^[[:space:]]*agent,$/s//        agent: process.env.NODE_USE_ENV_PROXY === '1' ? undefined : agent,/" "$target"; \
+            grep -q 'NODE_USE_ENV_PROXY' "$target" || { \
+                echo "ERROR: failed to patch OpenTelemetry OTLP transport at $target" >&2; \
+                exit 1; \
+            }; \
+            chown "$owner" "$target"; \
+            chmod "$mode" "$target"; \
+            echo "INFO: patched OpenTelemetry OTLP proxy handling in $target"; \
+        fi; \
+    fi
+
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
 #
-# Two-stage probe so Docker health does not contradict the NemoClaw delivery
+# Layered probe so Docker health does not contradict the NemoClaw delivery
 # chain on runtimes where the dashboard port lives in a different network
 # namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
 # The reporter saw `nemoclaw status` Ready + the host forward succeed while
@@ -836,27 +909,31 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 #
 #   1. Direct in-container probe (HTTP 200) — definitive when it works,
 #      preserves the original Compose/standalone health signal.
-#   2. ONLY on curl exit 7 ("Couldn't connect"), fall back to verifying
-#      ALL of:
-#        - the OpenClaw gateway process started by nemoclaw-start is
-#          still alive (via pgrep --ignore-ancestors), AND
-#        - the gateway log file exists and is non-empty (proves the
-#          process started and emitted its banner; rules out cases
-#          where the gateway never came up).
-#      Exit 7 means the in-container TCP connect was refused by the
-#      kernel because nothing is bound to the dashboard port inside
-#      this network namespace — the namespace-mismatch shape reported
-#      in #3975. A connect timeout (curl exit 28) is treated as a real
-#      failure: a listener exists but is not responding (wedged HTTP
-#      server), and we want Docker to restart in that case.
-#
-# Tradeoff: this fallback also fires in a standalone deployment where the
-# gateway process is alive but the configured dashboard port is wrong or
-# the listener never came up. We accept that residual risk because it
-# requires a misconfiguration the start-period (45s) already gives the
-# wizard a chance to fix, and the existing host-side delivery chain
-# probes (verify-deployment.ts, host port forward, sandbox status) still
-# catch it from outside.
+#   2. A connect timeout (curl exit 28) or HTTP 4xx/5xx (curl exit 22) is a
+#      real bad signal: a listener exists but is wedged or answered with a
+#      failure inside this container, so Docker should restart it.
+#   3. ONLY on curl exit 7 ("Couldn't connect" — the kernel refused the
+#      in-container TCP connect because nothing is bound to the dashboard
+#      port in THIS network namespace) the meaning depends on whether this
+#      container is the one running the OpenClaw gateway:
+#        a. If nemoclaw-start launched the gateway in this container it
+#           drops the /tmp/nemoclaw-gateway-local marker (see
+#           scripts/nemoclaw-start.sh). The gateway is local but its port
+#           may be forwarded out of this namespace (#3975), so confirm the
+#           gateway came up: the process is still alive (pgrep
+#           --ignore-ancestors) AND the gateway log is non-empty. A
+#           standalone deployment whose gateway never started fails here so
+#           Docker restarts it (#1430).
+#        b. If the marker is ABSENT the OpenClaw gateway is delivered
+#           outside this container (OpenShell docker-driver deployments run
+#           it on the host / in a host-side process chain — #4503). An
+#           in-container curl/pgrep cannot observe an out-of-namespace
+#           gateway, so a process-name fallback here produced false
+#           "unhealthy" while `nemoclaw status` and OpenShell reported the
+#           sandbox Ready. We must not drive Docker health off a signal we
+#           cannot prove: report healthy and defer to NemoClaw/OpenShell's
+#           host-side delivery-chain monitoring (verify-deployment.ts, host
+#           port forward, sandbox status).
 #
 # The process pattern matches both `openclaw gateway run` (the launcher
 # command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
@@ -869,9 +946,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # without --ignore-ancestors `pgrep -f` would happily report it as the
 # live gateway even after the real process exited (procps 4.0+ supports
 # this flag; the base image pins procps to 2:4.0.4-9).
-#
-# We deliberately do not fall back on HTTP 4xx/5xx — those mean the gateway
-# answered with a failure inside this container, which is a real bad signal.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
@@ -881,6 +955,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         curl -sf --max-time 3 "http://127.0.0.1:${port}/health" > /dev/null 2>&1 || rc=$?; \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
+        [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
         pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
         [ -s /tmp/gateway.log ]
 

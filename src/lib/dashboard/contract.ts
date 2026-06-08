@@ -14,6 +14,9 @@ export interface PlatformHints {
   port?: number;
   isWsl?: boolean;
   wslHostAddress?: string | null;
+  dashboardHealthEndpoint?: string;
+  gatewayPort?: number;
+  gatewayHealthEndpoint?: string;
   /**
    * Explicit operator opt-in to bind the dashboard forward on all interfaces.
    * Only `"0.0.0.0"` enables remote bind; anything else (including
@@ -29,6 +32,9 @@ export interface DashboardDeliveryChain {
   corsOrigins: string[];
   forwardTarget: string;
   healthEndpoint: string;
+  dashboardHealthEndpoint: string;
+  gatewayPort: number;
+  gatewayHealthEndpoint: string;
   port: number;
   bindAddress: string;
   shouldDisableDeviceAuth: boolean;
@@ -58,6 +64,21 @@ function isLoopbackUrl(chatUiUrl: string): boolean {
   } catch {
     return /localhost|::1|127(?:\.\d{1,3}){3}/i.test(raw);
   }
+}
+
+function normalizeEndpointPath(value: string | undefined, fallback: string): string {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  if (raw.startsWith("/")) return raw;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    try {
+      const path = new URL(raw).pathname;
+      if (path) return path;
+    } catch {
+      // Treat malformed URL-like values as path fragments below.
+    }
+  }
+  return `/${raw}`;
 }
 
 /** Build the complete dashboard delivery chain from platform hints. */
@@ -90,8 +111,25 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     ? [loopbackOrigin, accessOrigin] : [loopbackOrigin];
 
   const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false) || remoteBindOptIn;
+  const dashboardHealthEndpoint = normalizeEndpointPath(h.dashboardHealthEndpoint, "/health");
+  const gatewayPort =
+    Number.isFinite(h.gatewayPort) && h.gatewayPort! >= 1 && h.gatewayPort! <= 65535
+      ? Number(h.gatewayPort)
+      : port;
+  const gatewayHealthEndpoint = normalizeEndpointPath(h.gatewayHealthEndpoint, dashboardHealthEndpoint);
 
-  return { accessUrl, corsOrigins, forwardTarget, healthEndpoint: "/health", port, bindAddress, shouldDisableDeviceAuth };
+  return {
+    accessUrl,
+    corsOrigins,
+    forwardTarget,
+    healthEndpoint: dashboardHealthEndpoint,
+    dashboardHealthEndpoint,
+    gatewayPort,
+    gatewayHealthEndpoint,
+    port,
+    bindAddress,
+    shouldDisableDeviceAuth,
+  };
 }
 
 /** Build the list of control UI URLs. Callers pass chatUiUrl explicitly. */

@@ -27,3 +27,5 @@ config:
 
 ignores:
   - "node_modules/**"
+  # Generated catalog export, including signer-produced skill-card.md files.
+  - "skills/**"
