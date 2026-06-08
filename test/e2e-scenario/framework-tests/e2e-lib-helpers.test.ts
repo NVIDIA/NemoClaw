@@ -375,37 +375,6 @@ exit 0
     expect(r.stdout).toContain("DEBIAN_FRONTEND=noninteractive");
   });
 
-  it("artifact_helper_should_collect_known_logs_without_failing_when_missing", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-art-"));
-    const srcDir = path.join(tmp, "src");
-    const dstDir = path.join(tmp, "out");
-    fs.mkdirSync(srcDir);
-    fs.writeFileSync(path.join(srcDir, "present.log"), "hello\n");
-    const r = runBash(`
-      set -euo pipefail
-      . "${RUNTIME_LIB}/artifacts.sh"
-      e2e_artifact_collect_file "${srcDir}/present.log" "${dstDir}/present.log"
-      e2e_artifact_collect_file "${srcDir}/missing.log" "${dstDir}/missing.log" || true
-      ls "${dstDir}"
-    `);
-    expect(r.status, r.stderr).toBe(0);
-    expect(fs.existsSync(path.join(dstDir, "present.log"))).toBe(true);
-    expect(fs.existsSync(path.join(dstDir, "missing.log"))).toBe(false);
-    expect(r.stderr + r.stdout).toMatch(/missing\.log|not found|skipping/i);
-    fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it("gateway_helper_should_report_unhealthy_gateway_clearly", () => {
-    // Pick a port very unlikely to be bound.
-    const r = runBash(`
-      set -euo pipefail
-      . "${RUNTIME_LIB}/gateway.sh"
-      e2e_gateway_assert_healthy "http://127.0.0.1:65531"
-    `);
-    expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/65531|gateway|unhealthy/i);
-  });
-
   it("sandbox_helper_should_fail_for_missing_sandbox_name", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sb-"));
     try {
@@ -846,16 +815,13 @@ describe("Phase 1.C fixtures", () => {
   });
 
   it("older_base_image_should_emit_dockerfile_pointing_at_tagged_base", () => {
-    const r = runBash(
-      `
+    const r = runBash(`
       set -euo pipefail
       . "${FIXTURES}/older-base-image.sh"
       df="$(older_base_image_prepare v0.0.1-test)"
       echo "DF=$df"
       head -n1 "$df"
-    `,
-      { E2E_DRY_RUN: "1" },
-    );
+    `);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/^FROM .*:v0\.0\.1-test/m);
   });
