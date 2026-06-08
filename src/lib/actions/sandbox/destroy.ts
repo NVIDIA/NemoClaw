@@ -21,7 +21,11 @@ import {
 } from "../../domain/sandbox/destroy";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
-import { SANDBOX_PROVIDER_SUFFIXES } from "../../onboard/sandbox-provider-cleanup";
+import {
+  SANDBOX_PROVIDER_SUFFIXES,
+  runSandboxProviderPreDeleteCleanup,
+} from "../../onboard/sandbox-provider-cleanup";
+import { redact } from "../../security/redact";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import type { Session } from "../../state/onboard-session";
@@ -449,6 +453,12 @@ export async function destroySandbox(
       opts?: Record<string, unknown>,
     ) => { status: number | null; stdout?: string; stderr?: string };
   };
+  // Detach attached messaging and search providers before deleting the
+  // sandbox: OpenShell `sandbox delete` does not auto-detach providers,
+  // and the post-delete `provider delete` loop in `cleanupSandboxServices`
+  // suppresses errors. Without the explicit detach a stale provider
+  // attachment survives destroy and blocks the next onboard.
+  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],

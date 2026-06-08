@@ -6,13 +6,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SANDBOX_PROVIDER_SUFFIXES,
   detachSandboxProviders,
+  runSandboxProviderPreDeleteCleanup,
 } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
 
 type Argv = string[];
+type RunResult = { status: number | null; stderr?: string; stdout?: string };
 
 function buildRunOpenshell(
-  responses: Map<string, { status: number | null; stderr?: string; stdout?: string }>,
-  defaultResponse: { status: number | null; stderr?: string; stdout?: string } = { status: 0 },
+  responses: Map<string, RunResult>,
+  defaultResponse: RunResult = { status: 0 },
 ) {
   const calls: Argv[] = [];
   const fn = vi.fn((args: Argv) => {
@@ -58,7 +60,7 @@ describe("detachSandboxProviders", () => {
   });
 
   it("treats NotFound / not attached outputs as success-equivalent", () => {
-    const responses = new Map<string, { status: number; stderr?: string }>([
+    const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach alpha alpha-telegram-bridge",
         { status: 1, stderr: "Error: status: NotFound, provider 'alpha-telegram-bridge' not found" },
@@ -78,8 +80,23 @@ describe("detachSandboxProviders", () => {
     expect(result.detached).not.toContain("alpha-brave-search");
   });
 
+  it("tolerates the compact NotAttached status spelling", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach gamma gamma-slack-bridge",
+        { status: 9, stderr: "status: NotAttached, provider 'gamma-slack-bridge' is not bound" },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = detachSandboxProviders("gamma", { runOpenshell });
+
+    expect(result.failures).toEqual([]);
+    expect(result.detached).not.toContain("gamma-slack-bridge");
+  });
+
   it("collects non-tolerated failures without aborting the loop", () => {
-    const responses = new Map<string, { status: number; stderr?: string }>([
+    const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach beta beta-telegram-bridge",
         { status: 1, stderr: "Error: status: Internal, gateway timeout" },
@@ -112,5 +129,75 @@ describe("detachSandboxProviders", () => {
         argv[4] === "spark-nemo-brave-search",
     );
     expect(braveCall).toBeDefined();
+  });
+});
+
+describe("runSandboxProviderPreDeleteCleanup", () => {
+  it("emits no warning when every detach succeeds", () => {
+    const { runOpenshell } = buildRunOpenshell(new Map());
+    const warn = vi.fn();
+
+    const result = runSandboxProviderPreDeleteCleanup("spark-nemo", { runOpenshell, warn });
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([]);
+  });
+
+  it("redacts the OpenShell failure output before warning", () => {
+    const tokenOutput =
+      "Error: token AKIA0123456789ABCDEF failed: status Internal, gateway timeout";
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach delta delta-telegram-bridge",
+        { status: 1, stderr: tokenOutput },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+    const warn = vi.fn();
+    const redact = vi.fn((s: string) => s.replace(/AKIA[0-9A-Z]+/, "[REDACTED]"));
+
+    const result = runSandboxProviderPreDeleteCleanup("delta", { runOpenshell, warn, redact });
+
+    expect(result.failures).toHaveLength(1);
+    expect(redact).toHaveBeenCalledWith(result.failures[0].output);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warning = warn.mock.calls[0][0] as string;
+    expect(warning).toContain("[REDACTED]");
+    expect(warning).not.toContain("AKIA0123456789ABCDEF");
+    expect(warning).toContain("delta-telegram-bridge");
+  });
+
+  it("caps the warning output length to bound terminal noise on huge stderr", () => {
+    const longTail = "X".repeat(2000);
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach echo echo-telegram-bridge",
+        { status: 1, stderr: `internal gateway error: ${longTail}` },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+    const warn = vi.fn();
+
+    runSandboxProviderPreDeleteCleanup("echo", { runOpenshell, warn });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warning = warn.mock.calls[0][0] as string;
+    expect(warning.length).toBeLessThan(900);
+  });
+
+  it("runs the detach pass before any caller-driven sandbox delete", () => {
+    const { runOpenshell, calls } = buildRunOpenshell(new Map());
+
+    runSandboxProviderPreDeleteCleanup("foxtrot", { runOpenshell });
+    runOpenshell(["sandbox", "delete", "foxtrot"], { ignoreError: true });
+
+    const detachCount = calls.filter(
+      (argv) => argv[0] === "sandbox" && argv[1] === "provider" && argv[2] === "detach",
+    ).length;
+    const deleteIndex = calls.findIndex(
+      (argv) => argv[0] === "sandbox" && argv[1] === "delete",
+    );
+    expect(detachCount).toBe(SANDBOX_PROVIDER_SUFFIXES.length);
+    expect(deleteIndex).toBeGreaterThan(detachCount - 1);
   });
 });

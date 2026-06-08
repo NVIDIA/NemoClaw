@@ -120,8 +120,7 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
-const sandboxProviderCleanup: typeof import("./onboard/sandbox-provider-cleanup") = require("./onboard/sandbox-provider-cleanup");
-const { detachSandboxProviders } = sandboxProviderCleanup;
+const { runSandboxProviderPreDeleteCleanup } = require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -3202,22 +3201,7 @@ async function createSandbox(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
-    // Detach attached messaging and search providers before deleting the
-    // sandbox. OpenShell `sandbox delete` does not auto-detach providers, so
-    // a follow-up `provider delete` (driven by `upsertMessagingProviders`
-    // with `replaceExisting: true` below) trips on FailedPrecondition with
-    // "is attached to sandbox(es): <name>". Best-effort across the shared
-    // suffix set; non-NotFound failures are logged but do not abort the
-    // rebuild — the subsequent upsert will surface any provider that is
-    // genuinely uncleanable.
-    const detachResult = detachSandboxProviders(sandboxName, { runOpenshell });
-    if (detachResult.failures.length > 0) {
-      for (const f of detachResult.failures) {
-        console.warn(
-          `  Warning: failed to detach provider '${f.name}' before sandbox delete: ${f.output}`,
-        );
-      }
-    }
+    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     if (previousEntry?.imageTag) {
       const rmiResult = dockerRmi(previousEntry.imageTag, {
@@ -3390,12 +3374,8 @@ async function createSandbox(
   ];
 
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  // The recreate path above ran `detachSandboxProviders` then deleted the
-  // previous sandbox, so any attached providers have been released and are
-  // safe to delete+create. That's required for the legacy Brave
-  // generic→brave type migration since `openshell provider update` cannot
-  // change `--type`. Without the explicit detach the upsert would race
-  // OpenShell's attachment tracking and fail with FailedPrecondition.
+  // Recreate above detached providers then deleted the previous sandbox; the
+  // delete+create here covers the legacy Brave generic→brave type migration.
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
