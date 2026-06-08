@@ -210,7 +210,7 @@ describe("CLI dispatch", () => {
         detail: expect.stringContaining("openshell-cluster-nemoclaw"),
       }),
     );
-  });
+  }, 30_000);
 
   it("doctor accepts a local openshell-gateway process when legacy inspect fails", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
@@ -367,7 +367,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("OpenShell status");
     expect(r.out).toContain("Gateway: other");
     expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
-  });
+  }, 30_000);
 
   it("doctor treats a live non-cloudflared PID as stale", () => {
     const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");

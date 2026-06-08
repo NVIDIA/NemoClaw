@@ -4,18 +4,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
-  getConfiguredMessagingChannelsFromEntry,
-  getDisabledMessagingChannelsFromEntry,
-  getMessagingPlanFromEntry,
+  cloneSandboxMessagingState,
+  getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
+  getDisabledChannels as getRegistryDisabledChannels,
+  setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
+import type { SandboxMessagingState } from "./registry-messaging";
 export {
   getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getMessagingPlanFromEntry,
+  type SandboxMessagingState,
 } from "./registry-messaging";
 
 export interface CustomPolicyEntry {
@@ -83,11 +85,6 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
-}
-
-export interface SandboxMessagingState {
-  schemaVersion: 1;
-  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -283,16 +280,6 @@ export function registerSandbox(entry: SandboxEntry): void {
   });
 }
 
-function cloneSandboxMessagingState(
-  messaging: SandboxMessagingState | undefined,
-): SandboxMessagingState | undefined {
-  if (!messaging || messaging.schemaVersion !== 1) return undefined;
-  return {
-    schemaVersion: 1,
-    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
-  };
-}
-
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   return withLock(() => {
     const data = load();
@@ -380,48 +367,13 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
 }
 
 export function getDisabledChannels(name: string): string[] {
-  const data = load();
-  return getDisabledMessagingChannelsFromEntry(data.sandboxes[name]);
+  return getRegistryDisabledChannels(name, { load });
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
-  return withLock(() => {
-    const data = load();
-    const entry = data.sandboxes[name];
-    if (!entry) return false;
-    const plan = getMessagingPlanFromEntry(entry);
-    if (!plan) return false;
-    const configuredChannels = new Set(plan.channels.map((entry) => entry.channelId));
-    if (!configuredChannels.has(channel)) return false;
-    const current = new Set(plan.disabledChannels);
-    if (disabled) current.add(channel);
-    else current.delete(channel);
-    const disabledChannels = Array.from(current)
-      .filter((channelId) => configuredChannels.has(channelId))
-      .sort();
-    const disabledSet = new Set(disabledChannels);
-    entry.messaging = {
-      schemaVersion: 1,
-      plan: {
-        ...plan,
-        workflow: disabled ? "stop-channel" : "start-channel",
-        channels: plan.channels.map((channelPlan) => {
-          const channelDisabled = disabledSet.has(channelPlan.channelId);
-          return {
-            ...channelPlan,
-            disabled: channelDisabled,
-            active: !channelDisabled && channelPlan.configured,
-          };
-        }),
-        disabledChannels,
-      },
-    };
-    save(data);
-    return true;
-  });
+  return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }
 
 export function getConfiguredMessagingChannels(name: string): string[] {
-  const data = load();
-  return getConfiguredMessagingChannelsFromEntry(data.sandboxes[name]);
+  return getRegistryConfiguredMessagingChannels(name, { load });
 }
