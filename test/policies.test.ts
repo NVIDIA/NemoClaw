@@ -181,6 +181,7 @@ describe("policies", () => {
         "brew",
         "claude-code",
         "discord",
+        "gemini",
         "github",
         "huggingface",
         "jira",
@@ -227,6 +228,30 @@ describe("policies", () => {
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("gemini preset routes the Google Gemini API with node and curl access", () => {
+      const parsed = parsePresetYaml("gemini");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.gemini?.endpoints ?? [];
+      const endpoint = endpoints.find((item) => item.host === "generativelanguage.googleapis.com");
+      if (!endpoint) throw new Error("expected generativelanguage.googleapis.com endpoint");
+
+      expect(endpoint.port).toBe(443);
+      expect(endpoint.protocol).toBe("rest");
+      expect(endpoint.enforcement).toBe("enforce");
+      expect(endpoint.rules).toEqual([
+        { allow: { method: "GET", path: "/v1beta/openai/**" } },
+        { allow: { method: "POST", path: "/v1beta/openai/**" } },
+      ]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.gemini?.binaries ?? [];
+      expect(binaries.map((entry) => entry.path).sort()).toEqual([
+        "/usr/bin/curl",
+        "/usr/bin/node",
+        "/usr/local/bin/node",
+      ]);
     });
 
     it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
@@ -472,6 +497,12 @@ describe("policies", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       const hosts = policies.getPresetEndpoints(content);
       expect(hosts).toEqual(["api.telegram.org"]);
+    });
+
+    it("extracts hosts from gemini preset", () => {
+      const content = requirePresetContent(policies.loadPreset("gemini"));
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts).toEqual(["generativelanguage.googleapis.com"]);
     });
 
     it("extracts the explicit iLink hosts from wechat preset", () => {
