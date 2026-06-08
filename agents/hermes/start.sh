@@ -1065,7 +1065,6 @@ validate_hermes_env_secret_boundary() {
     echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
     return 1
   fi
-  [ -f "$env_file" ] || return 0
   python3 "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
 }
 

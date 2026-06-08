@@ -115,6 +115,10 @@ def validate_env_file(path: str) -> int:
                 violations.append(f"{key} (line {lineno})")
     finally:
         if fd != -1:
+            # Best-effort cleanup of a leaked descriptor when the body raised
+            # before os.fdopen took ownership. Surface a warning instead of
+            # silently swallowing so misuse stays diagnosable; the original
+            # exception (if any) still propagates because this runs in finally.
             try:
                 os.close(fd)
             except OSError as exc:

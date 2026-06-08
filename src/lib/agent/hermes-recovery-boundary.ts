@@ -63,6 +63,16 @@ function buildHermesValidatorMissingLog(): string {
   return `printf '%s\\n' ${shellQuote(message)} | tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2;`;
 }
 
+// REMOVAL CONDITION: the warn-and-skip path above is fail-open by design so
+// that a newer NemoClaw CLI talking to an older Hermes sandbox image still
+// recovers. Once the minimum supported Hermes image (currently the
+// `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base` tag tracked by the production
+// Dockerfile) is guaranteed to bake the validator in, flip the missing-file
+// branch to fail-closed (kill + `echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit
+// 1;`) and update `runtime-hermes-secret-boundary-behavioural.test.ts` to
+// assert the refusal. Track the cutoff against the base-image version pinned
+// in `agents/hermes/Dockerfile`.
+
 /**
  * Build the shell snippet that re-runs the documented Hermes secret-boundary
  * check against `/sandbox/.hermes/.env` before any in-sandbox Hermes process is
