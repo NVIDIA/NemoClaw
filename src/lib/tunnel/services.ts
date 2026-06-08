@@ -14,6 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { dockerSpawnSync } from "../adapters/docker";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
@@ -34,7 +35,7 @@ export interface ServiceOptions {
   dashboardPort?: number;
   /** Repo root directory — used to locate scripts/. */
   repoDir?: string;
-  /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
+  /** Override PID directory (default: {os.tmpdir()}/nemoclaw-services-{sandbox}). */
   pidDir?: string;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
@@ -385,7 +386,7 @@ function resolvePidDir(opts: ServiceOptions): string {
   const sandbox = validateSandboxName(
     opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "default",
   );
-  return opts.pidDir ?? `/tmp/nemoclaw-services-${sandbox}`;
+  return opts.pidDir ?? join(tmpdir(), `nemoclaw-services-${sandbox}`);
 }
 
 export function showStatus(opts: ServiceOptions = {}): void {
