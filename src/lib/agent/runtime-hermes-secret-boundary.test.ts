@@ -9,6 +9,8 @@ import { describe, it, expect } from "vitest";
 import {
   HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
   __testing,
+} from "../../../dist/lib/agent/hermes-recovery-boundary";
+import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildRecoveryScript,
@@ -118,10 +120,12 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).toContain("pkill -KILL -f");
   });
 
-  it("refuses with SECRET_BOUNDARY_VALIDATOR_MISSING when the script is absent", () => {
+  it("warns and continues recovery on older sandbox images that lack the validator", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
-    expect(script).not.toContain("secret-boundary validator missing on this image; skipping");
+    expect(script).not.toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
+    expect(script).toContain("[gateway-recovery] WARNING");
+    expect(script).toContain("secret-boundary validator");
+    expect(script).toContain("missing on this sandbox image");
   });
 
   it("does not gate non-Hermes recovery on the Hermes-specific validator", () => {
@@ -276,18 +280,19 @@ describe("Hermes secret-boundary guard — behavioural", () => {
     expect(result.pkillCalls.length).toBe(0);
   });
 
-  it("env-file guard refuses with SECRET_BOUNDARY_VALIDATOR_MISSING + logs the diagnostic when the script is absent", () => {
+  it("env-file guard warns and skips the boundary check when the validator script is absent", () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 0,
       validatorExists: false,
     });
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
-    expect(result.stdout).not.toContain("REACHED_LAUNCH");
-    expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
-    expect(result.recoveryLog).toContain("validator script");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("REACHED_LAUNCH");
+    expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
+    expect(result.pkillCalls.length).toBe(0);
+    expect(result.recoveryLog).toContain("[gateway-recovery] WARNING");
     expect(result.recoveryLog).toContain("missing on this sandbox image");
+    expect(result.stderr).toContain("[gateway-recovery] WARNING");
   });
 
   it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", () => {
@@ -360,6 +365,150 @@ describe("Hermes secret-boundary guard — behavioural", () => {
       const log = fs.readFileSync(recoveryLogPath, "utf-8");
       expect(log).toContain("[SECURITY] Refusing Hermes startup");
       expect(log).toContain("TELEGRAM_BOT_TOKEN (line 2)");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("full Hermes recovery refuses against an actual poisoned .env using the real Python validator", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-recovery-real-"));
+    const stubsDir = path.join(tmp, "bin");
+    const pkillLog = path.join(tmp, "pkill.log");
+    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
+    const hermesLaunchMarker = path.join(tmp, "hermes-launched");
+    const envFile = path.join(tmp, "hermes-dot-env");
+    const realValidator = path.join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "agents",
+      "hermes",
+      "validate-env-secret-boundary.py",
+    );
+    fs.mkdirSync(stubsDir, { recursive: true });
+    fs.writeFileSync(
+      envFile,
+      "API_SERVER_PORT=18642\nTELEGRAM_BOT_TOKEN=1234567890:AAExample-RawSecretValueHere\n",
+    );
+
+    writeStub(stubsDir, "pkill", `printf '%s\\n' "$*" >> ${JSON.stringify(pkillLog)}\nexit 0`);
+    writeStub(stubsDir, "pgrep", "exit 1");
+    writeStub(stubsDir, "sleep", "exit 0");
+    writeStub(stubsDir, "curl", 'printf "000"\nexit 0');
+    writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\nexit 0`);
+
+    const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
+    expect(recoveryScript).not.toBeNull();
+    const stubbed = recoveryScript!
+      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), realValidator)
+      .replace(/\/sandbox\/\.hermes\/\.env/g, envFile)
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath);
+
+    const scriptPath = path.join(tmp, "recovery.sh");
+    fs.writeFileSync(
+      scriptPath,
+      ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`, stubbed].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 15000,
+        env: { PATH: `${stubsDir}:/usr/bin:/bin`, HOME: tmp },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
+      expect(fs.existsSync(hermesLaunchMarker)).toBe(false);
+      const log = fs.readFileSync(recoveryLogPath, "utf-8");
+      expect(log).toContain("[SECURITY] Refusing Hermes startup");
+      expect(log).toContain("TELEGRAM_BOT_TOKEN");
+      expect(log).toContain("(line 2)");
+      expect(log).not.toContain("1234567890:AAExample-RawSecretValueHere");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("full Hermes recovery refuses on runtime-env violation after sourcing proxy-env", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-recovery-runtime-"));
+    const stubsDir = path.join(tmp, "bin");
+    const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
+    const pkillLog = path.join(tmp, "pkill.log");
+    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
+    const hermesLaunchMarker = path.join(tmp, "hermes-launched");
+    const proxyEnvFile = path.join(tmp, "nemoclaw-proxy-env.sh");
+    fs.mkdirSync(stubsDir, { recursive: true });
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      proxyEnvFile,
+      "export NODE_OPTIONS='--require=nemoclaw-sandbox-safety-net --require=nemoclaw-ciao-network-guard'\n",
+    );
+
+    writeStub(
+      stubsDir,
+      "python3",
+      [
+        'if [ "$1" = "-c" ]; then',
+        "  exit 0",
+        "fi",
+        'mode="$2"',
+        'if [ "$mode" = "env-file" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$mode" = "runtime-env" ]; then',
+        '  printf "[SECURITY] Refusing Hermes startup because the process environment contains raw secret-shaped values.\\n" >&2',
+        '  printf "[SECURITY]   TELEGRAM_BOT_TOKEN\\n" >&2',
+        "  exit 1",
+        "fi",
+        "exit 2",
+      ].join("\n"),
+    );
+    writeStub(stubsDir, "pkill", `printf '%s\\n' "$*" >> ${JSON.stringify(pkillLog)}\nexit 0`);
+    writeStub(stubsDir, "pgrep", "exit 1");
+    writeStub(stubsDir, "sleep", "exit 0");
+    writeStub(stubsDir, "curl", 'printf "000"\nexit 0');
+    writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\nexit 0`);
+
+    const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
+    const gatewayLogPath = path.join(tmp, "gateway.log");
+    const recoveryFallbackLog = path.join(tmp, "gateway-recovery-fallback.log");
+    const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
+    expect(recoveryScript).not.toBeNull();
+    const stubbed = recoveryScript!
+      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath)
+      .replace(/\/tmp\/nemoclaw-proxy-env\.sh/g, proxyEnvFile)
+      .replace(/\/tmp\/gateway\.log/g, gatewayLogPath)
+      .replace(
+        /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
+        `_GATEWAY_LOG=${recoveryFallbackLog}`,
+      );
+
+    const scriptPath = path.join(tmp, "recovery.sh");
+    fs.writeFileSync(
+      scriptPath,
+      ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`, stubbed].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 15000,
+        env: { PATH: `${stubsDir}:/usr/bin:/bin`, HOME: tmp },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
+      expect(fs.existsSync(hermesLaunchMarker)).toBe(false);
+      const log = fs.readFileSync(recoveryLogPath, "utf-8");
+      expect(log).toContain("[SECURITY] Refusing Hermes startup because the process environment");
+      expect(log).toContain("TELEGRAM_BOT_TOKEN");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

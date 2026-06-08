@@ -12,6 +12,10 @@ import { shellQuote } from "../runner";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { loadAgent, type AgentDefinition } from "./defs";
+import {
+  buildHermesEnvFileBoundaryGuard,
+  buildHermesRuntimeEnvBoundaryGuard,
+} from "./hermes-recovery-boundary";
 
 /**
  * Resolve the agent for a sandbox. Checks the per-sandbox registry first
@@ -146,95 +150,6 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
-export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
-  "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
-const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)";
-const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
-const HERMES_BOUNDARY_RECOVERY_LOG = "/tmp/gateway-recovery.log";
-
-function buildHermesBoundaryKillSnippet(): string {
-  return [
-    `pkill -TERM -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
-    `pkill -TERM -f ${shellQuote(HERMES_DASHBOARD_PROC_PATTERN)} 2>/dev/null || true;`,
-    "sleep 1;",
-    `pkill -KILL -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
-    `pkill -KILL -f ${shellQuote(HERMES_DASHBOARD_PROC_PATTERN)} 2>/dev/null || true;`,
-  ].join(" ");
-}
-
-/**
- * Pipe a validator invocation's stderr through `tee` so the detailed `[SECURITY]`
- * lines emitted by `validate-env-secret-boundary.py` are persisted to
- * `/tmp/gateway-recovery.log` inside the sandbox AND mirrored back onto stderr.
- * The recovery caller currently treats the command result as a boolean, so without
- * this duplication the documented `[SECURITY] Refusing Hermes startup ...` log
- * line and the offending key never surface anywhere a user can inspect after the
- * sandbox recovers — failing the issue's log-acceptance clause even when relaunch
- * is correctly refused.
- */
-function buildHermesValidatorInvocation(args: string): string {
-  return `python3 ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
-}
-
-function buildHermesValidatorMissingLog(): string {
-  const message = `[SECURITY] Refusing Hermes recovery: validator script ${HERMES_SECRET_BOUNDARY_VALIDATOR_PATH} missing on this sandbox image; the secret-boundary check cannot be verified.`;
-  return `printf '%s\\n' ${shellQuote(message)} | tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2;`;
-}
-
-/**
- * Build the shell snippet that re-runs the documented Hermes secret-boundary
- * check against `/sandbox/.hermes/.env` before any in-sandbox Hermes process is
- * relaunched. The startup entrypoint already runs this validator, but
- * `sandbox recover` / `connect --probe-only` does not re-enter the entrypoint,
- * so without this guard the boundary would only apply on cold start.
- *
- * On any violation — including a missing validator script — the guard kills any
- * currently-running Hermes gateway and dashboard so `/health` cannot keep
- * answering with the poisoned configuration, then refuses with
- * `SECRET_BOUNDARY_REFUSED` (or `SECRET_BOUNDARY_VALIDATOR_MISSING`) and exits 1.
- * The validator's detailed `[SECURITY]` lines are appended to
- * `/tmp/gateway-recovery.log` so a user inspecting the sandbox after a refused
- * recovery can identify the offending key.
- */
-function buildHermesEnvFileBoundaryGuard(): string {
-  const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
-  const kill = buildHermesBoundaryKillSnippet();
-  const missingLog = buildHermesValidatorMissingLog();
-  const invocation = buildHermesValidatorInvocation("env-file /sandbox/.hermes/.env");
-  return [
-    `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
-    `if ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
-  ].join(" ");
-}
-
-/**
- * Build the shell snippet that runs the Hermes runtime-env boundary validator
- * against the recovery shell's environment. Wire this in AFTER any preload env
- * file (e.g. `/tmp/nemoclaw-proxy-env.sh`) has been sourced and BEFORE the
- * launch command, so the final environment the relaunched gateway will inherit
- * is the one checked.
- *
- * Same fail-closed semantics as the env-file guard: missing validator or any
- * violation kills running Hermes processes and refuses the relaunch.
- */
-function buildHermesRuntimeEnvBoundaryGuard(): string {
-  const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
-  const kill = buildHermesBoundaryKillSnippet();
-  const missingLog = buildHermesValidatorMissingLog();
-  const invocation = buildHermesValidatorInvocation("runtime-env");
-  return [
-    `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; fi;`,
-    `if ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`,
-  ].join(" ");
-}
-
-export const __testing = {
-  buildHermesEnvFileBoundaryGuard,
-  buildHermesRuntimeEnvBoundaryGuard,
-  buildHermesBoundaryKillSnippet,
-  HERMES_GATEWAY_PROC_PATTERN,
-  HERMES_DASHBOARD_PROC_PATTERN,
-};
 
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;

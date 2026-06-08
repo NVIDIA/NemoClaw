@@ -18,8 +18,10 @@ gateway startup error contract).
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import re
+import stat
 import sys
 from typing import Iterable
 
@@ -65,15 +67,35 @@ def _emit_violations(prefix: str, violations: Iterable[str]) -> None:
 
 
 def validate_env_file(path: str) -> int:
-    if os.path.islink(path):
-        print(
-            f"[SECURITY] Refusing Hermes startup because {path} is a symlink",
-            file=sys.stderr,
-        )
-        return 1
+    # Open the file with O_NOFOLLOW so a symlink swapped in between any earlier
+    # lstat check and this read cannot redirect validation to an attacker-chosen
+    # target. fstat then confirms the descriptor still points at a regular file
+    # before we parse it, closing the static islink + open(path) TOCTOU gap.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            print(
+                f"[SECURITY] Refusing Hermes startup because {path} is a symlink",
+                file=sys.stderr,
+            )
+            return 1
+        raise
     violations: list[str] = []
     try:
-        with open(path, encoding="utf-8") as fh:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            print(
+                f"[SECURITY] Refusing Hermes startup because {path} is not a regular file",
+                file=sys.stderr,
+            )
+            return 1
+        fh = os.fdopen(fd, encoding="utf-8")
+        fd = -1
+        with fh:
             for lineno, raw_line in enumerate(fh, 1):
                 stripped = raw_line.strip()
                 if not stripped or stripped.startswith("#") or "=" not in stripped:
@@ -91,8 +113,12 @@ def validate_env_file(path: str) -> int:
                 if is_allowed_value(unquote(value)):
                     continue
                 violations.append(f"{key} (line {lineno})")
-    except FileNotFoundError:
-        return 0
+    finally:
+        if fd != -1:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     if not violations:
         return 0
     _emit_violations(
