@@ -8,6 +8,13 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -189,6 +196,7 @@ function runHermesEnvSecretBoundary(opts: {
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -215,6 +223,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -227,6 +236,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       env: {
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
+        _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
         ...envOverrides,
       },
     });
@@ -690,6 +700,109 @@ describe("agents/hermes/start.sh port validation", () => {
     expect(dashboardInternalOnApiPublic.stderr).toContain(
       "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
+  });
+});
+
+describe("agents/hermes/start.sh validator-path bootstrap", () => {
+  function extractValidatorBootstrapBlock(src: string): string {
+    const startMarker = "# Resolve the standalone secret-boundary validator";
+    const start = src.indexOf(startMarker);
+    if (start < 0) {
+      throw new Error("Expected validator bootstrap comment in agents/hermes/start.sh");
+    }
+    const fiNeedle = "\nfi\n";
+    const end = src.indexOf(fiNeedle, start);
+    if (end < 0) {
+      throw new Error("Expected closing 'fi' in validator bootstrap block");
+    }
+    return src.slice(start, end + fiNeedle.length);
+  }
+
+  it("ignores a caller-supplied _HERMES_BOUNDARY_VALIDATOR and resolves to the installed validator", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-"));
+    const installRoot = path.join(tmpDir, "usr-local-lib-nemoclaw");
+    const installValidator = path.join(installRoot, "validate-hermes-env-secret-boundary.py");
+    const evilValidator = path.join(tmpDir, "evil-validator.py");
+    fs.mkdirSync(installRoot, { recursive: true });
+    fs.writeFileSync(installValidator, "#!/usr/bin/env python3\n");
+    fs.writeFileSync(evilValidator, "#!/usr/bin/env python3\n");
+
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const bootstrap = extractValidatorBootstrapBlock(src).replaceAll(
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+      installValidator,
+    );
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        bootstrap,
+        'printf "FINAL=%s\\n" "$_HERMES_BOUNDARY_VALIDATOR"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          HOME: tmpDir,
+          PATH: process.env.PATH ?? "",
+          _HERMES_BOUNDARY_VALIDATOR: evilValidator,
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`FINAL=${installValidator}`);
+      expect(result.stdout).not.toContain(`FINAL=${evilValidator}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the script-relative validator when the install path is absent", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"));
+    const scriptDir = path.join(tmpDir, "agents", "hermes");
+    const fallbackValidator = path.join(scriptDir, "validate-env-secret-boundary.py");
+    fs.mkdirSync(scriptDir, { recursive: true });
+    fs.writeFileSync(fallbackValidator, "#!/usr/bin/env python3\n");
+
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const missingInstallPath = path.join(tmpDir, "definitely-not-installed.py");
+    const bootstrap = extractValidatorBootstrapBlock(src).replaceAll(
+      "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+      missingInstallPath,
+    );
+    const scriptPath = path.join(scriptDir, "start.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        bootstrap,
+        'printf "FINAL=%s\\n" "$_HERMES_BOUNDARY_VALIDATOR"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 5000,
+        env: {
+          HOME: tmpDir,
+          PATH: process.env.PATH ?? "",
+          _HERMES_BOUNDARY_VALIDATOR: "/tmp/evil-via-env",
+        },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`FINAL=${fallbackValidator}`);
+      expect(result.stdout).not.toContain("/tmp/evil-via-env");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

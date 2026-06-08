@@ -3566,7 +3566,7 @@ async function createSandbox(
         console.error(createResult.output);
       }
       console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output);
+      printSandboxCreateRecoveryHints(createResult.output, { createArgs });
       process.exit(createResult.status || 1);
     }
   }
