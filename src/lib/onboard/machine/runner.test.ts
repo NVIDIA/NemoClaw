@@ -14,10 +14,7 @@ import {
 } from "../../state/onboard-session";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
 import {
-  EmptyOnboardStateHandlerResultError,
   MissingOnboardStateHandlerError,
-  OnboardMachineResultSequenceOwnershipError,
-  OnboardMachineResultSequenceSourceError,
   OnboardMachineTransitionLimitError,
   type OnboardStateHandlers,
   runOnboardMachine,
@@ -82,23 +79,17 @@ function createRuntime(initialSession: Session = createSession()) {
 }
 
 describe("runOnboardMachine", () => {
-  it("runs handlers until completion while applying multiple results, retry, and branch transitions", async () => {
+  it("runs handlers until completion while applying retry and branch transitions", async () => {
     const runtime = createRuntime();
     const calls: string[] = [];
     const handlers: OnboardStateHandlers<RunnerContext> = {
       init: () => advanceTo("preflight"),
       preflight: () => advanceTo("gateway"),
       gateway: () => advanceTo("provider_selection"),
-      provider_selection: (context) => {
-        if (context.attempts === 0) return advanceTo("inference");
-        return [
-          advanceTo("inference", { metadata: { state: "provider_selection" } }),
-          advanceTo("sandbox", { metadata: { state: "inference" } }),
-        ];
-      },
+      provider_selection: () => advanceTo("inference"),
       inference: (context) => {
         calls.push(`inference:${context.attempts}`);
-        return retryTo("provider_selection");
+        return context.attempts === 0 ? retryTo("provider_selection") : advanceTo("sandbox");
       },
       sandbox: () => branchTo("openclaw"),
       openclaw: () => advanceTo("policies"),
@@ -122,7 +113,7 @@ describe("runOnboardMachine", () => {
       sandboxName: "my-assistant",
       machine: { state: "complete" },
     });
-    expect(calls).toEqual(["inference:0"]);
+    expect(calls).toEqual(["inference:0", "inference:1"]);
     expect(result.context.visited).toEqual([
       "init",
       "preflight",
@@ -137,154 +128,6 @@ describe("runOnboardMachine", () => {
       "finalizing",
       "post_verify",
     ]);
-  });
-
-  it("rejects handlers that return an empty result list", async () => {
-    const runtime = createRuntime();
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: { init: () => [] },
-      }),
-    ).rejects.toThrow(EmptyOnboardStateHandlerResultError);
-  });
-
-  it("requires source-state metadata for multi-result handler sequences", async () => {
-    const runtime = createRuntime();
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: {
-          init: () => [
-            advanceTo("preflight"),
-            advanceTo("gateway", { metadata: { state: "preflight" } }),
-          ],
-        },
-      }),
-    ).rejects.toThrow(OnboardMachineResultSequenceSourceError);
-  });
-
-  it("rejects multi-result handler sequences with stale source-state metadata", async () => {
-    const runtime = createRuntime();
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: {
-          init: () => [
-            advanceTo("preflight", { metadata: { state: "init" } }),
-            advanceTo("gateway", { metadata: { state: "init" } }),
-          ],
-        },
-      }),
-    ).rejects.toThrow(OnboardMachineResultSequenceSourceError);
-    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
-  });
-
-  it("rejects multi-result handler sequences that cross states outside the handler ownership", async () => {
-    const runtime = createRuntime();
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: {
-          init: () => [
-            advanceTo("preflight", { metadata: { state: "init" } }),
-            advanceTo("gateway", { metadata: { state: "preflight" } }),
-          ],
-        },
-      }),
-    ).rejects.toThrow(OnboardMachineResultSequenceOwnershipError);
-    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
-  });
-
-  it("propagates invalid transitions after earlier sequence results apply", async () => {
-    const runtime = createRuntime(
-      createSession({
-        machine: {
-          version: MACHINE_SNAPSHOT_VERSION,
-          state: "provider_selection",
-          stateEnteredAt: "2026-05-28T00:00:00.000Z",
-          revision: 1,
-        },
-      }),
-    );
-    const updateContext = vi.fn(({ context, state }) => ({
-      ...context,
-      visited: [...context.visited, state],
-    }));
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: {
-          provider_selection: () => [
-            advanceTo("inference", { metadata: { state: "provider_selection" } }),
-            advanceTo("policies", { metadata: { state: "inference" } }),
-          ],
-        },
-        updateContext,
-      }),
-    ).rejects.toThrow("Invalid onboarding machine transition");
-    expect(updateContext).toHaveBeenCalledOnce();
-    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "inference" } });
-  });
-
-  it("stops applying handler sequences after terminal results", async () => {
-    const runtime = createRuntime();
-    const updateContext = vi.fn(({ context, state }) => ({
-      ...context,
-      visited: [...context.visited, state],
-    }));
-
-    const result = await runOnboardMachine({
-      context: { attempts: 0, visited: [] } as RunnerContext,
-      runtime,
-      handlers: {
-        init: () => [
-          failOnboardMachine("init failed", {
-            step: "init",
-            metadata: { state: "init" },
-          }),
-          advanceTo("preflight", { metadata: { state: "failed" } }),
-        ],
-      },
-      updateContext,
-    });
-
-    expect(result.session).toMatchObject({
-      status: "failed",
-      failure: { step: "init", message: "init failed" },
-      machine: { state: "failed" },
-    });
-    expect(result.context.visited).toEqual(["init"]);
-    expect(updateContext).toHaveBeenCalledOnce();
-  });
-
-  it("counts each handler sequence result toward the transition limit", async () => {
-    const runtime = createRuntime();
-
-    await expect(
-      runOnboardMachine({
-        context: { attempts: 0, visited: [] } as RunnerContext,
-        runtime,
-        handlers: {
-          init: () => [
-            advanceTo("preflight", { metadata: { state: "init" } }),
-            advanceTo("gateway", { metadata: { state: "preflight" } }),
-          ],
-        },
-        maxTransitions: 1,
-      }),
-    ).rejects.toThrow(OnboardMachineTransitionLimitError);
-    await expect(runtime.session()).resolves.toMatchObject({ machine: { state: "preflight" } });
   });
 
   it("stops on failed terminal results", async () => {
