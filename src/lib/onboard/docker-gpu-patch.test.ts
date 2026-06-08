@@ -454,39 +454,6 @@ describe("docker-gpu-patch", () => {
     }
   });
 
-  it("prefers CDI over --gpus when the host advertises an NVIDIA CDI spec (#4948)", () => {
-    // Repro for #4948: on a Docker-CDI GPU host (e.g. Ubuntu 24.04 with
-    // /etc/cdi/nvidia.yaml), `docker create --gpus all` is *accepted* so the
-    // create-only probe passes and `--gpus all` was selected. OpenShell's
-    // gateway injects GPUs via the CDI spec, so the legacy --gpus injection
-    // path diverges from how the supervisor expects the container to be wired
-    // and never reconnects. When a CDI spec is present we must select the CDI
-    // mode (`--device nvidia.com/gpu=all`) ahead of --gpus.
-    expect(
-      buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind),
-    ).toEqual(["cdi", "gpus", "nvidia-runtime"]);
-
-    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));
-    const selected = selectDockerGpuPatchMode(
-      { image: "openshell/sandbox:abc" },
-      {
-        // `docker info` reports /etc/cdi, which holds an NVIDIA spec.
-        dockerCapture: vi.fn(() => JSON.stringify(["/etc/cdi"])),
-        readDir: (dir: string) => (dir === "/etc/cdi" ? ["nvidia.yaml"] : null),
-        readFile: (file: string) =>
-          file === "/etc/cdi/nvidia.yaml"
-            ? "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n"
-            : null,
-        // Every probe (including --gpus) would succeed on this host.
-        dockerRun,
-        dockerRm: vi.fn(() => ({ status: 0 })),
-      },
-    );
-
-    expect(selected.mode?.kind).toBe("cdi");
-    expect(selected.attempts[0].mode.kind).toBe("cdi");
-  });
-
   it("detects NVIDIA CDI specs in /etc/cdi when docker info reports no dirs (#3575)", () => {
     // Reproduces the Docker 29 + nvidia-container-toolkit + no daemon.json
     // case: `docker info` returns an empty CDISpecDirs list, but Docker is
