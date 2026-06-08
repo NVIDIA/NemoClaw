@@ -13,6 +13,10 @@ export type WorkflowJob = {
   secrets?: Record<string, string>;
   steps?: WorkflowStep[];
   with?: Record<string, string>;
+  strategy?: {
+    "fail-fast"?: boolean;
+    matrix?: Record<string, unknown>;
+  };
 };
 
 export type WorkflowStep = {

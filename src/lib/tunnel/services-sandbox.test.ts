@@ -361,16 +361,14 @@ describe("stopAll with sandbox channels", () => {
     logSpy.mockRestore();
   });
 
-  it("uses the effective env-selected sandbox for host-side pid cleanup", () => {
+  it("uses the effective env-selected sandbox for sandbox cleanup with explicit host pidDir", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const savedNemoclaw = process.env.NEMOCLAW_SANDBOX;
     const savedNemoclawName = process.env.NEMOCLAW_SANDBOX_NAME;
     const savedSandbox = process.env.SANDBOX_NAME;
-    const savedTmpDir = process.env.TMPDIR;
     const pidRoot = mkdtempSync(join(tmpdir(), "nemoclaw-services-pid-root-"));
     const effectivePidDir = join(pidRoot, "nemoclaw-services-name-sandbox");
     const lowerPriorityPidDir = join(pidRoot, "nemoclaw-services-other-sandbox");
-    process.env.TMPDIR = pidRoot;
     rmSync(effectivePidDir, { recursive: true, force: true });
     rmSync(lowerPriorityPidDir, { recursive: true, force: true });
     mkdirSync(effectivePidDir, { recursive: true, mode: 0o700 });
@@ -382,7 +380,7 @@ describe("stopAll with sandbox channels", () => {
     delete process.env.SANDBOX_NAME;
 
     try {
-      stopAll();
+      stopAll({ pidDir: effectivePidDir });
 
       expect(spawnSyncSpy).toHaveBeenCalledWith(
         "/usr/local/bin/openshell",
@@ -398,8 +396,6 @@ describe("stopAll with sandbox channels", () => {
       else delete process.env.NEMOCLAW_SANDBOX_NAME;
       if (savedSandbox !== undefined) process.env.SANDBOX_NAME = savedSandbox;
       else delete process.env.SANDBOX_NAME;
-      if (savedTmpDir !== undefined) process.env.TMPDIR = savedTmpDir;
-      else delete process.env.TMPDIR;
       rmSync(pidRoot, { recursive: true, force: true });
       logSpy.mockRestore();
     }
