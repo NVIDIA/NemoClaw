@@ -80,52 +80,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install hadolint
-        run: |
-          HADOLINT_VERSION="v2.14.0"
-          HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
-          curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
-          EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
-          ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
-          chmod +x /usr/local/bin/hadolint
-
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-
-      - name: Validate config schemas
-        run: npm run validate:configs
-
-      - name: Run static hook checks
-        run: |
-          npx prek run --all-files --stage pre-push \
-            --skip tsc-plugin \
-            --skip tsc-js \
-            --skip tsc-cli \
-            --skip version-tag-sync \
-            --skip test-cli \
-            --skip test-plugin \
-            --skip source-shape-test-budget \
-            --skip test-file-size-budget \
-            --skip test-skills-yaml
-
-      - name: Run source-shape budget
-        run: npm run source-shape:check
-
-      - name: Run test file size budget
-        run: npm run test-size:check
-
-      - name: Run skills YAML tests
-        run: npx vitest run test/skills-frontmatter.test.ts
-
-      - name: Verify platform matrix is in sync
-        run: python3 scripts/generate-platform-docs.py --check
+      - name: Run static checks
+        uses: ./.github/actions/ci-static-checks
 
   build-typecheck:
     needs: changes
@@ -138,34 +94,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Build CLI TypeScript modules
-        run: npm run build:cli
-
-      - name: Typecheck CLI + tests
-        run: npm run typecheck:cli
-
-      - name: Typecheck plugin
-        run: cd nemoclaw && npx tsc --noEmit --incremental
-
-      - name: Typecheck JavaScript config
-        run: npx tsc -p jsconfig.json
-
-      - name: Verify package version matches git tags
-        run: bash scripts/check-version-tag-sync.sh
+      - name: Run build and type checks
+        uses: ./.github/actions/ci-build-typecheck
 
   cli-test-shards:
     needs: changes
@@ -182,46 +112,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
-
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
       - name: Run CLI coverage shard
-        run: |
-          node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
-          npm run build:cli
-          npx tsx scripts/check-dist-sourcemaps.ts dist
-          npx vitest run --project cli \
-            --shard=${{ matrix.shard }}/3 \
-            --reporter=github-actions \
-            --reporter=blob \
-            --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-3.json \
-            --coverage \
-            --coverage.reporter=json-summary \
-            --coverage.reportsDirectory=coverage/cli/shard-${{ matrix.shard }} \
-            --coverage.include="bin/**/*.js" \
-            --coverage.include="dist/lib/**/*.js" \
-            --coverage.exclude="test/**/*.js" \
-            --coverage.exclude="test/**/*.ts"
-
-      - name: Upload CLI shard blob report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: ./.github/actions/ci-cli-coverage-shard
         with:
-          name: cli-blob-report-${{ matrix.shard }}
-          path: .vitest-reports/blob-${{ matrix.shard }}-3.json
-          if-no-files-found: error
-          retention-days: 1
+          shard: ${{ matrix.shard }}
 
   cli-tests:
     needs:
@@ -245,68 +139,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-
-      - name: Build CLI TypeScript modules
-        run: |
-          node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
-          npm run build:cli
-          npx tsx scripts/check-dist-sourcemaps.ts dist
-
-      - name: Download CLI shard blob reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: cli-blob-report-*
-          path: .vitest-reports
-          merge-multiple: true
-
-      - name: Verify CLI shard blob reports
-        run: |
-          set -euo pipefail
-          for shard in 1 2 3; do
-            blob=".vitest-reports/blob-${shard}-3.json"
-            if [ ! -s "$blob" ]; then
-              echo "::error title=Missing CLI shard blob::Expected non-empty ${blob}"
-              exit 1
-            fi
-          done
-          blob_count=$(find .vitest-reports -maxdepth 1 -type f -name 'blob-*-3.json' | wc -l | tr -d ' ')
-          if [ "$blob_count" != "3" ]; then
-            echo "::error title=Unexpected CLI shard blob count::Expected 3 blob reports, found ${blob_count}"
-            find .vitest-reports -maxdepth 1 -type f -print
-            exit 1
-          fi
-
       - name: Merge CLI coverage
-        run: |
-          npx vitest --mergeReports .vitest-reports \
-            --reporter=json \
-            --outputFile.json=coverage/cli/vitest-results.json \
-            --coverage \
-            --coverage.reporter=text-summary \
-            --coverage.reporter=json-summary \
-            --coverage.reportsDirectory=coverage/cli \
-            --coverage.include="bin/**/*.js" \
-            --coverage.include="dist/lib/**/*.js" \
-            --coverage.exclude="test/**/*.js" \
-            --coverage.exclude="test/**/*.ts"
-          npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
-
-      - name: Upload CLI Vitest timing report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cli-vitest-results
-          path: coverage/cli/vitest-results.json
-          if-no-files-found: warn
-          retention-days: 14
+        uses: ./.github/actions/ci-cli-coverage-merge
 
   plugin-tests:
     needs: changes
@@ -319,27 +153,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
-
       - name: Run plugin coverage
-        run: |
-          npx vitest run --project plugin \
-            --coverage \
-            --coverage.reporter=text-summary \
-            --coverage.reporter=json-summary \
-            --coverage.reportsDirectory=coverage/plugin \
-            --coverage.include="nemoclaw/src/**/*.ts" \
-            --coverage.exclude="**/*.test.ts"
-          npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
+        uses: ./.github/actions/ci-plugin-coverage
 
   test-e2e-ollama-proxy:
     needs: changes
