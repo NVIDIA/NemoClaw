@@ -315,6 +315,63 @@ nemoclaw my-assistant policy-remove my-internal-api --yes
 
 `policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
 
+## Agent Policy Context
+
+When an agent runs in the sandbox, it needs a compact view of the active policy so it can decide whether a host or integration is allowed and what to suggest when something fails.
+`nemoclaw <name> policy-explain` prints that view as a redacted summary: the recorded tier, the applied presets and their allowed host categories, the known presets that are not applied, the inspect/add/remove commands that change policy, and the support boundaries between NemoClaw, OpenShell, and the agent.
+
+```bash
+nemoclaw my-assistant policy-explain
+```
+
+Pass `--json` to emit the same context as a structured object the agent can read:
+
+```bash
+nemoclaw my-assistant policy-explain --json
+```
+
+NemoClaw also seeds the rendered context inside the sandbox at `/sandbox/.openclaw/workspace/POLICY.md` once during onboarding and refreshes it on every `policy-add` or `policy-remove`, so the in-sandbox agent picks it up when it scans the workspace.
+Pass `--write` to refresh that file on demand without changing the policy:
+
+```bash
+nemoclaw my-assistant policy-explain --write
+```
+
+The output is intentionally redacted.
+Network policy rule bodies, credential metadata, and binary allowlists are not included; only host stems and category-level summaries appear.
+Host stems that resolve to RFC 1918 ranges (10/8, 172.16/12, 192.168/16), loopback (127/8, `::1`), link-local (169.254/16, `fe80::/10`), cloud metadata (`169.254.169.254`), unique-local IPv6 (`fc00::/7`), reserved zero (0.0.0.0/8), CGNAT (100.64/10), benchmarking (198.18/15), `localhost`, and the internal DNS suffixes `.local`, `.internal`, `.lan`, `.home`, `.home.arpa`, `.corp`, `.intra`, `.intranet`, `.localdomain` are dropped from `allowedHostCategories` and surface as a `redactedHostCount`.
+
+Each active preset also carries a `verification` field that tells the agent whether the OpenShell gateway actually enforces it:
+
+| Status | Meaning |
+|--------|---------|
+| `verified` | Registry lists the preset and the gateway confirms it is enforced. Safe to treat the host stems as allowed. |
+| `registry-only` | Registry lists the preset but the gateway does not enforce it (drift). Treat allowed hosts as unverified; the agent should not assume the traffic will reach the host. |
+| `gateway-only` | Gateway enforces a preset the registry does not list. Reported as active so the agent does not misclassify allowed hosts as blocked. |
+| `gateway-unavailable` | Could not probe the gateway (no live snapshot). The whole report is advisory; rely on `nemoclaw <sandbox> policy-list` once the gateway is reachable. |
+
+The context also documents how the agent should classify a failed host or integration attempt.
+The rules are evaluated in order so HTTP 403 has a single interpretation per call: when the host matches an applied preset the request is treated as an authentication failure, otherwise as a policy denial.
+
+1. `unsupported` — the caller asserts the capability is not offered for this sandbox (for example, a messaging channel that the active agent does not support). The agent should surface the limitation without retrying.
+2. `missing-approval` — the host **is** allowed by an applied preset and the request was refused with HTTP 401. The network path is open; credentials are missing or invalid.
+3. `missing-approval` (low confidence) — the host **is** allowed by an applied preset and the request was refused with HTTP 403. Ambiguous: OpenShell policies enforce by method, path, protocol, and binary, so a 403 on an allowed host can still be a finer-grained policy denial rather than missing credentials. Confirm credentials first, then run `openshell policy get` to check whether the specific method or path is blocked.
+4. `blocked-by-policy` — either the host is **not** allowed by any applied preset and either an existing built-in or custom preset declares it (apply that preset), or the request is refused with a network-block error code (`EHOSTUNREACH`, `ENETUNREACH`, `ENOTFOUND`, `ECONNREFUSED`, `ETIMEDOUT`, `EAI_AGAIN`) or HTTP 403. The same network-block codes also surface as `blocked-by-policy` (low confidence) when the host is on an applied but **unverified** preset (`registry-only` or `gateway-unavailable`), because a block code on a host the registry says should be allowed is the strongest signal that the gateway is not enforcing the preset.
+5. `unknown` — none of the above apply; the agent should surface the underlying error. A network-block code on a host that matches a **verified** preset stays `unknown` because the gateway has confirmed enforcement, so the block must be an upstream connectivity failure rather than a policy denial.
+
+Each classification also carries a `confidence` field set to `high` or `low`. Low-confidence verdicts mean the agent should report multiple possibilities to the user instead of treating the next-step recommendation as authoritative. Common low-confidence triggers are:
+
+- HTTP 403 on an active host (ambiguous between missing credentials and a finer-grained OpenShell denial by method, path, protocol, or binary).
+- The matched preset is `registry-only` (the registry lists it but the gateway does not enforce it) — the agent must not assume the host is reachable.
+- The matched preset is `gateway-unavailable` (no live gateway snapshot was available) — the verdict is registry-derived and advisory.
+
+Callers that already hold a verified gateway snapshot can pass it to the classifier so verdicts about hosts on verified presets stay high-confidence.
+
+Use the classification to pick the next step.
+For `blocked-by-policy`, run `nemoclaw <name> policy-add <preset>` or author a [custom preset](#custom-preset-files).
+For `missing-approval`, confirm the API token and scopes for the integration.
+For `unsupported`, surface the limitation to the user without retrying.
+
 ## References
 
 - **[references/integration-policy-examples.md](references/integration-policy-examples.md)** — Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave Search, package managers, Hugging Face, local inference, and OpenShell approval workflows.

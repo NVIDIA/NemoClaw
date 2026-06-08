@@ -84,6 +84,7 @@ Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those
 Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling to those channels.
 When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
 Channel messages still require an explicit bot mention.
+When a Slack channel `@mention` is denied by these allowlists, NemoClaw sends a denial notice back to the sender instead of dropping the message silently.
 During sandbox startup, NemoClaw normalizes OpenShell credential placeholders into the environment shape expected by the Slack runtime, so post-rebuild Slack starts use the gateway-managed tokens instead of literal placeholder strings.
 
 WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin baked into the sandbox base image and the built-in Hermes iLink WeChat adapter.

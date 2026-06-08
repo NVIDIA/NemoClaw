@@ -3,9 +3,9 @@
 import { AgentOnly } from "../_components/AgentGuide";
 
 Workspace and state files define your agent's personality, memory, user context, and durable runtime state.
-They persist across sandbox restarts but are **permanently deleted** when you destroy the sandbox.
+They persist across sandbox restarts, but destroying the sandbox **permanently deletes** them.
 
-This guide covers snapshot commands, manual backup with CLI commands, and an automated script.
+This guide covers snapshot commands, all-sandbox backups, and manual backup with CLI commands.
 
 ## When to Back Up
 
@@ -148,16 +148,36 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/pl
 
 </AgentOnly>
 
+## Back Up All Running Sandboxes
+
+To back up every registered, running sandbox in one step, run `nemoclaw backup-all`.
+This is the recommended host-installed command before broad maintenance such as `nemoclaw update`, `nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
+
+```console
+$ nemoclaw backup-all
+```
+
+`backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
+Use `nemoclaw <name> snapshot list` and `nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
+
 ## Using the Backup Script
 
 <AgentOnly variant="openclaw">
 
-The repository includes a convenience script at `scripts/backup-workspace.sh`.
+**Source-tree helper script:**
+
+The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/backup-workspace.sh) helper exists only in the NemoClaw source repository for engineering workflows.
+It is not installed by the standard `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer, so host installs should use `nemoclaw backup-all` or the snapshot commands above.
 
 ### Backup
 
-```console
-$ ./scripts/backup-workspace.sh backup my-assistant
+```bash
+./scripts/backup-workspace.sh backup my-assistant
+```
+
+Expected output:
+
+```text
 Backing up workspace from sandbox 'my-assistant'...
 Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
 ```
@@ -180,8 +200,13 @@ Restore from a specific timestamp:
 
 List backed-up files to confirm completeness:
 
-```console
-$ ls -la ~/.nemoclaw/backups/20260320-120000/
+```bash
+ls -la ~/.nemoclaw/backups/20260320-120000/
+```
+
+Expected output:
+
+```text
 AGENTS.md
 IDENTITY.md
 MEMORY.md
@@ -206,7 +231,7 @@ When you configure OpenClaw with multiple named agents, each agent has its own w
 Refer to [Multi-Agent Deployments](workspace-files.md#multi-agent-deployments).
 
 `nemoclaw <name> snapshot create` automatically discovers every `workspace-*/` directory under the sandbox state tree and includes it in the snapshot bundle alongside the default `workspace/`.
-`snapshot restore` reapplies the full per-agent set.
+`nemoclaw <name> snapshot restore` reapplies the full per-agent set.
 You do not need a manual per-workspace backup pattern.
 
 The sandbox entrypoint ensures every per-agent workspace lives directly under the persistent `.openclaw/` tree, so state also survives `openshell sandbox restart`.
