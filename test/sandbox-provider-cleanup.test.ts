@@ -59,7 +59,7 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
-  it("treats NotFound / not attached outputs as success-equivalent", () => {
+  it("treats provider-scoped NotFound / not attached outputs as success-equivalent", () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach alpha alpha-telegram-bridge",
@@ -93,6 +93,25 @@ describe("detachSandboxProviders", () => {
 
     expect(result.failures).toEqual([]);
     expect(result.detached).not.toContain("gamma-slack-bridge");
+  });
+
+  it("does not tolerate a bare sandbox-not-found diagnostic — stale attachment may remain", () => {
+    const responses = new Map<string, RunResult>([
+      [
+        "sandbox provider detach zulu zulu-telegram-bridge",
+        { status: 1, stderr: "Error: status: NotFound, sandbox 'zulu' not found" },
+      ],
+    ]);
+    const { runOpenshell } = buildRunOpenshell(responses);
+
+    const result = detachSandboxProviders("zulu", { runOpenshell });
+
+    expect(result.failures).toEqual([
+      {
+        name: "zulu-telegram-bridge",
+        output: "Error: status: NotFound, sandbox 'zulu' not found",
+      },
+    ]);
   });
 
   it("collects non-tolerated failures without aborting the loop", () => {

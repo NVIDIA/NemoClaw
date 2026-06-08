@@ -458,7 +458,10 @@ export async function destroySandbox(
   // and the post-delete `provider delete` loop in `cleanupSandboxServices`
   // suppresses errors. Without the explicit detach a stale provider
   // attachment survives destroy and blocks the next onboard.
-  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
+  const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
+    runOpenshell,
+    redact,
+  });
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -521,6 +524,15 @@ export async function destroySandbox(
   if (alreadyGone) {
     console.log(
       `  Sandbox '${sandboxName}' was already absent from the live gateway.`,
+    );
+  }
+  if (detachOutcome.failures.length > 0) {
+    const residualNames = detachOutcome.failures.map((f) => f.name).join(", ");
+    console.warn(
+      `  ${YW}⚠${R} Residual provider state may remain in the OpenShell gateway: ${residualNames}.`,
+    );
+    console.warn(
+      "  Re-run 'openshell provider delete <name>' for each to clean up before the next onboard.",
     );
   }
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);

@@ -3374,8 +3374,7 @@ async function createSandbox(
   ];
 
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  // Recreate above detached providers then deleted the previous sandbox; the
-  // delete+create here covers the legacy Brave generic→brave type migration.
+  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),

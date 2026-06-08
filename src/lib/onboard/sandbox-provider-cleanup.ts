@@ -36,7 +36,7 @@ export const SANDBOX_PROVIDER_SUFFIXES = [
 export type SandboxProviderSuffix = (typeof SANDBOX_PROVIDER_SUFFIXES)[number];
 
 const TOLERATED_DETACH_OUTPUT_RE =
-  /\bNotFound\b|\bNotAttached\b|not\s+found|not\s+attached/i;
+  /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
 const MAX_WARNING_OUTPUT_CHARS = 500;
 
@@ -70,10 +70,24 @@ function identityRedact(input: string): string {
  * "is attached to sandbox(es): <name>" — the canonical pattern is detach
  * first, then delete the sandbox, then delete the provider.
  *
- * Best-effort across the full suffix set: `NotFound` / `NotAttached` /
- * `not found` / `not attached` outputs are treated as success-equivalent.
- * Non-matching failures are returned in `failures` for the caller to surface;
- * the caller decides whether to abort or continue.
+ * Source boundary and removal condition: this helper owns the
+ * NemoClaw-side workaround for OpenShell's sandbox-deletion lifecycle. The
+ * source-of-truth fix lives in OpenShell — `sandbox delete` should either
+ * fail fast on attached providers or release the attachment as part of the
+ * deletion. When OpenShell guarantees one of those behaviours (released by
+ * a future gateway/CLI version that surfaces a structured "detached on
+ * delete" signal), this helper and both production call sites can be
+ * removed in one pass.
+ *
+ * Best-effort across the full suffix set. Tolerated diagnostics are
+ * narrowly scoped — `NotAttached` / "not attached" (the attachment is
+ * already gone) and `provider … NotFound` / `provider … not found` (the
+ * provider itself never existed or has already been deleted). Bare
+ * `NotFound` is intentionally NOT tolerated because the same wording is
+ * also used for missing-sandbox errors during the resume / pruned-sandbox
+ * path, where the attachment may still be stale and require manual recovery.
+ * Non-matching failures are returned in `failures` for the caller to
+ * surface; the caller decides whether to abort or continue.
  */
 export function detachSandboxProviders(
   sandboxName: string,
