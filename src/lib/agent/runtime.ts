@@ -146,6 +146,32 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
+const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
+  "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
+
+/**
+ * Build the shell snippet that re-enforces the documented Hermes secret
+ * boundary before any in-sandbox Hermes process is relaunched by the host-side
+ * recovery path. The startup entrypoint already runs this validator, but
+ * `sandbox recover` / `connect --probe-only` does not re-enter the entrypoint,
+ * so without this guard the boundary would only apply on cold start.
+ *
+ * The guard refuses with `SECRET_BOUNDARY_REFUSED` on any violation and tolerates
+ * a missing validator (older sandbox images) with a warning so a partial upgrade
+ * does not break recovery; production images bake the validator in.
+ */
+function buildHermesSecretBoundaryGuard(): string {
+  const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
+  return [
+    `if [ -f ${shellQuote(validator)} ]; then`,
+    `  python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env || { echo SECRET_BOUNDARY_REFUSED; exit 1; };`,
+    `  python3 ${shellQuote(validator)} runtime-env || { echo SECRET_BOUNDARY_REFUSED; exit 1; };`,
+    "else",
+    '  echo "[gateway-recovery] WARNING: secret-boundary validator missing on this image; skipping" >&2;',
+    "fi;",
+  ].join(" ");
+}
+
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;
   internalPort: number;
@@ -174,6 +200,7 @@ export function buildHermesDashboardProcessRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     "export HERMES_HOME=/sandbox/.hermes;",
+    buildHermesSecretBoundaryGuard(),
     'if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;',
     'AGENT_BIN=/usr/local/bin/hermes; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v hermes)"; fi;',
     'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
@@ -259,6 +286,7 @@ export function buildRecoveryScript(
   return [
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     hermesHome,
+    ...(isHermes ? [buildHermesSecretBoundaryGuard()] : []),
     `_GW_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$_GW_CODE" in 200|401) echo ALREADY_RUNNING; exit 0 ;; esac;`,
     ...buildGatewayLogSetup(false),
     buildGatewayLogSelection(),

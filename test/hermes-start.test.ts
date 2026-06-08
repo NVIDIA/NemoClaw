@@ -8,6 +8,13 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -189,6 +196,7 @@ function runHermesEnvSecretBoundary(opts: {
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -215,6 +223,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
     ].join("\n"),
     { mode: 0o700 },
@@ -227,6 +236,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
       env: {
         HOME: tmpDir,
         PATH: process.env.PATH ?? "",
+        _HERMES_BOUNDARY_VALIDATOR: SECRET_BOUNDARY_VALIDATOR_SCRIPT,
         ...envOverrides,
       },
     });
