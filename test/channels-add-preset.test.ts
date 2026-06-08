@@ -16,10 +16,6 @@ import { makeMessagingState } from "./helpers/messaging-plan-fixtures";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 
-function updatePlanChannels(update: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId: string }> } } } } | undefined) {
-  return update?.updates?.messaging?.plan?.channels?.map((channel) => channel.channelId);
-}
-
 function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-3437-"));
   const scriptPath = path.join(tmpDir, "script.js");
