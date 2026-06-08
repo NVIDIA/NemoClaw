@@ -8,7 +8,45 @@ import {
   getStatusReport,
   listSandboxesCommand,
   showStatusCommand,
+  type SandboxEntry,
 } from "./index";
+
+function withMessaging(
+  sandbox: Omit<SandboxEntry, "messaging">,
+  channels: readonly string[],
+  disabledChannels: readonly string[] = [],
+): SandboxEntry {
+  const disabled = new Set(disabledChannels);
+  return {
+    ...sandbox,
+    messaging: {
+      plan: {
+        schemaVersion: 1,
+        sandboxName: sandbox.name,
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: channels.map((channelId) => ({
+          channelId,
+          displayName: channelId,
+          authMode: "token-paste",
+          active: !disabled.has(channelId),
+          selected: true,
+          configured: true,
+          disabled: disabled.has(channelId),
+          inputs: [],
+          hooks: [],
+        })),
+        disabledChannels,
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
+  };
+}
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {
@@ -353,11 +391,7 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          {
-            name: "alpha",
-            model: "m",
-            messagingChannels: ["telegram"],
-          },
+          withMessaging({ name: "alpha", model: "m" }, ["telegram"]),
         ],
         defaultSandbox: "alpha",
       }),
@@ -401,8 +435,8 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          withMessaging({ name: "alice", model: "m" }, ["telegram"]),
+          withMessaging({ name: "bob", model: "m" }, ["telegram"]),
         ],
         defaultSandbox: "alice",
       }),
@@ -428,8 +462,8 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          withMessaging({ name: "alice", model: "m" }, ["telegram"]),
+          withMessaging({ name: "bob", model: "m" }, ["telegram"]),
         ],
         defaultSandbox: "alice",
       }),
@@ -462,12 +496,7 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          {
-            name: "alpha",
-            model: "m",
-            messagingChannels: ["telegram"],
-            agent: "hermes",
-          },
+          withMessaging({ name: "alpha", model: "m", agent: "hermes" }, ["telegram"]),
         ],
         defaultSandbox: "alpha",
       }),
@@ -492,11 +521,7 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          {
-            name: "alpha",
-            model: "m",
-            messagingChannels: ["telegram"],
-          },
+          withMessaging({ name: "alpha", model: "m" }, ["telegram"]),
         ],
         defaultSandbox: "alpha",
       }),

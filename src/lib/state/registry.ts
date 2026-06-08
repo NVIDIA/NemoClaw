@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface CustomPolicyEntry {
@@ -60,15 +59,12 @@ export interface SandboxEntry {
   agent?: string | null;
   agentVersion?: string | null;
   imageTag?: string | null;
-  messagingChannels?: string[];
-  messagingChannelConfig?: MessagingChannelConfig;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  disabledChannels?: string[];
   dashboardPort?: number | null;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
@@ -256,11 +252,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
-      messagingChannels: entry.messagingChannels || [],
-      messagingChannelConfig:
-        entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
-          ? { ...entry.messagingChannelConfig }
-          : undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
@@ -270,10 +261,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
-      disabledChannels:
-        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
-          ? [...entry.disabledChannels]
-          : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
@@ -383,7 +370,7 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
 
 export function getDisabledChannels(name: string): string[] {
   const data = load();
-  return data.sandboxes[name]?.disabledChannels ?? [];
+  return getDisabledMessagingChannelsFromEntry(data.sandboxes[name]);
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
@@ -391,11 +378,74 @@ export function setChannelDisabled(name: string, channel: string, disabled: bool
     const data = load();
     const entry = data.sandboxes[name];
     if (!entry) return false;
-    const current = new Set(entry.disabledChannels ?? []);
+    const plan = getMessagingPlanFromEntry(entry);
+    if (!plan) return false;
+    const configuredChannels = new Set(plan.channels.map((entry) => entry.channelId));
+    if (!configuredChannels.has(channel)) return false;
+    const current = new Set(plan.disabledChannels);
     if (disabled) current.add(channel);
     else current.delete(channel);
-    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
+    const disabledChannels = Array.from(current)
+      .filter((channelId) => configuredChannels.has(channelId))
+      .sort();
+    const disabledSet = new Set(disabledChannels);
+    entry.messaging = {
+      schemaVersion: 1,
+      plan: {
+        ...plan,
+        workflow: disabled ? "stop-channel" : "start-channel",
+        channels: plan.channels.map((channelPlan) => {
+          const channelDisabled = disabledSet.has(channelPlan.channelId);
+          return {
+            ...channelPlan,
+            disabled: channelDisabled,
+            active: !channelDisabled && channelPlan.configured,
+          };
+        }),
+        disabledChannels,
+      },
+    };
     save(data);
     return true;
   });
+}
+
+export function getMessagingPlanFromEntry(
+  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
+): SandboxMessagingPlan | null {
+  const plan = entry?.messaging?.schemaVersion === 1 ? entry.messaging.plan : null;
+  return plan?.schemaVersion === 1 ? plan : null;
+}
+
+export function getConfiguredMessagingChannelsFromEntry(
+  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
+): string[] {
+  const plan = getMessagingPlanFromEntry(entry);
+  if (!plan) return [];
+  return plan.channels
+    .filter((channel) => channel.configured)
+    .map((channel) => channel.channelId);
+}
+
+export function getActiveMessagingChannelsFromEntry(
+  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
+): string[] {
+  const plan = getMessagingPlanFromEntry(entry);
+  if (!plan) return [];
+  const disabled = new Set(plan.disabledChannels);
+  return plan.channels
+    .filter((channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId))
+    .map((channel) => channel.channelId);
+}
+
+export function getDisabledMessagingChannelsFromEntry(
+  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
+): string[] {
+  const plan = getMessagingPlanFromEntry(entry);
+  return plan ? [...plan.disabledChannels] : [];
+}
+
+export function getConfiguredMessagingChannels(name: string): string[] {
+  const data = load();
+  return getConfiguredMessagingChannelsFromEntry(data.sandboxes[name]);
 }

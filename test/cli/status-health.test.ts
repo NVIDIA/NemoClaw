@@ -14,6 +14,36 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+function messagingState(sandboxName: string, channels: readonly string[]) {
+  return {
+    schemaVersion: 1,
+    plan: {
+      schemaVersion: 1,
+      sandboxName,
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: channels.map((channelId) => ({
+        channelId,
+        displayName: channelId,
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      })),
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: channels, entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    },
+  };
+}
+
 describe("CLI dispatch", () => {
   it("status --help exits 0 and shows status usage", () => {
     const r = run("status --help");
@@ -43,7 +73,7 @@ describe("CLI dispatch", () => {
             policies: ["npm"],
             agent: "openclaw",
             dashboardPort: 18789,
-            messagingChannels: ["slack"],
+            messaging: messagingState(sandboxName, ["slack"]),
             dashboardUrl: "http://127.0.0.1:18789/?token=dashboard-secret",
             logs: "Bearer should-not-render xoxb-should-not-render-000000",
           },

@@ -12,8 +12,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { makeMessagingState } from "./helpers/messaging-plan-fixtures";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+
+function updatePlanChannels(update: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId: string }> } } } } | undefined) {
+  return update?.updates?.messaging?.plan?.channels?.map((channel) => channel.channelId);
+}
 
 function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-3437-"));
@@ -141,9 +146,12 @@ const registryUpdates = [];
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: ${JSON.stringify(sandboxAgent)},
-  messagingChannels: [],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", [], [], sandboxAgent))},
 });
+registry.getConfiguredMessagingChannels = (name) =>
+  registry.getConfiguredMessagingChannelsFromEntry(registry.getSandbox(name));
+registry.getDisabledChannels = (name) =>
+  registry.getDisabledMessagingChannelsFromEntry(registry.getSandbox(name));
 registry.updateSandbox = (name, updates) => {
   registryUpdates.push({ name, updates });
   return true;
@@ -370,10 +378,6 @@ const ctx = module.exports;
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
 
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
-    assert.deepEqual(payload.registryUpdates[0], {
-      name: "test-sb",
-      updates: { messagingChannels: ["whatsapp"], disabledChannels: [] },
-    });
     const messagingStateUpdate = payload.registryUpdates.find(
       (entry: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } } }) =>
         entry.updates?.messaging?.plan,
@@ -392,7 +396,7 @@ const ctx = module.exports;
     assert.deepEqual(messagingStateUpdate.updates.messaging.plan.credentialBindings, []);
     assert.deepEqual(
       payload.registryUpdates.map((entry: { name: string }) => entry.name),
-      ["test-sb", "test-sb"],
+      ["test-sb"],
     );
     assert.deepEqual(
       payload.appliedCalls,
@@ -517,7 +521,7 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing preset YAML must not register telegram in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing preset YAML must not persist a messaging plan; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
@@ -771,7 +775,7 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing whatsapp.yaml must not flip messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing whatsapp.yaml must not persist a messaging plan; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
@@ -828,12 +832,11 @@ process.exit = (code) => {
       [{ sandboxName: "test-sb", presetName: "telegram" }],
       `expected one failed applyPreset call; got ${JSON.stringify(payload.appliedCalls)}`,
     );
-    assert.ok(
-      payload.registryUpdates.length === 2,
-      `expected one add update and one rollback update; got ${JSON.stringify(payload.registryUpdates)}`,
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `policy failure must not persist a messaging plan; got ${JSON.stringify(payload.registryUpdates)}`,
     );
-    assert.deepEqual(payload.registryUpdates[0].updates.messagingChannels, ["telegram"]);
-    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
     assert.deepEqual(
       payload.deletedCredentialKeys,
       ["TELEGRAM_BOT_TOKEN"],
@@ -902,11 +905,11 @@ process.exit = (code) => {
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
-    assert.ok(
-      payload.registryUpdates.length === 2,
-      `expected registry add + rollback even when openshell detach fails; got ${JSON.stringify(payload.registryUpdates)}`,
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `policy failure must not persist a messaging plan even when gateway rollback has residue; got ${JSON.stringify(payload.registryUpdates)}`,
     );
-    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
     assert.deepEqual(
       payload.deletedCredentialKeys,
       ["TELEGRAM_BOT_TOKEN"],
@@ -931,8 +934,7 @@ process.exit = (code) => {
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
-  messagingChannels: ["telegram"],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", ["telegram"]))},
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 const ctx = module.exports;
@@ -972,11 +974,10 @@ process.exit = (code) => {
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
-    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
     assert.deepEqual(
-      lastRegistry.updates.messagingChannels,
-      ["telegram"],
-      `re-add failure must keep prior 'telegram' in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      payload.registryUpdates,
+      [],
+      `re-add failure must keep prior telegram plan untouched; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
@@ -1002,8 +1003,7 @@ process.exit = (code) => {
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
-  messagingChannels: ["telegram"],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", ["telegram"]))},
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 let upsertCalls = 0;
@@ -1046,11 +1046,10 @@ process.exit = (code) => {
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
 
     assert.deepEqual(payload.exitCodes, [1]);
-    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
     assert.deepEqual(
-      lastRegistry.updates.messagingChannels,
-      ["telegram"],
-      `registry restoration must precede gateway re-upsert so an upsert failure cannot orphan the channel; got ${JSON.stringify(payload.registryUpdates)}`,
+      payload.registryUpdates,
+      [],
+      `registry plan must stay untouched when gateway re-upsert fails; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
@@ -1651,8 +1650,7 @@ const registry = require(${j("state/registry.js")});
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: global.__testAgent || "openclaw",
-  messagingChannels: [],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", []))},
 });
 registry.updateSandbox = () => true;
 

@@ -90,7 +90,6 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           policies: [],
           agent: null,
           openshellDriver: "vm",
-          messagingChannels: null,
         },
       },
     }),
@@ -126,7 +125,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
+      messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },

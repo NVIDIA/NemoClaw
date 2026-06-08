@@ -29,13 +29,24 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Derive the equivalent of session.messagingChannels from a plan. */
+/** Derive configured channel ids from a plan. */
 export function getChannelsFromPlan(plan: SandboxMessagingPlan | null | undefined): string[] | null {
   if (!plan || plan.channels.length === 0) return null;
   return plan.channels.map((c) => c.channelId);
 }
 
-/** Derive the equivalent of session.disabledChannels from a plan. */
+/** Derive active, non-disabled channels from a plan for build/provider setup. */
+export function getActiveChannelsFromPlan(
+  plan: SandboxMessagingPlan | null | undefined,
+): string[] | null {
+  if (!plan || plan.channels.length === 0) return null;
+  const disabled = new Set(plan.disabledChannels);
+  return plan.channels
+    .filter((channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId))
+    .map((channel) => channel.channelId);
+}
+
+/** Derive disabled channel ids from a plan. */
 export function getDisabledChannelsFromPlan(
   plan: SandboxMessagingPlan | null | undefined,
 ): string[] | null {
@@ -44,9 +55,9 @@ export function getDisabledChannelsFromPlan(
 }
 
 /**
- * Derive the equivalent of session.messagingChannelConfig from a plan.
- * Config inputs (kind === "config") carry their resolved env-key/value pairs
- * in plan.channels[].inputs, populated at compile time from process.env.
+ * Derive non-secret channel config from a plan. Config inputs
+ * (kind === "config") carry their resolved env-key/value pairs in
+ * plan.channels[].inputs, populated at compile time from process.env.
  */
 export function getMessagingChannelConfigFromPlan(
   plan: SandboxMessagingPlan | null | undefined,

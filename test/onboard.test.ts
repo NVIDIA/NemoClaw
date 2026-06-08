@@ -1159,7 +1159,6 @@ registry.getSandbox = (name) =>
         provider: "hermes-provider",
         model: "moonshotai/kimi-k2.6",
         hermesToolGateways: [],
-        messagingChannels: [],
         policies: ["nous-web"],
       }
     : null;

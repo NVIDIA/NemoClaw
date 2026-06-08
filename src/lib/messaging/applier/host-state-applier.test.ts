@@ -53,8 +53,6 @@ describe("MessagingHostStateApplier", () => {
   it("stores only the new messaging state on an existing sandbox entry", () => {
     registryMock.__setSandbox("demo", {
       name: "demo",
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
     });
     const plan = makePlan(["telegram"]);
 
@@ -68,13 +66,13 @@ describe("MessagingHostStateApplier", () => {
       },
     });
     expect(registryMock.__getSandbox("demo")).toMatchObject({
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
       messaging: {
         schemaVersion: 1,
         plan,
       },
     });
+    expect(registryMock.__getSandbox("demo")).not.toHaveProperty("messagingChannels");
+    expect(registryMock.__getSandbox("demo")).not.toHaveProperty("disabledChannels");
   });
 
   it("can merge a single-channel add plan into existing messaging state", () => {

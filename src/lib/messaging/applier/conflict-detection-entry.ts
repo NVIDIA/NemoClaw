@@ -28,12 +28,7 @@ function normalizeRequest(request: ChannelConflictRequest): ConflictRequest | nu
 /**
  * Return the active channel IDs for a registry entry.
  *
- * Uses `entry.messaging.plan` when available. Pre-plan registry entries are
- * supported only for channel presence via the legacy
- * `messagingChannels`/`disabledChannels` flat fields; legacy credential hashes
- * are deliberately not recovered. Remove this branch when flat pre-plan
- * messaging registry fields are no longer supported. Returns `null` when the
- * entry has neither shape.
+ * Returns `null` when the entry has no compiled messaging plan.
  */
 export function resolveActiveChannelsFromEntry(
   entry: ConflictRegistryEntry,
@@ -41,9 +36,7 @@ export function resolveActiveChannelsFromEntry(
   if (entry.messaging?.plan) {
     return getActiveChannelIdsFromPlan(entry.messaging.plan);
   }
-  if (!Array.isArray(entry.messagingChannels)) return null;
-  const disabled = new Set(Array.isArray(entry.disabledChannels) ? entry.disabledChannels : []);
-  return (entry.messagingChannels as string[]).filter((c) => !disabled.has(c));
+  return null;
 }
 
 function resolveChannelHashesFromEntry(
@@ -152,7 +145,7 @@ export function findConflictsInEntries(
   const others = entries.filter(
     (e) =>
       e.name !== currentSandbox &&
-      (Array.isArray(e.messagingChannels) || e.messaging?.plan != null),
+      e.messaging?.plan != null,
   );
   return requests.flatMap((request) =>
     others.flatMap((entry) => {

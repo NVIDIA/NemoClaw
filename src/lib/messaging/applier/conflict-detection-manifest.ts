@@ -10,11 +10,3 @@ export const CHANNEL_CREDENTIAL_ENV_KEYS: Readonly<Record<string, readonly strin
   Object.fromEntries(
     BUILT_IN_CHANNEL_MANIFESTS.map((m) => [m.id, m.credentials.map((c) => c.providerEnvKey)]),
   );
-
-export const PROVIDER_SUFFIXES: Record<string, string[]> = Object.fromEntries(
-  BUILT_IN_CHANNEL_MANIFESTS.flatMap((m) => {
-    const suffixes = m.credentials.map((c) => c.providerName.replace("{sandboxName}", ""));
-    if (suffixes.length === 0) return [];
-    return [[m.id, suffixes]];
-  }),
-);

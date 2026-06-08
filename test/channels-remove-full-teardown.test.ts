@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { makeMessagingPlan, makeMessagingState } from "./helpers/messaging-plan-fixtures";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 
@@ -119,9 +120,7 @@ const sessionStore = {
   routerPid: null,
   routerCredentialHash: null,
   policyTier: null,
-  messagingChannels: [${JSON.stringify(channelInRegistry)}],
-  messagingChannelConfig: null,
-  disabledChannels: [],
+  messagingPlan: ${JSON.stringify(makeMessagingPlan("test-sb", [channelInRegistry], [], sandboxAgent))},
   hermesToolGateways: [],
   wechatConfig: null,
 };
@@ -133,10 +132,13 @@ const registryUpdates = [];
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: ${JSON.stringify(sandboxAgent)},
-  messagingChannels: [${JSON.stringify(channelInRegistry)}],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", [channelInRegistry], [], sandboxAgent))},
   policies: ${JSON.stringify(presetNamesApplied)},
 });
+registry.getConfiguredMessagingChannels = (name) =>
+  registry.getConfiguredMessagingChannelsFromEntry(registry.getSandbox(name));
+registry.getDisabledChannels = (name) =>
+  registry.getDisabledMessagingChannelsFromEntry(registry.getSandbox(name));
 registry.updateSandbox = (name, updates) => {
   registryUpdates.push({ name, updates });
   return true;
@@ -379,8 +381,7 @@ const registryOverride = require(${JSON.stringify(path.join(repoRoot, "dist", "l
 registryOverride.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
-  messagingChannels: [],
-  disabledChannels: [],
+  messaging: ${JSON.stringify(makeMessagingState("test-sb", []))},
   policies: [],
 });
 const policiesOverride = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "policy/index.js"))});
@@ -504,18 +505,20 @@ const ctx = module.exports;
       "other presets must remain after removing a token-based channel",
     );
 
-    const messagingChannelsUpdate = payload.registryUpdates.find(
-      (u: { updates: { messagingChannels?: string[] } }) =>
-        u.updates.messagingChannels !== undefined,
+    const messagingPlanUpdate = payload.registryUpdates.find(
+      (u: { updates: { messaging?: { plan?: { channels?: Array<{ channelId: string }> } } } }) =>
+        u.updates.messaging?.plan,
     );
     assert.ok(
-      messagingChannelsUpdate,
-      `expected an updateSandbox call that writes messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      messagingPlanUpdate,
+      `expected an updateSandbox call that writes messaging plan; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.deepEqual(
-      messagingChannelsUpdate.updates.messagingChannels,
+      messagingPlanUpdate.updates.messaging.plan.channels.map(
+        (channel: { channelId: string }) => channel.channelId,
+      ),
       [],
-      "messagingChannels must be empty after removing telegram",
+      "messaging plan channels must be empty after removing telegram",
     );
   });
 });

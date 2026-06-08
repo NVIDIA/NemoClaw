@@ -21,6 +21,36 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+function messagingState(sandboxName: string, channels: readonly string[], agent = "openclaw") {
+  return {
+    schemaVersion: 1,
+    plan: {
+      schemaVersion: 1,
+      sandboxName,
+      agent,
+      workflow: "onboard",
+      channels: channels.map((channelId) => ({
+        channelId,
+        displayName: channelId,
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      })),
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: channels, entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    },
+  };
+}
+
 describe("CLI dispatch", () => {
   it("routes logs to OpenClaw and OpenShell log sources", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
@@ -302,7 +332,7 @@ describe("CLI dispatch", () => {
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"], "hermes"),
             agent: "hermes",
           },
         },

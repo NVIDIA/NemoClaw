@@ -15,6 +15,14 @@ vi.mock("../../policy", () => ({
 
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
+  getConfiguredMessagingChannelsFromEntry: vi.fn((entry?: SandboxEntry | null) =>
+    (entry?.messaging?.plan.channels ?? [])
+      .filter((channel) => channel.configured)
+      .map((channel) => channel.channelId),
+  ),
+  getDisabledMessagingChannelsFromEntry: vi.fn((entry?: SandboxEntry | null) =>
+    entry?.messaging?.plan.disabledChannels ? [...entry.messaging.plan.disabledChannels] : [],
+  ),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -105,14 +113,40 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
 }
 
 function entry(
-  messagingChannels: string[] = ["whatsapp"],
+  channelIds: string[] = ["whatsapp"],
   disabledChannels: string[] = [],
 ): SandboxEntry {
+  const disabled = new Set(disabledChannels);
   return {
     name: "alpha",
     agent: "openclaw",
-    messagingChannels,
-    disabledChannels,
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: channelIds.map((channelId) => ({
+          channelId,
+          displayName: channelId,
+          authMode: "token-paste",
+          active: !disabled.has(channelId),
+          selected: true,
+          configured: true,
+          disabled: disabled.has(channelId),
+          inputs: [],
+          hooks: [],
+        })),
+        disabledChannels,
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
   } as SandboxEntry;
 }
 
@@ -444,7 +478,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(capturedCmd as unknown as string).toMatch(/pgrep -fa/);
   });
 
-  it("skips the deep probe and reports paused state when WhatsApp is in disabledChannels", async () => {
+  it("skips the deep probe and reports paused state when WhatsApp is disabled in the plan", async () => {
     // Regression guard: `channels stop whatsapp` deliberately drops the
     // bridge and preset until the operator runs `channels start`. The
     // status command should reflect that rather than probing a torn-down

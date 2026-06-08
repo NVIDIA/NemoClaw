@@ -7,13 +7,27 @@ import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
 
-function makeMinimalPlan(sandboxName: string, agent = "openclaw"): SandboxMessagingPlan {
+function makeMinimalPlan(
+  sandboxName: string,
+  agent = "openclaw",
+  channelIds: readonly string[] = [],
+): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
     sandboxName,
     agent: agent as SandboxMessagingPlan["agent"],
     workflow: "onboard",
-    channels: [],
+    channels: channelIds.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: true,
+      selected: true,
+      configured: true,
+      disabled: false,
+      inputs: [],
+      hooks: [],
+    })),
     disabledChannels: [],
     credentialBindings: [],
     networkPolicy: { presets: [], entries: [] },
@@ -39,7 +53,6 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       session = mutator(session) ?? session;
       return session;
     }),
-    persistMessaging: vi.fn(),
     removeSandbox: vi.fn(),
     repairSandbox: vi.fn(),
     validateBrave: vi.fn(async () => "brave-key"),
@@ -72,7 +85,6 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
-      persistMessagingChannelConfigToSession: calls.persistMessaging,
       getSandboxReuseState: () => "missing",
       computeTelegramRequireMention: () => null,
       hasSandboxGpuDrift: () => false,
@@ -89,7 +101,6 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       getRecordedMessagingChannelsForResume: calls.getRecordedChannels,
       getSandboxMessagingChannels: () => ["telegram"],
       setupMessagingChannels: calls.setupMessaging,
-      readMessagingChannelConfigFromEnv: () => null,
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
       getRegistrySandboxMessagingPlan: () => null,
@@ -142,9 +153,10 @@ function baseOptions(
 
 describe("handleSandboxState", () => {
   it("creates a sandbox and records messaging/web search state", async () => {
+    const mockPlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
     const { deps, calls } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
-      readMessagingChannelConfigFromEnv: () => ({ telegram: "polling" }),
+      readMessagingPlanFromEnv: () => mockPlan,
     });
     calls.setupMessaging.mockResolvedValue(["telegram"]);
 
@@ -182,7 +194,10 @@ describe("handleSandboxState", () => {
   });
 
   it("reuses a completed ready sandbox on resume", async () => {
-    const session = createSession({ sandboxName: "saved", messagingChannels: ["slack"] });
+    const session = createSession({
+      sandboxName: "saved",
+      messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
+    });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
 
@@ -351,7 +366,10 @@ describe("handleSandboxState", () => {
 
   it("restores registry plan to env on non-interactive resume when env is empty", async () => {
     const registryPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
+    const session = createSession({
+      sandboxName: "my-assistant",
+      messagingPlan: makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
+    });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps } = createDeps({
@@ -369,7 +387,10 @@ describe("handleSandboxState", () => {
   it("prefers env-staged plan over registry plan on non-interactive resume (rebuild path)", async () => {
     const registryPlan = makeMinimalPlan("my-assistant");
     const rebuiltPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
+    const session = createSession({
+      sandboxName: "my-assistant",
+      messagingPlan: makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
+    });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps, getSession } = createDeps({
@@ -386,7 +407,10 @@ describe("handleSandboxState", () => {
   });
 
   it("does not restore plan to env when registry has no entry", async () => {
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
+    const session = createSession({
+      sandboxName: "my-assistant",
+      messagingPlan: makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
+    });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
     const { deps } = createDeps({
