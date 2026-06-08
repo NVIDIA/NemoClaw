@@ -8,14 +8,12 @@ import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.
 import { ScenarioRunner } from "./orchestrators/runner.ts";
 import { listScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
-import type { ScenarioDefinition } from "./types.ts";
+import type { PhaseResult, ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
-  planOnly: boolean;
-  dryRun: boolean;
-  validateOnly: boolean;
   emitMatrix: boolean;
+  planOnly: boolean;
   scenarios: string[];
 }
 
@@ -34,14 +32,7 @@ export interface ScenarioMatrixEntry {
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = {
-    list: false,
-    planOnly: false,
-    dryRun: false,
-    validateOnly: false,
-    emitMatrix: false,
-    scenarios: [],
-  };
+  const args: Args = { list: false, emitMatrix: false, planOnly: false, scenarios: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
@@ -54,14 +45,6 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--plan-only") {
       args.planOnly = true;
-      continue;
-    }
-    if (arg === "--dry-run") {
-      args.dryRun = true;
-      continue;
-    }
-    if (arg === "--validate-only") {
-      args.validateOnly = true;
       continue;
     }
     if (arg === "--scenarios") {
@@ -122,6 +105,7 @@ function emitMatrix() {
   // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
   //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
   // without needing heredoc multi-line output handling.
+  // Consumed by the dynamic matrix workflow (PR #4359).
   process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
 }
 
@@ -136,10 +120,6 @@ async function main() {
     return;
   }
 
-  const modeCount = [args.planOnly, args.dryRun, args.validateOnly].filter(Boolean).length;
-  if (modeCount !== 1) {
-    throw new Error("Use exactly one of --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
-  }
   if (args.scenarios.length === 0) {
     throw new Error("scenario execution requires --scenarios <id[,id...]>");
   }
@@ -153,12 +133,73 @@ async function main() {
   writePlanArtifacts(plans, contextDir);
   console.log(renderPlanText(plans));
 
-  if (args.dryRun) {
-    const runner = new ScenarioRunner();
-    for (const plan of plans) {
-      await runner.run({ contextDir, dryRun: true }, plan);
+  if (args.planOnly) {
+    // Local debug only. Workflows must not pass --plan-only.
+    return;
+  }
+
+  const runner = new ScenarioRunner();
+  const allResults: PhaseResult[] = [];
+  let anyFailed = false;
+  for (const plan of plans) {
+    const results = await runner.run({ contextDir }, plan);
+    allResults.push(...results);
+    if (planFailed(plan, results)) {
+      anyFailed = true;
     }
   }
+
+  // Surface a compact run summary so phase results don't have to be opened
+  // to see what passed.
+  console.log("");
+  console.log("Phase results:");
+  for (const result of allResults) {
+    const counts = result.assertions.reduce(
+      (acc, assertion) => {
+        acc[assertion.status] = (acc[assertion.status] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+    const detail = Object.entries(counts)
+      .map(([status, count]) => `${status}=${count}`)
+      .join(" ");
+    console.log(`  ${result.phase}: ${result.status} (${detail || "no steps"})`);
+  }
+
+  if (anyFailed) {
+    process.exitCode = 1;
+  }
+}
+
+// A scenario fails iff:
+//   positive (no expectedFailure): any phase result failed.
+//   negative (expectedFailure declared): the synthetic
+//     negative-contract phase did not match, OR the runtime
+//     control group's required side-effect step did not pass.
+//
+// The matcher decides exit code for negatives so that a scenario
+// that failed for the right reason in the right phase is no longer
+// reported as red just because setup did not complete. Until the
+// forbidden-side-effect probe lands, the required pending step in
+// runtimeControlGroups keeps negatives visibly red on the side-effect
+// axis even when phase + errorClass match.
+function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
+  if (!plan.expectedFailure) {
+    return results.some((result) => result.status === "failed");
+  }
+  const contractPhase = results.find((result) => result.phase === "negative-contract");
+  if (!contractPhase || contractPhase.status !== "passed") {
+    return true;
+  }
+  const runtime = results.find((result) => result.phase === "runtime");
+  const sideEffectStep = runtime?.assertions.find(
+    (assertion) => assertion.id === "runtime.expected-failure.no-side-effects",
+  );
+  if (!sideEffectStep || sideEffectStep.status !== "passed") {
+    return true;
+  }
+  return false;
 }
 
 // Only execute when invoked directly as a script. Importing this module from

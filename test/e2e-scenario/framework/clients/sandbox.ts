@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
-import { assertExitZero, type CommandRunner } from "./command.ts";
+import { trustedShellCommand } from "../shell-probe.ts";
+import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
 
 export interface SandboxClientOptions {
   openshellPath?: string;
@@ -18,11 +19,17 @@ export class SandboxClient {
   }
 
   openshell(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    return this.runner.run(this.openshellPath, {
-      artifactName: `openshell-${args.join("-") || "default"}`,
-      ...options,
-      args,
-    });
+    return this.runner.run(
+      trustedShellCommand({
+        command: this.openshellPath,
+        args,
+        reason: "run OpenShell sandbox command",
+      }),
+      {
+        artifactName: `openshell-${artifactLabel(args.join("-") || "default")}`,
+        ...options,
+      },
+    );
   }
 
   list(): Promise<ShellProbeResult> {
@@ -30,10 +37,12 @@ export class SandboxClient {
   }
 
   status(name: string): Promise<ShellProbeResult> {
+    validateSandboxName(name);
     return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}` });
   }
 
   exec(name: string, command: string[], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    validateSandboxName(name);
     return this.openshell(["sandbox", "exec", name, "--", ...command], {
       artifactName: `sandbox-exec-${name}`,
       ...options,
@@ -44,5 +53,11 @@ export class SandboxClient {
     const result = await this.status(name);
     assertExitZero(result, `openshell sandbox status ${name}`);
     return result;
+  }
+}
+
+function validateSandboxName(name: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
+    throw new Error(`sandbox name is invalid for fixture client: ${name}`);
   }
 }

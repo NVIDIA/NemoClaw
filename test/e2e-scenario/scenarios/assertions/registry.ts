@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { environmentBaseline } from "./environment.ts";
 import type { AssertionGroup, AssertionStep, PhaseName, ScenarioDefinition } from "../types.ts";
 
 type Reliability = AssertionStep["reliability"];
@@ -25,22 +24,42 @@ function shellStep(input: ShellStepInput): AssertionStep {
   };
 }
 
-function probeStep(id: string, phase: PhaseName, ref: string, reliability?: Reliability): AssertionStep {
+interface ProbeStepOptions {
+  reliability?: Reliability;
+  // When true, an unregistered probe fails the phase (and the run)
+  // instead of skipping. Use for security-sensitive probes the run
+  // is not safe without.
+  required?: boolean;
+}
+
+function probeStep(
+  id: string,
+  phase: PhaseName,
+  ref: string,
+  options: ProbeStepOptions = {},
+): AssertionStep {
   return {
     id,
     phase,
     implementation: { kind: "probe", ref },
     evidencePath: `.e2e/assertions/${id}.json`,
-    reliability,
+    reliability: options.reliability,
+    required: options.required,
   };
 }
 
-function pendingStep(id: string, phase: PhaseName, ref: string): AssertionStep {
+function pendingStep(
+  id: string,
+  phase: PhaseName,
+  ref: string,
+  options: { required?: boolean } = {},
+): AssertionStep {
   return {
     id,
     phase,
     implementation: { kind: "pending", ref },
     evidencePath: `.e2e/assertions/${id}.json`,
+    required: options.required,
   };
 }
 
@@ -186,7 +205,21 @@ export const runtimeControlGroups: AssertionGroup[] = [
     phase: "runtime",
     description: "Negative scenario runtime check ensuring forbidden side effects did not occur.",
     migrationStatus: "complete",
-    steps: [pendingStep("runtime.expected-failure.no-side-effects", "runtime", "expectedFailureNoSideEffectsProbe")],
+    steps: [
+      pendingStep(
+        "runtime.expected-failure.no-side-effects",
+        "runtime",
+        "expectedFailureNoSideEffectsProbe",
+        // Negative scenarios assert that a declared failure mode
+        // produced no forbidden side effects. Until the side-effect
+        // validator is implemented, this step must fail closed for
+        // any scenario that opts into runtimeControlGroups[0]
+        // (i.e. scenario.expectedFailure is set). Skipping it would
+        // let negative scenarios silently "pass" without verifying
+        // their core contract.
+        { required: true },
+      ),
+    ],
   },
 ];
 
@@ -219,9 +252,19 @@ export const validationSuiteGroups: AssertionGroup[] = [
   ]),
   suiteGroup("credentials", credentialsSteps),
   suiteGroup("security-credentials", credentialsSteps),
-  suiteGroup("security-shields", [probeStep("security.shields.config", "runtime", "shieldsConfigProbe")]),
-  suiteGroup("security-policy", [probeStep("security.policy.enforced", "runtime", "networkPolicyProbe")]),
-  suiteGroup("security-injection", [probeStep("security.injection.blocked", "runtime", "injectionBlockedProbe")]),
+  // Security-sensitive probes MUST fail closed until the probe
+  // registry lands. A skipped shields/policy/injection check would
+  // produce fake-green for the exact suites these scenarios exist to
+  // protect.
+  suiteGroup("security-shields", [
+    probeStep("security.shields.config", "runtime", "shieldsConfigProbe", { required: true }),
+  ]),
+  suiteGroup("security-policy", [
+    probeStep("security.policy.enforced", "runtime", "networkPolicyProbe", { required: true }),
+  ]),
+  suiteGroup("security-injection", [
+    probeStep("security.injection.blocked", "runtime", "injectionBlockedProbe", { required: true }),
+  ]),
   suiteGroup("messaging-telegram", [
     shellStep({ id: "messaging.telegram.injection-safety", phase: "runtime", ref: "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
     shellStep({ id: "messaging.telegram.injection-payload-classes", phase: "runtime", ref: "test/e2e-scenario/validation_suites/messaging/telegram/01-telegram-injection-payload-classes.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
@@ -257,7 +300,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
 ];
 
 export const assertionRegistry = {
-  groups: [environmentBaseline(), ...onboardingAssertionGroups, ...runtimeControlGroups, ...validationSuiteGroups],
+  groups: [...onboardingAssertionGroups, ...runtimeControlGroups, ...validationSuiteGroups],
 };
 
 export function assertionGroupForSuite(suiteId: string): AssertionGroup | undefined {
@@ -285,8 +328,15 @@ function supplementalSuiteIdsForScenario(scenario: ScenarioDefinition): string[]
       "sandbox-lifecycle",
       "sandbox-operations",
       "snapshot",
-      "rebuild",
-      "upgrade",
+      // 'rebuild' and 'upgrade' are intentionally NOT supplemental
+      // here. Those suites assert post-rebuild state (marker survival,
+      // version upgrade, post-rebuild inference) and require a real
+      // `nemoclaw rebuild` to have run first. The dedicated
+      // `ubuntu-rebuild-openclaw` scenario opts into them by declaring
+      // a `rebuild-current-version` lifecycle profile that performs
+      // the rebuild before the runtime phase. Including them on this
+      // scenario produced fake-failures (no rebuild ran, so nothing
+      // could be preserved) and obscured the real coverage gap.
       "diagnostics",
       "docs-validation",
     );
@@ -352,8 +402,11 @@ export function assertionGroupsForScenario(scenario: ScenarioDefinition): Assert
     return group;
   });
 
+  // Environment phase work is performed by typed PhaseAction entries
+  // (context.emit + install.<id>) emitted from compiler.phaseActions(),
+  // not by assertion groups. No environment-phase assertion group is
+  // included in scenario plans.
   const groups: (AssertionGroup | undefined)[] = [
-    environmentBaseline(),
     ...onboardingGroups,
     ...suiteGroups,
     ...supplementalGroups,

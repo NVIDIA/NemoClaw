@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
-import { assertExitZero, type CommandRunner } from "./command.ts";
+import { trustedShellCommand } from "../shell-probe.ts";
+import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
 
 export interface HostClientOptions {
   cliPath?: string;
@@ -21,16 +22,23 @@ export class HostCliClient {
   }
 
   command(command: string, args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    const merged: ShellProbeRunOptions = { ...options, args };
+    const merged: ShellProbeRunOptions = { ...options };
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;
     }
-    return this.runner.run(command, merged);
+    return this.runner.run(
+      trustedShellCommand({
+        command,
+        args,
+        reason: `run host command ${command}`,
+      }),
+      merged,
+    );
   }
 
   nemoclaw(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     return this.command(this.cliPath, args, {
-      artifactName: `nemoclaw-${args.join("-") || "default"}`,
+      artifactName: `nemoclaw-${artifactLabel(args.join("-") || "default")}`,
       ...options,
     });
   }
