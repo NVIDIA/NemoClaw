@@ -80,6 +80,10 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 NemoClaw validates both tokens before it saves Slack credentials or enables the channel.
+This validation calls the live Slack API (`auth.test` and `apps.connections.open`), so the tokens must belong to a real Slack app.
+If Slack rejects the tokens (for example, `invalid_auth` for placeholder or fake values), NemoClaw skips the Slack channel.
+Because the `slack` network policy preset is only applied for channels that are actually enabled, a skipped Slack channel also means the `slack` preset is not applied, so it does not appear as applied (`●`) in `$$nemoclaw <name> policy-list`.
+To exercise Slack channel setup and the `slack` policy preset with placeholder tokens in a restricted network or hermetic test environment, set `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1` to skip the live credential probes; Slack token format checks still apply.
 Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
 Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling to those channels.
 When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
