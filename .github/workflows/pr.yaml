@@ -167,11 +167,15 @@ jobs:
       - name: Verify package version matches git tags
         run: bash scripts/check-version-tag-sync.sh
 
-  cli-tests:
+  cli-test-shards:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -192,13 +196,79 @@ jobs:
       - name: Build TypeScript plugin
         run: cd nemoclaw && npm run build
 
-      - name: Run CLI coverage
+      - name: Run CLI coverage shard
         run: |
           node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
           npm run build:cli
           npx tsx scripts/check-dist-sourcemaps.ts dist
           npx vitest run --project cli \
+            --shard=${{ matrix.shard }}/3 \
             --reporter=github-actions \
+            --reporter=blob \
+            --coverage \
+            --coverage.reporter=json-summary \
+            --coverage.reportsDirectory=coverage/cli/shard-${{ matrix.shard }} \
+            --coverage.include="bin/**/*.js" \
+            --coverage.include="dist/lib/**/*.js" \
+            --coverage.exclude="test/**/*.js" \
+            --coverage.exclude="test/**/*.ts"
+
+      - name: Upload CLI shard blob report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-blob-report-${{ matrix.shard }}
+          path: .vitest-reports/blob-${{ matrix.shard }}-3.json
+          if-no-files-found: warn
+          retention-days: 1
+
+  cli-tests:
+    needs:
+      - changes
+      - cli-test-shards
+    if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+        run: |
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Build CLI TypeScript modules
+        run: |
+          node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
+          npm run build:cli
+          npx tsx scripts/check-dist-sourcemaps.ts dist
+
+      - name: Download CLI shard blob reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cli-blob-report-*
+          path: .vitest-reports
+          merge-multiple: true
+
+      - name: Merge CLI coverage
+        run: |
+          npx vitest --mergeReports .vitest-reports \
             --reporter=json \
             --outputFile.json=coverage/cli/vitest-results.json \
             --coverage \

@@ -10,7 +10,7 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 type PullRequestWorkflow = {
-  jobs: Record<string, WorkflowJob & { if?: string; needs?: string[] }>;
+  jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
 
 type CodebaseGrowthGuardrailsWorkflow = {
@@ -99,6 +99,7 @@ describe("pull request workflow contract", () => {
     const basicChecks = readYaml<CompositeAction>(".github/actions/basic-checks/action.yaml");
     const staticRuns = stepRuns(workflow.jobs["static-checks"]);
     const buildRuns = stepRuns(workflow.jobs["build-typecheck"]);
+    const cliShardRun = stepRuns(workflow.jobs["cli-test-shards"]).join("\n");
     const cliTestRun = stepRuns(workflow.jobs["cli-tests"]).join("\n");
     const pluginTestRun = stepRuns(workflow.jobs["plugin-tests"]).join("\n");
     const staticPrekRun = staticRuns.find((run) =>
@@ -129,12 +130,23 @@ describe("pull request workflow contract", () => {
     expect(buildRuns).toContain("cd nemoclaw && npx tsc --noEmit --incremental");
     expect(buildRuns).toContain("npx tsc -p jsconfig.json");
     expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
-    expect(cliTestRun).toContain("npx vitest run --project cli");
-    expect(cliTestRun).toContain("--reporter=github-actions");
+    expect(cliShardRun).toContain("cd nemoclaw && npm run build");
+    expect(cliShardRun).toContain("npm run build:cli");
+    expect(cliShardRun).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
+    expect(cliShardRun).toContain("npx vitest run --project cli");
+    expect(cliShardRun).toContain("--shard=${{ matrix.shard }}/3");
+    expect(cliShardRun).toContain("--reporter=github-actions");
+    expect(cliShardRun).toContain("--reporter=blob");
+    expect(cliShardRun).toContain("--coverage.reportsDirectory=coverage/cli/shard-${{ matrix.shard }}");
+    expect(cliShardRun).not.toContain("scripts/check-coverage-ratchet.ts");
+    expect(cliTestRun).toContain("npm run build:cli");
+    expect(cliTestRun).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
+    expect(cliTestRun).toContain("npx vitest --mergeReports .vitest-reports");
     expect(cliTestRun).toContain("--reporter=json");
     expect(cliTestRun).toContain(
       "--outputFile.json=coverage/cli/vitest-results.json",
     );
+    expect(cliTestRun).toContain("--coverage.reportsDirectory=coverage/cli");
     expect(cliTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
     expect(pluginTestRun).toContain("npx vitest run --project plugin");
     expect(pluginTestRun).toContain("npx tsx scripts/check-coverage-ratchet.ts");
@@ -174,6 +186,52 @@ describe("pull request workflow contract", () => {
     expect(uploadStep?.with?.["retention-days"]).toBe(14);
   });
 
+  it("runs CLI coverage in shards and merges coverage before ratcheting", () => {
+    const shardJob = workflow.jobs["cli-test-shards"];
+    const mergeJob = workflow.jobs["cli-tests"];
+    const shardRuns = stepRuns(shardJob).join("\n");
+    const mergeRuns = stepRuns(mergeJob).join("\n");
+    const shardUploadStep = shardJob.steps?.find(
+      (step) => step.name === "Upload CLI shard blob report",
+    );
+    const downloadStep = mergeJob.steps?.find(
+      (step) => step.name === "Download CLI shard blob reports",
+    );
+
+    expect(shardJob.needs).toBe("changes");
+    expect(shardJob.if).toBe("needs.changes.outputs.code == 'true'");
+    expect(shardJob.strategy?.["fail-fast"]).toBe(false);
+    expect(shardJob.strategy?.matrix?.shard).toEqual([1, 2, 3]);
+    expect(shardRuns).toContain("--shard=${{ matrix.shard }}/3");
+    expect(shardRuns).toContain("--reporter=blob");
+    expect(shardRuns).toContain("--coverage");
+    expect(shardRuns).not.toContain("--outputFile.json=coverage/cli/vitest-results.json");
+    expect(shardRuns).not.toContain("scripts/check-coverage-ratchet.ts");
+
+    expect(shardUploadStep?.if).toBe("always()");
+    expect(shardUploadStep?.uses).toContain("actions/upload-artifact@");
+    expect(shardUploadStep?.with?.name).toBe("cli-blob-report-${{ matrix.shard }}");
+    expect(shardUploadStep?.with?.path).toBe(
+      ".vitest-reports/blob-${{ matrix.shard }}-3.json",
+    );
+    expect(shardUploadStep?.with?.["retention-days"]).toBe(1);
+
+    expect(mergeJob.needs).toEqual(["changes", "cli-test-shards"]);
+    expect(mergeJob.if).toBe("${{ always() && needs.changes.outputs.code == 'true' }}");
+    expect(mergeRuns).toContain("CLI_SHARD_RESULT");
+    expect(mergeRuns).toContain("npx vitest --mergeReports .vitest-reports");
+    expect(mergeRuns).toContain("--outputFile.json=coverage/cli/vitest-results.json");
+    expect(mergeRuns).toContain("--coverage.reportsDirectory=coverage/cli");
+    expect(mergeRuns).toContain(
+      'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
+    );
+
+    expect(downloadStep?.uses).toContain("actions/download-artifact@");
+    expect(downloadStep?.with?.pattern).toBe("cli-blob-report-*");
+    expect(downloadStep?.with?.path).toBe(".vitest-reports");
+    expect(downloadStep?.with?.["merge-multiple"]).toBe(true);
+  });
+
   it("keeps the final checks job as the branch-protection aggregate", () => {
     const checks = workflow.jobs.checks;
     const checksRun = stepRuns(checks).join("\n");
@@ -188,6 +246,7 @@ describe("pull request workflow contract", () => {
       "plugin-tests",
       "test-e2e-ollama-proxy",
     ]);
+    expect(workflow.jobs["cli-tests"].needs).toContain("cli-test-shards");
 
     for (const jobName of [
       "changes",
@@ -204,7 +263,7 @@ describe("pull request workflow contract", () => {
   });
 
   it("does not run npm lifecycle scripts during pull_request dependency installs", () => {
-    for (const jobName of ["build-typecheck", "cli-tests", "plugin-tests"]) {
+    for (const jobName of ["build-typecheck", "cli-test-shards", "plugin-tests"]) {
       const installRun = stepRuns(workflow.jobs[jobName]).find((run) =>
         run.includes("cd nemoclaw && npm install"),
       );
@@ -216,6 +275,11 @@ describe("pull request workflow contract", () => {
         "cd nemoclaw && npm install\n",
       );
     }
+
+    const aggregateCliInstall = stepRuns(workflow.jobs["cli-tests"]).find((run) =>
+      run.includes("npm install"),
+    );
+    expect(aggregateCliInstall).toBe("npm install --ignore-scripts");
   });
 
   it("does not persist checkout credentials in pull_request jobs", () => {
