@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isIP } from "node:net";
+
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
 import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
@@ -16,10 +18,14 @@ export interface TrustedProviderEndpoint {
 }
 
 export interface TrustedProviderEndpointOptions {
+  /**
+   * Static framework-owned trust configuration for external HTTPS provider
+   * endpoints. Do not populate this from scenario manifests or user input.
+   */
   allowedHosts?: readonly string[];
 }
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal"]);
 
 function queryRedactionValues(url: URL): string[] {
@@ -41,6 +47,58 @@ function safeProviderLabels(url: URL): { artifactLabel: string; logLabel: string
   };
 }
 
+function normalizeHostname(hostname: string): string {
+  const host = hostname.trim().toLowerCase();
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  return host;
+}
+
+function parseIpv4(host: string): number[] | undefined {
+  const parts = host.split(".");
+  if (parts.length !== 4) return undefined;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return undefined;
+  }
+  return octets;
+}
+
+function isLoopbackHost(host: string): boolean {
+  if (LOOPBACK_HOSTS.has(host)) return true;
+  const ipv4 = parseIpv4(host);
+  return Boolean(ipv4 && ipv4[0] === 127);
+}
+
+function isPrivateOrLinkLocalIp(host: string): boolean {
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) {
+    const ipv4 = parseIpv4(host);
+    if (!ipv4) return false;
+    const [a, b] = ipv4;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (ipVersion === 6) {
+    if (host === "::" || host === "::1") return true;
+    if (host.startsWith("::ffff:")) {
+      return isPrivateOrLinkLocalIp(host.slice("::ffff:".length));
+    }
+    const firstHextet = Number.parseInt(host.split(":")[0] ?? "", 16);
+    if (!Number.isFinite(firstHextet)) return false;
+    return (firstHextet & 0xfe00) === 0xfc00 || (firstHextet & 0xffc0) === 0xfe80;
+  }
+  return false;
+}
+
 export function trustedProviderEndpoint(
   rawUrl: string,
   options: TrustedProviderEndpointOptions = {},
@@ -57,18 +115,21 @@ export function trustedProviderEndpoint(
   if (url.username || url.password) {
     throw new Error("provider endpoint URL must not include credentials");
   }
-  const host = url.hostname.toLowerCase();
+  const host = normalizeHostname(url.hostname);
   if (!host) {
     throw new Error("provider endpoint URL must include a host");
   }
   if (BLOCKED_HOSTS.has(host)) {
     throw new Error(`provider endpoint host is blocked: ${host}`);
   }
-  if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(host)) {
+  if (isPrivateOrLinkLocalIp(host) && !isLoopbackHost(host)) {
+    throw new Error(`provider endpoint IP literal must not target private or link-local ranges: ${host}`);
+  }
+  if (url.protocol === "http:" && !isLoopbackHost(host)) {
     throw new Error(`provider endpoint http URLs must target loopback hosts: ${host}`);
   }
-  const allowedHosts = options.allowedHosts?.map((allowed) => allowed.toLowerCase());
-  if (!LOOPBACK_HOSTS.has(host) && !allowedHosts) {
+  const allowedHosts = options.allowedHosts?.map(normalizeHostname);
+  if (!isLoopbackHost(host) && !allowedHosts) {
     throw new Error(`provider endpoint external hosts require an allowedHosts entry: ${host}`);
   }
   if (allowedHosts && !allowedHosts.includes(host)) {

@@ -166,6 +166,12 @@ describe("E2E fixture clients", () => {
     expect(() =>
       trustedProviderEndpoint("https://api.example.test/models", { allowedHosts: ["api.other.test"] }),
     ).toThrow(/not allowed/);
+    expect(() => trustedProviderEndpoint("https://10.0.0.1/models", { allowedHosts: ["10.0.0.1"] })).toThrow(
+      /private or link-local/,
+    );
+    expect(() =>
+      trustedProviderEndpoint("https://[fd00::1]/models", { allowedHosts: ["fd00::1"] }),
+    ).toThrow(/private or link-local/);
   });
 
   it("provider endpoint allows loopback HTTP, including IPv6 loopback", () => {
