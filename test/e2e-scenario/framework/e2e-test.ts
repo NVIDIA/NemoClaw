@@ -4,6 +4,13 @@
 import { expect, test as base } from "vitest";
 
 import { createArtifactSink, type ArtifactSink } from "./artifacts.ts";
+import {
+  GatewayClient,
+  HostCliClient,
+  ProviderClient,
+  SandboxClient,
+  StateClient,
+} from "./clients/index.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
@@ -13,6 +20,11 @@ export interface E2EScenarioFixtures {
   cleanup: CleanupRegistry;
   secrets: SecretStore;
   shellProbe: ShellProbe;
+  host: HostCliClient;
+  gateway: GatewayClient;
+  sandbox: SandboxClient;
+  provider: ProviderClient;
+  state: StateClient;
 }
 
 export const test = base
@@ -43,6 +55,11 @@ export const test = base
       redact: (text, extraValues) => secrets.redact(text, extraValues),
       signal,
     });
-  });
+  })
+  .extend("host", async ({ shellProbe }) => new HostCliClient(shellProbe))
+  .extend("gateway", async ({ host }) => new GatewayClient(host))
+  .extend("sandbox", async ({ shellProbe }) => new SandboxClient(shellProbe))
+  .extend("provider", async ({ shellProbe }) => new ProviderClient(shellProbe))
+  .extend("state", async () => new StateClient());
 
 export { expect };
