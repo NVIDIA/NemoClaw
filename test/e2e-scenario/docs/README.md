@@ -8,11 +8,15 @@ It combines typed scenario builders, product-facing setup manifests, YAML
 runtime metadata, and reusable shell suites while the older live E2E scripts
 continue to run in parallel.
 
-This hybrid model is transitional. The target architecture for #3588 is a
-single scenario runner that owns scenario resolution, orchestration, evidence
-collection, redaction, and assertion dispatch. Shell scripts should be kept to
-the smallest practical set of system-boundary probes or command fixtures, not a
-second planning or assertion-control runtime.
+This hybrid model is transitional. The target architecture for #3588 and #4941
+is **Vitest as the single scenario execution runner**, extended by NemoClaw
+fixtures and typed domain helpers. Vitest owns test discovery, filtering,
+timeouts, reporters, fixture lifecycle, skips, and CI integration. NemoClaw owns
+scenario vocabulary, setup/onboarding helpers, product clients, evidence
+collection, redaction, cleanup, and assertion helpers.
+
+Shell scripts should be kept to the smallest practical set of system-boundary
+probes or command fixtures, not a second planning or assertion-control runtime.
 
 ## Current sources of truth
 
@@ -34,11 +38,16 @@ maintainer-approved reason.
 
 ## Target runner model
 
-Future scenario coverage should move toward one runner with these properties:
+Future scenario coverage should move toward one Vitest-based runner with these
+properties:
 
-- the runner compiles one typed plan for each scenario and treats that plan as
-  the source of truth for setup, onboarding, expected state, suites, assertions,
-  evidence paths, and expected failures;
+- Vitest is the execution surface for live scenarios and owns lifecycle,
+  filtering, reporting, timeouts, and fixture scopes;
+- NemoClaw fixtures expose scenario-level helpers for setup, onboarding, host
+  CLI access, gateway checks, sandbox checks, provider fixtures, evidence
+  artifacts, redaction, and cleanup;
+- typed scenario data and matrix helpers describe stable scenario IDs and
+  supported combinations without becoming a second runner;
 - product-facing manifests remain declarative setup inputs, not executable test
   programs;
 - assertion modules prefer TypeScript probes and typed client helpers;
@@ -48,7 +57,7 @@ Future scenario coverage should move toward one runner with these properties:
   environment, timeout, redaction, artifact capture, and command/argument
   validation;
 - bridge work that expands the YAML/bash runner must also identify how that
-  behavior will move into the single runner before legacy runner paths are
+  behavior will move into Vitest fixtures before legacy runner paths are
   removed.
 
 The #4347-#4357 audit-phase issues should be read as acceptance coverage
@@ -79,8 +88,40 @@ The current YAML shell runner expresses this through:
 
 The typed scenario registry expresses the same intent as deterministic code and
 is used by the scenario workflow matrix and dry-run plan artifacts. The target
-single runner should collapse these parallel expressions into one executable
-plan model.
+Vitest fixture model should collapse these parallel expressions into one live
+execution path.
+
+## Fixture-first scenario shape
+
+Final-state live scenarios should read like regular Vitest tests that depend on
+NemoClaw fixtures:
+
+```ts
+import { test } from "../framework/e2e-test.ts";
+
+test("ubuntu repo cloud OpenClaw", async ({
+  repo,
+  openclaw,
+  gateway,
+  sandbox,
+  inference,
+}) => {
+  await repo.installCurrent();
+
+  const instance = await openclaw.onboard({
+    agent: "openclaw",
+    provider: "nvidia",
+  });
+
+  await gateway.expectHealthy(instance);
+  await sandbox.expectRunning(instance);
+  await inference.expectLocalChat(instance, { prompt: "Say ok.", expect: /ok/i });
+});
+```
+
+The test body should express product behavior. Fixture implementations should
+hide redacted process spawning, artifact paths, cleanup registration, secret
+gating, and retry/flake classification.
 
 ## How to run
 
@@ -148,14 +189,16 @@ test/e2e-scenario/
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
   `regression-e2e.yaml` still run legacy live E2E scripts during the migration.
 - `vitest.config.ts` contains the `e2e-scenario-framework` project for framework
-  and metadata tests.
+  and metadata tests. The live scenario target should be a separate opt-in
+  Vitest project so ordinary `npm test` remains fast and local-friendly.
 
 ## Migration tracking
 
 Migration status is tracked outside the repository in GitHub issues and PRs,
 not in repo-local checklists. The parent architecture issue is #3588. Active
 audit-coverage work is tracked by the #4347–#4357 issue set, with focused
-follow-ups such as #4378 for specific drift fixes.
+follow-ups such as #4378 for specific drift fixes. The execution-model decision
+is tracked in #4941.
 
 The old workflow-level parity report has been removed. Use scenario framework
 tests, the coverage report, PR review, and the audit issues to decide what to

@@ -20,10 +20,12 @@ The scenario E2E migration is in a hybrid phase:
 - legacy `test/e2e/test-*.sh` scripts still provide most live nightly and
   platform coverage.
 
-This hybrid shape is not the target end state. #3588 should converge on a
-single scenario runner. Until that runner owns live execution, resolver,
-assertion, evidence, and redaction behavior, treat YAML and bash runner updates
-as bridge work rather than durable architecture.
+This hybrid shape is not the target end state. #3588 and #4941 should converge
+on one live execution path: **Vitest as the scenario runner, extended by
+NemoClaw fixtures and typed domain helpers**. Until that path owns live
+execution, resolver behavior, assertions, evidence, cleanup, and redaction,
+treat YAML and bash runner updates as bridge work rather than durable
+architecture.
 
 Do not assume legacy scripts are deletion-ready just because a scenario or suite
 name exists. The final reconciliation phase must show either evidence-complete
@@ -34,19 +36,21 @@ removed.
 
 The final scenario framework should have one execution path:
 
-- typed scenario definitions compile to the runner plan consumed by CI and local
-  runs;
-- the runner owns setup, onboarding, runtime actions, expected-state probes,
-  assertion execution, expected-failure matching, evidence artifacts, and
-  secret redaction;
+- Vitest owns live execution, filtering, reporters, timeouts, fixture lifecycle,
+  skip handling, and CI integration;
+- NemoClaw fixtures own setup, onboarding, runtime actions, expected-state
+  probes, assertion helpers, expected-failure matching, evidence artifacts,
+  cleanup, and secret redaction;
+- typed scenario definitions and matrix helpers describe stable scenario IDs and
+  supported combinations without becoming a second execution framework;
 - reusable assertions prefer TypeScript probes and typed clients;
 - shell scripts remain only for host, sandbox, process, or platform boundaries
   where shell is the thing being tested or the lowest-risk adapter;
-- shell execution is wrapped by the runner so environment scoping, timeout,
+- shell execution is wrapped by fixtures so environment scoping, timeout,
   redaction, artifact capture, and argument validation are consistent.
 
 When a bridge PR adds behavior to the current YAML/bash runner, preserve the
-requirement it proves, but port that requirement into the single-runner path
+requirement it proves, but port that requirement into the Vitest fixture path
 before removing legacy runner pieces. Do not deepen the bash runner as a second
 long-term source of truth.
 
@@ -57,6 +61,7 @@ Use these GitHub issues for status and follow-up work:
 | Issue | Purpose |
 | --- | --- |
 | #3588 | Parent architecture epic for layered single-runner scenario E2E |
+| #4941 | Decision issue for using Vitest fixtures as the scenario execution model |
 | #4347–#4356 | Domain-specific audit-coverage phases |
 | #4357 | Final audit reconciliation, placeholder cleanup, and deletion-readiness review |
 | #4378 | Friendly `setup_scenarios` aliases for layered test plans |
@@ -88,7 +93,7 @@ When moving behavior from a legacy E2E script into the scenario framework:
    canonical scenario ID.
 4. Add or update current YAML metadata only when the existing bridge runner must
    keep resolving the scenario during the migration.
-5. Add the reusable assertion or probe in the single-runner direction whenever
+5. Add the reusable assertion or probe in the Vitest fixture direction whenever
    possible instead of adding new bash-runner-only behavior.
 6. Add reusable suite or assertion helpers instead of copying entire legacy
    scripts.
@@ -119,7 +124,7 @@ npx vitest run --project e2e-scenario-framework --silent=false --reporter=defaul
 ## Cleanup rules
 
 - Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.
-- Prefer single-runner behavior over new YAML/bash-runner behavior; if a bridge
+- Prefer Vitest fixture behavior over new YAML/bash-runner behavior; if a bridge
   change is unavoidable, document the porting requirement in the owning issue or
   PR.
 - Do not reintroduce the removed workflow-level parity report unless maintainers
