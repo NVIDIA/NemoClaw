@@ -15,10 +15,6 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 
 echo "local-ollama-inference:ollama-chat-completion"
 e2e_context_require E2E_SANDBOX_NAME
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would POST chat completion from sandbox to host-network Ollama"
-  exit 0
-fi
 name="$(e2e_context_get E2E_SANDBOX_NAME)"
 model="$(curl -fsS --max-time 10 http://127.0.0.1:11434/api/tags \
   | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(data.models?.[0]?.name || data.models?.[0]?.model || 'default');")"

@@ -24,9 +24,10 @@ Use the source that matches the task while the migration is in progress:
 
 | Task | Current source |
 | --- | --- |
-| Scenario workflow fan-out and dry-run planning | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts`, and `test/e2e-scenario/scenarios/run.ts` |
+| Scenario workflow fan-out and live execution | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts`, and `test/e2e-scenario/scenarios/run.ts` |
+| Typed expected-state registry (single source of truth) | `test/e2e-scenario/scenarios/expected-states.ts` |
 | Product-facing desired setup/onboarding state | `test/e2e-scenario/manifests/*.yaml` |
-| Shell runner scenario resolution and live scenario execution | `test/e2e-scenario/nemoclaw_scenarios/scenarios.yaml`, `expected-states.yaml`, and `validation_suites/suites.yaml` |
+| Shell runner scenario resolution and live scenario execution | `test/e2e-scenario/nemoclaw_scenarios/scenarios.yaml` and `validation_suites/suites.yaml` (legacy YAML resolver path retired) |
 | Reusable live suite assertions | `test/e2e-scenario/validation_suites/` |
 | Existing nightly and platform E2E coverage | legacy `test/e2e/test-*.sh` scripts and their workflows |
 
@@ -158,7 +159,6 @@ test/e2e-scenario/
   scenarios/                         # Typed builders, registry, compiler, assertions, dry-run orchestration
   nemoclaw_scenarios/                # YAML runtime metadata and setup helpers
     scenarios.yaml
-    expected-states.yaml
     install/
     onboard/
     fixtures/

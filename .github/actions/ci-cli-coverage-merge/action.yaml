@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-cli-coverage-merge
+description: Merge shared CLI coverage shard blob reports and run the coverage ratchet.
+
+inputs:
+  shard-count:
+    description: Total number of CLI coverage shards to merge.
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: "22"
+        cache: npm
+
+    - name: Install dependencies
+      shell: bash
+      run: npm install --ignore-scripts
+
+    - name: Build CLI TypeScript modules
+      shell: bash
+      run: |
+        node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
+        npm run build:cli
+        npx tsx scripts/check-dist-sourcemaps.ts dist
+
+    - name: Download CLI shard blob reports
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        pattern: cli-blob-report-*
+        path: .vitest-reports
+        merge-multiple: true
+
+    - name: Verify CLI shard blob reports
+      shell: bash
+      run: |
+        set -euo pipefail
+        for shard in $(seq 1 "${{ inputs.shard-count }}"); do
+          blob=".vitest-reports/blob-${shard}-${{ inputs.shard-count }}.json"
+          if [ ! -s "$blob" ]; then
+            echo "::error title=Missing CLI shard blob::Expected non-empty ${blob}"
+            exit 1
+          fi
+        done
+        blob_count=$(find .vitest-reports -maxdepth 1 -type f -name 'blob-*-${{ inputs.shard-count }}.json' | wc -l | tr -d ' ')
+        if [ "$blob_count" != "${{ inputs.shard-count }}" ]; then
+          echo "::error title=Unexpected CLI shard blob count::Expected ${{ inputs.shard-count }} blob reports, found ${blob_count}"
+          find .vitest-reports -maxdepth 1 -type f -print
+          exit 1
+        fi
+
+    - name: Merge CLI coverage
+      shell: bash
+      run: |
+        npx vitest --mergeReports .vitest-reports \
+          --reporter=json \
+          --outputFile.json=coverage/cli/vitest-results.json \
+          --coverage \
+          --coverage.reporter=text-summary \
+          --coverage.reporter=json-summary \
+          --coverage.reportsDirectory=coverage/cli \
+          --coverage.include="bin/**/*.js" \
+          --coverage.include="dist/lib/**/*.js" \
+          --coverage.exclude="test/**/*.js" \
+          --coverage.exclude="test/**/*.ts"
+        npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
+
+    - name: Upload CLI Vitest timing report
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: cli-vitest-results
+        path: coverage/cli/vitest-results.json
+        if-no-files-found: warn
+        retention-days: 14
