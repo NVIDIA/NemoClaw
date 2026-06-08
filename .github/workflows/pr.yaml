@@ -80,8 +80,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+          sparse-checkout-cone-mode: false
+
       - name: Run static checks
-        uses: ./.github/actions/ci-static-checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
 
   build-typecheck:
     needs: changes
@@ -94,8 +108,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+          sparse-checkout-cone-mode: false
+
       - name: Run build and type checks
-        uses: ./.github/actions/ci-build-typecheck
+        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
 
   cli-test-shards:
     needs: changes
@@ -112,8 +140,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+          sparse-checkout-cone-mode: false
+
       - name: Run CLI coverage shard
-        uses: ./.github/actions/ci-cli-coverage-shard
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
 
@@ -139,8 +181,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+          sparse-checkout-cone-mode: false
+
       - name: Merge CLI coverage
-        uses: ./.github/actions/ci-cli-coverage-merge
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
 
   plugin-tests:
     needs: changes
@@ -153,8 +209,22 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+          sparse-checkout-cone-mode: false
+
       - name: Run plugin coverage
-        uses: ./.github/actions/ci-plugin-coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
 
   test-e2e-ollama-proxy:
     needs: changes

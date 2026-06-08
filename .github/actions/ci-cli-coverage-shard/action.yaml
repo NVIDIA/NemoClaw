@@ -15,6 +15,32 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Validate shard inputs
+      id: validate-shard-inputs
+      shell: bash
+      env:
+        CLI_SHARD: ${{ inputs.shard }}
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
+      run: |
+        set -euo pipefail
+
+        case "$CLI_SHARD" in
+          ''|*[!0-9]*)
+            echo "::error title=Invalid CLI shard::Expected positive integer, got ${CLI_SHARD}"
+            exit 1
+            ;;
+        esac
+        case "$CLI_SHARD_COUNT" in
+          ''|*[!0-9]*)
+            echo "::error title=Invalid CLI shard count::Expected positive integer, got ${CLI_SHARD_COUNT}"
+            exit 1
+            ;;
+        esac
+        if [ "$CLI_SHARD" -lt 1 ] || [ "$CLI_SHARD_COUNT" -lt 1 ] || [ "$CLI_SHARD" -gt "$CLI_SHARD_COUNT" ]; then
+          echo "::error title=Invalid CLI shard range::Expected 1 <= shard <= shard-count, got ${CLI_SHARD}/${CLI_SHARD_COUNT}"
+          exit 1
+        fi
+
     - name: Setup Node.js
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
       with:
@@ -33,25 +59,28 @@ runs:
 
     - name: Run CLI coverage shard
       shell: bash
+      env:
+        CLI_SHARD: ${{ inputs.shard }}
+        CLI_SHARD_COUNT: ${{ inputs.shard-count }}
       run: |
         node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
         npm run build:cli
         npx tsx scripts/check-dist-sourcemaps.ts dist
         npx vitest run --project cli \
-          --shard=${{ inputs.shard }}/${{ inputs.shard-count }} \
+          --shard="${CLI_SHARD}/${CLI_SHARD_COUNT}" \
           --reporter=github-actions \
           --reporter=blob \
-          --outputFile.blob=.vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json \
+          --outputFile.blob=".vitest-reports/blob-${CLI_SHARD}-${CLI_SHARD_COUNT}.json" \
           --coverage \
           --coverage.reporter=json-summary \
-          --coverage.reportsDirectory=coverage/cli/shard-${{ inputs.shard }} \
+          --coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}" \
           --coverage.include="bin/**/*.js" \
           --coverage.include="dist/lib/**/*.js" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
 
     - name: Upload CLI shard blob report
-      if: always()
+      if: ${{ always() && steps.validate-shard-inputs.outcome == 'success' }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: cli-blob-report-${{ inputs.shard }}
