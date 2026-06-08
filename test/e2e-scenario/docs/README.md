@@ -126,24 +126,22 @@ gating, and retry/flake classification.
 
 ## How to run
 
+The TypeScript runner is the canonical entrypoint. There is one execution
+mode — live — and `--plan-only` is for local debug only (it must not appear
+in any CI workflow).
+
 ```bash
-# YAML/shell scenario runner
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --validate-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id>
-
-# Suite runner against an existing scenario context
-bash test/e2e-scenario/runtime/run-suites.sh <suite-id> [<suite-id>...]
-
-# Scenario metadata coverage report
-bash test/e2e-scenario/runtime/coverage-report.sh
-
-# Typed scenario registry / workflow dry-run path
+# List canonical scenario ids
 npx tsx test/e2e-scenario/scenarios/run.ts --list
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
+
+# Emit the GitHub Actions fan-out matrix payload
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+
+# Execute one or more scenarios live
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id[,id...]>
+
+# Local debug only: print the compiled plan without executing
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
 
 # Opt-in Vitest live scenario path
 npm run build:cli
@@ -151,8 +149,8 @@ NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silen
 ```
 
 Override the runtime context directory with `E2E_CONTEXT_DIR=<path>` (default
-`.e2e/`, gitignored). The shell scenario runner and suites communicate through
-`$E2E_CONTEXT_DIR/context.env`; suites should not rediscover setup state.
+`.e2e/`, gitignored). Suites communicate through `$E2E_CONTEXT_DIR/context.env`;
+suites should not rediscover setup state.
 
 ## Repository layout
 
@@ -175,11 +173,7 @@ test/e2e-scenario/
     platform/
     security/
     sandbox/
-  runtime/                           # Shell runner, suite runner, resolver, coverage report, shared libs
-    run-scenario.sh
-    run-suites.sh
-    coverage-report.sh
-    resolver/
+  runtime/                           # Shared shell helper libs sourced by validation_suites
     lib/
 ```
 
