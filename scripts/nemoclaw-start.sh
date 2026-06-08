@@ -128,6 +128,11 @@ _TOOL_REDIRECTS=(
   'PYTHON_HISTORY=/tmp/.python_history'
   'CLAUDE_CONFIG_DIR=/tmp/.claude'
   'npm_config_prefix=/tmp/npm-global'
+  # Pin npm online at runtime so a stale base image or future build-time
+  # offline-lock regression cannot force `only-if-cached` mode on PID 1 or
+  # `openshell sandbox connect` sessions.
+  'npm_config_offline=false'
+  'NPM_CONFIG_OFFLINE=false'
 )
 for _redir in "${_TOOL_REDIRECTS[@]}"; do
   export "${_redir?}"
@@ -1114,6 +1119,69 @@ refresh_openclaw_provider_placeholders() {
 
   local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
 
+  # Append operator-registered extras from NEMOCLAW_EXTRA_PLACEHOLDER_KEYS so
+  # the revision-strip walk also collapses suffixed placeholders such as
+  # openshell:resolve:env:v51_TELEGRAM_BOT_TOKEN_AGENT_A back to the canonical
+  # form. The host-side onboard parser at
+  # src/lib/onboard/extra-placeholder-keys.ts already filters by an identical
+  # regex, rejects canonical-channel collisions, and requires every entry to
+  # extend a canonical channel envKey with a non-empty `_<suffix>`; this loop
+  # mirrors all three checks because the env var travels through one extra hop
+  # and a sandbox operator could clobber it independently. Keeping both
+  # parsers symmetrical means a host-side restriction (refusing GITHUB_TOKEN,
+  # NEMOCLAW_EXTRA_PLACEHOLDER_KEYS itself, etc.) cannot be bypassed by
+  # mutating the runtime env after sandbox boot.
+  local extra_token
+  local _extra_raw="${NEMOCLAW_EXTRA_PLACEHOLDER_KEYS-}"
+  # Normalize commas to whitespace so callers can pass either form,
+  # matching the host-side parseExtraPlaceholderKeys contract.
+  _extra_raw="${_extra_raw//,/ }"
+  local _extras_accepted=0
+  local _canon_prefix
+  local _accepted_this_token
+  for extra_token in $_extra_raw; do
+    case "$extra_token" in
+      '' | TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN | SLACK_BOT_TOKEN | SLACK_APP_TOKEN | BRAVE_API_KEY | WECHAT_BOT_TOKEN)
+        continue
+        ;;
+    esac
+    if ! printf '%s' "$extra_token" | grep -Eq '^[A-Z][A-Z0-9_]{0,127}$'; then
+      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must match /^[A-Z][A-Z0-9_]{0,127}\$/\n" \
+        "$extra_token" >&2
+      continue
+    fi
+    _accepted_this_token=0
+    for _canon_prefix in TELEGRAM_BOT_TOKEN_ DISCORD_BOT_TOKEN_ SLACK_BOT_TOKEN_ SLACK_APP_TOKEN_ WECHAT_BOT_TOKEN_ BRAVE_API_KEY_; do
+      case "$extra_token" in
+        "${_canon_prefix}"?*)
+          _accepted_this_token=1
+          break
+          ;;
+      esac
+    done
+    if [ "$_accepted_this_token" -ne 1 ]; then
+      printf "[config] Ignoring NEMOCLAW_EXTRA_PLACEHOLDER_KEYS entry '%s' — must extend a canonical channel envKey such as TELEGRAM_BOT_TOKEN_<suffix>\n" \
+        "$extra_token" >&2
+      continue
+    fi
+    if [ "$_extras_accepted" -ge 32 ]; then
+      printf "[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS: capped at 32 entries; ignoring remainder\n" >&2
+      break
+    fi
+    keys="$keys $extra_token"
+    _extras_accepted=$((_extras_accepted + 1))
+  done
+  if [ "$_extras_accepted" -gt 0 ]; then
+    # Deterministic breadcrumb so e2e harnesses can prove the host-validated
+    # extras list reached the in-container refresh helper even when no
+    # revision-scoped placeholder has been staged yet (which is the steady
+    # state for a fresh provider attach). Stripping the canonical baseline
+    # prefix here keeps the log line about extras only.
+    local _accepted_extras="${keys#TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY }"
+    printf '[config] NEMOCLAW_EXTRA_PLACEHOLDER_KEYS accepted %d entry(ies): %s\n' \
+      "$_extras_accepted" "$_accepted_extras" >&2
+  fi
+
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
     return 1
@@ -1152,12 +1220,27 @@ with open(config_file, encoding="utf-8") as f:
 
 refreshed = set()
 
+# Match each canonical placeholder only as an exact token. The OpenShell
+# placeholder grammar is "openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]*",
+# so the negative-lookahead ensures replacing TELEGRAM_BOT_TOKEN does not
+# also mutate TELEGRAM_BOT_TOKEN_AGENT_A; sort longest-first so two keys
+# sharing a strict prefix still match the more specific one when both
+# replacements happen to apply to the same exact-token position (the
+# lookahead already guarantees disjoint matches in practice, but keeping
+# longest-first preserves the determinism the tests rely on).
+replacement_patterns = [
+    (re.compile(re.escape(old) + r"(?![A-Za-z0-9_])"), key, new)
+    for old, (key, new) in sorted(replacements.items(), key=lambda kv: -len(kv[0]))
+]
+
+
 def rewrite(value):
     if isinstance(value, str):
-        for old, (key, new) in replacements.items():
-            if old in value:
-                value = value.replace(old, new)
+        for pattern, key, new in replacement_patterns:
+            updated, count = pattern.subn(new, value)
+            if count:
                 refreshed.add(key)
+                value = updated
         return value
     if isinstance(value, list):
         return [rewrite(item) for item in value]

@@ -9,7 +9,6 @@ import type { GpuInfo } from "../local";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { waitForPort } = require("../../core/wait");
@@ -38,7 +37,6 @@ const {
   loadLocalAdapterPid,
   persistLocalAdapterPid,
   readLocalAdapterTextFile,
-  removeLocalAdapterFile,
   spawnDetachedNodeAdapter,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
@@ -120,10 +118,6 @@ function persistProxyPid(pid: number | null | undefined): void {
 
 function loadPersistedProxyPid(): number | null {
   return loadLocalAdapterPid(PROXY_PID_PATH);
-}
-
-function clearPersistedProxyPid(): void {
-  removeLocalAdapterFile(PROXY_PID_PATH);
 }
 
 // ── Process management ───────────────────────────────────────────

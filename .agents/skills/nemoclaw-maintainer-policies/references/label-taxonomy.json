@@ -59,7 +59,7 @@
       "family": "pr_type",
       "item_kinds": ["pull_request"],
       "description": "PR primarily fixes broken behavior.",
-      "positive_signals": ["regression fix", "failing test fix", "crash fix", "incorrect output fix"],
+      "positive_signals": ["fix conventional commit prefix", "regression fix", "failing test fix", "crash fix", "incorrect output fix"],
       "negative_signals": ["new capability", "docs only", "tooling only"],
       "mutually_exclusive_group": "pr_type"
     },
@@ -68,7 +68,7 @@
       "family": "pr_type",
       "item_kinds": ["pull_request"],
       "description": "PR adds or expands user-visible capability.",
-      "positive_signals": ["new command", "new provider", "new workflow", "new user-facing behavior"],
+      "positive_signals": ["feat conventional commit prefix", "new command", "new provider", "new workflow", "new user-facing behavior"],
       "negative_signals": ["bug-only fix", "docs only"],
       "mutually_exclusive_group": "pr_type"
     },
@@ -77,7 +77,7 @@
       "family": "pr_type",
       "item_kinds": ["pull_request"],
       "description": "PR restructures code without intended behavior change.",
-      "positive_signals": ["cleanup", "decomposition", "architecture simplification"],
+      "positive_signals": ["refactor conventional commit prefix", "cleanup", "decomposition", "architecture simplification"],
       "negative_signals": ["intended behavior change"],
       "mutually_exclusive_group": "pr_type"
     },
@@ -86,7 +86,7 @@
       "family": "pr_type",
       "item_kinds": ["pull_request"],
       "description": "Docs, CI, dependencies, packaging, policy, or maintenance.",
-      "positive_signals": ["docs", "CI", "dependency", "skill policy", "automation", "packaging"],
+      "positive_signals": ["chore conventional commit prefix", "docs-only", "CI-only", "dependency", "skill policy", "generated skill sync", "automation", "packaging"],
       "negative_signals": ["primary product behavior change"],
       "mutually_exclusive_group": "pr_type"
     },
@@ -103,18 +103,18 @@
       "name": "needs: triage",
       "family": "needs",
       "item_kinds": ["issue", "pull_request"],
-      "description": "New issue or PR needs maintainer review for project workflow assignment, labeling, ownership, or next action.",
-      "positive_signals": ["new issue", "new PR", "project workflow assignment needed", "labeling needed", "ownership needed", "next action unclear"],
-      "negative_signals": ["already classified", "project workflow assignment complete", "owner assigned", "next action clear"],
+      "description": "Existing inbox/placeholder signal for unprocessed items; normal triage agents should not newly add it.",
+      "positive_signals": ["pre-triage inbox state before an agent produces recommendations"],
+      "negative_signals": ["normal triage output", "Type recommended", "labels recommended", "Project fields recommended", "already classified", "project workflow assignment complete", "owner assigned", "next action clear"],
       "mutually_exclusive_group": null
     },
     {
       "name": "needs: info",
       "family": "needs",
       "item_kinds": ["issue", "pull_request"],
-      "description": "Waiting on author for missing details.",
-      "positive_signals": ["missing repro", "missing logs", "missing version", "missing platform", "unclear intent"],
-      "negative_signals": ["enough context to act", "review-ready PR"],
+      "description": "Waiting on author for missing details required before work can proceed.",
+      "positive_signals": ["missing repro required for investigation", "missing logs required for investigation", "missing version required for routing", "missing platform required for routing", "unclear intent blocks review"],
+      "negative_signals": ["optional clarifying question only", "enough context to act", "enough context to route", "review-ready PR"],
       "mutually_exclusive_group": "primary_blocking_need"
     },
     {
@@ -122,8 +122,8 @@
       "family": "needs",
       "item_kinds": ["issue", "pull_request"],
       "description": "Requires product or architecture direction.",
-      "positive_signals": ["cross-cutting change", "unclear architecture", "product decision needed"],
-      "negative_signals": ["straightforward implementation"],
+      "positive_signals": ["cross-cutting change with no clear owner", "unclear architecture blocks implementation", "product decision needed before work can proceed"],
+      "negative_signals": ["straightforward implementation", "specific integration bug", "test flake", "documentation gap"],
       "mutually_exclusive_group": null
     },
     {
@@ -180,7 +180,9 @@
         "Use area labels for the affected product or code surface, not for every concept mentioned in the report.",
         "For install/onboarding/packaging overlap: use area: install for prerequisites or setup mechanics, area: onboarding for first-run flow and onboarding state, and area: packaging for shipped artifacts, images, registries, or distribution.",
         "For inference/providers/routing/local-models overlap: use area: inference for model execution or output behavior, area: providers for provider integration/configuration/selection work, area: routing for dispatch/fallback/model-selection logic, and area: local-models for local runtime, download, launch, or connectivity.",
-        "For integrations/messaging overlap: use area: integrations for external app or bridge behavior, area: messaging when message delivery/channel lifecycle is the affected subsystem, and add a specific integration:* label when one listed integration is involved."
+        "For integrations/messaging overlap: use area: integrations for external app or bridge behavior, area: messaging when message delivery/channel lifecycle is the affected subsystem, and add a specific integration:* label when one listed integration is involved.",
+        "Do not use only area: integrations when a canonical integration is named or clearly implicated; include the matching integration:* label.",
+        "For CI/e2e overlap: use area: ci for workflow, check, release automation, nightly-runner, or test infrastructure failures. Do not add area: ci merely because an e2e failure was observed in CI; use both area: ci and area: e2e only when the CI workflow, runner, scheduling, logs, or test infrastructure is part of the affected surface."
       ],
       "values": [
         "area: architecture",
@@ -217,8 +219,8 @@
         {
           "name": "area: ci",
           "description": "CI workflows, checks, release automation, or GitHub Actions.",
-          "positive_signals": ["GitHub Actions", "workflow failure", "CI check", "release automation", "test runner infrastructure"],
-          "negative_signals": ["runtime bug found by CI but not caused by CI", "manual test failure"]
+          "positive_signals": ["GitHub Actions", "workflow failure", "CI check", "release automation", "test runner infrastructure", "nightly runner", "e2e workflow or runner issue", "CI log or scheduling issue"],
+          "negative_signals": ["e2e failure merely observed in CI", "runtime bug found by CI but not caused by CI", "manual test failure"]
         },
         {
           "name": "area: cli",
@@ -254,7 +256,7 @@
           "name": "area: integrations",
           "description": "External app, tool, channel, or OpenClaw integration behavior.",
           "positive_signals": ["external app", "bridge", "channel", "integration setup", "third-party tool"],
-          "negative_signals": ["core product behavior with no external integration"]
+          "negative_signals": ["core product behavior with no external integration", "specific canonical integration named but matching integration:* label omitted"]
         },
         {
           "name": "area: local-models",
@@ -379,7 +381,7 @@
         {
           "name": "platform: arm64",
           "description": "ARM64 or aarch64-specific behavior.",
-          "positive_signals": ["ARM64-only failure", "aarch64 build failure", "architecture-specific binary or dependency", "reproduction differs between ARM64 and x86_64"],
+          "positive_signals": ["ARM64-only failure", "Windows ARM", "Windows ARM64", "aarch64 build failure", "architecture-specific binary or dependency", "reproduction differs between ARM64 and x86_64"],
           "negative_signals": ["platform only listed in environment", "same failure on x86_64", "Apple Silicon or Jetson issue better routed by platform: macos or platform: jetson alone"]
         },
         {
@@ -457,7 +459,7 @@
         {
           "name": "platform: wsl",
           "description": "Windows Subsystem for Linux behavior.",
-          "positive_signals": ["WSL", "WSL2", "Windows Subsystem for Linux", "WSL networking", "WSL filesystem path"],
+          "positive_signals": ["WSL", "WSL2", "Ubuntu on WSL", "Ubuntu on WSL2", "Windows Subsystem for Linux", "WSL networking", "WSL filesystem path"],
           "negative_signals": ["native Windows issue", "generic Linux issue without WSL-specific evidence"]
         }
       ],
@@ -520,7 +522,8 @@
       "selection_guidance": [
         "Apply integration labels only when a listed external app, channel, tool, or agent integration is specifically involved.",
         "Use area: integrations for integration subsystem work, and add integration:* when a listed integration is named or clearly implicated.",
-        "Use area: messaging when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with integration:* when the messaging issue is specific to a listed integration."
+        "Use area: messaging when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with integration:* when the messaging issue is specific to a listed integration.",
+        "If the title, body, linked issue, test name, file path, or PR prefix names a canonical integration as the affected subject, include the corresponding integration:* label. Do not replace the specific label with only area: integrations."
       ],
       "values": [
         "integration: brave",
@@ -547,14 +550,14 @@
         },
         {
           "name": "integration: hermes",
-          "description": "Hermes startup, plugin, or sandbox behavior.",
-          "positive_signals": ["Hermes", "Hermes plugin", "Hermes startup", "Hermes sandbox"],
+          "description": "Hermes startup, plugin, sandbox, TUI, or Hermes model/tool-call behavior.",
+          "positive_signals": ["Hermes", "[hermes]", "fix(hermes)", "agents/hermes", "Hermes-3", "Hermes TUI", "Hermes tool call", "Hermes plugin", "Hermes startup", "Hermes sandbox"],
           "negative_signals": ["generic plugin issue without Hermes evidence"]
         },
         {
           "name": "integration: openclaw",
-          "description": "OpenClaw runtime, plugins, configuration, or bridge.",
-          "positive_signals": ["OpenClaw", "OpenClaw runtime", "OpenClaw plugin", "OpenClaw bridge"],
+          "description": "OpenClaw runtime, TUI, e2e tests, stubs, plugins, configuration, or bridge.",
+          "positive_signals": ["OpenClaw", "openclaw", "openclaw-tui", "openclaw e2e", "OpenClaw runtime", "OpenClaw plugin", "OpenClaw bridge", "OpenClaw config", "OpenClaw stub"],
           "negative_signals": ["NemoClaw core behavior without OpenClaw involvement"]
         },
         {

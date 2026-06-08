@@ -88,6 +88,7 @@ describe("public route/display separation", () => {
       "sandbox:hosts:list",
       "sandbox:hosts:remove",
       "sandbox:policy:add",
+      "sandbox:policy:explain",
       "sandbox:policy:list",
       "sandbox:policy:remove",
     ]);

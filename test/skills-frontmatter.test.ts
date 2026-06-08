@@ -44,7 +44,6 @@ describe("repo skill markdown files", () => {
 
   for (const markdownFile of generatedUserSkillFiles) {
     const relPath = path.relative(repoRoot, markdownFile);
-    const isSkill = path.basename(markdownFile) === "SKILL.md";
 
     it(`does not include generated SPDX comments for ${relPath}`, () => {
       const raw = fs.readFileSync(markdownFile, "utf8");

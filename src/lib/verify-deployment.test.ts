@@ -110,7 +110,7 @@ describe("verifyDeployment", () => {
   it("messaging failure is a warning, not a blocker", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["slack", "discord"],
-      providerExistsInGateway: (name: string) => name !== "discord",
+      providerExistsInGateway: (name: string) => name !== "my-sandbox-discord-bridge",
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(true); // messaging is non-blocking

@@ -172,6 +172,16 @@ describe("handleProviderInferenceState", () => {
       metadata: { state: "inference", provider: "nvidia-prod", model: "nvidia/test" },
     });
     expect(result.retryStateResults).toEqual([]);
+    expect(result.stateResults).toEqual([
+      {
+        type: "transition",
+        next: "inference",
+        transitionKind: "advance",
+        updates: undefined,
+        metadata: { state: "provider_selection", provider: "nvidia-prod", model: "nvidia/test" },
+      },
+      result.stateResult,
+    ]);
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
@@ -435,6 +445,12 @@ describe("handleProviderInferenceState", () => {
       },
     ]);
     expect(result.stateResult).toMatchObject({ next: "sandbox", transitionKind: "advance" });
+    expect(result.stateResults.map((stateResult) => [stateResult.next, stateResult.transitionKind])).toEqual([
+      ["inference", "advance"],
+      ["provider_selection", "retry"],
+      ["inference", "advance"],
+      ["sandbox", "advance"],
+    ]);
   });
 
   it("aborts before inference setup when the configuration summary is rejected", async () => {
