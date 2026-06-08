@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { makeMessagingState } from "../../../../test/helpers/messaging-plan-fixtures";
 
 // The orchestrator transitively pulls in policy/index.ts and agent/defs.ts,
 // both of which require runner.ts via CJS; runner.ts uses `require()` calls
@@ -116,37 +117,10 @@ function entry(
   channelIds: string[] = ["whatsapp"],
   disabledChannels: string[] = [],
 ): SandboxEntry {
-  const disabled = new Set(disabledChannels);
   return {
     name: "alpha",
     agent: "openclaw",
-    messaging: {
-      schemaVersion: 1,
-      plan: {
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "openclaw",
-        workflow: "onboard",
-        channels: channelIds.map((channelId) => ({
-          channelId,
-          displayName: channelId,
-          authMode: "token-paste",
-          active: !disabled.has(channelId),
-          selected: true,
-          configured: true,
-          disabled: disabled.has(channelId),
-          inputs: [],
-          hooks: [],
-        })),
-        disabledChannels,
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      },
-    },
+    messaging: makeMessagingState("alpha", channelIds, disabledChannels),
   } as SandboxEntry;
 }
 

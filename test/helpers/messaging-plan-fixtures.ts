@@ -1,20 +1,27 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  MessagingAgentId,
+  MessagingCompilerWorkflow,
+  SandboxMessagingPlan,
+} from "../../src/lib/messaging/manifest";
+import type { SandboxMessagingState } from "../../src/lib/state/registry";
+
 export function makeMessagingPlan(
   sandboxName: string,
   channels: readonly string[],
   disabledChannels: readonly string[] = [],
-  agent = "openclaw",
-  workflow = "onboard",
+  agent: string = "openclaw",
+  workflow: string = "onboard",
   config: Record<string, string> = {},
-) {
+): SandboxMessagingPlan {
   const disabled = new Set(disabledChannels);
   return {
     schemaVersion: 1,
     sandboxName,
-    agent,
-    workflow,
+    agent: agent as MessagingAgentId,
+    workflow: workflow as MessagingCompilerWorkflow,
     channels: channels.map((channelId) => ({
       channelId,
       displayName: channelId,
@@ -50,10 +57,10 @@ export function makeMessagingState(
   sandboxName: string,
   channels: readonly string[],
   disabledChannels: readonly string[] = [],
-  agent = "openclaw",
-  workflow = "onboard",
+  agent: string = "openclaw",
+  workflow: string = "onboard",
   config: Record<string, string> = {},
-) {
+): SandboxMessagingState {
   return {
     schemaVersion: 1,
     plan: makeMessagingPlan(sandboxName, channels, disabledChannels, agent, workflow, config),

@@ -2,40 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { makeMessagingPlan } from "../../../../../test/helpers/messaging-plan-fixtures";
 
-import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
 
 function makeMinimalPlan(
   sandboxName: string,
-  agent = "openclaw",
+  agent: "openclaw" | "hermes" = "openclaw",
   channelIds: readonly string[] = [],
-): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: agent as SandboxMessagingPlan["agent"],
-    workflow: "onboard",
-    channels: channelIds.map((channelId) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "token-paste",
-      active: true,
-      selected: true,
-      configured: true,
-      disabled: false,
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
+) {
+  return makeMessagingPlan(sandboxName, channelIds, [], agent);
 }
 
 type Gpu = { type: string } | null;

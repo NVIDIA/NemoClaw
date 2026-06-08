@@ -6,6 +6,17 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import {
+  getConfiguredMessagingChannelsFromEntry,
+  getDisabledMessagingChannelsFromEntry,
+  getMessagingPlanFromEntry,
+} from "./registry-messaging";
+export {
+  getActiveMessagingChannelsFromEntry,
+  getConfiguredMessagingChannelsFromEntry,
+  getDisabledMessagingChannelsFromEntry,
+  getMessagingPlanFromEntry,
+} from "./registry-messaging";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -408,41 +419,6 @@ export function setChannelDisabled(name: string, channel: string, disabled: bool
     save(data);
     return true;
   });
-}
-
-export function getMessagingPlanFromEntry(
-  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
-): SandboxMessagingPlan | null {
-  const plan = entry?.messaging?.schemaVersion === 1 ? entry.messaging.plan : null;
-  return plan?.schemaVersion === 1 ? plan : null;
-}
-
-export function getConfiguredMessagingChannelsFromEntry(
-  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
-): string[] {
-  const plan = getMessagingPlanFromEntry(entry);
-  if (!plan) return [];
-  return plan.channels
-    .filter((channel) => channel.configured)
-    .map((channel) => channel.channelId);
-}
-
-export function getActiveMessagingChannelsFromEntry(
-  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
-): string[] {
-  const plan = getMessagingPlanFromEntry(entry);
-  if (!plan) return [];
-  const disabled = new Set(plan.disabledChannels);
-  return plan.channels
-    .filter((channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId))
-    .map((channel) => channel.channelId);
-}
-
-export function getDisabledMessagingChannelsFromEntry(
-  entry: Pick<SandboxEntry, "messaging"> | null | undefined,
-): string[] {
-  const plan = getMessagingPlanFromEntry(entry);
-  return plan ? [...plan.disabledChannels] : [];
 }
 
 export function getConfiguredMessagingChannels(name: string): string[] {

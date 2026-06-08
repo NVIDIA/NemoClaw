@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeMessagingState } from "../../../test/helpers/messaging-plan-fixtures";
 
 import {
   getSandboxInventory,
@@ -16,35 +17,9 @@ function withMessaging(
   channels: readonly string[],
   disabledChannels: readonly string[] = [],
 ): SandboxEntry {
-  const disabled = new Set(disabledChannels);
   return {
     ...sandbox,
-    messaging: {
-      plan: {
-        schemaVersion: 1,
-        sandboxName: sandbox.name,
-        agent: "openclaw",
-        workflow: "onboard",
-        channels: channels.map((channelId) => ({
-          channelId,
-          displayName: channelId,
-          authMode: "token-paste",
-          active: !disabled.has(channelId),
-          selected: true,
-          configured: true,
-          disabled: disabled.has(channelId),
-          inputs: [],
-          hooks: [],
-        })),
-        disabledChannels,
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      },
-    },
+    messaging: makeMessagingState(sandbox.name, channels, disabledChannels),
   };
 }
 
