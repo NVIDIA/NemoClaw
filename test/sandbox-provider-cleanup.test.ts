@@ -17,7 +17,7 @@ function buildRunOpenshell(
   defaultResponse: RunResult = { status: 0 },
 ) {
   const calls: Argv[] = [];
-  const fn = vi.fn((args: Argv) => {
+  const fn = vi.fn((args: Argv, _opts?: Record<string, unknown>) => {
     calls.push(args);
     const key = args.join(" ");
     return responses.get(key) ?? defaultResponse;

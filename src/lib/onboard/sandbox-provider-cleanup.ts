@@ -107,10 +107,26 @@ export function detachSandboxProviders(
  * through the injected `warn` channel with the failure output redacted and
  * length-capped. Returns the same result as `detachSandboxProviders` so
  * callers can inspect / re-test specific names if they want to short-circuit
- * downstream work; the rebuild and destroy paths both treat any residual
- * failures as advisory because the subsequent `sandbox delete` and
- * `provider delete` / `provider create` calls will surface the real
- * uncleanable provider with a more actionable diagnostic.
+ * downstream work.
+ *
+ * Non-tolerated detach failures are advisory rather than fatal because the
+ * downstream operations that immediately follow the cleanup already surface
+ * the same residual attachment with an actionable, name-scoped error:
+ *
+ *   - The onboard recreate path runs `upsertMessagingProviders(...,
+ *     { replaceExisting: true })` next; its `provider delete` step calls
+ *     `process.exit(1)` with the exact OpenShell FailedPrecondition diagnostic
+ *     for any provider still attached.
+ *   - The destroy path runs `runOpenshell(["sandbox", "delete", sandboxName])`
+ *     next; that call hard-fails on non-`alreadyGone` errors before any
+ *     registry state is removed, so a real gateway outage stops destroy
+ *     before it can drop state needed for retry.
+ *
+ * Treating a non-tolerated detach return as a hard failure here would
+ * regress the merely-flaky-gateway case (where the subsequent operation
+ * succeeds) without gaining any signal that the immediately-following step
+ * does not already provide. Callers that want stricter semantics inspect
+ * the returned `failures` array directly.
  */
 export function runSandboxProviderPreDeleteCleanup(
   sandboxName: string,
