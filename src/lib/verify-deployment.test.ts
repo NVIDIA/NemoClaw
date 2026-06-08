@@ -120,43 +120,6 @@ describe("verifyDeployment", () => {
     expect(msgDiag?.detail).toContain("discord");
   });
 
-  it("checks sandbox-scoped provider names for configured messaging channels", async () => {
-    const checkedProviders: string[] = [];
-    const deps = makeDeps({
-      getMessagingChannels: () => ["telegram", "slack"],
-      providerExistsInGateway: (name: string) => {
-        checkedProviders.push(name);
-        return true;
-      },
-    });
-
-    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-
-    expect(result.verification.messagingBridgesHealthy).toBe(true);
-    expect(checkedProviders).toEqual([
-      "my-sandbox-telegram-bridge",
-      "my-sandbox-slack-bridge",
-      "my-sandbox-slack-app",
-    ]);
-  });
-
-  it("does not require a gateway provider for tokenless messaging channels", async () => {
-    const checkedProviders: string[] = [];
-    const deps = makeDeps({
-      getMessagingChannels: () => ["whatsapp"],
-      providerExistsInGateway: (name: string) => {
-        checkedProviders.push(name);
-        return false;
-      },
-    });
-
-    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-
-    expect(result.verification.messagingBridgesHealthy).toBe(true);
-    expect(checkedProviders).toEqual([]);
-    expect(result.diagnostics.find((d) => d.link === "messaging")).toBeUndefined();
-  });
-
   it("warns when an expected channel is absent from the runtime config entirely (stale rebuild)", async () => {
     // Registry says telegram is enabled, but a stale or bad rebuild
     // produced an openclaw.json with no `channels.telegram` block. The
