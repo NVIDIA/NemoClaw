@@ -628,16 +628,27 @@ function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerial
 
 function mergeJsonObjects(target: JsonObject, patch: JsonObject): void {
   for (const [key, value] of Object.entries(patch)) {
-    assertSafeObjectKey(key, "Messaging object merge");
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      throw new MessagingBuildApplierError("Messaging object merge rejected unsafe object key " + key);
+    }
     const existing = target[key];
     if (isObject(existing) && isObject(value)) {
       mergeJsonObjects(existing as JsonObject, value as JsonObject);
     } else if (Array.isArray(existing) && Array.isArray(value)) {
-      target[key] = [...new Set([...existing, ...value])];
+      setMergedObjectValue(target, key, [...new Set([...existing, ...value])]);
     } else {
-      target[key] = value;
+      setMergedObjectValue(target, key, value);
     }
   }
+}
+
+function setMergedObjectValue(target: JsonObject, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 function mergeEnvLines(existingLines: string[], desiredLines: readonly string[]): void {

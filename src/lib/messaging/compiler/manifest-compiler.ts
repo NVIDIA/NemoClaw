@@ -331,16 +331,20 @@ function inputReferenceBase(
 }
 
 function readInputEnvValue(input: ChannelInputSpec): MessagingSerializableValue | undefined {
+  const normalize = (raw: string | null | undefined): string | undefined => {
+    const normalized = raw?.replace(/\r/g, "").trim();
+    if (!normalized || normalized.length === 0) return undefined;
+    if (input.validValues && !input.validValues.includes(normalized)) return undefined;
+    return normalized;
+  };
+
   if (!input.envKey) return undefined;
   if (input.kind === "config") {
     const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
-    if (resolved.value) return resolved.value;
+    const normalizedResolved = normalize(resolved.value);
+    if (normalizedResolved !== undefined) return normalizedResolved;
   }
-  const value = process.env[input.envKey];
-  const normalized = value?.replace(/\r/g, "").trim();
-  if (!normalized || normalized.length === 0) return undefined;
-  if (input.validValues && !input.validValues.includes(normalized)) return undefined;
-  return normalized;
+  return normalize(process.env[input.envKey]);
 }
 
 function readInputStatePath(input: ChannelInputSpec): MessagingStatePath | undefined {

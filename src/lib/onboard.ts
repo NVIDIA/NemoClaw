@@ -3380,7 +3380,9 @@ async function createSandbox(
   // Off by default so existing sandboxes behave the same; opt-in via
   // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
   const telegramConfig: { requireMention?: boolean } = {};
-  if (activeMessagingChannels.includes("telegram")) {
+  const configuredMessagingChannels =
+    enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels;
+  if (configuredMessagingChannels.includes("telegram")) {
     const telegramRequireMention = computeTelegramRequireMention();
     if (telegramRequireMention !== null) {
       telegramConfig.requireMention = telegramRequireMention;
@@ -3706,8 +3708,7 @@ async function createSandbox(
     // X, but X is still configured — losing it here means a later `channels start
     // X` has nothing to re-enable (the next rebuild sees an empty channel set and
     // never reattaches the gateway bridge). See #3381.
-    messagingChannels:
-      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
+    messagingChannels: configuredMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
     messaging: messagingState,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,

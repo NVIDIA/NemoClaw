@@ -131,7 +131,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     const lines = src.split("\n");
     let promoted = false;
     let inEnvBlock = false;
-    let sawGeneratorRun = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/^\s*FROM\b/.test(line)) {
@@ -153,10 +152,9 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         )
       ) {
         expect(promoted).toBeTruthy();
-        sawGeneratorRun = true;
         return;
       }
     }
-    expect(sawGeneratorRun).toBeTruthy();
+    throw new Error("expected generate-openclaw-config RUN layer");
   });
 });

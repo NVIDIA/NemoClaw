@@ -53,9 +53,7 @@ let tmpDir: string;
 
 function ensureFakeOpenClaw(): string {
   const fakeOpenclaw = path.join(tmpDir, "openclaw");
-  if (!fs.existsSync(fakeOpenclaw)) {
-    fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  }
+  fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   return fakeOpenclaw;
 }
 
@@ -219,9 +217,6 @@ function writeWeChatNpmPluginMetadata(manifest: Record<string, unknown>) {
 function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
   return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
 }
-
-
-const SANDBOX_WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
 
 function writeRegistryManifest(
   blueprintDir: string,

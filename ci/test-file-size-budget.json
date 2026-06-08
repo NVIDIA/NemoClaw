@@ -6,12 +6,12 @@
     "src/lib/inference/nim.test.ts": 2079,
     "src/lib/onboard/preflight.test.ts": 1905,
     "test/channels-add-preset.test.ts": 1915,
-    "test/openclaw-config-render.test.ts": 2005,
+    "test/openclaw-config-render.test.ts": 2000,
     "test/install-preflight.test.ts": 4397,
     "test/nemoclaw-start.test.ts": 5300,
-    "test/onboard-messaging.test.ts": 2122,
+    "test/onboard-messaging.test.ts": 2120,
     "test/onboard-selection.test.ts": 7757,
-    "test/onboard.test.ts": 4887,
+    "test/onboard.test.ts": 4879,
     "test/policies.test.ts": 2763
   }
 }

@@ -12,6 +12,8 @@ import { pathToFileURL } from "node:url";
 import { describe, it } from "vitest";
 import YAML from "yaml";
 
+import { activeChannelsFromDockerfile, encodeTestMessagingPlan } from "./helpers/messaging-plan-fixtures";
+
 type CommandEntry = {
   command: string;
   env?: Record<string, string | undefined>;
@@ -20,63 +22,6 @@ type CommandEntry = {
   dockerfileContent?: string;
   dockerfileReadError?: string;
 };
-
-type MessagingPlanChannel = {
-  channelId?: unknown;
-  active?: unknown;
-};
-
-type MessagingPlan = {
-  channels?: MessagingPlanChannel[];
-};
-
-function readMessagingPlanFromDockerfile(dockerfileContent: string | undefined): MessagingPlan {
-  assert.ok(dockerfileContent, "expected Dockerfile content");
-  const line = dockerfileContent
-    .split("\n")
-    .find((entry) => entry.startsWith("ARG NEMOCLAW_MESSAGING_PLAN_B64="));
-  assert.ok(line, "expected messaging plan build arg in Dockerfile");
-  const prefix = "ARG NEMOCLAW_MESSAGING_PLAN_B64=";
-  return JSON.parse(Buffer.from(line.slice(prefix.length), "base64").toString("utf8"));
-}
-
-function activeChannelsFromDockerfile(dockerfileContent: string | undefined): string[] {
-  const plan = readMessagingPlanFromDockerfile(dockerfileContent);
-  return (plan.channels ?? [])
-    .filter((channel) => channel.active === true && typeof channel.channelId === "string")
-    .map((channel) => String(channel.channelId))
-    .sort();
-}
-
-function encodeTestMessagingPlan(
-  channels: ReadonlyArray<{ readonly channelId: string; readonly active: boolean }>,
-): string {
-  const plan = {
-    schemaVersion: 1,
-    sandboxName: "my-assistant",
-    agent: "openclaw",
-    workflow: "onboard",
-    channels: channels.map(({ channelId, active }) => ({
-      channelId,
-      displayName: channelId,
-      authMode: "none",
-      active,
-      selected: true,
-      configured: true,
-      disabled: !active,
-      inputs: [],
-      hooks: [],
-    })),
-    disabledChannels: channels.filter((channel) => !channel.active).map((channel) => channel.channelId),
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-  return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
-}
 
 function parseStdoutJson<T>(stdout: string): T {
   const line = stdout.trim().split("\n").pop();

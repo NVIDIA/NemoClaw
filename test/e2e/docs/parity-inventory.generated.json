@@ -8804,7 +8804,7 @@
           "line": 1212,
           "text": "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — manifest seed placeholder regression",
           "polarity": "fail",
-          "normalized_id": "m.w9.real.wechat.token.spliced.into.accounts.wechat.account.json.seed.wechat.accounts.py.placeholder.regression",
+          "normalized_id": "m.w9.real.wechat.token.spliced.into.accounts.wechat.account.json.manifest.seed.placeholder.regression",
           "mapping_status": "deferred"
         },
         {
