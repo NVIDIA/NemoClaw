@@ -155,6 +155,32 @@ describe("writePolicyContextToSandbox", () => {
     expect(command).toContain(POLICY_CONTEXT_SANDBOX_PATH);
   });
 
+  it("stages the payload in a sibling temp file and atomically replaces the target without following symlinks", () => {
+    const build = vi.fn(fakeContext);
+    const render = vi.fn(() => "payload\n");
+    const exec = vi.fn((_sandbox: string, _command: string) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+
+    writePolicyContextToSandbox("alpha", { build, render, exec });
+
+    const command = exec.mock.calls[0][1];
+    // Payload must land in a freshly-minted temp file under the workspace
+    // directory before any rename — never written directly to the final
+    // path.
+    expect(command).toContain("mktemp /sandbox/.openclaw/workspace/.POLICY.md.XXXXXX");
+    // The atomic replace must use rename(2) semantics — `mv -fT` operates
+    // on the link itself rather than the target of a symlink, so a
+    // pre-existing POLICY.md symlink is replaced, never followed.
+    expect(command).toMatch(/mv -fT -- "\$__pm_tmp" \/sandbox\/\.openclaw\/workspace\/POLICY\.md/);
+    // The legacy direct-redirect-into-target form must not appear — that
+    // form would write through a pre-existing symlink and is the failure
+    // mode this contract guards against.
+    expect(command).not.toMatch(/> \/sandbox\/\.openclaw\/workspace\/POLICY\.md/);
+  });
+
   it("returns sandbox-unreachable when exec yields null", () => {
     const build = vi.fn(fakeContext);
     const render = vi.fn(() => "x");

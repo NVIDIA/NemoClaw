@@ -1195,7 +1195,7 @@ async function rollbackChannelAdd(
   return result;
 }
 
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1327,7 +1327,7 @@ function syncSessionPolicyPresetsWithRegistry(
 // api.telegram.org / discord.com / slack.com should follow). Warns but does
 // not abort the remove flow — the bridge teardown has already succeeded;
 // the operator can run `policy-remove <channel>` manually if cleanup falters.
-function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
+export function removeChannelPresetIfPresent(sandboxName: string, channelName: string): void {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
     syncSessionPolicyPresetsWithRegistry(sandboxName, channelName, "remove");

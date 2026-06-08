@@ -35,9 +35,16 @@ const registry = D("state/registry.js");
 const onboardSession = D("state/onboard-session.js");
 const policies = D("policy/index.js");
 const policyContextRefresh = D("actions/sandbox/policy-context-refresh.js");
-const { addSandboxPolicy, removeSandboxPolicy } = D("actions/sandbox/policy-channel.js") as {
+const {
+  addSandboxPolicy,
+  removeSandboxPolicy,
+  applyChannelPresetIfAvailable,
+  removeChannelPresetIfPresent,
+} = D("actions/sandbox/policy-channel.js") as {
   addSandboxPolicy: (sandboxName: string, options?: Record<string, unknown>) => Promise<void>;
   removeSandboxPolicy: (sandboxName: string, options?: Record<string, unknown>) => Promise<void>;
+  applyChannelPresetIfAvailable: (sandboxName: string, channelName: string) => boolean;
+  removeChannelPresetIfPresent: (sandboxName: string, channelName: string) => void;
 };
 
 const POLICY_PRESETS: PresetInfo[] = [
@@ -162,19 +169,17 @@ describe("addSandboxPolicy refresh contract", () => {
 });
 
 describe("applyExternalPreset refresh contract (--from-file)", () => {
+  let tempDir: string;
   let tempFile: string;
 
   beforeEach(() => {
-    tempFile = path.join(os.tmpdir(), `policy-refresh-${process.pid}-${Date.now()}.yaml`);
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "policy-refresh-"));
+    tempFile = path.join(tempDir, "preset.yaml");
     fs.writeFileSync(tempFile, "network_policies:\n  custom:\n    host: custom.example.com\n");
   });
 
   afterEach(() => {
-    try {
-      fs.unlinkSync(tempFile);
-    } catch {
-      // best-effort cleanup
-    }
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it("refreshes after a successful custom-preset apply via --from-file", async () => {
@@ -253,6 +258,87 @@ describe("removeSandboxPolicy refresh contract", () => {
     ).resolves.toBe(1);
 
     expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyChannelPresetIfAvailable refresh contract", () => {
+  it("refreshes once after a successful channel preset apply", () => {
+    const ok = applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(true);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh when policy library reports apply failure", () => {
+    applyPresetMock.mockReturnValue(false);
+
+    const ok = applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(false);
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library throws", () => {
+    applyPresetMock.mockImplementation(() => {
+      throw new Error("preset YAML missing");
+    });
+
+    const ok = applyChannelPresetIfAvailable("alpha", "discord");
+
+    expect(ok).toBe(false);
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("removeChannelPresetIfPresent refresh contract", () => {
+  it("refreshes once after a successful built-in channel preset removal", () => {
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["discord"]);
+
+    removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(refreshSpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not refresh when the channel is not a built-in preset", () => {
+    removeChannelPresetIfPresent("alpha", "totally-not-a-preset");
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when the built-in preset is not currently applied", () => {
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue([]);
+
+    removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).not.toHaveBeenCalled();
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library reports remove failure", () => {
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["discord"]);
+    removePresetMock.mockReturnValue(false);
+
+    removeChannelPresetIfPresent("alpha", "discord");
+
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "discord");
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when policy library throws", () => {
+    vi.spyOn(policies, "getAppliedPresets").mockReturnValue(["discord"]);
+    removePresetMock.mockImplementation(() => {
+      throw new Error("preset removal racing with rebuild");
+    });
+
+    removeChannelPresetIfPresent("alpha", "discord");
+
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 });

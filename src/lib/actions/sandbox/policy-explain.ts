@@ -95,7 +95,7 @@ function loadExecutor(): ExecutorLoad {
 }
 
 /**
- * Render the in-sandbox write command. Three explicit safety guarantees:
+ * Render the in-sandbox write command. Four explicit safety guarantees:
  *
  * - The markdown payload is base64-encoded before it is interpolated into
  *   the shell string, so anything in the rendered context — quotes,
@@ -110,6 +110,14 @@ function loadExecutor(): ExecutorLoad {
  *   path so the command never mixes interpolated user data with shell
  *   tokens. The `dir` derivation is a string operation on the constant
  *   path and never sees external input.
+ * - The payload is first written to a freshly-created sibling temp file
+ *   with restrictive permissions (umask 077 + mktemp template), then
+ *   atomically replaces the target via `mv -fT`. Replacement uses the
+ *   `rename(2)` semantics, which acts on the link itself rather than the
+ *   target of a symlink, so an in-sandbox attacker who pre-created
+ *   POLICY.md as a symlink cannot redirect the policy-context write into
+ *   another file reachable from the sandbox user. `mv -fT` additionally
+ *   refuses to descend into a directory pre-staged at the target path.
  */
 function buildWriteCommand(markdown: string, targetPath: string): string {
   const encoded = Buffer.from(markdown, "utf-8").toString("base64");
@@ -117,8 +125,10 @@ function buildWriteCommand(markdown: string, targetPath: string): string {
   return [
     `mkdir -p ${dir}`,
     "umask 077",
-    `printf '%s' '${encoded}' | base64 -d > ${targetPath}`,
-    `chmod 0644 ${targetPath}`,
+    `__pm_tmp=$(mktemp ${dir}/.POLICY.md.XXXXXX)`,
+    `printf '%s' '${encoded}' | base64 -d > "$__pm_tmp"`,
+    `chmod 0644 "$__pm_tmp"`,
+    `mv -fT -- "$__pm_tmp" ${targetPath}`,
   ].join(" && ");
 }
 

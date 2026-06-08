@@ -50,10 +50,30 @@ export function seedInitialPolicyContext(
 ): void {
   const refresh = deps.refresh ?? defaultRefresh;
   const logError = deps.logError ?? defaultLog;
+  // The refresh path eventually reaches `executeSandboxCommand` →
+  // `captureSandboxSshConfig` → `captureOpenshellCommand`, which calls
+  // `process.exit(1)` from `handleSpawnError` on any `spawnSync`-level
+  // error (ENOENT, EMFILE, ETIMEDOUT, …) regardless of `ignoreError`.
+  // When the onboard host is rebuild.ts, that exit fires inside rebuild's
+  // overridden `process.exit` and corrupts the post-onboard recovery flag
+  // even though the seed is supposed to be best-effort. Shadow
+  // `process.exit` for the duration of the call so any exit attempt the
+  // refresh helper triggers becomes a thrown error we can swallow without
+  // leaking the exit signal to the surrounding onboard run.
+  const savedExit = process.exit;
+  process.exit = ((code: number | undefined): never => {
+    const message =
+      typeof code === "number"
+        ? `policy-context refresh attempted process.exit(${String(code)})`
+        : "policy-context refresh attempted process.exit()";
+    throw new Error(message);
+  }) as typeof process.exit;
   try {
     refresh(sandboxName);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     logError(`  [onboard] Could not seed sandbox policy context: ${message}`);
+  } finally {
+    process.exit = savedExit;
   }
 }
