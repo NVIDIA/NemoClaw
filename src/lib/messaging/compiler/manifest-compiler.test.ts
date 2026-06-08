@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
 import {
   type ChannelManifest,
@@ -71,6 +74,7 @@ function compiler(): ManifestCompiler {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -418,6 +422,7 @@ describe("ManifestCompiler", () => {
     const plan = await new ManifestCompiler(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",
@@ -499,7 +504,7 @@ describe("ManifestCompiler", () => {
         TELEGRAM_BOT_TOKEN: "123456:raw-telegram-token",
       },
       () =>
-        new ManifestCompiler(createBuiltInChannelManifestRegistry(), hooks).compile({
+        new ManifestCompiler(createBuiltInChannelManifestRegistry(), hooks, createBuiltInRenderTemplateResolver()).compile({
           sandboxName: "demo",
           agent: "openclaw",
           workflow: "onboard",
@@ -553,6 +558,7 @@ describe("ManifestCompiler", () => {
     const plan = await new ManifestCompiler(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",

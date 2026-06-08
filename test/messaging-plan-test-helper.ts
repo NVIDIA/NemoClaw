@@ -12,6 +12,7 @@ import {
   MessagingWorkflowPlanner,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
 } from "./src/lib/messaging/index.ts";
 
 const agent = process.env.NEMOCLAW_TEST_MESSAGING_PLAN_AGENT;
@@ -30,6 +31,7 @@ async function main() {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
   const plan = await planner.buildPlan({
     sandboxName: "test-sandbox",

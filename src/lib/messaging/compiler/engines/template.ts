@@ -12,36 +12,29 @@ const CREDENTIAL_PLACEHOLDER_PATTERN =
   /\{\{\s*credential\.([A-Za-z0-9_-]+)\.placeholder\s*\}\}/g;
 const EXACT_TEMPLATE_PATTERN = /^\{\{\s*([^}]+?)\s*\}\}$/;
 const TEMPLATE_REFERENCE_PATTERN = /\{\{\s*([^}]+?)\s*\}\}/g;
-const DEFAULT_PROXY_HOST = "10.200.0.1";
-const DEFAULT_PROXY_PORT = "3128";
 
-type RenderTemplateValue = MessagingSerializableValue | undefined;
-const UNRESOLVED_TEMPLATE = Symbol("unresolved-template");
-type TemplateReferenceResult = RenderTemplateValue | typeof UNRESOLVED_TEMPLATE;
-type TemplateReferenceResolver = (
+export type RenderTemplateValue = MessagingSerializableValue | undefined;
+
+export interface RenderTemplateReferenceResolution {
+  readonly matched: true;
+  readonly value: RenderTemplateValue;
+}
+
+export type RenderTemplateReferenceResolver = (
   reference: string,
   context: RenderTemplateContext,
-) => TemplateReferenceResult;
-
-const TEMPLATE_REFERENCE_RESOLVERS: Record<string, TemplateReferenceResolver> = {
-  allowedIds: resolveAllowedIdsTemplateReference,
-  discord: resolveDiscordTemplateReference,
-  discordProxyUrl: resolveDiscordProxyUrlTemplateReference,
-  proxyUrl: resolveProxyUrlTemplateReference,
-  slackConfig: resolveSlackConfigTemplateReference,
-  telegramConfig: resolveTelegramConfigTemplateReference,
-  wechatConfig: resolveWechatConfigTemplateReference,
-};
-
-type DiscordGuildConfig = {
-  readonly enabled: true;
-  readonly requireMention?: boolean;
-  readonly users?: readonly string[];
-};
+) => RenderTemplateReferenceResolution | undefined;
 
 export interface RenderTemplateContext {
   readonly inputs: readonly SandboxMessagingInputReference[];
   readonly env?: Record<string, string | undefined>;
+  readonly referenceResolver?: RenderTemplateReferenceResolver;
+}
+
+export function resolvedRenderTemplateReference(
+  value: RenderTemplateValue,
+): RenderTemplateReferenceResolution {
+  return { matched: true, value };
 }
 
 export function resolveSandboxNameTemplate(
@@ -178,216 +171,8 @@ function resolveTemplateReference(
   reference: string,
   context: RenderTemplateContext,
 ): RenderTemplateValue {
-  const resolver = TEMPLATE_REFERENCE_RESOLVERS[templateReferenceKey(reference)];
-  if (!resolver) return "{{" + reference + "}}";
-  const resolved = resolver(reference, context);
-  return resolved === UNRESOLVED_TEMPLATE ? "{{" + reference + "}}" : resolved;
-}
-
-function templateReferenceKey(reference: string): string {
-  const separator = reference.indexOf(".");
-  return separator === -1 ? reference : reference.slice(0, separator);
-}
-
-function resolveProxyUrlTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  return reference === "proxyUrl" ? proxyUrl(context.env) : UNRESOLVED_TEMPLATE;
-}
-
-function resolveDiscordProxyUrlTemplateReference(reference: string): TemplateReferenceResult {
-  return reference === "discordProxyUrl" ? undefined : UNRESOLVED_TEMPLATE;
-}
-
-function resolveDiscordTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  switch (reference) {
-    case "discord.guilds":
-      return nonEmptyObject(discordGuilds(context));
-    case "discord.hasGuilds":
-      return Object.keys(discordGuilds(context)).length > 0;
-    case "discord.guildIds.csv":
-      return nonEmptyCsv(Object.keys(discordGuilds(context)));
-    case "discord.allowedUsers.values":
-      return nonEmptyArray(discordAllowedUsers(context));
-    case "discord.allowedUsers.csv":
-      return nonEmptyCsv(discordAllowedUsers(context));
-    case "discord.allowedUsers.dmPolicy":
-      return discordAllowedUsers(context).length > 0 ? "allowlist" : undefined;
-    case "discord.allowAllUsers":
-      return Object.keys(discordGuilds(context)).length > 0 &&
-        discordAllowedUsers(context).length === 0
-        ? true
-        : undefined;
-    case "discord.requireMention":
-      return discordRequireMention(context);
-    default:
-      return UNRESOLVED_TEMPLATE;
-  }
-}
-
-function resolveAllowedIdsTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  const allowedIds = reference.match(
-    /^allowedIds[.]([A-Za-z0-9_-]+)[.](values|csv|dmPolicy|groupPolicy|channels)$/,
-  );
-  if (!allowedIds?.[1] || !allowedIds[2]) return UNRESOLVED_TEMPLATE;
-  return resolveAllowedIdsTemplate(allowedIds[1], allowedIds[2], context);
-}
-
-function resolveTelegramConfigTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  if (reference !== "telegramConfig.requireMention") return UNRESOLVED_TEMPLATE;
-  return parseBoolean(stateValue(context, "telegramConfig.requireMention"));
-}
-
-function resolveWechatConfigTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  const wechatConfig = reference.match(/^wechatConfig[.](accountId|baseUrl|userId)$/);
-  if (!wechatConfig?.[1]) return UNRESOLVED_TEMPLATE;
-  return nonEmptyString(stateValue(context, "wechatConfig." + wechatConfig[1]));
-}
-
-function resolveSlackConfigTemplateReference(
-  reference: string,
-  context: RenderTemplateContext,
-): TemplateReferenceResult {
-  if (reference !== "slackConfig.allowedChannels.csv") return UNRESOLVED_TEMPLATE;
-  return nonEmptyCsv(slackAllowedChannels(context));
-}
-
-function resolveAllowedIdsTemplate(
-  channel: string,
-  selector: string,
-  context: RenderTemplateContext,
-): RenderTemplateValue {
-  const ids = allowedIds(context, channel);
-  if (selector === "values") return nonEmptyArray(ids);
-  if (selector === "csv") return nonEmptyCsv(ids);
-  if (selector === "dmPolicy") return ids.length > 0 ? "allowlist" : undefined;
-  if (selector === "groupPolicy") {
-    return ids.length > 0 || (channel === "slack" && slackAllowedChannels(context).length > 0)
-      ? "allowlist"
-      : undefined;
-  }
-  if (selector === "channels" && channel === "slack") return slackChannelConfig(context, ids);
-  return undefined;
-}
-
-function proxyUrl(env: RenderTemplateContext["env"]): string {
-  const host = nonEmptyString(env?.NEMOCLAW_PROXY_HOST) ?? DEFAULT_PROXY_HOST;
-  const port = nonEmptyString(env?.NEMOCLAW_PROXY_PORT) ?? DEFAULT_PROXY_PORT;
-  return `http://${host}:${port}`;
-}
-
-function slackChannelConfig(
-  context: RenderTemplateContext,
-  users: readonly string[],
-): Record<string, MessagingSerializableValue> | undefined {
-  const allowedChannels = slackAllowedChannels(context);
-  const entry: Record<string, MessagingSerializableValue> = {
-    enabled: true,
-    requireMention: true,
-    ...(users.length > 0 ? { users: [...users] } : {}),
-  };
-  if (allowedChannels.length > 0) {
-    return Object.fromEntries(allowedChannels.map((channelId) => [channelId, { ...entry }]));
-  }
-  return users.length > 0 ? { "*": entry } : undefined;
-}
-
-function discordGuilds(context: RenderTemplateContext): Record<string, DiscordGuildConfig> {
-  const serverIds = parseList(stateValue(context, "discordGuilds.serverId"));
-  if (serverIds.length === 0) return {};
-  const users = parseList(stateValue(context, "discordGuilds.userIds"));
-  const requireMention = parseBoolean(stateValue(context, "discordGuilds.requireMention")) ?? true;
-  return Object.fromEntries(
-    serverIds.map((serverId) => [
-      serverId,
-      {
-        enabled: true,
-        requireMention,
-        ...(users.length > 0 ? { users } : {}),
-      },
-    ]),
-  );
-}
-
-function discordAllowedUsers(context: RenderTemplateContext): string[] {
-  const users = new Set(allowedIds(context, "discord"));
-  for (const guild of Object.values(discordGuilds(context))) {
-    for (const user of guild.users ?? []) users.add(String(user));
-  }
-  return [...users];
-}
-
-function discordRequireMention(context: RenderTemplateContext): boolean {
-  for (const guild of Object.values(discordGuilds(context))) {
-    if (typeof guild.requireMention === "boolean") return guild.requireMention;
-  }
-  return true;
-}
-
-function allowedIds(context: RenderTemplateContext, channel: string): string[] {
-  const ids = parseList(stateValue(context, `allowedIds.${channel}`));
-  if (channel !== "wechat") return ids;
-  const userId = nonEmptyString(stateValue(context, "wechatConfig.userId"));
-  return userId && !ids.includes(userId) ? [userId, ...ids] : ids;
-}
-
-function slackAllowedChannels(context: RenderTemplateContext): string[] {
-  return parseList(stateValue(context, "slackConfig.allowedChannels"));
-}
-
-function stateValue(context: RenderTemplateContext, path: string): MessagingSerializableValue | undefined {
-  const stateInput = context.inputs.find((input) => input.statePath === path);
-  if (stateInput?.value !== undefined) return stateInput.value;
-  const inputId = path.split(".").at(-1);
-  return context.inputs.find((input) => input.inputId === inputId)?.value;
-}
-
-function parseList(value: MessagingSerializableValue | undefined): string[] {
-  if (Array.isArray(value)) return unique(value.map(String).map(cleanString).filter(Boolean));
-  const text = cleanString(value);
-  if (!text) return [];
-  return unique(text.split(",").map(cleanString).filter(Boolean));
-}
-
-function parseBoolean(value: MessagingSerializableValue | undefined): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  const text = cleanString(value)?.toLowerCase();
-  if (text === "1" || text === "true" || text === "yes" || text === "on") return true;
-  if (text === "0" || text === "false" || text === "no" || text === "off") return false;
-  return undefined;
-}
-
-function nonEmptyString(value: unknown): string | undefined {
-  return cleanString(value) || undefined;
-}
-
-function cleanString(value: unknown): string {
-  return String(value ?? "").replace(/\r/g, "").trim();
-}
-
-function nonEmptyArray(values: readonly string[]): string[] | undefined {
-  return values.length > 0 ? [...values] : undefined;
-}
-
-function nonEmptyCsv(values: readonly string[]): string | undefined {
-  return values.length > 0 ? values.join(",") : undefined;
-}
-
-function nonEmptyObject<T extends Record<string, unknown>>(value: T): T | undefined {
-  return Object.keys(value).length > 0 ? value : undefined;
+  const resolved = context.referenceResolver?.(reference, context);
+  return resolved?.matched ? resolved.value : "{{" + reference + "}}";
 }
 
 function collectTemplateReferencesInString(value: MessagingTemplateString): string[] {

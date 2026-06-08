@@ -13,6 +13,7 @@ import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
   getMessagingManifestAvailabilityContext,
   MessagingHostStateApplier,
   MessagingSetupApplier,
@@ -769,6 +770,7 @@ async function planSandboxChannelAdd(
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     createBuiltInMessagingHookRegistry(),
+    createBuiltInRenderTemplateResolver(),
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
   const supportedChannelIds = availableChannels.map((manifest) => manifest.id);

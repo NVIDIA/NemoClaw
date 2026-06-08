@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
@@ -65,6 +68,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -222,6 +226,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildPlan({
       sandboxName: "demo",
       agent: "openclaw",
@@ -289,7 +294,8 @@ describe("MessagingWorkflowPlanner", () => {
         const plan = await new MessagingWorkflowPlanner(
           createBuiltInChannelManifestRegistry(),
           hooks,
-        ).buildPlan({
+          createBuiltInRenderTemplateResolver(),
+    ).buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
           workflow: "onboard",
@@ -496,6 +502,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildChannelAddPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",

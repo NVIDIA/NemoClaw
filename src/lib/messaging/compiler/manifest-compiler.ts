@@ -32,6 +32,7 @@ import { planCredentialBindings } from "./engines/credential-binding-engine";
 import { planHealthChecks } from "./engines/health-check-engine";
 import { planNetworkPolicy } from "./engines/policy-resolver";
 import { planStateUpdates } from "./engines/state-update-engine";
+import type { RenderTemplateReferenceResolver } from "./engines/template";
 import type { ManifestCompilerContext } from "./types";
 
 export class ManifestCompiler {
@@ -40,6 +41,7 @@ export class ManifestCompiler {
   constructor(
     private readonly registry: ChannelManifestRegistry,
     hooks = new MessagingHookRegistry(),
+    private readonly renderTemplateResolver?: RenderTemplateReferenceResolver,
   ) {
     this.hooks = ensureCommonCompilerHooks(hooks);
   }
@@ -68,6 +70,7 @@ export class ManifestCompiler {
             context,
             inputRegistry.get(manifest.id) ?? [],
             this.hooks,
+            this.renderTemplateResolver,
           ),
         ),
       )

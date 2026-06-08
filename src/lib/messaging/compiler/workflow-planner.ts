@@ -10,6 +10,7 @@ import type {
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
 } from "../manifest";
+import type { RenderTemplateReferenceResolver } from "./engines/template";
 import { ManifestCompiler } from "./manifest-compiler";
 import type {
   ManifestCompilerContext,
@@ -33,8 +34,9 @@ export class MessagingWorkflowPlanner {
   constructor(
     private readonly registry: ChannelManifestRegistry,
     hooks = new MessagingHookRegistry(),
+    renderTemplateResolver?: RenderTemplateReferenceResolver,
   ) {
-    this.compiler = new ManifestCompiler(registry, hooks);
+    this.compiler = new ManifestCompiler(registry, hooks, renderTemplateResolver);
   }
 
   async buildPlan(

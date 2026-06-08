@@ -21,6 +21,7 @@ import {
   collectTemplateReferencesInLines,
   collectTemplateReferencesInValue,
   isTruthyRenderTemplate,
+  type RenderTemplateReferenceResolver,
   resolveCredentialTemplatesInLines,
   resolveCredentialTemplatesInValue,
   resolveRenderTemplatesInLines,
@@ -32,9 +33,10 @@ export async function planAgentRender(
   context: ManifestCompilerContext,
   inputs: readonly SandboxMessagingInputReference[] = [],
   hooks = createBuiltInMessagingHookRegistry(),
+  referenceResolver?: RenderTemplateReferenceResolver,
 ): Promise<SandboxMessagingAgentRenderPlan[]> {
   const plans: SandboxMessagingAgentRenderPlan[] = [];
-  const templateContext = { inputs, env: process.env };
+  const templateContext = { inputs, env: process.env, referenceResolver };
 
   for (const [index, render] of manifest.render.entries()) {
     if (render.agent !== context.agent) continue;
