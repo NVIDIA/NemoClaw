@@ -11,6 +11,7 @@ import { ArtifactSink } from "../framework/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../framework/cleanup.ts";
 import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
+import { ShellProbe } from "../framework/shell-probe.ts";
 
 describe("E2E fixture primitives", () => {
   it("artifact sink writes under its root and rejects traversal", async () => {
@@ -79,6 +80,67 @@ describe("E2E fixture primitives", () => {
     expect(store.optional("PLAIN_VALUE")).toBe("visible");
     expect(store.redact("token=nv-secret plain=visible")).toBe("token=[REDACTED] plain=visible");
     expect(() => store.required("MISSING_SECRET")).toThrow(/missing required E2E secret/);
+  });
+
+  it("shell probe cleans up and redacts missing command failures", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const secret = "spawn-secret-value";
+      const controller = new AbortController();
+      let abortAdds = 0;
+      let abortRemoves = 0;
+      const addEventListener = controller.signal.addEventListener.bind(controller.signal);
+      const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+      const instrumentedAddEventListener = (
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: AddEventListenerOptions | boolean,
+      ) => {
+        if (type === "abort") abortAdds += 1;
+        return addEventListener(type, listener, options);
+      };
+      const instrumentedRemoveEventListener = (
+        type: string,
+        listener: EventListener | EventListenerObject,
+        options?: EventListenerOptions | boolean,
+      ) => {
+        if (type === "abort") abortRemoves += 1;
+        return removeEventListener(type, listener, options);
+      };
+      controller.signal.addEventListener = instrumentedAddEventListener as typeof controller.signal.addEventListener;
+      controller.signal.removeEventListener = instrumentedRemoveEventListener as typeof controller.signal.removeEventListener;
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text, extraValues = []) =>
+          [secret, ...extraValues].reduce((redacted, value) => redacted.split(value).join("[REDACTED]"), text),
+        signal: controller.signal,
+      });
+
+      let thrown: unknown;
+      try {
+        await probe.run(`missing-command-${secret}`, {
+          args: [secret],
+          artifactName: "spawn-error",
+          redactionValues: [secret],
+          timeoutMs: 10_000,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toContain("[REDACTED]");
+      expect(message).not.toContain(secret);
+      expect(abortAdds).toBe(1);
+      expect(abortRemoves).toBe(1);
+      expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.result.json"), "utf8")).not.toContain(secret);
+      expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.stderr.txt"), "utf8")).toContain("[REDACTED]");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 

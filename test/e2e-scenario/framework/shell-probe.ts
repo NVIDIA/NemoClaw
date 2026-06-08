@@ -40,14 +40,25 @@ export interface ShellProbeDeps {
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 
-function safeArtifactBase(command: string, explicitName?: string): string {
-  const raw = explicitName ?? command;
+function safeArtifactBase(raw: string): string {
   const safe = raw
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return safe || "shell-probe";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function redactedError(error: unknown, message: string): Error {
+  const next = new Error(message);
+  if (error instanceof Error) {
+    next.name = error.name;
+  }
+  return next;
 }
 
 export class ShellProbe {
@@ -69,6 +80,15 @@ export class ShellProbe {
     const args = options.args ?? [];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+    const redactionValues = options.redactionValues ?? [];
+    const redactProbeText = (text: string) => this.redact(redactText(text, redactionValues));
+    const redactedCommand = [command, ...args].map(redactProbeText);
+    const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
+    const writeArtifacts = async (result: Omit<ShellProbeResult, "artifacts">): Promise<ShellProbeResult["artifacts"]> => ({
+      stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
+      stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
+      result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
+    });
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.inheritEnv ? { ...process.env, ...(options.env ?? {}) } : { ...(options.env ?? {}) },
@@ -103,34 +123,50 @@ export class ShellProbe {
     }, timeoutMs);
     this.signal.addEventListener("abort", abort, { once: true });
 
-    const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve, reject) => {
+    let childResult: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let childError: unknown;
+    try {
+      childResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
         child.on("error", reject);
         child.on("close", (code, signal) => resolve({ code, signal }));
-      },
-    );
+      });
+    } catch (error) {
+      childError = error;
+    } finally {
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      this.signal.removeEventListener("abort", abort);
+    }
 
-    clearTimeout(timeout);
-    if (killTimer) clearTimeout(killTimer);
-    this.signal.removeEventListener("abort", abort);
+    const redactedStdout = redactProbeText(stdout);
+    if (childError) {
+      const redactedMessage = redactProbeText(errorMessage(childError));
+      const redactedStderr = redactProbeText([stderr, redactedMessage].filter(Boolean).join("\n"));
+      await writeArtifacts({
+        command: redactedCommand,
+        exitCode: null,
+        signal: null,
+        timedOut,
+        stdout: redactedStdout,
+        stderr: redactedStderr,
+      });
+      throw redactedError(childError, redactedMessage);
+    }
 
-    const redactionValues = options.redactionValues ?? [];
-    const redactedStdout = this.redact(redactText(stdout, redactionValues));
-    const redactedStderr = this.redact(redactText(stderr, redactionValues));
-    const artifactBase = `shell/${safeArtifactBase(command, options.artifactName)}`;
+    if (!childResult) {
+      throw new Error("shell probe child process did not report a result");
+    }
+
+    const redactedStderr = redactProbeText(stderr);
     const result: Omit<ShellProbeResult, "artifacts"> = {
-      command: [command, ...args].map((part) => this.redact(redactText(part, redactionValues))),
-      exitCode: code,
-      signal,
+      command: redactedCommand,
+      exitCode: childResult.code,
+      signal: childResult.signal,
       timedOut,
       stdout: redactedStdout,
       stderr: redactedStderr,
     };
-    const artifacts = {
-      stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, redactedStdout),
-      stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, redactedStderr),
-      result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
-    };
+    const artifacts = await writeArtifacts(result);
     return { ...result, artifacts };
   }
 }
