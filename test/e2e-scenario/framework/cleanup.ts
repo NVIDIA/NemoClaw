@@ -12,6 +12,7 @@ export interface CleanupResult {
 }
 
 type CleanupFn = () => Promise<void> | void;
+type RedactFn = (text: string) => string;
 
 interface CleanupEntry {
   name: string;
@@ -20,6 +21,11 @@ interface CleanupEntry {
 
 export class CleanupRegistry {
   private readonly entries: CleanupEntry[] = [];
+  private readonly redact: RedactFn;
+
+  constructor(redact: RedactFn = (text) => text) {
+    this.redact = redact;
+  }
 
   add(name: string, run: CleanupFn): void {
     if (!name.trim()) {
@@ -33,11 +39,11 @@ export class CleanupRegistry {
     for (const entry of [...this.entries].reverse()) {
       try {
         await entry.run();
-        result.passed.push(entry.name);
+        result.passed.push(this.redact(entry.name));
       } catch (error) {
         result.failures.push({
-          name: entry.name,
-          message: error instanceof Error ? error.message : String(error),
+          name: this.redact(entry.name),
+          message: this.redact(error instanceof Error ? error.message : String(error)),
         });
       }
     }

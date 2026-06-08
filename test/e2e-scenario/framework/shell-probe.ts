@@ -10,7 +10,9 @@ export interface ShellProbeRunOptions {
   args?: string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  inheritEnv?: boolean;
   timeoutMs?: number;
+  killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
 }
@@ -36,6 +38,7 @@ export interface ShellProbeDeps {
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_KILL_GRACE_MS = 1_000;
 
 function safeArtifactBase(command: string, explicitName?: string): string {
   const raw = explicitName ?? command;
@@ -65,9 +68,10 @@ export class ShellProbe {
 
     const args = options.args ?? [];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env ?? {}) },
+      env: options.inheritEnv ? { ...process.env, ...(options.env ?? {}) } : { ...(options.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -87,9 +91,15 @@ export class ShellProbe {
     const abort = () => {
       child.kill("SIGTERM");
     };
+    let killTimer: NodeJS.Timeout | undefined;
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, killGraceMs);
     }, timeoutMs);
     this.signal.addEventListener("abort", abort, { once: true });
 
@@ -101,6 +111,7 @@ export class ShellProbe {
     );
 
     clearTimeout(timeout);
+    if (killTimer) clearTimeout(killTimer);
     this.signal.removeEventListener("abort", abort);
 
     const redactionValues = options.redactionValues ?? [];

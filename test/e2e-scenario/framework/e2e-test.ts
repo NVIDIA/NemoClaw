@@ -27,8 +27,9 @@ export const test = base
     });
     return artifacts;
   })
-  .extend("cleanup", async ({ artifacts }, { onCleanup }) => {
-    const cleanup = new CleanupRegistry();
+  .extend("secrets", async ({ skip }) => new SecretStore(process.env, skip))
+  .extend("cleanup", async ({ artifacts, secrets }, { onCleanup }) => {
+    const cleanup = new CleanupRegistry((text) => secrets.redact(text));
     onCleanup(async () => {
       const result = await cleanup.runAll();
       await artifacts.writeJson("cleanup.json", result);
@@ -36,7 +37,6 @@ export const test = base
     });
     return cleanup;
   })
-  .extend("secrets", async ({ skip }) => new SecretStore(process.env, skip))
   .extend("shellProbe", async ({ artifacts, secrets, signal }) => {
     return new ShellProbe({
       artifacts,

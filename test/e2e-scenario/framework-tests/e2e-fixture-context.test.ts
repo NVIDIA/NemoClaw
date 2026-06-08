@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../framework/artifacts.ts";
-import { CleanupRegistry } from "../framework/cleanup.ts";
+import { assertCleanupPassed, CleanupRegistry } from "../framework/cleanup.ts";
 import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
 
@@ -40,6 +40,32 @@ describe("E2E fixture primitives", () => {
     const result = await cleanup.runAll();
     expect(order).toEqual(["second", "first"]);
     expect(result).toEqual({ passed: ["second", "first"], failures: [] });
+  });
+
+  it("cleanup registry redacts failures, continues, and clears callbacks", async () => {
+    const secret = "cleanup-secret-value";
+    const cleanup = new CleanupRegistry((text) => text.split(secret).join("[REDACTED]"));
+    const order: string[] = [];
+    cleanup.add("first", () => {
+      order.push("first");
+    });
+    cleanup.add("second", () => {
+      order.push("second");
+      throw new Error(`failed with ${secret}`);
+    });
+    cleanup.add(`third-${secret}`, () => {
+      order.push("third");
+    });
+
+    const result = await cleanup.runAll();
+    expect(order).toEqual(["third", "second", "first"]);
+    expect(result).toEqual({
+      passed: ["third-[REDACTED]", "first"],
+      failures: [{ name: "second", message: "failed with [REDACTED]" }],
+    });
+    expect(() => assertCleanupPassed(result)).toThrow("failed with [REDACTED]");
+    expect(() => assertCleanupPassed(result)).not.toThrow(secret);
+    expect(await cleanup.runAll()).toEqual({ passed: [], failures: [] });
   });
 
   it("secret store redacts sensitive env values and skips missing required secrets", () => {
@@ -86,4 +112,49 @@ e2eTest("fixture context captures redacted shell artifacts", async ({
   expect(result.stdout).not.toContain(secret);
   expect(result.stderr).not.toContain(secret);
   expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(secret);
+});
+
+e2eTest("shell probe uses explicit env and escalates ignored timeouts", async ({ shellProbe }) => {
+  const parentSecretName = "NEMOCLAW_PARENT_SECRET_FOR_PROBE_TEST";
+  const parentSecret = "parent-secret-value";
+  const explicitSecret = "explicit-secret-value";
+  const oldParentSecret = process.env[parentSecretName];
+  process.env[parentSecretName] = parentSecret;
+  try {
+    const envResult = await shellProbe.run(process.execPath, {
+      args: [
+        "-e",
+        `console.log(process.env.${parentSecretName} ?? "missing"); console.log(process.env.NEMOCLAW_TEST_TOKEN);`,
+      ],
+      artifactName: "minimal-env",
+      env: { NEMOCLAW_TEST_TOKEN: explicitSecret },
+      redactionValues: [explicitSecret, parentSecret],
+      timeoutMs: 5_000,
+    });
+
+    expect(envResult.exitCode).toBe(0);
+    expect(envResult.stdout).toContain("missing");
+    expect(envResult.stdout).toContain("[REDACTED]");
+    expect(envResult.stdout).not.toContain(parentSecret);
+    expect(envResult.stdout).not.toContain(explicitSecret);
+    expect(fs.readFileSync(envResult.artifacts.result, "utf8")).not.toContain(explicitSecret);
+  } finally {
+    if (oldParentSecret === undefined) {
+      delete process.env[parentSecretName];
+    } else {
+      process.env[parentSecretName] = oldParentSecret;
+    }
+  }
+
+  const started = Date.now();
+  const timeoutResult = await shellProbe.run(process.execPath, {
+    args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+    artifactName: "timeout-escalation",
+    timeoutMs: 50,
+    killGraceMs: 50,
+  });
+
+  expect(Date.now() - started).toBeLessThan(2_000);
+  expect(timeoutResult.timedOut).toBe(true);
+  expect(timeoutResult.signal).toBe("SIGKILL");
 });
