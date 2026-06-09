@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-post-reboot-recovery
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    # Lifecycle phase opt-in. The Vitest live runner dispatches this
+    # profile through `LifecyclePhaseFixture.simulate(...)`, which:
+    #   1. stops the OpenShell gateway runtime, and
+    #   2. `docker stop`s the labeled sandbox container.
+    # The host-side state-validation probes
+    # (`local-registry-entry-present`, `docker-sandbox-container-present`)
+    # then assert that `nemoclaw <name> status` recovers the sandbox
+    # without destroying registry state. On unfixed code the registry
+    # entry is wiped by the `missing` branch in
+    # `src/lib/actions/sandbox/{status,gateway-state}.ts` and the
+    # `local-registry-entry-present` probe fails. See #4423.
+    lifecycle: post-reboot-recovery
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY
