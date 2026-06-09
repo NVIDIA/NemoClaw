@@ -1,20 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
+import { redactText } from "../secrets.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"];
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
+const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
 const DOCKER_MISSING_PATTERNS = [
   /Cannot connect to the Docker daemon/i,
   /Is the docker daemon running\??/i,
@@ -35,6 +37,7 @@ const MISSING_SANDBOX_DELETE_PATTERNS = [
 
 export interface OnboardingSecrets {
   required(name: string): string;
+  redact?(text: string, extraValues?: string[]): string;
 }
 
 export interface OnboardingCleanup {
@@ -98,6 +101,11 @@ function prependPath(pathEntry: string, currentPath?: string): string {
 
 function resultText(result: ShellProbeResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+function legacyNegativePreflightLogPath(): string | undefined {
+  const contextDir = process.env.E2E_CONTEXT_DIR;
+  return contextDir ? join(contextDir, NEGATIVE_PREFLIGHT_LOG) : undefined;
 }
 
 function hasDockerMissingSignature(result: ShellProbeResult): boolean {
@@ -172,6 +180,7 @@ export class OnboardingPhaseFixture {
         redactionValues: [apiKey],
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });
+      await this.writeNegativePreflightEvidence(result, [apiKey]);
       if (result.exitCode === 0) {
         throw new Error("cloud-openclaw-no-docker onboarding unexpectedly succeeded.");
       }
@@ -210,5 +219,16 @@ export class OnboardingPhaseFixture {
         assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
       }
     });
+  }
+
+  private redact(text: string, extraValues: string[] = []): string {
+    return this.secrets.redact?.(text, extraValues) ?? redactText(text, extraValues);
+  }
+
+  private async writeNegativePreflightEvidence(result: ShellProbeResult, redactionValues: string[]): Promise<void> {
+    const logPath = legacyNegativePreflightLogPath();
+    if (!logPath) return;
+    await mkdir(dirname(logPath), { recursive: true });
+    await writeFile(logPath, this.redact(resultText(result), redactionValues), "utf8");
   }
 }

@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, expectTypeOf, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
@@ -68,6 +71,11 @@ class FakeSecrets implements OnboardingSecrets {
     const value = this.values[name];
     if (!value) throw new Error(`skip: missing required E2E secret: ${name}`);
     return value;
+  }
+
+  redact(text: string, extraValues: string[] = []): string {
+    const values = [...Object.values(this.values), ...extraValues].filter((value): value is string => Boolean(value));
+    return values.reduce((redacted, value) => redacted.split(value).join("[REDACTED]"), text);
   }
 }
 
@@ -268,6 +276,40 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
     expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
     expect(cleanup.calls).toEqual([]);
+  });
+
+  it("publishes redacted legacy preflight evidence for the no-Docker negative path", async () => {
+    const previousContextDir = process.env.E2E_CONTEXT_DIR;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-typed-no-docker-"));
+    process.env.E2E_CONTEXT_DIR = tmp;
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(7, "Docker is required before onboarding with secret-token"));
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(runner),
+        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+      );
+
+      await onboard.from(
+        ready({
+          runtime: "docker-missing",
+          onboarding: "cloud-openclaw-no-docker",
+          docker: { id: "docker-missing", expectation: "missing", available: true },
+        }),
+      );
+
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("Docker is required before onboarding");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).not.toContain("secret-token");
+    } finally {
+      if (previousContextDir === undefined) {
+        delete process.env.E2E_CONTEXT_DIR;
+      } else {
+        process.env.E2E_CONTEXT_DIR = previousContextDir;
+      }
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("requires the docker-missing runtime expectation for the no-Docker negative path", async () => {

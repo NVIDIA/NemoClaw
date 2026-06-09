@@ -30,6 +30,43 @@
 # which sets up a different failure condition (port 8080 occupied) but
 # follows the same capture-output / check-exit / grep-log shape.
 
+e2e_no_docker_redact_preflight_log() {
+  local log="$1"
+  [[ -f "${log}" ]] || return 0
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${log}" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8", errors="replace") as handle:
+    text = handle.read()
+
+for name, value in os.environ.items():
+    if value and re.search(r"(api[_-]?key|token|secret|password|credential)", name, re.I):
+        text = text.replace(value, "[REDACTED]")
+
+text = re.sub(
+    r"(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_/-]{12,}|(api[_-]?key|token|secret|password)[=:][^\s]+)",
+    "[REDACTED]",
+    text,
+    flags=re.I,
+)
+
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text)
+PY
+    return
+  fi
+
+  local redacted
+  redacted="$(mktemp -t e2e-negative-preflight-redacted-XXXXXX)"
+  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' "${log}" >"${redacted}"
+  mv "${redacted}" "${log}"
+}
+
 e2e_onboard_cloud_openclaw_no_docker() {
   e2e_env_apply_noninteractive
   # The TS runner already seeded context.env. Resolve the directory and
@@ -60,6 +97,7 @@ SHIM
     >"${log}" 2>&1 || rc=$?
 
   rm -rf "${shim_dir}"
+  e2e_no_docker_redact_preflight_log "${log}"
 
   echo "negative-preflight: nemoclaw onboard exited ${rc}"
   if [[ -f "${log}" ]]; then

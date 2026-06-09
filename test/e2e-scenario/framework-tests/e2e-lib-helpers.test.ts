@@ -61,7 +61,7 @@ describe("E2E shell helpers", () => {
     }
   });
 
-  it("no_docker_onboarding_worker_should_preserve_seeded_context", () => {
+  it("no_docker_onboarding_worker_should_preserve_seeded_context_and_redact_log", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-context-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -69,6 +69,7 @@ describe("E2E shell helpers", () => {
       path.join(fakeBin, "nemoclaw"),
       `#!/usr/bin/env bash
 if [[ "\${1:-}" = "onboard" ]]; then
+  echo "NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
   echo "Docker is required before onboarding" >&2
   exit 42
 fi
@@ -98,9 +99,10 @@ exit 2
       expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
       const contextBody = fs.readFileSync(path.join(tmp, "context.env"), "utf8");
       expect(contextBody).toMatch(/^E2E_SANDBOX_NAME=e2e-preserved$/m);
-      expect(fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8")).toContain(
-        "Docker is required before onboarding",
-      );
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("Docker is required before onboarding");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).not.toContain("secret-token");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
