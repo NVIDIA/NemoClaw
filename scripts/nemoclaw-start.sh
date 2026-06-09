@@ -1460,13 +1460,16 @@ install_telegram_diagnostics() {
 }
 
 # ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
-# The upstream @openclaw/whatsapp QR renders at full size and overflows DGX
-# Spark terminals (NemoClaw#4522). This preload forces qrcode-terminal into
-# the same `{ small: true }` half-block mode the host-side WeChat path uses.
-# Unlike the diagnostics/guard preloads it is NOT added to the global
-# NODE_OPTIONS — the gateway never renders the pairing QR. The openclaw()
-# guard injects it for the single `channels login --channel whatsapp`
-# invocation, so we only need the file present in the sandbox.
+# The upstream @openclaw/whatsapp QR renders at full size (~56 rows) and
+# overflows DGX Spark terminals (NemoClaw#4522). The plugin renders through
+# `renderQrTerminal()` → the `qrcode` package's toString(text,{type:"terminal"})
+# WITHOUT a `small` flag, so it defaults to full size. This preload patches the
+# qrcode package to force `{ small: true }` half-block rendering for terminal
+# output, roughly quartering the area without changing the payload.
+# It is NOT added to the global boot NODE_OPTIONS (the gateway never renders the
+# pairing QR); instead it is wired into the connect-session NODE_OPTIONS (so any
+# openclaw invocation in the session gets it, not just the openclaw() shell
+# function) and the openclaw() guard injects it as defense-in-depth.
 _WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
 _WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
 
@@ -2424,6 +2427,10 @@ PYAPPROVEAFTER
             esac
             echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
+            # Defense-in-depth: the connect-session NODE_OPTIONS already wires
+            # this preload in for every openclaw invocation; injecting it again
+            # here covers non-connect shells (e.g. `openshell sandbox exec`).
+            # The preload is idempotent, so a double --require is harmless.
             # Literal path: this guard body is emitted inside a single-quoted
             # heredoc, so shell variables are intentionally not expanded here.
             # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
@@ -2511,6 +2518,15 @@ GUARDENVEOF
     # by install_slack_channel_guard() — conditional on the file existing at
     # source-time so connect sessions started before Slack is configured are safe.
     echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
+    # WhatsApp compact-QR preload for connect sessions (NemoClaw#4522). The
+    # in-sandbox `openclaw channels login --channel whatsapp` QR renders full
+    # size (~56 rows) and overflows the terminal. Wiring the preload into the
+    # connect-session NODE_OPTIONS forces compact rendering for ANY openclaw
+    # invocation in the session — not only the openclaw() shell-function path,
+    # which a direct binary call would bypass. The file is installed by
+    # install_whatsapp_qr_compact() only for WhatsApp sandboxes, so the
+    # source-time `[ -f ]` check leaves non-WhatsApp connect sessions untouched.
+    echo "[ -f \"$_WHATSAPP_QR_COMPACT_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WHATSAPP_QR_COMPACT_SCRIPT\""
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do

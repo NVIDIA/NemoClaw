@@ -69,6 +69,17 @@
       "notes": "Split into Telegram, Discord, Slack, fake-provider, and token-rotation Vitest scenarios before deleting."
     },
     {
+      "legacyScript": "test/e2e/test-whatsapp-qr-compact-e2e.sh",
+      "domain": "messaging",
+      "ownerIssue": "#4351",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Hermetic WhatsApp pairing-QR size guard (NemoClaw#4522); migrate alongside the messaging-provider scenarios once a Vitest harness can drive the openclaw renderQrTerminal renderer."
+    },
+    {
       "legacyScript": "test/e2e/test-token-rotation.sh",
       "domain": "messaging",
       "ownerIssue": "#4351",
