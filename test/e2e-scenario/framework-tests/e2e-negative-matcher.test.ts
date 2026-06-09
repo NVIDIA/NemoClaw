@@ -13,6 +13,7 @@ import {
 } from "../scenarios/orchestrators/negative-matcher.ts";
 import { ScenarioRunner } from "../scenarios/orchestrators/runner.ts";
 import { listScenarios } from "../scenarios/registry.ts";
+import { planFailed } from "../scenarios/run.ts";
 import type {
   ExpectedFailureContract,
   PhaseName,
@@ -72,6 +73,35 @@ function phaseResult(
           },
         ]
       : [],
+  };
+}
+
+function passedNegativeContractPhase(): PhaseResult {
+  return {
+    phase: "negative-contract",
+    status: "passed",
+    actions: [],
+    assertions: [
+      {
+        id: "negative-contract.match",
+        status: "passed",
+        attempts: 1,
+        durationMs: 0,
+        message: "matched",
+      },
+    ],
+  };
+}
+
+function stateValidationResult(
+  status: PhaseResult["status"],
+  actionIds: string[] = ["state-validation.gateway-absent", "state-validation.sandbox-absent"],
+): PhaseResult {
+  return {
+    phase: "state-validation",
+    status,
+    actions: actionIds.map((id) => ({ id, status: "passed", durationMs: 1 })),
+    assertions: [],
   };
 }
 
@@ -289,6 +319,35 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
     expect(synthetic.assertions[0]).toEqual(
       expect.objectContaining({ id: "negative-contract.match", status: "passed" }),
     );
+  });
+});
+
+describe("negative plan exit-code contract", () => {
+  const plan = planWithExpectedFailure({
+    phase: "preflight",
+    errorClass: "docker-missing",
+    forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+  });
+
+  it("passes when negative contract and forbidden-side-effect probes pass", () => {
+    expect(planFailed(plan, [passedNegativeContractPhase(), stateValidationResult("passed")])).toBe(false);
+  });
+
+  it("fails when state-validation is missing", () => {
+    expect(planFailed(plan, [passedNegativeContractPhase()])).toBe(true);
+  });
+
+  it("fails when state-validation is skipped", () => {
+    expect(planFailed(plan, [passedNegativeContractPhase(), stateValidationResult("skipped")])).toBe(true);
+  });
+
+  it("fails when a declared forbidden-side-effect probe did not run", () => {
+    expect(
+      planFailed(plan, [
+        passedNegativeContractPhase(),
+        stateValidationResult("passed", ["state-validation.gateway-absent"]),
+      ]),
+    ).toBe(true);
   });
 });
 
