@@ -379,20 +379,32 @@ function resolveAgentRenderTarget(
   options: { readonly homeDir?: string } = {},
 ): string {
   const home = options.homeDir ?? homedir();
+  const agentRoot = agent === "hermes" ? join(home, ".hermes") : join(home, ".openclaw");
+  const normalizedRoot = resolve(agentRoot);
   if (agent === "openclaw" && target === "openclaw.json") {
-    return join(home, ".openclaw", "openclaw.json");
+    return join(agentRoot, "openclaw.json");
   }
+  let relativePath: string | null = null;
   if (target.startsWith("~/.openclaw/")) {
     if (agent !== "openclaw") {
       throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
     }
-    return join(home, ".openclaw", target.slice("~/.openclaw/".length));
+    relativePath = target.slice("~/.openclaw/".length);
   }
   if (target.startsWith("~/.hermes/")) {
     if (agent !== "hermes") {
       throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
     }
-    return join(home, ".hermes", target.slice("~/.hermes/".length));
+    relativePath = target.slice("~/.hermes/".length);
+  }
+  if (relativePath !== null) {
+    const resolvedTarget = resolve(agentRoot, relativePath);
+    if (resolvedTarget !== normalizedRoot && !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)) {
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} must stay inside ${agentRoot}.`,
+      );
+    }
+    return resolvedTarget;
   }
   throw new MessagingBuildApplierError(`Unsupported messaging render target ${target}.`);
 }
