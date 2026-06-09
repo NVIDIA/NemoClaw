@@ -25,6 +25,7 @@ import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } 
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 const BRAVE_CURL_CONFIG_PREFIX = "nemoclaw-brave-probe";
+const BRAVE_API_KEY_LINE_BREAK_MESSAGE = "Brave Search API key must not contain line breaks.";
 
 export interface WebSearchFlowDeps {
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
@@ -97,7 +98,21 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     ];
   }
 
+  function invalidBraveSearchApiKey(message: string): CurlProbeResult {
+    return {
+      ok: false,
+      httpStatus: 0,
+      curlStatus: 0,
+      body: "",
+      stderr: "",
+      message,
+    };
+  }
+
   function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
+    if (/[\r\n]/.test(apiKey)) {
+      return invalidBraveSearchApiKey(BRAVE_API_KEY_LINE_BREAK_MESSAGE);
+    }
     const { configPath, cleanup } = writeBraveCurlConfig(apiKey);
     try {
       return runCurlProbe(braveSearchArgs(configPath), { trustedConfigFiles: [configPath] });
