@@ -134,10 +134,14 @@ function ghApi(path: string): unknown {
 function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
   // Use gh api --paginate with REST for lightweight pagination (no GraphQL timeout).
   // --jq outputs one JSON object per PR per page; we collect them as NDJSON then parse.
-  const out = run("gh", [
-    "api", "--paginate",
-    `repos/${repo}/pulls?state=open&per_page=100`,
-    "--jq", `.[] | {
+  const out = run(
+    "gh",
+    [
+      "api",
+      "--paginate",
+      `repos/${repo}/pulls?state=open&per_page=100`,
+      "--jq",
+      `.[] | {
       number, title, url: .html_url,
       author: {login: .user.login},
       additions: 0, deletions: 0, changedFiles: 0,
@@ -152,7 +156,9 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
       labels: [.labels[] | {name}],
       statusCheckRollup: []
     }`,
-  ], 300_000);
+    ],
+    300_000,
+  );
   if (!out) return [];
 
   try {
@@ -179,8 +185,13 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
  */
 function enrichPr(repo: string, pr: PrData): void {
   const out = run("gh", [
-    "pr", "view", String(pr.number), "--repo", repo,
-    "--json", "reviewDecision,statusCheckRollup,additions,deletions,changedFiles",
+    "pr",
+    "view",
+    String(pr.number),
+    "--repo",
+    repo,
+    "--json",
+    "reviewDecision,statusCheckRollup,additions,deletions,changedFiles",
   ]);
   if (!out) return;
   try {
@@ -196,7 +207,9 @@ function enrichPr(repo: string, pr: PrData): void {
     pr.additions = data.additions;
     pr.deletions = data.deletions;
     pr.changedFiles = data.changedFiles;
-  } catch { /* leave as-is */ }
+  } catch {
+    /* leave as-is */
+  }
 }
 
 function classifyPr(pr: PrData): ClassifiedPr {
@@ -215,9 +228,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // contributors need "Approve and run" before pull_request workflows
   // execute. Until then only pull_request_target checks and external
   // bots appear — treat that as not-green.
-  const presentNames = new Set(
-    checks.map((c) => c.name ?? c.context ?? "").filter(Boolean),
-  );
+  const presentNames = new Set(checks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
   if (REQUIRED_CHECK_NAMES.some((name) => !presentNames.has(name))) {
     checksGreen = false;
   }
@@ -267,8 +278,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // review-ready: green CI + no conflicts + not draft — best candidates for review
   const reviewReady = !draft && !mergeNow && checksGreen && !hasConflict;
   // near-miss: not draft, has fixable blockers (failing CI or minor conflict)
-  const nearMiss = !draft && !mergeNow && !reviewReady && reasons.length <= 2 &&
-    !hasConflict;
+  const nearMiss = !draft && !mergeNow && !reviewReady && reasons.length <= 2 && !hasConflict;
 
   return {
     number: pr.number,
@@ -291,9 +301,9 @@ function classifyPr(pr: PrData): ClassifiedPr {
 }
 
 function fetchPrFiles(repo: string, number: number): string[] {
-  const data = ghApi(`repos/${repo}/pulls/${number}/files?per_page=100`) as
-    | Array<{ filename: string }>
-    | null;
+  const data = ghApi(`repos/${repo}/pulls/${number}/files?per_page=100`) as Array<{
+    filename: string;
+  }> | null;
   if (!Array.isArray(data)) return [];
   return data.map((f) => f.filename);
 }
@@ -316,7 +326,11 @@ function loadState(): StateFile | null {
 function scoreItem(
   item: ClassifiedPr,
   riskyFiles: string[],
-): { score: number; bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked"; nextAction: string } {
+): {
+  score: number;
+  bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked";
+  nextAction: string;
+} {
   let score = 0;
   let bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked" = "blocked";
   let nextAction = "review";
@@ -428,16 +442,14 @@ function main(): void {
   const classified = prs.map(classifyPr);
   process.stderr.write(
     `Classified: ${classified.filter((c) => c.mergeNow).length} merge-now, ` +
-    `${classified.filter((c) => c.reviewReady).length} review-ready, ` +
-    `${classified.filter((c) => c.nearMiss).length} near-miss, ` +
-    `${classified.filter((c) => !c.mergeNow && !c.reviewReady && !c.nearMiss).length} blocked\n`,
+      `${classified.filter((c) => c.reviewReady).length} review-ready, ` +
+      `${classified.filter((c) => c.nearMiss).length} near-miss, ` +
+      `${classified.filter((c) => !c.mergeNow && !c.reviewReady && !c.nearMiss).length} blocked\n`,
   );
 
   // 2. Load exclusions
   const state = loadState();
-  const excludedPrs = new Set(
-    Object.keys(state?.excluded?.prs ?? {}).map(Number),
-  );
+  const excludedPrs = new Set(Object.keys(state?.excluded?.prs ?? {}).map(Number));
 
   const allItems = classified.filter((item) => !excludedPrs.has(item.number));
 
@@ -483,7 +495,9 @@ function main(): void {
 
   // 4. Sort and rank
   scored.sort((a, b) => b.score - a.score);
-  const queue = scored.filter((s) => s.bucket === "merge-now" || s.bucket === "review-ready").slice(0, limit);
+  const queue = scored
+    .filter((s) => s.bucket === "merge-now" || s.bucket === "review-ready")
+    .slice(0, limit);
   const nearMisses = scored.filter((s) => s.bucket === "salvage-now").slice(0, limit);
   queue.forEach((item, i) => (item.rank = i + 1));
   nearMisses.forEach((item, i) => (item.rank = i + 1));

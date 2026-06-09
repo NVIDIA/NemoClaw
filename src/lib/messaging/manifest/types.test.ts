@@ -3,17 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import type {
-  ChannelManifest,
-  SandboxMessagingPlan,
-} from "../index";
+import type { ChannelManifest, SandboxMessagingPlan } from "../index";
 
 type FunctionLike = (...args: never[]) => unknown;
 
 type FunctionFieldKey<T> = {
-  [Key in keyof T]-?: Extract<NonNullable<T[Key]>, FunctionLike> extends never
-    ? never
-    : Key;
+  [Key in keyof T]-?: Extract<NonNullable<T[Key]>, FunctionLike> extends never ? never : Key;
 }[keyof T];
 
 type AssertNever<T extends never> = T;
@@ -57,7 +52,6 @@ const telegramManifest = {
       required: false,
       envKey: "TELEGRAM_REQUIRE_MENTION",
       validValues: ["0", "1"],
-      defaultValue: "1",
       statePath: "telegramConfig.requireMention",
     },
   ],
@@ -185,19 +179,29 @@ const wechatHookManifest = {
 
 const telegramPlan = {
   schemaVersion: 1,
+  sandboxName: "demo",
+  agent: "openclaw",
+  workflow: "onboard",
   channels: [
     {
       channelId: "telegram",
       displayName: "Telegram",
+      authMode: "token-paste",
       active: true,
+      selected: true,
+      configured: false,
+      disabled: false,
       inputs: [
         {
+          channelId: "telegram",
           inputId: "botToken",
           kind: "secret",
           required: true,
           sourceEnv: "TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
         },
         {
+          channelId: "telegram",
           inputId: "allowedIds",
           kind: "config",
           required: false,
@@ -205,36 +209,55 @@ const telegramPlan = {
           statePath: "allowedIds.telegram",
         },
       ],
-      credentialBindings: [
-        {
-          credentialId: "telegramBotToken",
-          sourceInput: "botToken",
-          providerName: "demo-telegram-bridge",
-          providerEnvKey: "TELEGRAM_BOT_TOKEN",
-          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        },
-      ],
-      policyPresets: ["telegram"],
-      render: [
-        {
-          kind: "json-fragment",
-          agent: "openclaw",
-          target: "openclaw.json",
-          path: "channels.telegram.accounts.default",
-          value: {
-            botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-            enabled: true,
-          },
-        },
-        {
-          kind: "env-lines",
-          agent: "hermes",
-          target: "~/.hermes/.env",
-          lines: ["TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN"],
-        },
-      ],
-      buildInputs: [],
       hooks: [],
+    },
+  ],
+  disabledChannels: [],
+  credentialBindings: [
+    {
+      channelId: "telegram",
+      credentialId: "telegramBotToken",
+      sourceInput: "botToken",
+      providerName: "demo-telegram-bridge",
+      providerEnvKey: "TELEGRAM_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      credentialAvailable: true,
+    },
+  ],
+  networkPolicy: {
+    presets: ["telegram"],
+    entries: [
+      {
+        channelId: "telegram",
+        presetName: "telegram",
+        policyKeys: ["telegram_bot"],
+        source: "manifest",
+      },
+    ],
+  },
+  agentRender: [
+    {
+      channelId: "telegram",
+      renderId: "telegram-openclaw",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      path: "channels.telegram.accounts.default",
+      value: {
+        botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        enabled: true,
+      },
+      templateRefs: [],
+    },
+  ],
+  buildSteps: [],
+  stateUpdates: [],
+  healthChecks: [
+    {
+      channelId: "telegram",
+      phase: "health-check",
+      requiredBefore: "lifecycle-success",
+      hookIds: [],
     },
   ],
 } as const satisfies SandboxMessagingPlan;
@@ -249,7 +272,9 @@ function findFunctionPaths(value: unknown, prefix = "$"): string[] {
     return value.flatMap((entry, index) => findFunctionPaths(entry, `${prefix}[${index}]`));
   }
   if (value && typeof value === "object") {
-    return Object.entries(value).flatMap(([key, entry]) => findFunctionPaths(entry, `${prefix}.${key}`));
+    return Object.entries(value).flatMap(([key, entry]) =>
+      findFunctionPaths(entry, `${prefix}.${key}`),
+    );
   }
   return [];
 }
@@ -282,7 +307,7 @@ describe("messaging manifest type contracts", () => {
     expect(parsed).toEqual(telegramPlan);
     expect(serialized).toContain("openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     expect(serialized).not.toContain(rawSecret);
-    expect(parsed.channels[0]?.credentialBindings[0]).not.toHaveProperty("value");
+    expect(parsed.credentialBindings[0]).not.toHaveProperty("value");
   });
 
   it("uses hook handler references instead of function-valued fields", () => {

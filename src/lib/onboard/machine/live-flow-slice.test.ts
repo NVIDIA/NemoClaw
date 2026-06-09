@@ -14,7 +14,9 @@ interface Context {
 }
 
 function runtime(state: Session["machine"]["state"]): OnboardMachineRunnerRuntime {
-  const session = createSession({ machine: { version: 1, state, stateEnteredAt: null, revision: 1 } });
+  const session = createSession({
+    machine: { version: 1, state, stateEnteredAt: null, revision: 1 },
+  });
   return {
     async session() {
       return session;
@@ -25,7 +27,10 @@ function runtime(state: Session["machine"]["state"]): OnboardMachineRunnerRuntim
   };
 }
 
-function phase(state: OnboardSequencePhase<Context>["state"], next: number): OnboardSequencePhase<Context> {
+function phase(
+  state: OnboardSequencePhase<Context>["state"],
+  next: number,
+): OnboardSequencePhase<Context> {
   return {
     state,
     run: (context) => ({
@@ -37,7 +42,10 @@ function phase(state: OnboardSequencePhase<Context>["state"], next: number): Onb
 
 describe("runLiveOnboardFlowSlice", () => {
   it("uses the strict slice runner for fresh matching entry states", async () => {
-    const runSlice = vi.fn(async ({ context }) => ({ context: { value: context.value + 1 }, session: "strict" }));
+    const runSlice = vi.fn(async ({ context }) => ({
+      context: { value: context.value + 1 },
+      session: "strict",
+    }));
     const applyCompatibleResult = vi.fn(async () => undefined);
 
     const result = await runLiveOnboardFlowSlice({

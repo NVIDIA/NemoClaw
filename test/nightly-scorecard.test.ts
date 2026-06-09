@@ -49,10 +49,7 @@ describe("nightly scorecard prior-day trend lookup", () => {
       },
     ];
 
-    const result = findPriorScheduledRunFromPages(
-      [firstPage, secondPage],
-      since24h,
-    );
+    const result = findPriorScheduledRunFromPages([firstPage, secondPage], since24h);
 
     expect(result?.created_at).toBe(secondPage[0].created_at);
   });

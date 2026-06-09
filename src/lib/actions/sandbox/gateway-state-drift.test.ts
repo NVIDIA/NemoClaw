@@ -73,11 +73,13 @@ describe("sandbox gateway state drift guard", () => {
     spies.push(
       detectPreflightIssueSpy,
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
-      vi.spyOn(gatewayDrift, "formatOpenShellStateRpcIssue").mockReturnValue([
-        "",
-        "  OpenShell gateway schema preflight failed before checking status.",
-        "  No sandbox data was changed.",
-      ]),
+      vi
+        .spyOn(gatewayDrift, "formatOpenShellStateRpcIssue")
+        .mockReturnValue([
+          "",
+          "  OpenShell gateway schema preflight failed before checking status.",
+          "  No sandbox data was changed.",
+        ]),
       captureOpenshellSpy,
       captureOpenshellForStatusSpy,
       runOpenshellSpy,
@@ -104,9 +106,11 @@ describe("sandbox gateway state drift guard", () => {
 
     expect(lookup.state).toBe("gateway_schema_mismatch");
     expect(lookup.output).toContain("No sandbox data was changed.");
-    expect(detectPreflightIssueSpy).toHaveBeenCalledWith(expect.objectContaining({
-      timeoutMs: expect.any(Number),
-    }));
+    expect(detectPreflightIssueSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: expect.any(Number),
+      }),
+    );
     expect(captureOpenshellForStatusSpy).not.toHaveBeenCalled();
   });
 
@@ -116,9 +120,11 @@ describe("sandbox gateway state drift guard", () => {
 
     await gatewayState.getSandboxGatewayStateForStatus("alpha");
 
-    expect(detectPreflightIssueSpy).toHaveBeenCalledWith(expect.objectContaining({
-      timeoutMs: 123,
-    }));
+    expect(detectPreflightIssueSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 123,
+      }),
+    );
     expect(captureOpenshellForStatusSpy).toHaveBeenCalledWith(
       ["sandbox", "get", "alpha"],
       expect.objectContaining({ timeout: 123 }),
@@ -126,9 +132,7 @@ describe("sandbox gateway state drift guard", () => {
   });
 
   it("recover/connect liveness guard exits without removing registry entries on schema mismatch", async () => {
-    await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow("process.exit(1)");
 
     expect(removeSandboxSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).not.toHaveBeenCalled();

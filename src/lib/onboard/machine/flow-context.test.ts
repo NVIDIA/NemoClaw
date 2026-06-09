@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { createSession } from "../../state/onboard-session";
 import { advanceTo } from "./result";
-import { mergeOnboardFlowContext, onboardFlowPhaseResult, type OnboardFlowContext } from "./flow-context";
+import {
+  mergeOnboardFlowContext,
+  onboardFlowPhaseResult,
+  type OnboardFlowContext,
+} from "./flow-context";
 
 function baseContext(): OnboardFlowContext<null, { type: string }, { mode: string }> {
   return {

@@ -31,11 +31,7 @@ export const RISKY_PATTERNS: RegExp[] = [
   /inference/i,
 ];
 
-export const TEST_PATTERNS: RegExp[] = [
-  /\.test\.[jt]sx?$/,
-  /\.spec\.[jt]sx?$/,
-  /^test\//,
-];
+export const TEST_PATTERNS: RegExp[] = [/\.test\.[jt]sx?$/, /\.spec\.[jt]sx?$/, /^test\//];
 
 export function isRiskyFile(path: string): boolean {
   return RISKY_PATTERNS.some((re) => re.test(path));
@@ -53,11 +49,7 @@ export function isTestFile(path: string): boolean {
  * Run a command and return its stdout. On failure, logs the error to stderr
  * and returns an empty string so callers can handle the absence of data.
  */
-export function run(
-  cmd: string,
-  args: string[],
-  timeoutMs = 120_000,
-): string {
+export function run(cmd: string, args: string[], timeoutMs = 120_000): string {
   try {
     return execFileSync(cmd, args, {
       encoding: "utf-8",
@@ -94,9 +86,9 @@ export function ghJson(args: string[]): unknown {
 // need a maintainer to click "Approve and run" before these execute.
 // If any are missing from statusCheckRollup, CI cannot be considered green.
 export const REQUIRED_CHECK_NAMES: string[] = [
-  "checks",       // pr.yaml — lint, typecheck, test
-  "commit-lint",  // commit-lint.yaml
-  "dco-check",    // dco-check.yaml
+  "checks", // pr.yaml — lint, typecheck, test
+  "commit-lint", // commit-lint.yaml
+  "dco-check", // dco-check.yaml
 ];
 
 // ---------------------------------------------------------------------------
@@ -106,11 +98,11 @@ export const REQUIRED_CHECK_NAMES: string[] = [
 /** Union of CheckRun and StatusContext fields from GitHub's statusCheckRollup. */
 export interface StatusCheck {
   __typename?: string;
-  name?: string;       // CheckRun field
-  context?: string;    // StatusContext field
-  status?: string;     // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
+  name?: string; // CheckRun field
+  context?: string; // StatusContext field
+  status?: string; // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
   conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
-  state?: string;      // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
+  state?: string; // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
 }
 
 // ---------------------------------------------------------------------------

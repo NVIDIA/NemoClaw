@@ -28,7 +28,10 @@ import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 
-function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  extraEnv: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-sync-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);

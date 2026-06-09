@@ -11,6 +11,7 @@ import { versionGte } from "../domain/installer/version";
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
 export const NEMOCLAW_REPO_URL = "https://github.com/NVIDIA/NemoClaw.git";
 export const NEMOCLAW_UPDATE_COMMAND = `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | bash`;
+export const NEMOCLAW_MAINTAINED_INSTALL_TAG = "lkg";
 
 type LogFn = (message?: string) => void;
 type PromptFn = (question: string) => Promise<string>;
@@ -105,7 +106,7 @@ export function isSourceCheckout(rootDir: string, env: NodeJS.ProcessEnv = proce
   return detectInstallType(rootDir, env) === "source";
 }
 
-export function getLatestNemoClawVersionFromGitLatestTag(
+export function getMaintainedNemoClawVersionFromGitTag(
   deps: {
     env?: NodeJS.ProcessEnv;
     gitCommand?: string;
@@ -119,8 +120,8 @@ export function getLatestNemoClawVersionFromGitLatestTag(
       "ls-remote",
       "--tags",
       deps.repoUrl ?? NEMOCLAW_REPO_URL,
-      "refs/tags/latest",
-      "refs/tags/latest^{}",
+      `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}`,
+      `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}^{}`,
       "refs/tags/v*",
     ],
     {
@@ -132,18 +133,21 @@ export function getLatestNemoClawVersionFromGitLatestTag(
   if (result.error || (result.status ?? 1) !== 0) return null;
 
   const versionsBySha = new Map<string, string>();
-  let latestSha: string | null = null;
+  let maintainedSha: string | null = null;
   for (const line of trimOutput(result.stdout).split(/\r?\n/)) {
     const [sha, ref] = line.trim().split(/\s+/, 2);
     if (!sha || !ref) continue;
-    if (ref === "refs/tags/latest^{}" || (ref === "refs/tags/latest" && !latestSha)) {
-      latestSha = sha;
+    if (
+      ref === `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}^{}` ||
+      (ref === `refs/tags/${NEMOCLAW_MAINTAINED_INSTALL_TAG}` && !maintainedSha)
+    ) {
+      maintainedSha = sha;
       continue;
     }
     const match = /^refs\/tags\/v(.+?)(\^\{\})?$/.exec(ref);
     if (match?.[1]) versionsBySha.set(sha, match[1]);
   }
-  return latestSha ? versionsBySha.get(latestSha) ?? null : null;
+  return maintainedSha ? (versionsBySha.get(maintainedSha) ?? null) : null;
 }
 
 function updateAvailable(currentVersion: string, latestVersion: string | null): boolean | null {
@@ -160,7 +164,9 @@ function printStatus(input: {
   updateAvailable: boolean | null;
 }): void {
   input.log(`  Current ${input.branding.displayName} version: ${input.currentVersion}`);
-  input.log(`  Latest maintained version:${input.latestVersion ? ` ${input.latestVersion}` : " unknown"}`);
+  input.log(
+    `  Latest maintained version:${input.latestVersion ? ` ${input.latestVersion}` : " unknown"}`,
+  );
   const installTypeLabel =
     input.installType === "source"
       ? "source checkout"
@@ -195,7 +201,9 @@ export async function runUpdateAction(
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
   const branding = updateBranding(env);
-  const latestVersion = (deps.getLatestVersion ?? (() => getLatestNemoClawVersionFromGitLatestTag({ env })))();
+  const latestVersion = (
+    deps.getLatestVersion ?? (() => getMaintainedNemoClawVersionFromGitTag({ env }))
+  )();
   const installType = deps.isSourceCheckout
     ? deps.isSourceCheckout()
       ? "source"
@@ -203,7 +211,14 @@ export async function runUpdateAction(
     : detectInstallType(rootDir, env);
   const available = updateAvailable(currentVersion, latestVersion);
 
-  printStatus({ branding, currentVersion, installType, latestVersion, log, updateAvailable: available });
+  printStatus({
+    branding,
+    currentVersion,
+    installType,
+    latestVersion,
+    log,
+    updateAvailable: available,
+  });
 
   if (options.check) {
     return {
@@ -255,7 +270,9 @@ export async function runUpdateAction(
     }
     const prompt = deps.prompt;
     if (!prompt) {
-      error("  Refusing to run the installer without confirmation. Re-run with --yes for non-interactive update.");
+      error(
+        "  Refusing to run the installer without confirmation. Re-run with --yes for non-interactive update.",
+      );
       return {
         currentVersion,
         installType,
@@ -265,7 +282,9 @@ export async function runUpdateAction(
         updateAvailable: available,
       };
     }
-    const answer = (await prompt(`  Run the maintained ${branding.displayName} installer now? [y/N]: `))
+    const answer = (
+      await prompt(`  Run the maintained ${branding.displayName} installer now? [y/N]: `)
+    )
       .trim()
       .toLowerCase();
     if (answer !== "y" && answer !== "yes") {
@@ -282,13 +301,19 @@ export async function runUpdateAction(
   }
 
   log(`  Running maintained ${branding.displayName} installer...`);
-  const result = (deps.spawnSyncImpl ?? spawnSync)("bash", ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND], {
-    env: updateInstallerEnv(env),
-    stdio: "inherit",
-  });
+  const result = (deps.spawnSyncImpl ?? spawnSync)(
+    "bash",
+    ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
+    {
+      env: updateInstallerEnv(env),
+      stdio: "inherit",
+    },
+  );
   const status = result.status ?? 1;
   if (status === 0) {
-    log(`  Installer completed. Run \`${branding.cliName} upgrade-sandboxes --check\` to verify sandbox state.`);
+    log(
+      `  Installer completed. Run \`${branding.cliName} upgrade-sandboxes --check\` to verify sandbox state.`,
+    );
   } else {
     error(`  Installer failed with exit ${status}.`);
   }

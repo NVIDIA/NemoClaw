@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -357,7 +356,6 @@ describe("oclif compatibility dispatch", () => {
       restoreCache(oclifRunnerPath, priorOclifRunner);
     }
   });
-
 
   it("uses the alias binary name in native oclif help", () => {
     const result = spawnSync(

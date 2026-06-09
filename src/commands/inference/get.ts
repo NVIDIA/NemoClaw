@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  InferenceGetError,
-  runInferenceGet,
-} from "../../lib/actions/inference-get";
+import { InferenceGetError, runInferenceGet } from "../../lib/actions/inference-get";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class InferenceGetCommand extends NemoClawCommand {

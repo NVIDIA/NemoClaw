@@ -156,7 +156,7 @@ JSON
   log "[cli] comparing: $NODE bin/nemoclaw.js --dump-commands"
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
-  log '[cli]        vs: docs/reference/commands.mdx (### `nemoclaw …` headings only)'
+  log '[cli]        vs: docs/reference/commands.mdx (### `nemoclaw …` or `$$nemoclaw …` headings)'
 
   log "[cli] phase 1/2: dump canonical command list from registry"
   if ! HOME="$_cli_home" "$NODE" "$CLI_JS" --dump-commands >"$_tmp/help.txt" 2>"$_tmp/help.err"; then
@@ -172,11 +172,11 @@ JSON
 
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
-  log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
+  log '[cli] phase 2/2: extract ### `nemoclaw …` / `$$nemoclaw …` headings from commands reference'
   # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}.
   # Preserve placeholders that are part of the canonical help signature, but
   # keep accepting docs-only suffixes such as `snapshot restore [selector]`.
-  grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
+  grep -E '^### `(\$\$)?nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
     BEGIN {
       my $help_path = shift @ARGV;
       open my $help_fh, "<", $help_path or die "open help list: $!";
@@ -188,6 +188,7 @@ JSON
     }
     if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
       my $c = $1;
+      $c =~ s/^\$\$nemoclaw\b/nemoclaw/;
       $c =~ s/\s+$//;
       while (!$help{$c}) {
         my $changed = 0;
@@ -254,6 +255,7 @@ JSON
         bt = index(line, "`")
         if (bt > 0) {
           cand = substr(line, 1, bt - 1)
+          sub(/^\$\$nemoclaw/, "nemoclaw", cand)
           sub(/[[:space:]]+$/, "", cand)
           if (cand == target) {
             in_sec = 1
@@ -689,12 +691,288 @@ extract_targets() {
       next;
     }
 
-    while ($visible =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
-    while ($visible =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    my $scan = $visible;
+    $scan =~ s/`[^`]*`//g;
+    while ($scan =~ /\!?\[[^\]]*\]\(([^)\s]+)(?:\s+["'"'"'][^)"'"'"']*["'"'"'])?\)/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /<(https?:[^>\s]+)>/g) { print $line . "\t" . $1 . "\n"; }
+    while ($scan =~ /\bhref=(["'"'"'])([^"'"'"'\s]+)\1/g) { print $line . "\t" . $2 . "\n"; }
     END {
       die "malformed HTML comment\n" if $in_comment;
     }
   ' -- "$1"
+}
+
+FERN_ROUTE_INDEX_LOADED=0
+FERN_ROUTE_INDEX=""
+
+load_fern_route_index() {
+  [[ "$FERN_ROUTE_INDEX_LOADED" -eq 1 ]] && return 0
+  FERN_ROUTE_INDEX_LOADED=1
+
+  local nav_yml="${CHECK_DOCS_FERN_NAV_YML:-$REPO_ROOT/docs/index.yml}"
+  [[ -f "$nav_yml" ]] || return 0
+  if ! command -v "$NODE" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Build a lightweight route index from Fern navigation without requiring npm
+  # dependencies. Each emitted row is: <docs source path> TAB <canonical route>.
+  # The parser intentionally handles the subset used by docs/index.yml:
+  # variants, nested sections with slugs, and pages/sections with path+slug.
+  local _fern_route_index_err
+  _fern_route_index_err="$(mktemp)"
+  if ! FERN_ROUTE_INDEX="$(
+    "$NODE" - "$nav_yml" <<'NODE' 2>"$_fern_route_index_err"
+const fs = require("node:fs");
+const navPath = process.argv[2];
+const lines = fs.readFileSync(navPath, "utf8").split(/\r?\n/);
+
+let variant = "";
+let stack = [];
+let current = null;
+const rows = [];
+
+function clean(value) {
+  let out = value.trim();
+  const hash = out.indexOf(" #");
+  if (hash >= 0) out = out.slice(0, hash).trim();
+  if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
+    out = out.slice(1, -1);
+  }
+  return out;
+}
+
+function maybeEmit(item) {
+  if (!item || item.emitted || !variant || !item.path || !item.slug || item.indent <= 6) return;
+  const route = ["user-guide", variant, ...item.parent, item.slug].join("/");
+  rows.push(`${item.path}\t${route}`);
+  const sourcePath = agentVariantSourcePath(item.path);
+  if (sourcePath && sourcePath !== item.path) {
+    rows.push(`${sourcePath}\t${route}`);
+  }
+  item.emitted = true;
+}
+
+function agentVariantSourcePath(navPath) {
+  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/);
+  return match ? `${match[1]}.mdx` : null;
+}
+
+function maybePushSection(item) {
+  if (!item || item.pushed || item.type !== "section" || !item.slug || item.indent <= 6) return;
+  stack.push({ indent: item.indent, slug: item.slug });
+  item.pushed = true;
+}
+
+for (const line of lines) {
+  const itemMatch = line.match(/^(\s*)-\s+(page|section|link|title):/);
+  if (itemMatch) {
+    const indent = itemMatch[1].length;
+    const type = itemMatch[2];
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    if (indent === 6 && type === "title") {
+      variant = "";
+      stack = [];
+    }
+    current = {
+      indent,
+      type,
+      parent: stack.map((part) => part.slug),
+      path: "",
+      slug: "",
+      emitted: false,
+      pushed: false,
+    };
+    continue;
+  }
+
+  const propMatch = line.match(/^(\s*)(path|slug):\s*(.+?)\s*$/);
+  if (!propMatch || !current) continue;
+  const indent = propMatch[1].length;
+  if (indent !== current.indent + 2) continue;
+
+  const key = propMatch[2];
+  const value = clean(propMatch[3]);
+  if (current.indent === 6 && key === "slug") {
+    variant = value;
+    stack = [];
+    continue;
+  }
+  if (key === "path") current.path = value;
+  if (key === "slug") current.slug = value;
+  maybeEmit(current);
+  maybePushSection(current);
+}
+
+if (rows.length === 0) {
+  throw new Error(`no Fern routes found in ${navPath}`);
+}
+process.stdout.write(rows.join("\n"));
+NODE
+  )"; then
+    echo "check-docs: [links] failed to parse Fern navigation ${nav_yml#"$REPO_ROOT"/}: $(tr '\n' ' ' <"$_fern_route_index_err" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')" >&2
+    rm -f "$_fern_route_index_err"
+    return 1
+  fi
+  rm -f "$_fern_route_index_err"
+}
+
+normalize_fern_route_path() {
+  local input="$1" part
+  input="${input#/}"
+  case "$input" in
+    nemoclaw/latest/*) input="${input#nemoclaw/latest/}" ;;
+    nemoclaw/*) input="${input#nemoclaw/}" ;;
+    latest/*) input="${input#latest/}" ;;
+  esac
+  input="${input%.mdx}"
+  input="${input%.md}"
+
+  local -a parts=() out=()
+  local IFS='/'
+  read -r -a parts <<<"$input"
+  unset IFS
+  for part in "${parts[@]}"; do
+    case "$part" in
+      "" | .) ;;
+      ..)
+        if [[ "${#out[@]}" -eq 0 ]]; then
+          return 1
+        fi
+        unset 'out[${#out[@]}-1]'
+        ;;
+      *) out+=("$part") ;;
+    esac
+  done
+
+  local joined
+  joined="$(
+    IFS=/
+    printf '%s' "${out[*]}"
+  )"
+  printf '%s' "$joined"
+}
+
+fern_route_exists() {
+  local route="$1" candidate
+  if ! load_fern_route_index; then
+    return 3
+  fi
+  [[ -n "$FERN_ROUTE_INDEX" ]] || return 1
+
+  route="$(normalize_fern_route_path "$route")" || return 1
+  local -a candidates=("$route")
+  case "$route" in
+    openclaw)
+      candidates+=("user-guide/openclaw/home")
+      ;;
+    hermes)
+      candidates+=("user-guide/hermes/home")
+      ;;
+    user-guide/openclaw | user-guide/hermes)
+      candidates+=("$route/home")
+      ;;
+    openclaw/* | hermes/*)
+      candidates+=("user-guide/$route")
+      ;;
+    user-guide/*) ;;
+    about/* | get-started/* | inference/* | manage-sandboxes/* | network-policy/* | deployment/* | monitoring/* | security/* | reference/* | resources/*)
+      candidates+=("user-guide/openclaw/$route")
+      ;;
+  esac
+  if [[ "$route" == get-started/quickstart-hermes ]]; then
+    candidates+=("user-guide/hermes/get-started/quickstart-hermes")
+  elif [[ "$route" == get-started/hermes/* ]]; then
+    candidates+=("user-guide/hermes/get-started/${route#get-started/hermes/}")
+  fi
+
+  local _source indexed_route
+  for candidate in "${candidates[@]}"; do
+    while IFS=$'\t' read -r _source indexed_route || [[ -n "${indexed_route:-}" ]]; do
+      [[ "$indexed_route" == "$candidate" ]] && return 0
+    done <<<"$FERN_ROUTE_INDEX"
+  done
+  return 1
+}
+
+fern_relative_ref_exists() {
+  local md_path="$1" stripped="$2"
+  local abs_md="$md_path" source_rel current route
+  [[ "$abs_md" == /* ]] || abs_md="$REPO_ROOT/$abs_md"
+  case "$abs_md" in
+    "$REPO_ROOT/docs/"*) source_rel="${abs_md#"$REPO_ROOT/docs/"}" ;;
+    *) return 1 ;;
+  esac
+
+  if ! load_fern_route_index; then
+    return 3
+  fi
+  [[ -n "$FERN_ROUTE_INDEX" ]] || return 1
+
+  while IFS=$'\t' read -r _source current || [[ -n "${current:-}" ]]; do
+    [[ "$_source" == "$source_rel" ]] || continue
+    route="${current%/*}/$stripped"
+    local _fern_rc
+    set +e
+    fern_route_exists "$route"
+    _fern_rc=$?
+    set -e
+    if [[ "$_fern_rc" -eq 0 ]]; then
+      return 0
+    elif [[ "$_fern_rc" -eq 3 ]]; then
+      return 3
+    fi
+  done <<<"$FERN_ROUTE_INDEX"
+  return 1
+}
+
+source_ref_exists() {
+  local base_dir="$1" stripped="$2" candidate
+  local -a candidates=("$stripped")
+  if [[ "$stripped" == */ ]]; then
+    candidates+=("${stripped}index.mdx" "${stripped}index.md")
+  else
+    candidates+=("$stripped.mdx" "$stripped.md" "$stripped/index.mdx" "$stripped/index.md")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if (cd "$base_dir" && [[ -e "$candidate" ]]); then
+      return 0
+    fi
+  done
+  return 1
+}
+
+site_source_ref_exists() {
+  local stripped="$1"
+  local site_path="${stripped#/}"
+  local -a site_paths=("$site_path")
+  case "$site_path" in
+    nemoclaw/latest/*) site_paths+=("${site_path#nemoclaw/latest/}") ;;
+    nemoclaw/*) site_paths+=("${site_path#nemoclaw/}") ;;
+    latest/*) site_paths+=("${site_path#latest/}") ;;
+  esac
+  case "$site_path" in
+    user-guide/openclaw/*) site_paths+=("${site_path#user-guide/openclaw/}") ;;
+    user-guide/hermes/*) site_paths+=("${site_path#user-guide/hermes/}") ;;
+    openclaw/*) site_paths+=("${site_path#openclaw/}") ;;
+    hermes/*) site_paths+=("${site_path#hermes/}") ;;
+  esac
+
+  local route_path
+  for route_path in "${site_paths[@]}"; do
+    if source_ref_exists "$REPO_ROOT/docs" "$route_path"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+has_markdown_extension() {
+  case "$1" in
+    *.md | *.mdx) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 check_local_ref() {
@@ -717,21 +995,42 @@ check_local_ref() {
   fi
 
   if [[ "$stripped" == /* ]]; then
-    local site_path="${stripped#/}"
-    local candidate
-    for candidate in \
-      "$REPO_ROOT/docs/$site_path" \
-      "$REPO_ROOT/docs/$site_path.mdx" \
-      "$REPO_ROOT/docs/$site_path.md" \
-      "$REPO_ROOT/docs/$site_path/index.mdx" \
-      "$REPO_ROOT/docs/$site_path/index.md"; do
-      [[ -e "$candidate" ]] && return 0
-    done
+    local _fern_rc
+    set +e
+    fern_route_exists "$stripped"
+    _fern_rc=$?
+    set -e
+    if [[ "$_fern_rc" -eq 0 ]] && has_markdown_extension "$stripped"; then
+      echo "check-docs: [links] route-style link should omit .md/.mdx extension in $md_path:$line_no -> $target" >&2
+      return 1
+    fi
+    if [[ "$_fern_rc" -eq 0 ]]; then
+      return 0
+    elif [[ "$_fern_rc" -eq 3 ]]; then
+      return 1
+    fi
+    if site_source_ref_exists "$stripped"; then
+      return 0
+    fi
     echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
     return 1
   fi
 
-  if (cd "$(dirname "$md_path")" && [[ -e "$stripped" ]]); then
+  local _fern_relative_rc
+  set +e
+  fern_relative_ref_exists "$md_path" "$stripped"
+  _fern_relative_rc=$?
+  set -e
+  if [[ "$_fern_relative_rc" -eq 0 ]] && has_markdown_extension "$stripped"; then
+    echo "check-docs: [links] route-style link should omit .md/.mdx extension in $md_path:$line_no -> $target" >&2
+    return 1
+  fi
+  if [[ "$_fern_relative_rc" -eq 0 ]]; then
+    return 0
+  elif [[ "$_fern_relative_rc" -eq 3 ]]; then
+    return 1
+  fi
+  if source_ref_exists "$(dirname "$md_path")" "$stripped"; then
     return 0
   fi
   echo "check-docs: [links] broken local link in $md_path:$line_no -> $target" >&2
@@ -843,7 +1142,7 @@ run_links_check() {
   local failures=0
   declare -a REMOTE_URLS=()
 
-  log "[links] phase 1/2: local file targets for [](url) / ![]() / <https://> (code fences skipped)"
+  log "[links] phase 1/2: local file targets and Fern routes for [](url) / ![]() / <https://> (code fences skipped)"
   for md in "${DOC_FILES[@]}"; do
     if [[ ! -f "$md" ]]; then
       echo "check-docs: [links] missing file: $md" >&2
@@ -881,7 +1180,7 @@ run_links_check() {
     log "[links] phase 1 failed"
     return 1
   fi
-  log "[links] phase 1 OK (local paths resolve from each .md directory)"
+  log "[links] phase 1 OK (local paths and Fern routes resolve)"
 
   local _n_raw _deduped _unique _i _u url
   _n_raw="${#REMOTE_URLS[@]}"

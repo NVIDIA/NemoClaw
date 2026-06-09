@@ -46,9 +46,10 @@ const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint
  * backend and progress mode, so taking only stderr can hide the actual reason
  * a build failed.
  */
-export function formatBuildFailureDiagnostics(
-  buildResult: { stderr?: unknown; stdout?: unknown },
-): string {
+export function formatBuildFailureDiagnostics(buildResult: {
+  stderr?: unknown;
+  stdout?: unknown;
+}): string {
   const streams = [buildResult.stderr, buildResult.stdout]
     .map((stream) => {
       if (stream == null) return "";
@@ -62,7 +63,8 @@ export function formatBuildFailureDiagnostics(
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
-  const match = text.match(/GLIBC\s+([0-9]+(?:\.[0-9]+)+)/i) || text.match(/\s([0-9]+\.[0-9]+)\s*$/);
+  const match =
+    text.match(/GLIBC\s+([0-9]+(?:\.[0-9]+)+)/i) || text.match(/\s([0-9]+\.[0-9]+)\s*$/);
   return match ? match[1] : null;
 }
 
@@ -91,7 +93,10 @@ export function getImageGlibcVersion(imageRef: string): string | null {
   return parseGlibcVersion(output);
 }
 
-export function imageMeetsMinimumGlibc(imageRef: string, minVersion = OPENSHELL_SANDBOX_MIN_GLIBC): {
+export function imageMeetsMinimumGlibc(
+  imageRef: string,
+  minVersion = OPENSHELL_SANDBOX_MIN_GLIBC,
+): {
   ok: boolean;
   version: string | null;
 } {
@@ -99,10 +104,15 @@ export function imageMeetsMinimumGlibc(imageRef: string, minVersion = OPENSHELL_
   return { ok: !!version && versionGte(version, minVersion), version };
 }
 
-export function getSourceShortShaTags(rootDir = ROOT, env: NodeJS.ProcessEnv = process.env): string[] {
+export function getSourceShortShaTags(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const values: string[] = [];
   const push = (value: string | null | undefined) => {
-    const normalized = String(value || "").trim().toLowerCase();
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
     if (!/^[0-9a-f]{7,40}$/.test(normalized)) return;
     values.push(normalized.slice(0, 8), normalized.slice(0, 7));
   };
@@ -130,12 +140,16 @@ function normalizeVersionTag(value: string | null | undefined): string | null {
 }
 
 function gitExactVersionTag(rootDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const git = spawnSync("git", ["-C", rootDir, "describe", "--tags", "--exact-match", "--match", "v*"], {
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5_000,
-    env,
-  });
+  const git = spawnSync(
+    "git",
+    ["-C", rootDir, "describe", "--tags", "--exact-match", "--match", "v*"],
+    {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+      env,
+    },
+  );
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
@@ -159,10 +173,16 @@ export function getVersionedBaseImageTags(
     gitExactVersionTag(rootDir, env),
     versionFileTag(rootDir),
   ];
-  return Array.from(new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean))) as string[];
+  return Array.from(
+    new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean)),
+  ) as string[];
 }
 
-function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv = process.env): number | null {
+function gitStatus(
+  rootDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
   const git = spawnSync("git", ["-C", rootDir, ...args], {
     encoding: "utf-8",
     stdio: "ignore",
@@ -233,12 +253,9 @@ export function baseImageInputsChangedSinceMain(
     gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
   }
 
-  const candidates = [
-    baseRemoteRef,
-    "origin/main",
-    "upstream/main",
-    "main",
-  ].filter((ref): ref is string => !!ref);
+  const candidates = [baseRemoteRef, "origin/main", "upstream/main", "main"].filter(
+    (ref): ref is string => !!ref,
+  );
 
   for (const ref of Array.from(new Set(candidates))) {
     if (!gitRefExists(rootDir, ref, env)) continue;
@@ -258,7 +275,10 @@ function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV !== "test" && env.VITEST !== "true";
 }
 
-function getRepoDigest(imageName: string, imageRef: string): { digest: string; ref: string } | null {
+function getRepoDigest(
+  imageName: string,
+  imageRef: string,
+): { digest: string; ref: string } | null {
   const atIndex = imageRef.indexOf("@sha256:");
   if (atIndex !== -1) {
     const digest = imageRef.slice(atIndex + 1);
@@ -342,9 +362,7 @@ function resolveLocalCandidate(
   if (!localBuildAllowed(options.env)) return null;
 
   const label = options.label || "sandbox base image";
-  console.warn(
-    `  Building ${label} locally because no compatible published base image was found.`,
-  );
+  console.warn(`  Building ${label} locally because no compatible published base image was found.`);
   console.warn("  This is a one-time step and can take several minutes.");
   // Suppress the full BuildKit log (apt-get output, layer hashes, debconf
   // warnings) on success — same approach as #3311 for the [2/8] gateway
