@@ -17,12 +17,14 @@ export default class InternalDnsSetupProxyCommand extends NemoClawCommand {
     gatewayName: Args.string({ description: "OpenShell gateway name", required: true }),
     sandboxName: Args.string({ description: "Sandbox name", required: true }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(InternalDnsSetupProxyCommand);
-    const result = runSetupDnsProxy({ gatewayName: args.gatewayName, sandboxName: args.sandboxName });
+    const result = runSetupDnsProxy({
+      gatewayName: args.gatewayName,
+      sandboxName: args.sandboxName,
+    });
     this.applyExitResult(result);
   }
 }

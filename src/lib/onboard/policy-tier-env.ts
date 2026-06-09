@@ -17,7 +17,9 @@ export function resolvePolicyTierFromEnv(): string {
   const name = trimmed || "balanced";
   if (!getTier(name)) {
     console.error(
-      `  Unknown policy tier: ${name}. Valid: ${listTiers().map((t) => t.name).join(", ")}`,
+      `  Unknown policy tier: ${name}. Valid: ${listTiers()
+        .map((t) => t.name)
+        .join(", ")}`,
     );
     process.exit(1);
   }

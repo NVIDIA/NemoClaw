@@ -66,7 +66,9 @@ describe("onboard Hermes dashboard helpers", () => {
         effectivePort: 18789,
         env: { NEMOCLAW_DASHBOARD_PORT: "8642" },
       }),
-    ).toThrow("[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API");
+    ).toThrow(
+      "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
+    );
   });
 
   it("routes the #4984 rejection through fail() so onboarding exits non-zero", () => {
@@ -93,7 +95,9 @@ describe("onboard Hermes dashboard helpers", () => {
         effectivePort: 8642,
         env: {},
       }),
-    ).toThrow("[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API");
+    ).toThrow(
+      "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API",
+    );
   });
 
   it("accepts a non-reserved NEMOCLAW_DASHBOARD_PORT for Hermes (#4984)", () => {

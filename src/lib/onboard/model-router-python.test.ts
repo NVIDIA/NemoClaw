@@ -33,7 +33,10 @@ function probeImportError(detail: string, version: readonly [number, number, num
   };
 }
 
-function writeFakePython(filePath: string, version: readonly [number, number, number] = [3, 13, 0]) {
+function writeFakePython(
+  filePath: string,
+  version: readonly [number, number, number] = [3, 13, 0],
+) {
   fs.writeFileSync(
     filePath,
     [
@@ -58,13 +61,14 @@ function writeFakePython(filePath: string, version: readonly [number, number, nu
 
 describe("pickHostPython", () => {
   it("prefers a healthy higher-version candidate over a healthy lower-version one", () => {
-    const which = (cmd: string) => ({
-      "python3.13": "/usr/bin/python3.13",
-      "python3.12": "/usr/bin/python3.12",
-      "python3.11": "/usr/bin/python3.11",
-      "python3.10": "/usr/bin/python3.13",
-      python3: "/usr/bin/python3.13",
-    })[cmd] ?? null;
+    const which = (cmd: string) =>
+      ({
+        "python3.13": "/usr/bin/python3.13",
+        "python3.12": "/usr/bin/python3.12",
+        "python3.11": "/usr/bin/python3.11",
+        "python3.10": "/usr/bin/python3.13",
+        python3: "/usr/bin/python3.13",
+      })[cmd] ?? null;
     const probe = (executable: string) =>
       ({
         "/usr/bin/python3.13": probeOk([3, 13, 2]),
@@ -82,13 +86,14 @@ describe("pickHostPython", () => {
   });
 
   it("returns every healthy candidate in priority order so the caller can fall back on venv failure (#3786 Codex P2)", () => {
-    const which = (cmd: string) => ({
-      "python3.13": "/usr/bin/python3.13",
-      "python3.12": "/usr/bin/python3.12",
-      "python3.11": "/usr/bin/python3.11",
-      "python3.10": null,
-      python3: "/usr/bin/python3.13",
-    })[cmd] ?? null;
+    const which = (cmd: string) =>
+      ({
+        "python3.13": "/usr/bin/python3.13",
+        "python3.12": "/usr/bin/python3.12",
+        "python3.11": "/usr/bin/python3.11",
+        "python3.10": null,
+        python3: "/usr/bin/python3.13",
+      })[cmd] ?? null;
     const probe = (executable: string) =>
       ({
         "/usr/bin/python3.13": probeOk([3, 13, 2]),
@@ -107,13 +112,14 @@ describe("pickHostPython", () => {
   });
 
   it("falls back when the top candidate fails the stdlib probe (#3781)", () => {
-    const which = (cmd: string) => ({
-      "python3.14": null,
-      "python3.13": null,
-      "python3.12": null,
-      "python3.11": "/opt/homebrew/bin/python3.11",
-      python3: "/opt/homebrew/bin/python3.14",
-    })[cmd] ?? null;
+    const which = (cmd: string) =>
+      ({
+        "python3.14": null,
+        "python3.13": null,
+        "python3.12": null,
+        "python3.11": "/opt/homebrew/bin/python3.11",
+        python3: "/opt/homebrew/bin/python3.14",
+      })[cmd] ?? null;
     const probe = (executable: string) => {
       if (executable === "/opt/homebrew/bin/python3.14") {
         return probeImportError(
@@ -149,7 +155,8 @@ describe("pickHostPython", () => {
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
     assert.equal(result.ok, null);
-    const reason = result.failures.find((f) => f.resolved === "/opt/homebrew/bin/python3")?.reason ?? "";
+    const reason =
+      result.failures.find((f) => f.resolved === "/opt/homebrew/bin/python3")?.reason ?? "";
     assert.match(reason, /above supported ceiling/);
     assert.match(reason, /3\.14/);
   });
@@ -222,7 +229,9 @@ describe("pickHostPython", () => {
   it("honours a healthy NEMOCLAW_MODEL_ROUTER_PYTHON override", () => {
     const which = () => null;
     const probe = (executable: string) =>
-      executable === "/opt/custom/python3.12" ? probeOk([3, 12, 6]) : probeImportError("never picked");
+      executable === "/opt/custom/python3.12"
+        ? probeOk([3, 12, 6])
+        : probeImportError("never picked");
 
     const result = pickHostPython({
       which,

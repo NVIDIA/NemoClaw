@@ -22,11 +22,7 @@ import {
 export type { InstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 export { decideInstallOllamaLinuxMode } from "./install-ollama-linux-mode";
 
-const {
-  runCaptureEx,
-  runShell,
-  shellQuote,
-}: typeof import("../runner") = require("../runner");
+const { runCaptureEx, runShell, shellQuote }: typeof import("../runner") = require("../runner");
 const {
   setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
@@ -253,10 +249,7 @@ function installOllamaUserLocal(opts: InstallOllamaLinuxOptions): InstallOllamaL
   return { ok: true, mode: "user-local", binPath };
 }
 
-function startUserLocalOllamaDaemon(
-  binPath: string,
-  opts: InstallOllamaLinuxOptions,
-): boolean {
+function startUserLocalOllamaDaemon(binPath: string, opts: InstallOllamaLinuxOptions): boolean {
   const log = opts.log ?? ((m: string) => console.log(m));
   const runShellImpl = opts.runShellImpl ?? runShell;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
@@ -297,8 +290,8 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
   const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   const ensureOverrideImpl =
-    opts.ensureManagedOllamaLoopbackSystemdOverrideImpl
-    ?? ensureManagedOllamaLoopbackSystemdOverride;
+    opts.ensureManagedOllamaLoopbackSystemdOverrideImpl ??
+    ensureManagedOllamaLoopbackSystemdOverride;
 
   runOfficialInstallScript(opts);
   sleepSecondsImpl(2);
@@ -348,9 +341,7 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
  * than throwing so the caller (the onboard selection loop) can continue to
  * the next menu entry on interactive runs.
  */
-export function installOllamaOnLinux(
-  opts: InstallOllamaLinuxOptions,
-): InstallOllamaLinuxResult {
+export function installOllamaOnLinux(opts: InstallOllamaLinuxOptions): InstallOllamaLinuxResult {
   const mode = decideInstallOllamaLinuxMode(opts);
   const result = mode === "user-local" ? installOllamaUserLocal(opts) : installOllamaSystem(opts);
   // Pin to local loopback so a cached `host.docker.internal` from an

@@ -14,10 +14,15 @@ describe("ResourcesCommand", () => {
 
   it("returns the hardware resource object in JSON mode", async () => {
     const result = await ResourcesCommand.run(["--json"], rootDir);
-    expect(result).toEqual(expect.objectContaining({
-      cpu: expect.objectContaining({ cores: expect.any(Number), model: expect.any(String) }),
-      memory: expect.objectContaining({ totalMB: expect.any(Number), swapMB: expect.any(Number) }),
-    }));
+    expect(result).toEqual(
+      expect.objectContaining({
+        cpu: expect.objectContaining({ cores: expect.any(Number), model: expect.any(String) }),
+        memory: expect.objectContaining({
+          totalMB: expect.any(Number),
+          swapMB: expect.any(Number),
+        }),
+      }),
+    );
   });
 
   it("prints human-readable output without returning data in text mode", async () => {

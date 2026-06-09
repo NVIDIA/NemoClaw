@@ -13,7 +13,9 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "XDG_RUNTIME_DIR",
 ];
 
-export function buildAvailabilityProbeEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function buildAvailabilityProbeEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   // Availability probes run outside PhaseOrchestrator, but they need the
   // same child-env and PATH policy as scenario steps. Add only Docker
   // discovery knobs on top of the shared framework boundary.

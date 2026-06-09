@@ -15,10 +15,7 @@ import { tmpdir } from "node:os";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const resolveOpenshellModule = require("../../../dist/lib/adapters/openshell/resolve");
 
-import {
-  stopSandboxChannels,
-  stopAll,
-} from "../../../dist/lib/tunnel/services";
+import { stopSandboxChannels, stopAll } from "../../../dist/lib/tunnel/services";
 
 // ---------------------------------------------------------------------------
 // stopSandboxChannels

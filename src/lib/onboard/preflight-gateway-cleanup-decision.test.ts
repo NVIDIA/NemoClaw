@@ -72,11 +72,7 @@ describe("applyPreflightGatewayCleanup", () => {
     const runOpenshell = vi.fn(() => ({ status: 0 }));
     const destroyGateway = vi.fn(() => true);
     const destroyGatewayForReuse = vi.fn<
-      (
-        destroy: () => boolean,
-        success: string,
-        failure: string,
-      ) => GatewayReuseState
+      (destroy: () => boolean, success: string, failure: string) => GatewayReuseState
     >((destroy) => {
       destroy();
       return "missing";

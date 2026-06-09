@@ -102,11 +102,7 @@ function killWindowsOllamaProcesses(): void {
     { ignoreError: true },
   );
   runCapture(
-    [
-      "powershell.exe",
-      "-Command",
-      "Get-Process ollama -EA SilentlyContinue | Stop-Process -Force",
-    ],
+    ["powershell.exe", "-Command", "Get-Process ollama -EA SilentlyContinue | Stop-Process -Force"],
     { ignoreError: true },
   );
 }

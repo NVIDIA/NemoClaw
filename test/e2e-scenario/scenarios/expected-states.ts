@@ -88,7 +88,9 @@ const REGISTRY: readonly ExpectedState[] = [
   onboardingFailureGatewayPortConflict,
 ];
 
-const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(REGISTRY.map((state) => [state.id, state]));
+const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(
+  REGISTRY.map((state) => [state.id, state]),
+);
 
 export function listExpectedStates(): readonly ExpectedState[] {
   return REGISTRY;

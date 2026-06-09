@@ -59,10 +59,7 @@ function writeRegistryState(
     { mode: 0o600 },
   );
 
-  if (
-    sandboxEntry.provider !== "ollama-local" ||
-    options.writeOllamaProxyState === false
-  ) {
+  if (sandboxEntry.provider !== "ollama-local" || options.writeOllamaProxyState === false) {
     return;
   }
 
@@ -406,12 +403,7 @@ export function runConnect(
   const repoRoot = path.join(import.meta.dirname, "..", "..");
   return spawnSync(
     process.execPath,
-    [
-      path.join(repoRoot, "bin", "nemoclaw.js"),
-      sandboxName,
-      "connect",
-      ...connectArgs,
-    ],
+    [path.join(repoRoot, "bin", "nemoclaw.js"), sandboxName, "connect", ...connectArgs],
     {
       cwd: repoRoot,
       encoding: "utf-8",

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import {
   detectOpenShellStateRpcPreflightIssue,
   detectOpenShellStateRpcResultIssue,
@@ -84,10 +83,8 @@ export async function upgradeSandboxes(
   const liveNames = parseReadySandboxNames(liveResult.output || "");
 
   // Classify sandboxes as stale, unknown, or current
-  const { stale, unknown } = classifyUpgradeableSandboxes(
-    sandboxes,
-    liveNames,
-    (name) => checkAgentVersionForUpgrade(name, liveNames),
+  const { stale, unknown } = classifyUpgradeableSandboxes(sandboxes, liveNames, (name) =>
+    checkAgentVersionForUpgrade(name, liveNames),
   );
 
   if (stale.length === 0 && unknown.length === 0) {

@@ -14,3 +14,8 @@ export {
   type OnboardingOptions,
   type OnboardingSecrets,
 } from "./onboarding.ts";
+export {
+  StateValidationPhaseFixture,
+  type StateValidationProbeResult,
+  type StateValidationResult,
+} from "./state-validation.ts";

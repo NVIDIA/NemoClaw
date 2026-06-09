@@ -64,11 +64,7 @@ export function isSandboxReady(output: string, sandboxName: string): boolean {
  * with a clear phase rather than waiting out the full timeout window
  * (NemoClaw issue #4316 — Docker GPU patch leaves the sandbox in Error).
  */
-const TERMINAL_SANDBOX_FAILURE_PHASES = new Set([
-  "Error",
-  "Failed",
-  "CrashLoopBackOff",
-]);
+const TERMINAL_SANDBOX_FAILURE_PHASES = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
 /**
  * Return the failure phase token from `openshell sandbox list` if the row
@@ -142,8 +138,10 @@ export function isGatewayHealthy(
 
   // Fallback: status is empty (ARM64/non-TTY) but gateway info confirms
   // the named gateway exists and has an active endpoint
-  const statusEmpty = typeof statusOutput === 'string' && stripAnsi(statusOutput).trim().length === 0;
-  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === gatewayName) return true;
+  const statusEmpty =
+    typeof statusOutput === "string" && stripAnsi(statusOutput).trim().length === 0;
+  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === gatewayName)
+    return true;
 
   return false;
 }

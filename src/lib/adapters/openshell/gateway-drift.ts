@@ -157,14 +157,10 @@ function getGatewayClusterPublishedHostPorts(
   containerName: string,
   timeoutMs: number,
 ): Set<string> {
-  const raw = dockerContainerInspectFormat(
-    "{{json .NetworkSettings.Ports}}",
-    containerName,
-    {
-      ignoreError: true,
-      timeout: timeoutMs,
-    },
-  ).trim();
+  const raw = dockerContainerInspectFormat("{{json .NetworkSettings.Ports}}", containerName, {
+    ignoreError: true,
+    timeout: timeoutMs,
+  }).trim();
   if (!raw || raw === "null" || raw === "<no value>") return new Set();
   try {
     const parsed = JSON.parse(raw) as Record<
@@ -213,14 +209,10 @@ export function isGatewayClusterActiveForGateway(
   if (!endpointPort) return false;
 
   const containerName = getGatewayClusterContainerName(gatewayName);
-  const running = dockerContainerInspectFormat(
-    "{{.State.Running}}",
-    containerName,
-    {
-      ignoreError: true,
-      timeout: timeoutMs,
-    },
-  ).trim();
+  const running = dockerContainerInspectFormat("{{.State.Running}}", containerName, {
+    ignoreError: true,
+    timeout: timeoutMs,
+  }).trim();
   if (running !== "true") return false;
 
   return getGatewayClusterPublishedHostPorts(containerName, timeoutMs).has(endpointPort);
@@ -250,12 +242,7 @@ export function getGatewayClusterImageDrift({
       ? deps.getGatewayClusterImageRef(gatewayName)
       : getGatewayClusterImageRef(gatewayName, { timeoutMs });
   const currentVersion = parseGatewayClusterImageVersion(currentImage);
-  if (
-    !expectedVersion ||
-    !currentImage ||
-    !currentVersion ||
-    currentVersion === expectedVersion
-  ) {
+  if (!expectedVersion || !currentImage || !currentVersion || currentVersion === expectedVersion) {
     return null;
   }
   return {
@@ -368,7 +355,9 @@ function resolveHostProcessGatewayBin(
  */
 export function getHostProcessGatewayRuntimeOrNull({
   timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
-}: { timeoutMs?: number } = {}): HostProcessGatewayRuntime | null {
+}: {
+  timeoutMs?: number;
+} = {}): HostProcessGatewayRuntime | null {
   const marker = readDockerDriverGatewayRuntimeMarker(
     getDockerDriverGatewayRuntimeMarkerPath(resolveDockerDriverGatewayStateDir()),
   );
@@ -419,8 +408,7 @@ export function getGatewayHostProcessDrift({
     return null;
   }
   const runtime =
-    deps.getHostProcessGatewayRuntime?.() ??
-    getHostProcessGatewayRuntimeOrNull({ timeoutMs });
+    deps.getHostProcessGatewayRuntime?.() ?? getHostProcessGatewayRuntimeOrNull({ timeoutMs });
   if (!runtime || !runtime.runningVersion || runtime.runningVersion === expectedVersion) {
     return null;
   }
@@ -449,7 +437,11 @@ export function detectOpenShellStateRpcPreflightIssue({
 
 export function detectOpenShellStateRpcResultIssue(
   result: StateRpcResult,
-  { gatewayName = DEFAULT_GATEWAY_NAME, deps = {}, timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS }: GatewayDriftOptions = {},
+  {
+    gatewayName = DEFAULT_GATEWAY_NAME,
+    deps = {},
+    timeoutMs = OPENSHELL_PROBE_TIMEOUT_MS,
+  }: GatewayDriftOptions = {},
 ): OpenShellStateRpcIssue | null {
   const output = String(result.output || "");
   if (!isOpenShellProtobufSchemaMismatch(output)) {
@@ -477,12 +469,9 @@ export function formatOpenShellStateRpcIssue(
     issue.kind === "protobuf_mismatch"
       ? `  OpenShell gateway/schema mismatch was detected while ${action}.`
       : `  OpenShell gateway schema preflight failed before ${action}.`;
-  const lines = [
-    "",
-    phaseLine,
-  ];
+  const lines = ["", phaseLine];
 
-  const drift = issue.kind === "protobuf_mismatch" ? issue.drift ?? null : issue.drift;
+  const drift = issue.kind === "protobuf_mismatch" ? (issue.drift ?? null) : issue.drift;
   if (drift) {
     lines.push(`  Installed OpenShell: ${drift.expectedVersion}`);
     if (isHostProcessGatewayDrift(drift)) {
@@ -493,9 +482,7 @@ export function formatOpenShellStateRpcIssue(
       lines.push(`  Running gateway image: ${drift.currentImage} (${drift.currentVersion})`);
     }
   } else {
-    lines.push(
-      `  ${CLI_DISPLAY_NAME} saw protobuf/schema mismatch output from OpenShell.`,
-    );
+    lines.push(`  ${CLI_DISPLAY_NAME} saw protobuf/schema mismatch output from OpenShell.`);
   }
 
   if (issue.kind === "protobuf_mismatch") {

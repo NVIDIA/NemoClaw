@@ -97,10 +97,7 @@ describe("MessagingHostStateApplier", () => {
     expect(updated).toBe(true);
     const entry = registryMock.__getSandbox("demo");
     const plan = (entry?.messaging as { plan: SandboxMessagingPlan }).plan;
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "slack",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "slack"]);
     expect(plan.credentialBindings.map((binding) => binding.providerEnvKey)).toEqual([
       "TELEGRAM_BOT_TOKEN",
       "SLACK_BOT_TOKEN",
