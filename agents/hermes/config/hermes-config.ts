@@ -63,8 +63,14 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
 
+  const upstream: Record<string, unknown> = {
+    provider: settings.upstreamProvider,
+    model: settings.model,
+  };
+
   const config: Record<string, unknown> = {
     _config_version: 12,
+    _nemoclaw_upstream: upstream,
     model: modelConfig,
     terminal: {
       backend: "local",

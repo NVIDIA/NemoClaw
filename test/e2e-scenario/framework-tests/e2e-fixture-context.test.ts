@@ -122,6 +122,88 @@ describe("E2E fixture primitives", () => {
     ).toThrow(/argument cannot contain NUL bytes/);
   });
 
+  it("shell probe enforces options.redactionValues even when the injected redactor ignores extra values", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-enforce-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const secret = "redaction-enforced-via-options";
+      const controller = new AbortController();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+
+      const result = await probe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", `console.log(${JSON.stringify(secret)}); console.error(${JSON.stringify(secret)});`],
+          reason: "verify ShellProbe enforces redactionValues regardless of injected redactor",
+        }),
+        {
+          artifactName: "options-redaction-enforced",
+          redactionValues: [secret],
+          timeoutMs: 5_000,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("[REDACTED]");
+      expect(result.stderr).toContain("[REDACTED]");
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stderr).not.toContain(secret);
+      const written = fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.result.json"), "utf8");
+      expect(written).not.toContain(secret);
+      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8")).not.toContain(secret);
+      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stderr.txt"), "utf8")).not.toContain(secret);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("shell probe scrubs overlapping redactionValues longest-first when the injected redactor ignores extra values", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-overlap-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      await artifacts.ensureRoot();
+      const longer = "alpha-beta-gamma-delta";
+      const shorter = "alpha";
+      const controller = new AbortController();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+
+      const result = await probe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", `console.log(${JSON.stringify(longer)}); console.error(${JSON.stringify(longer)});`],
+          reason: "verify ShellProbe longest-first ordering for overlapping redactionValues",
+        }),
+        {
+          artifactName: "overlap-shorter-first",
+          redactionValues: [shorter, longer],
+          timeoutMs: 5_000,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain(longer);
+      expect(result.stdout).not.toContain("-beta-gamma-delta");
+      expect(result.stderr).not.toContain(longer);
+      expect(result.stderr).not.toContain("-beta-gamma-delta");
+      const written = fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.result.json"), "utf8");
+      expect(written).not.toContain(longer);
+      expect(written).not.toContain("-beta-gamma-delta");
+      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stdout.txt"), "utf8")).not.toContain("-beta-gamma-delta");
+      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stderr.txt"), "utf8")).not.toContain("-beta-gamma-delta");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("shell probe cleans up and redacts missing command failures", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-shell-probe-"));
     try {

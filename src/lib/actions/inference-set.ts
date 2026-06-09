@@ -270,6 +270,9 @@ export function patchHermesInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const upstream = ensureObject(config, "_nemoclaw_upstream");
+  upstream.provider = provider;
+  upstream.model = model;
   const modelConfig = ensureObject(config, "model");
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
