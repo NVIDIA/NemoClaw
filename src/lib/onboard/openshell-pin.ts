@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -26,9 +26,7 @@ export type OpenshellInstallPinDeps = {
   error?: (message: string) => void;
 };
 
-export type OpenshellInstallEnvDirective =
-  | { env: NodeJS.ProcessEnv }
-  | { env: null };
+export type OpenshellInstallEnvDirective = { env: NodeJS.ProcessEnv } | { env: null };
 
 export type OpenshellInstallPinResult =
   | { kind: "pin"; version: string; latest: string | null; reason: "latest" | "max-cap" }
@@ -184,9 +182,7 @@ export function computeOpenshellInstallEnv(
   if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
   if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
   if (pin.kind === "pin") overlay.NEMOCLAW_OPENSHELL_PIN_VERSION = pin.version;
-  return Object.keys(overlay).length === 0
-    ? { env: baseEnv }
-    : { env: { ...baseEnv, ...overlay } };
+  return Object.keys(overlay).length === 0 ? { env: baseEnv } : { env: { ...baseEnv, ...overlay } };
 }
 
 export type RunOpenshellInstallDeps = OpenshellInstallPinDeps & {
@@ -206,16 +202,18 @@ export type RunOpenshellInstallDeps = OpenshellInstallPinDeps & {
 export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellInstallResult {
   const { env } = computeOpenshellInstallEnv(process.env, deps);
   if (env === null) return { installed: false, localBin: null, futureShellPathHint: null };
+  // Stream install-openshell.sh output live (info() progress + curl progress bar)
+  // so the in-onboard OpenShell upgrade shows progress instead of sitting silent
+  // for the whole download/verify (#4431). `inherit` keeps this call synchronous
+  // (no async ripple into the onboard entrypoint) while the child writes straight
+  // to the terminal in real time.
   const result = spawnSync("bash", [path.join(deps.scriptsDir, "install-openshell.sh")], {
     cwd: deps.cwd,
     env,
-    stdio: ["ignore", "pipe", "pipe"],
-    encoding: "utf-8",
+    stdio: ["ignore", "inherit", "inherit"],
     timeout: 300_000,
   });
   if (result.status !== 0) {
-    const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
-    if (output) console.error(output);
     return { installed: false, localBin: null, futureShellPathHint: null };
   }
   const localBin = process.env.XDG_BIN_HOME || path.join(process.env.HOME || "", ".local", "bin");

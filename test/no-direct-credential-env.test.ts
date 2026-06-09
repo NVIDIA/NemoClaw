@@ -60,10 +60,7 @@ describe("direct credential env guard", () => {
     ["const key = process.env.ANTHROPIC_API_KEY;", "ANTHROPIC_API_KEY"],
     ["const key = process.env.GEMINI_API_KEY;", "GEMINI_API_KEY"],
     ["const key = process.env.COMPATIBLE_API_KEY;", "COMPATIBLE_API_KEY"],
-    [
-      "const key = process.env.COMPATIBLE_ANTHROPIC_API_KEY;",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-    ],
+    ["const key = process.env.COMPATIBLE_ANTHROPIC_API_KEY;", "COMPATIBLE_ANTHROPIC_API_KEY"],
 
     // Conditional check (read context)
     ["if (!process.env.NVIDIA_API_KEY) {}", "NVIDIA_API_KEY"],

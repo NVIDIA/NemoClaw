@@ -8,6 +8,7 @@
  */
 
 const { runCapture } = require("../runner");
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
 
 export type OllamaVersionRunCapture = (
@@ -23,9 +24,7 @@ export type OllamaVersionRunCapture = (
  */
 export const MIN_OLLAMA_VERSION = "0.7.0";
 
-export function getInstalledOllamaVersion(
-  runCaptureImpl?: OllamaVersionRunCapture,
-): string | null {
+export function getInstalledOllamaVersion(runCaptureImpl?: OllamaVersionRunCapture): string | null {
   const capture = runCaptureImpl ?? runCapture;
   const out = capture(["ollama", "--version"], { ignoreError: true });
   if (!out) return null;
@@ -49,12 +48,14 @@ export function getRunningOllamaDaemonVersion(
   const out = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "2",
-      "--max-time",
-      "5",
-      endpoint,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        endpoint,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -72,10 +73,7 @@ export function getRunningOllamaDaemonVersion(
   return match ? match[0] : null;
 }
 
-export function isOllamaVersionAtLeast(
-  version: string | null,
-  minimum: string,
-): boolean {
+export function isOllamaVersionAtLeast(version: string | null, minimum: string): boolean {
   if (!version) return false;
   const parts = version.split(".").map((v) => Number.parseInt(v, 10));
   const min = minimum.split(".").map((v) => Number.parseInt(v, 10));

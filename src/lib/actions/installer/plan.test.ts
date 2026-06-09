@@ -33,21 +33,25 @@ describe("installer plan actions", () => {
     expect(plan.provider).toMatchObject({ normalized: "build", raw: "cloud", valid: true });
     expect(plan.runtime).toEqual({ ok: true, nodeVersion: "v22.16.0", npmVersion: "10.1.0" });
     expect(plan.npm?.globalBin).toBe(path.join("/tmp/npm-prefix", "bin"));
-    expect(plan.npm?.pathWithGlobalBin).toBe(`${path.join("/tmp/npm-prefix", "bin")}${path.delimiter}/usr/bin`);
+    expect(plan.npm?.pathWithGlobalBin).toBe(
+      `${path.join("/tmp/npm-prefix", "bin")}${path.delimiter}/usr/bin`,
+    );
     expect(plan.npm?.linkTargetsWritable?.ok).toBe(true);
   });
 
   it("marks unsupported providers and missing optional probes without failing plan construction", () => {
     const plan = buildInstallerPlan({ env: { NEMOCLAW_PROVIDER: "bad-provider" } });
 
-    expect(plan.installRef).toBe("latest");
+    expect(plan.installRef).toBe("lkg");
     expect(plan.provider).toMatchObject({ normalized: null, raw: "bad-provider", valid: false });
     expect(plan.runtime).toBeNull();
     expect(plan.npm).toBeNull();
   });
 
   it("normalizes installer env for shell-compatible helper output", () => {
-    expect(normalizeInstallerEnv({ NEMOCLAW_INSTALL_TAG: "v1.2.3", NEMOCLAW_PROVIDER: "nim" })).toEqual({
+    expect(
+      normalizeInstallerEnv({ NEMOCLAW_INSTALL_TAG: "v1.2.3", NEMOCLAW_PROVIDER: "nim" }),
+    ).toEqual({
       installRef: "v1.2.3",
       provider: expect.objectContaining({ normalized: "nim-local", raw: "nim", valid: true }),
     });

@@ -84,6 +84,11 @@ function ConvertTo-ProcessArgument {
     return '"' + ($Value -replace '"', '\"') + '"'
 }
 
+function ConvertTo-PowerShellLiteral {
+    param([Parameter(Mandatory)] [string]$Value)
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
 function Get-ScriptInvocationArguments {
     param([switch]$ResumeRun)
 
@@ -228,6 +233,21 @@ function Minimize-DockerDesktopWindow {
     }
 }
 
+function Test-DockerDesktopRunning {
+    try {
+        return $null -ne (
+            Get-Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.ProcessName -eq 'Docker Desktop' -or
+                    $_.MainWindowTitle -like '*Docker Desktop*'
+                } |
+                Select-Object -First 1
+        )
+    } catch {
+        return $false
+    }
+}
+
 function Resolve-WslExe {
     $candidates = @(
         (Join-Path -Path $env:SystemRoot -ChildPath 'System32\wsl.exe'),
@@ -247,25 +267,6 @@ function Resolve-WslExe {
     throw 'wsl.exe was not found. WSL installation requires Windows 10 version 2004/build 19041 or later, or Windows 11.'
 }
 
-function Resolve-UbuntuLauncher {
-    $names = @('ubuntu.exe')
-    $sanitizedName = $DistroName -replace '[^A-Za-z0-9]', ''
-    if ($sanitizedName) {
-        $names += "$sanitizedName.exe"
-    }
-    foreach ($name in ($names | Select-Object -Unique)) {
-        $command = Get-Command $name -ErrorAction SilentlyContinue
-        if ($command) {
-            return $command.Source
-        }
-        $alias = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Microsoft\WindowsApps\$name"
-        if (Test-Path -LiteralPath $alias) {
-            return $alias
-        }
-    }
-    return $null
-}
-
 function Resolve-WingetExe {
     $cmd = Get-Command 'winget.exe' -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -276,6 +277,81 @@ function Resolve-WingetExe {
         return $alias
     }
     return $null
+}
+
+function Set-JsonProperty {
+    param(
+        [Parameter(Mandatory)] $Object,
+        [Parameter(Mandatory)] [string]$PropertyName,
+        [AllowNull()] $Value
+    )
+
+    $property = $Object.PSObject.Properties[$PropertyName]
+    if ($null -ne $property) {
+        $property.Value = $Value
+    } else {
+        Add-Member -InputObject $Object -MemberType NoteProperty -Name $PropertyName -Value $Value
+    }
+}
+
+function Get-DockerDesktopSettingsPath {
+    $settingsDir = Join-Path -Path $env:APPDATA -ChildPath 'Docker'
+    $settingsStorePath = Join-Path -Path $settingsDir -ChildPath 'settings-store.json'
+    $legacySettingsPath = Join-Path -Path $settingsDir -ChildPath 'settings.json'
+
+    if (Test-Path -LiteralPath $settingsStorePath) {
+        return $settingsStorePath
+    }
+    if (Test-Path -LiteralPath $legacySettingsPath) {
+        return $legacySettingsPath
+    }
+    return $settingsStorePath
+}
+
+function Enable-DockerDesktopWslIntegration {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    if (-not $InstallDockerDesktop) {
+        return
+    }
+    if (-not $env:APPDATA) {
+        Write-Status -Level WARN 'APPDATA is not set; cannot update Docker Desktop WSL integration settings.'
+        return
+    }
+
+    $settingsPath = Get-DockerDesktopSettingsPath
+    $settingsDir = Split-Path -Parent $settingsPath
+    New-Item -ItemType Directory -Path $settingsDir -Force | Out-Null
+
+    if (Test-Path -LiteralPath $settingsPath) {
+        $backupPath = "$settingsPath.bak.$(Get-Date -Format yyyyMMddHHmmss)"
+        Copy-Item -LiteralPath $settingsPath -Destination $backupPath -Force
+        try {
+            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        } catch {
+            Write-Status -Level WARN "Could not parse Docker Desktop settings at $settingsPath; leaving settings unchanged."
+            return
+        }
+    } else {
+        $settings = [pscustomobject]@{}
+    }
+
+    Set-JsonProperty -Object $settings -PropertyName 'wslEngineEnabled' -Value $true
+    Set-JsonProperty -Object $settings -PropertyName 'enableIntegrationWithDefaultWslDistro' -Value $false
+
+    $integratedDistros = @()
+    $integratedDistrosProperty = $settings.PSObject.Properties['integratedWslDistros']
+    if ($null -ne $integratedDistrosProperty -and $null -ne $integratedDistrosProperty.Value) {
+        $integratedDistros = @($integratedDistrosProperty.Value)
+    }
+    if ($integratedDistros -notcontains $Name) {
+        $integratedDistros += $Name
+    }
+    Set-JsonProperty -Object $settings -PropertyName 'integratedWslDistros' -Value ([string[]]($integratedDistros | Where-Object { $_ } | Select-Object -Unique))
+
+    $json = $settings | ConvertTo-Json -Depth 100
+    [System.IO.File]::WriteAllText($settingsPath, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+    Write-Status "Enabled Docker Desktop WSL integration settings for '$Name'."
 }
 
 function Get-WindowsFeatureState {
@@ -421,7 +497,12 @@ function Start-DockerDesktop {
         return
     }
 
-    Write-Status 'Launching Docker Desktop...'
+    $wasRunning = Test-DockerDesktopRunning
+    if ($wasRunning) {
+        Write-Status 'Docker Desktop is already running.'
+    } else {
+        Write-Status 'Launching Docker Desktop...'
+    }
     Start-Process -FilePath $script:DockerDesktopExe | Out-Null
 
     if (-not (Test-Path -LiteralPath $script:DockerCli)) {
@@ -430,8 +511,13 @@ function Start-DockerDesktop {
     }
 
     Wait-DockerDesktopEngine -TimeoutSeconds 120 | Out-Null
-    Write-Status 'Restarting Docker Desktop so WSL integration picks up the default distro...'
-    Restart-DockerDesktop
+    if ($wasRunning) {
+        Write-Status 'Restarting Docker Desktop so WSL integration picks up the configured distro...'
+        Restart-DockerDesktop
+    } else {
+        Minimize-DockerDesktopWindow
+        Set-InstallerWindowForeground
+    }
 }
 
 function Restart-DockerDesktop {
@@ -659,6 +745,142 @@ function Get-WslInstallCommandText {
     return "wsl --install -d $Name"
 }
 
+function Wait-WslDistroRegistration {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [int]$TimeoutSeconds = 300
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if ((Get-WslDistros) -contains $Name) {
+            return $true
+        }
+        Start-Sleep -Seconds 5
+    }
+
+    return $false
+}
+
+function Get-WslDistroRegistryProperties {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $lxssPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    if (-not (Test-Path -LiteralPath $lxssPath)) {
+        return $null
+    }
+
+    foreach ($key in (Get-ChildItem -Path $lxssPath -ErrorAction SilentlyContinue)) {
+        $properties = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+        if (-not $properties) {
+            continue
+        }
+        $distributionName = $properties.PSObject.Properties['DistributionName']
+        if ($null -ne $distributionName -and $distributionName.Value -eq $Name) {
+            return $properties
+        }
+    }
+
+    return $null
+}
+
+function Get-WslDistroDefaultUid {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $properties = Get-WslDistroRegistryProperties -Name $Name
+    if (-not $properties) {
+        return $null
+    }
+
+    $defaultUid = $properties.PSObject.Properties['DefaultUid']
+    if ($null -eq $defaultUid -or $null -eq $defaultUid.Value) {
+        return $null
+    }
+
+    return [int]$defaultUid.Value
+}
+
+function Wait-WslDefaultUserReady {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [int]$TimeoutSeconds = 600
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $uid = Get-WslDistroDefaultUid -Name $Name
+        if ($null -ne $uid -and $uid -gt 0) {
+            return $uid
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    return $null
+}
+
+function Start-WslInstallInPowerShellWindow {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $wsl = Resolve-WslExe
+    $installCommand = '& {0} --install -d {1}' -f (ConvertTo-PowerShellLiteral -Value $wsl), (ConvertTo-PowerShellLiteral -Value $Name)
+    $installArguments = @(
+        '-NoLogo',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        $installCommand
+    )
+    $installArgumentLine = ($installArguments | ForEach-Object { ConvertTo-ProcessArgument -Value $_ }) -join ' '
+
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $installArgumentLine | Out-Null
+}
+
+function Stop-WslDistroForDockerIntegration {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [string]$Reason = 'so Docker Desktop integration is applied on next launch'
+    )
+
+    $wsl = Resolve-WslExe
+    Write-Status "Terminating WSL distro '$Name' $Reason..."
+    $terminateExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('--terminate', $Name) -SuppressOutput
+    if ($terminateExitCode -ne 0) {
+        Write-Status -Level WARN "wsl --terminate $Name exited with code $terminateExitCode."
+    }
+}
+
+function Assert-WslDistroStarts {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $wsl = Resolve-WslExe
+    Write-Status "Verifying WSL distro '$Name' starts..."
+    $startExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('-d', $Name, '--', 'echo', 'WSL_OK') -SuppressOutput
+    if ($startExitCode -ne 0) {
+        throw "WSL distro '$Name' is registered but could not start. Run 'wsl -d $Name' from PowerShell, resolve the startup error, then rerun this script."
+    }
+    Write-Status "Verified WSL distro '$Name' starts."
+}
+
+function Ensure-WslDockerCliConfigDirectory {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    if (-not $InstallDockerDesktop) {
+        return
+    }
+
+    $wsl = Resolve-WslExe
+    Write-Status "Preparing Docker CLI config directory in '$Name'..."
+    $mkdirExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('-d', $Name, '--', 'sh', '-lc', 'mkdir -p "$HOME/.docker"') -SuppressOutput
+    if ($mkdirExitCode -ne 0) {
+        Write-Status -Level WARN "Could not prepare ~/.docker in '$Name'; Docker Desktop may need to retry WSL integration."
+    } else {
+        Write-Status "Prepared Docker CLI config directory in '$Name'."
+    }
+
+    Stop-WslDistroForDockerIntegration -Name $Name -Reason 'after preparing Docker CLI config directory'
+}
+
 function Write-WslUbuntuRequiredNotice {
     param([Parameter(Mandatory)] [string]$Name)
 
@@ -676,29 +898,37 @@ function Write-WslUbuntuRequiredNotice {
 }
 
 function Ensure-UbuntuWsl {
-    $wsl = Resolve-WslExe
     $script:InstallDistroAtHandoff = $false
 
     $distros = Get-WslDistros
     if ($distros -notcontains $DistroName) {
-        Write-Status "$DistroName is not registered yet. It will be installed during the final Ubuntu handoff."
-        $script:InstallDistroAtHandoff = $true
-        return
-    }
+        Write-Host ''
+        Write-Host "$DistroName is not registered yet. Installing it in a separate PowerShell window..." -ForegroundColor Cyan
+        Write-Host 'Create the Unix user in that window. This script will continue automatically after setup completes.' -ForegroundColor Cyan
+        Write-Host ''
+        Start-WslInstallInPowerShellWindow -Name $DistroName
 
-    Write-Status "WSL distro already registered: $DistroName"
+        if (-not (Wait-WslDistroRegistration -Name $DistroName)) {
+            Write-WslUbuntuRequiredNotice -Name $DistroName
+            throw "WSL distro '$DistroName' is still not registered after install."
+        }
+
+        Write-Status "WSL distro registered: $DistroName"
+        $defaultUid = Wait-WslDefaultUserReady -Name $DistroName
+        if ($null -eq $defaultUid) {
+            throw "Timed out waiting for $DistroName first-run user creation."
+        }
+
+        Write-Status "$DistroName first-run user is registered (UID $defaultUid)."
+        Stop-WslDistroForDockerIntegration -Name $DistroName -Reason 'after first-run setup so Docker Desktop sees a settled user profile'
+    } else {
+        Write-Status "WSL distro already registered: $DistroName"
+    }
 
     Ensure-WslDistroVersion2 -Name $DistroName
+    Assert-WslDistroStarts -Name $DistroName
+    Ensure-WslDockerCliConfigDirectory -Name $DistroName
 
-    $setDefaultExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('--set-default', $DistroName)
-    if ($setDefaultExitCode -ne 0) {
-        throw "wsl --set-default failed with exit code $setDefaultExitCode"
-    }
-
-    $verify = Invoke-NativeCommandOutput -FilePath $wsl -ArgumentList @('-d', $DistroName, '--', 'echo', 'WSL_OK') -MergeError
-    if ($verify.ExitCode -ne 0 -or $verify.Output -notmatch 'WSL_OK') {
-        throw "Could not start WSL distro '$DistroName'. Output: $($verify.Output)"
-    }
     Write-Status "$DistroName is ready."
 }
 
@@ -800,6 +1030,24 @@ function Get-NemoClawInstallerCommand {
     return $installerCommand
 }
 
+function Open-WslInPowerShellWindow {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $wsl = Resolve-WslExe
+    $launchCommand = '& {0} -d {1}' -f (ConvertTo-PowerShellLiteral -Value $wsl), (ConvertTo-PowerShellLiteral -Value $Name)
+    $launchArguments = @(
+        '-NoLogo',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        $launchCommand
+    )
+    $launchArgumentLine = ($launchArguments | ForEach-Object { ConvertTo-ProcessArgument -Value $_ }) -join ' '
+
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $launchArgumentLine | Out-Null
+}
+
 function Open-UbuntuForInstaller {
     $wsl = Resolve-WslExe
     try {
@@ -807,22 +1055,7 @@ function Open-UbuntuForInstaller {
             Start-Process -FilePath $wsl -ArgumentList @('--install', '-d', $DistroName) | Out-Null
             return
         }
-
-        $ubuntuLauncher = Resolve-UbuntuLauncher
-        $windowsTerminal = Get-Command 'wt.exe' -ErrorAction SilentlyContinue
-        if ($windowsTerminal) {
-            if ($ubuntuLauncher) {
-                Start-Process -FilePath $windowsTerminal.Source -ArgumentList @($ubuntuLauncher) | Out-Null
-            } else {
-                Start-Process -FilePath $windowsTerminal.Source -ArgumentList @('wsl.exe', '-d', $DistroName) | Out-Null
-            }
-            return
-        }
-        if ($ubuntuLauncher) {
-            Start-Process -FilePath $ubuntuLauncher | Out-Null
-            return
-        }
-        Start-Process -FilePath $wsl -ArgumentList @('-d', $DistroName) | Out-Null
+        Open-WslInPowerShellWindow -Name $DistroName
     } catch {
         Write-Status -Level WARN "Could not open $DistroName automatically: $($_.Exception.Message)"
         if ($script:InstallDistroAtHandoff) {
@@ -834,6 +1067,7 @@ function Open-UbuntuForInstaller {
 
 function Write-InstallerHandoff {
     $installerCommand = Get-NemoClawInstallerCommand
+
     Write-Host ''
     Write-Host 'Windows preparation is complete.' -ForegroundColor Green
     Write-Host ''
@@ -859,9 +1093,10 @@ function Invoke-Main {
     Enable-WslFeatures
     Ensure-UbuntuWsl
     Install-DockerDesktop
+    Enable-DockerDesktopWslIntegration -Name $DistroName
     Start-DockerDesktop
     if ($script:InstallDistroAtHandoff) {
-        Write-Status "Skipping Docker-in-WSL verification until $DistroName is installed and first-run setup completes."
+        Write-Status "Skipping Docker-in-WSL verification until $DistroName first-run setup completes."
     } else {
         Ensure-DockerWslIntegration
     }

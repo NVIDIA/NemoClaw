@@ -68,7 +68,11 @@ export function classifyNemoclawShim(input: ShimInput): ShimClassification {
   }
 
   if (!input.isFile) {
-    return { kind: "unsupported-path-type", remove: false, reason: "shim path is not a regular file" };
+    return {
+      kind: "unsupported-path-type",
+      remove: false,
+      reason: "shim path is not a regular file",
+    };
   }
 
   const contents = input.contents ?? "";

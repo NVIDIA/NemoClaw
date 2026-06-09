@@ -31,6 +31,17 @@ filesystem_policy:
   read_write:
     - /tmp
     - /dev/null
+    - /dev/pts                      # PTY multiplexer + slave devices (devpts).
+                                    # OpenClaw's bundled tmux-session flow — and
+                                    # any PTY allocation (tmux, script, expect,
+                                    # interactive shells) — opens /dev/ptmx
+                                    # (-> /dev/pts/ptmx) and a /dev/pts/<n> slave
+                                    # via forkpty(). Without this grant landlock
+                                    # denies the open with EACCES, which tmux
+                                    # surfaces as `create window failed: fork
+                                    # failed: Permission denied` (#4513). Grant
+                                    # the directory, not /dev/ptmx itself — the
+                                    # supervisor refuses to chown that symlink.
     - /sandbox/.openclaw            # Agent config (lockable via shields up)
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)

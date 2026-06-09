@@ -35,13 +35,9 @@ function buildHermeticEnv(tmpDir: string, extra: Record<string, string> = {}): N
 describe("Hermes Provider onboarding selection", () => {
   it("keeps bare interactive onboard on the OpenClaw default", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-agent-default-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-default-"));
     const scriptPath = path.join(tmpDir, "agent-default-check.js");
-    const onboardPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard.js"),
-    );
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 
     const script = String.raw`
 const { selectOnboardAgent } = require(${onboardPath});
@@ -69,16 +65,10 @@ const { selectOnboardAgent } = require(${onboardPath});
 
   it("rejects Hermes Provider when Hermes Agent was not selected", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-hermes-provider-hidden-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-hidden-"));
     const scriptPath = path.join(tmpDir, "hermes-provider-hidden-check.js");
-    const onboardPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard.js"),
-    );
-    const runnerPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "runner.js"),
-    );
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     const script = String.raw`
 const runner = require(${runnerPath});
@@ -115,16 +105,10 @@ const { setupNim } = require(${onboardPath});
 
   it("selects the API-key Hermes Provider path for Hermes Agent", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-hermes-provider-api-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-api-"));
     const scriptPath = path.join(tmpDir, "hermes-provider-api-check.js");
-    const onboardPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard.js"),
-    );
-    const runnerPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "runner.js"),
-    );
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     const script = String.raw`
 const runner = require(${runnerPath});

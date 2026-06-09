@@ -4,6 +4,7 @@
 import {
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
+  resolveMessagingChannelConfigEnvValue,
   sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
 import type { Session } from "../state/onboard-session";
@@ -61,8 +62,10 @@ export function collectMessagingBuildConfig({
 }: CollectMessagingBuildConfigOptions): MessagingBuildConfig {
   const messagingAllowedIds: Record<string, string[]> = {};
   for (const ch of channels) {
-    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey && env[ch.userIdEnvKey]) {
-      const ids = parseMessagingConfigList(env[ch.userIdEnvKey]);
+    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey) {
+      const resolved = resolveMessagingChannelConfigEnvValue(ch.userIdEnvKey, env);
+      if (!resolved.value) continue;
+      const ids = parseMessagingConfigList(resolved.value);
       if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
     }
   }
@@ -114,7 +117,9 @@ export function getStoredMessagingChannelConfig(
   return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
 }
 
-export function persistMessagingChannelConfigToSession(config: MessagingChannelConfig | null): void {
+export function persistMessagingChannelConfigToSession(
+  config: MessagingChannelConfig | null,
+): void {
   onboardSession.updateSession((current: Session) => {
     current.messagingChannelConfig = config;
     return current;

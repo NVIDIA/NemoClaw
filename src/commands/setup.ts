@@ -4,7 +4,11 @@
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 
 import { runSetupAction } from "../lib/actions/global";
-import { buildOnboardFlags, type OnboardFlags, toLegacyOnboardArgs } from "../lib/onboard/command-support";
+import {
+  buildOnboardFlags,
+  type OnboardFlags,
+  toLegacyOnboardArgs,
+} from "../lib/onboard/command-support";
 
 export default class SetupCliCommand extends NemoClawCommand {
   static id = "setup";

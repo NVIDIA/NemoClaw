@@ -31,6 +31,14 @@ export interface VersionCheckResult {
 }
 
 /**
+ * Controls whether version checks may use cached metadata or must inspect the sandbox runtime.
+ */
+export interface VersionCheckOptions {
+  forceProbe?: boolean;
+  skipProbe?: boolean;
+}
+
+/**
  * Resolve the agent definition for a sandbox.
  * Falls back to "openclaw" when the sandbox has no agent set.
  */
@@ -55,6 +63,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (sshConfigResult.status !== 0) return null;
+  if (!sshConfigResult.output.trim()) return null;
 
   const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
@@ -62,11 +71,16 @@ export function probeAgentVersion(sandboxName: string): string | null {
     const result = spawnSync(
       "ssh",
       [
-        "-F", tmpFile,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "LogLevel=ERROR",
+        "-F",
+        tmpFile,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "LogLevel=ERROR",
         `openshell-${sandboxName}`,
         agent.versionCommand,
       ],
@@ -77,7 +91,11 @@ export function probeAgentVersion(sandboxName: string): string | null {
   } catch {
     return null;
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -89,13 +107,18 @@ export function probeAgentVersion(sandboxName: string): string | null {
  */
 export function checkAgentVersion(
   sandboxName: string,
-  opts?: { forceProbe?: boolean; skipProbe?: boolean },
+  opts?: VersionCheckOptions,
 ): VersionCheckResult {
   const agent = resolveAgentForSandbox(sandboxName);
   const expectedVersion = agent.expectedVersion;
 
   if (!expectedVersion) {
-    return { sandboxVersion: null, expectedVersion: null, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion: null,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const sb = registry.getSandbox(sandboxName);
@@ -112,7 +135,12 @@ export function checkAgentVersion(
   }
 
   if (opts?.skipProbe && !opts.forceProbe) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   // Slow path: SSH exec into sandbox
@@ -123,7 +151,12 @@ export function checkAgentVersion(
   }
 
   if (!probed) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const isStale = !versionGte(probed, expectedVersion);
@@ -138,10 +171,7 @@ export function checkAgentVersion(
 /**
  * Format a user-facing staleness warning for console output.
  */
-export function formatStalenessWarning(
-  sandboxName: string,
-  result: VersionCheckResult,
-): string[] {
+export function formatStalenessWarning(sandboxName: string, result: VersionCheckResult): string[] {
   const agentName = resolveAgentForSandbox(sandboxName).displayName;
   return [
     "",

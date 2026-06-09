@@ -7,6 +7,7 @@ import YAML from "yaml";
 
 import * as policies from "../policy";
 import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
+import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type InitialSandboxPolicy = {
@@ -153,11 +154,7 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   try {
     const parsed = YAML.parse(policyContent);
     const networkPolicies = parsed?.network_policies;
-    if (
-      !networkPolicies ||
-      typeof networkPolicies !== "object" ||
-      Array.isArray(networkPolicies)
-    ) {
+    if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
       return new Set();
     }
     return new Set(Object.keys(networkPolicies));
@@ -220,16 +217,13 @@ export function prepareInitialSandboxCreatePolicy(
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const buildCleanup = () =>
-    cleanupFns.length > 0
-      ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean)
-      : undefined;
+    cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
   const requestedCreateTimePresets = [
-    ...new Set(
-      [
-        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
-        ...(options.additionalPresets || []),
-      ],
-    ),
+    ...new Set([
+      ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+      ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
+      ...(options.additionalPresets || []),
+    ]),
   ];
   const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 

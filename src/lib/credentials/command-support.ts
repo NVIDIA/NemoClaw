@@ -40,7 +40,8 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
 
 export async function recoverGatewayOrExit(
   kind: "query" | "reach",
-  reportFailure: (lines: readonly string[]) => void = (lines) => lines.forEach((line) => console.error(line)),
+  reportFailure: (lines: readonly string[]) => void = (lines) =>
+    lines.forEach((line) => console.error(line)),
 ): Promise<boolean> {
   const recovery = await recoverNamedGatewayRuntime();
   if (recovery.recovered) return true;

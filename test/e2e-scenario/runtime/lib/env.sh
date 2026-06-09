@@ -40,8 +40,3 @@ e2e_env_trace() {
     printf '%s %s\n' "${event}" "$*" >>"${E2E_TRACE_FILE}"
   fi
 }
-
-# e2e_env_is_dry_run: true if E2E_DRY_RUN=1
-e2e_env_is_dry_run() {
-  [[ "${E2E_DRY_RUN:-0}" == "1" ]]
-}

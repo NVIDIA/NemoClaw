@@ -50,19 +50,11 @@ export const CONTEXT_PATTERNS: RegExp[] = [
 ];
 
 /** All secret patterns combined. */
-export const SECRET_PATTERNS: RegExp[] = [
-  ...TOKEN_PREFIX_PATTERNS,
-  ...CONTEXT_PATTERNS,
-];
+export const SECRET_PATTERNS: RegExp[] = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_PATTERNS];
 
 /**
  * Token prefixes covered by the debug.sh sed fallback.
  * The primary path delegates to node; this fallback only runs when
  * node or dist/ is unavailable. Consistency test verifies these appear.
  */
-export const EXPECTED_SHELL_PREFIXES = [
-  "nvapi-",
-  "nvcf-",
-  "ghp_",
-  "sk-",
-];
+export const EXPECTED_SHELL_PREFIXES = ["nvapi-", "nvcf-", "ghp_", "sk-"];

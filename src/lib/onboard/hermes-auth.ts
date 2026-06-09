@@ -13,7 +13,9 @@ export const HERMES_NOUS_API_KEY_CREDENTIAL_ENV =
   hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV || "NOUS_API_KEY";
 export const HERMES_NOUS_API_KEY_HELP_URL = "https://portal.nousresearch.com/manage-subscription";
 
-export function normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null {
+export function normalizeHermesAuthMethod(
+  value: string | null | undefined,
+): HermesAuthMethod | null {
   const normalized = String(value || "")
     .trim()
     .toLowerCase()
@@ -60,7 +62,10 @@ export interface HermesAuthFlowDeps {
   validateNvidiaApiKeyValue(value: string, envName: string): string | null;
   compactText(value: string): string;
   redact(value: unknown): string;
-  runOpenshell(args: string[], opts?: Record<string, unknown>): {
+  runOpenshell(
+    args: string[],
+    opts?: Record<string, unknown>,
+  ): {
     status?: number | null;
     stdout?: string | Buffer | null;
     stderr?: string | Buffer | null;
@@ -95,9 +100,7 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     if (deps.isNonInteractive()) {
       const method =
         requested ||
-        (resolveHermesNousApiKey()
-          ? HERMES_AUTH_METHOD_API_KEY
-          : HERMES_AUTH_METHOD_OAUTH);
+        (resolveHermesNousApiKey() ? HERMES_AUTH_METHOD_API_KEY : HERMES_AUTH_METHOD_OAUTH);
       deps.note(`  [non-interactive] Hermes auth: ${hermesAuthMethodLabel(method)}`);
       return method;
     }
@@ -109,7 +112,8 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     });
     console.log("");
 
-    const defaultIdx = (requested ? methods.findIndex((method) => method.key === requested) : 0) + 1;
+    const defaultIdx =
+      (requested ? methods.findIndex((method) => method.key === requested) : 0) + 1;
     const choice = await deps.prompt(`  Choose [${defaultIdx}]: `);
     const navigation = deps.getNavigationChoice(choice);
     if (navigation === "back") return deps.backToSelection;

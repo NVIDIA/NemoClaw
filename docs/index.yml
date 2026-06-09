@@ -1,150 +1,304 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-landing-page:
-  page: "Home"
-  path: index.mdx
+tabs:
+  user-guide:
+    display-name: User Guide
+    icon: book-open
 
 navigation:
-  - section: "About NemoClaw"
-    slug: about
-    contents:
-      - page: "Overview"
-        path: about/overview.mdx
-        slug: overview
-      - page: "Architecture Overview"
-        path: about/how-it-works.mdx
-        slug: how-it-works
-      - page: "Ecosystem"
-        path: about/ecosystem.mdx
-        slug: ecosystem
-      - page: "Release Notes"
-        path: about/release-notes.mdx
-        slug: release-notes
-  - section: "Get Started"
-    slug: get-started
-    contents:
-      - section: "Prerequisites"
-        path: get-started/prerequisites.mdx
-        slug: prerequisites
-        contents:
-          - page: "(Windows Only) Windows Prerequisites"
-            path: get-started/windows-preparation.mdx
-            slug: windows-preparation
-      - page: "Quickstart with OpenClaw"
-        path: get-started/quickstart.mdx
-        slug: quickstart
-      - page: "Quickstart with Hermes"
-        path: get-started/quickstart-hermes.mdx
-        slug: quickstart-hermes
-  - section: "Inference"
-    slug: inference
-    contents:
-      - page: "Inference Options"
-        path: inference/inference-options.mdx
-        slug: inference-options
-      - page: "Use Local Inference"
-        path: inference/use-local-inference.mdx
-        slug: use-local-inference
-      - page: "Tool-Calling Reliability"
-        path: inference/tool-calling-reliability.mdx
-        slug: tool-calling-reliability
-      - page: "Switch Inference Providers"
-        path: inference/switch-inference-providers.mdx
-        slug: switch-inference-providers
-      - page: "Set Up Task-Specific Sub-Agents"
-        path: inference/set-up-sub-agent.mdx
-  - section: "Manage Sandboxes"
-    slug: manage-sandboxes
-    contents:
-      - page: "Manage Sandbox Lifecycle"
-        path: manage-sandboxes/lifecycle.mdx
-        slug: lifecycle
-      - page: "Runtime Controls"
-        path: manage-sandboxes/runtime-controls.mdx
-        slug: runtime-controls
-      - page: "Set Up Messaging Channels"
-        path: manage-sandboxes/messaging-channels.mdx
-        slug: messaging-channels
-      - page: "Workspace Files"
-        path: manage-sandboxes/workspace-files.mdx
-        slug: workspace-files
-      - page: "Backup and Restore"
-        path: manage-sandboxes/backup-restore.mdx
-        slug: backup-restore
-  - section: "Network Policy"
-    slug: network-policy
-    contents:
-      - page: "Approve or Deny Network Requests"
-        path: network-policy/approve-network-requests.mdx
-        slug: approve-network-requests
-      - page: "Customize the Network Policy"
-        path: network-policy/customize-network-policy.mdx
-        slug: customize-network-policy
-      - page: "Integration Policy Examples"
-        path: network-policy/integration-policy-examples.mdx
-        slug: integration-policy-examples
-  - section: "Deployment"
-    slug: deployment
-    contents:
-      - page: "Deploy to Remote GPU Instances"
-        path: deployment/deploy-to-remote-gpu.mdx
-        slug: deploy-to-remote-gpu
-      - page: "Brev Web UI"
-        path: deployment/brev-web-ui.mdx
-        slug: brev-web-ui
-      - page: "Install OpenClaw Plugins"
-        path: deployment/install-openclaw-plugins.mdx
-        slug: install-openclaw-plugins
-      - page: "Sandbox Hardening"
-        path: deployment/sandbox-hardening.mdx
-        slug: sandbox-hardening
-  - section: "Monitoring"
-    slug: monitoring
-    contents:
-      - page: "Monitor Sandbox Activity"
-        path: monitoring/monitor-sandbox-activity.mdx
-        slug: monitor-sandbox-activity
-  - section: "Security"
-    slug: security
-    contents:
-      - page: "Security Best Practices"
-        path: security/best-practices.mdx
-        slug: best-practices
-      - page: "Credential Storage"
-        path: security/credential-storage.mdx
-        slug: credential-storage
-      - page: "OpenClaw Controls"
-        path: security/openclaw-controls.mdx
-        slug: openclaw-controls
-  - section: "Reference"
-    slug: reference
-    contents:
-      - page: "Architecture Details"
-        path: reference/architecture.mdx
-        slug: architecture
-      - page: "CLI Commands Reference"
-        path: reference/commands.mdx
-        slug: commands
-      - page: "CLI Selection Guide"
-        path: reference/cli-selection-guide.mdx
-        slug: cli-selection-guide
-      - page: "Network Policies"
-        path: reference/network-policies.mdx
-        slug: network-policies
-      - page: "Troubleshooting"
-        path: reference/troubleshooting.mdx
-        slug: troubleshooting
-  - section: "Resources"
-    slug: resources
-    contents:
-      - page: "Agent Skills"
-        path: resources/agent-skills.mdx
-        slug: agent-skills
-      - link: "Report Vulnerabilities"
-        href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
-      - page: "License"
-        path: resources/license.mdx
-        slug: license
-      - link: "Discord"
-        href: https://discord.gg/XFpfPv9Uvx
+  - tab: user-guide
+    variants:
+      - title: NemoClaw for OpenClaw
+        subtitle: Guide for OpenClaw agents
+        slug: openclaw
+        default: true
+        layout:
+          - page: "Home"
+            path: index.mdx
+            slug: home
+          - section: "About NemoClaw"
+            slug: about
+            collapsed: open-by-default
+            contents:
+              - page: "Overview"
+                path: _build/agent-variants/about/overview.openclaw.generated.mdx
+                slug: overview
+              - page: "Architecture Overview"
+                path: _build/agent-variants/about/how-it-works.openclaw.generated.mdx
+                slug: how-it-works
+              - page: "Ecosystem"
+                path: about/ecosystem.mdx
+                slug: ecosystem
+              - page: "Release Notes"
+                path: _build/agent-variants/about/release-notes.openclaw.generated.mdx
+                slug: release-notes
+          - section: "Get Started"
+            slug: get-started
+            collapsed: open-by-default
+            contents:
+              - section: "Prerequisites"
+                path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
+                slug: prerequisites
+                contents:
+                  - page: "(Windows Only) Windows Prerequisites"
+                    path: _build/agent-variants/get-started/windows-preparation.openclaw.generated.mdx
+                    slug: windows-preparation
+              - page: "Quickstart with OpenClaw"
+                path: get-started/quickstart.mdx
+                slug: quickstart
+          - section: "Inference"
+            slug: inference
+            collapsed: open-by-default
+            contents:
+              - page: "Inference Options"
+                path: _build/agent-variants/inference/inference-options.openclaw.generated.mdx
+                slug: inference-options
+              - page: "Use Local Inference"
+                path: _build/agent-variants/inference/use-local-inference.openclaw.generated.mdx
+                slug: use-local-inference
+              - page: "Tool-Calling Reliability"
+                path: inference/tool-calling-reliability.mdx
+                slug: tool-calling-reliability
+              - page: "Switch Inference Providers"
+                path: _build/agent-variants/inference/switch-inference-providers.openclaw.generated.mdx
+                slug: switch-inference-providers
+              - page: "Set Up Task-Specific Sub-Agents"
+                path: inference/set-up-sub-agent.mdx
+                slug: set-up-sub-agent
+          - section: "Manage Sandboxes"
+            slug: manage-sandboxes
+            collapsed: open-by-default
+            contents:
+              - page: "Manage Sandbox Lifecycle"
+                path: _build/agent-variants/manage-sandboxes/lifecycle.openclaw.generated.mdx
+                slug: lifecycle
+              - page: "Runtime Controls"
+                path: _build/agent-variants/manage-sandboxes/runtime-controls.openclaw.generated.mdx
+                slug: runtime-controls
+              - page: "Set Up Messaging Channels"
+                path: _build/agent-variants/manage-sandboxes/messaging-channels.openclaw.generated.mdx
+                slug: messaging-channels
+              - page: "Workspace Files"
+                path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
+                slug: workspace-files
+              - page: "Backup and Restore"
+                path: _build/agent-variants/manage-sandboxes/backup-restore.openclaw.generated.mdx
+                slug: backup-restore
+              - page: "Install OpenClaw Plugins"
+                path: deployment/install-openclaw-plugins.mdx
+                slug: install-openclaw-plugins
+              - page: "Sandbox Hardening"
+                path: deployment/sandbox-hardening.mdx
+                slug: sandbox-hardening
+          - section: "Network Policy"
+            slug: network-policy
+            collapsed: open-by-default
+            contents:
+              - page: "Approve or Deny Network Requests"
+                path: _build/agent-variants/network-policy/approve-network-requests.openclaw.generated.mdx
+                slug: approve-network-requests
+              - page: "Customize the Network Policy"
+                path: _build/agent-variants/network-policy/customize-network-policy.openclaw.generated.mdx
+                slug: customize-network-policy
+              - page: "Integration Policy Examples"
+                path: _build/agent-variants/network-policy/integration-policy-examples.openclaw.generated.mdx
+                slug: integration-policy-examples
+          - section: "Deployment"
+            slug: deployment
+            collapsed: open-by-default
+            contents:
+              - page: "Deploy to Remote GPU Instances"
+                path: deployment/deploy-to-remote-gpu.mdx
+                slug: deploy-to-remote-gpu
+              - page: "Brev Web UI"
+                path: deployment/brev-web-ui.mdx
+                slug: brev-web-ui
+          - section: "Monitoring"
+            slug: monitoring
+            collapsed: open-by-default
+            contents:
+              - page: "Monitor Sandbox Activity"
+                path: _build/agent-variants/monitoring/monitor-sandbox-activity.openclaw.generated.mdx
+                slug: monitor-sandbox-activity
+          - section: "Security"
+            slug: security
+            collapsed: open-by-default
+            contents:
+              - page: "Security Best Practices"
+                path: _build/agent-variants/security/best-practices.openclaw.generated.mdx
+                slug: best-practices
+              - page: "Credential Storage"
+                path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
+                slug: credential-storage
+              - page: "OpenClaw Controls"
+                path: security/openclaw-controls.mdx
+                slug: openclaw-controls
+          - section: "Reference"
+            slug: reference
+            collapsed: open-by-default
+            contents:
+              - page: "Architecture Details"
+                path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
+                slug: architecture
+              - page: "CLI Commands Reference"
+                path: _build/agent-variants/reference/commands.openclaw.generated.mdx
+                slug: commands
+              - page: "CLI Selection Guide"
+                path: _build/agent-variants/reference/cli-selection-guide.openclaw.generated.mdx
+                slug: cli-selection-guide
+              - page: "Network Policies"
+                path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
+                slug: network-policies
+              - page: "Troubleshooting"
+                path: _build/agent-variants/reference/troubleshooting.openclaw.generated.mdx
+                slug: troubleshooting
+          - section: "Resources"
+            slug: resources
+            collapsed: open-by-default
+            contents:
+              - page: "Agent Skills"
+                path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
+                slug: agent-skills
+              - link: "Report Vulnerabilities"
+                href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+              - page: "License"
+                path: _build/agent-variants/resources/license.openclaw.generated.mdx
+                slug: license
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx
+      - title: NemoClaw for Hermes
+        subtitle: Guide for Hermes agents
+        slug: hermes
+        layout:
+          - page: "Home"
+            path: index.mdx
+            slug: home
+          - section: "About NemoClaw"
+            slug: about
+            collapsed: open-by-default
+            contents:
+              - page: "Overview"
+                path: _build/agent-variants/about/overview.hermes.generated.mdx
+                slug: overview
+              - page: "Architecture Overview"
+                path: _build/agent-variants/about/how-it-works.hermes.generated.mdx
+                slug: how-it-works
+              - page: "Ecosystem"
+                path: about/ecosystem-hermes.mdx
+                slug: ecosystem
+              - page: "Release Notes"
+                path: _build/agent-variants/about/release-notes.hermes.generated.mdx
+                slug: release-notes
+          - section: "Get Started"
+            slug: get-started
+            collapsed: open-by-default
+            contents:
+              - section: "Prerequisites"
+                path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
+                slug: prerequisites
+                contents:
+                  - page: "(Windows Only) Windows Prerequisites"
+                    path: _build/agent-variants/get-started/windows-preparation.hermes.generated.mdx
+                    slug: windows-preparation
+              - page: "Quickstart with Hermes"
+                path: get-started/quickstart-hermes.mdx
+                slug: quickstart
+          - section: "Inference"
+            slug: inference
+            collapsed: open-by-default
+            contents:
+              - page: "Inference Options"
+                path: _build/agent-variants/inference/inference-options.hermes.generated.mdx
+                slug: inference-options
+              - page: "Use Local Inference"
+                path: _build/agent-variants/inference/use-local-inference.hermes.generated.mdx
+                slug: use-local-inference
+              - page: "Switch Inference Providers"
+                path: _build/agent-variants/inference/switch-inference-providers.hermes.generated.mdx
+                slug: switch-inference-providers
+          - section: "Manage Sandboxes"
+            slug: manage-sandboxes
+            collapsed: open-by-default
+            contents:
+              - page: "Manage Sandbox Lifecycle"
+                path: _build/agent-variants/manage-sandboxes/lifecycle.hermes.generated.mdx
+                slug: lifecycle
+              - page: "Runtime Controls"
+                path: _build/agent-variants/manage-sandboxes/runtime-controls.hermes.generated.mdx
+                slug: runtime-controls
+              - page: "Set Up Messaging Channels"
+                path: _build/agent-variants/manage-sandboxes/messaging-channels.hermes.generated.mdx
+                slug: messaging-channels
+              - page: "Workspace Files"
+                path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
+                slug: workspace-files
+              - page: "Backup and Restore"
+                path: _build/agent-variants/manage-sandboxes/backup-restore.hermes.generated.mdx
+                slug: backup-restore
+              - page: "Install Hermes Plugins"
+                path: manage-sandboxes/install-plugins-hermes.mdx
+                slug: install-plugins-hermes
+          - section: "Network Policy"
+            slug: network-policy
+            collapsed: open-by-default
+            contents:
+              - page: "Approve or Deny Network Requests"
+                path: _build/agent-variants/network-policy/approve-network-requests.hermes.generated.mdx
+                slug: approve-network-requests
+              - page: "Customize the Network Policy"
+                path: _build/agent-variants/network-policy/customize-network-policy.hermes.generated.mdx
+                slug: customize-network-policy
+              - page: "Integration Policy Examples"
+                path: _build/agent-variants/network-policy/integration-policy-examples.hermes.generated.mdx
+                slug: integration-policy-examples
+          - section: "Monitoring"
+            slug: monitoring
+            collapsed: open-by-default
+            contents:
+              - page: "Monitor Sandbox Activity"
+                path: _build/agent-variants/monitoring/monitor-sandbox-activity.hermes.generated.mdx
+                slug: monitor-sandbox-activity
+          - section: "Security"
+            slug: security
+            collapsed: open-by-default
+            contents:
+              - page: "Security Best Practices"
+                path: _build/agent-variants/security/best-practices.hermes.generated.mdx
+                slug: best-practices
+              - page: "Credential Storage"
+                path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
+                slug: credential-storage
+          - section: "Reference"
+            slug: reference
+            collapsed: open-by-default
+            contents:
+              - page: "Architecture Details"
+                path: _build/agent-variants/reference/architecture.hermes.generated.mdx
+                slug: architecture
+              - page: "CLI Commands Reference"
+                path: reference/commands-nemohermes.mdx
+                slug: commands
+              - page: "CLI Selection Guide"
+                path: _build/agent-variants/reference/cli-selection-guide.hermes.generated.mdx
+                slug: cli-selection-guide
+              - page: "Network Policies"
+                path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
+                slug: network-policies
+              - page: "Troubleshooting"
+                path: _build/agent-variants/reference/troubleshooting.hermes.generated.mdx
+                slug: troubleshooting
+          - section: "Resources"
+            slug: resources
+            collapsed: open-by-default
+            contents:
+              - page: "Agent Skills"
+                path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
+                slug: agent-skills
+              - link: "Report Vulnerabilities"
+                href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+              - page: "License"
+                path: _build/agent-variants/resources/license.hermes.generated.mdx
+                slug: license
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx

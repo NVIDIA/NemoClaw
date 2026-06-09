@@ -93,6 +93,29 @@ SH
 write_executable "$FAKE_BIN/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+write_asset() {
+  local asset_name="$1"
+  local asset_path="$2"
+  printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
+}
+sha256_digest() {
+  if [ -x /usr/bin/sha256sum ]; then
+    /usr/bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /bin/sha256sum ]; then
+    /bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /usr/bin/shasum ]; then
+    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
+  else
+    exit 3
+  fi
+}
+write_checksum() {
+  local checksum_file="$1"
+  local asset_name="$2"
+  local asset_path="$3"
+  [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
+  printf '%s  %s\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+}
 if [ "${1:-}" = "release" ] && [ "${2:-}" = "download" ]; then
   tag="${3:-}"
   pattern=""
@@ -109,16 +132,19 @@ if [ "${1:-}" = "release" ] && [ "${2:-}" = "download" ]; then
   mkdir -p "$dir"
   case "$pattern" in
     openshell-checksums-sha256.txt)
-      printf 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz\n' > "$dir/$pattern"
+      asset_name="openshell-x86_64-unknown-linux-musl.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
       ;;
     openshell-gateway-checksums-sha256.txt)
-      printf 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz\n' > "$dir/$pattern"
+      asset_name="openshell-gateway-x86_64-unknown-linux-gnu.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
       ;;
     openshell-sandbox-checksums-sha256.txt)
-      printf 'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz\n' > "$dir/$pattern"
+      asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
       ;;
     *)
-      : > "$dir/$pattern"
+      write_asset "$pattern" "$dir/$pattern"
       ;;
   esac
   exit 0
@@ -129,6 +155,29 @@ SH
 write_executable "$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+write_asset() {
+  local asset_name="$1"
+  local asset_path="$2"
+  printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
+}
+sha256_digest() {
+  if [ -x /usr/bin/sha256sum ]; then
+    /usr/bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /bin/sha256sum ]; then
+    /bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /usr/bin/shasum ]; then
+    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
+  else
+    exit 3
+  fi
+}
+write_checksum() {
+  local checksum_file="$1"
+  local asset_name="$2"
+  local asset_path="$3"
+  [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
+  printf '%s  %s\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+}
 printf 'curl %s\n' "$*" >> "${DOWNLOAD_LOG:?}"
 out=""
 while [ "$#" -gt 0 ]; do
@@ -141,16 +190,19 @@ done
 [ -n "$out" ] || exit 0
 case "$(basename "$out")" in
   openshell-checksums-sha256.txt)
-    printf 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz\n' > "$out"
+    asset_name="openshell-x86_64-unknown-linux-musl.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
     ;;
   openshell-gateway-checksums-sha256.txt)
-    printf 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz\n' > "$out"
+    asset_name="openshell-gateway-x86_64-unknown-linux-gnu.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
     ;;
   openshell-sandbox-checksums-sha256.txt)
-    printf 'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz\n' > "$out"
+    asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
     ;;
   *)
-    : > "$out"
+    write_asset "$(basename "$out")" "$out"
     ;;
 esac
 SH

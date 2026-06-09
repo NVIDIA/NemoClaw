@@ -5,64 +5,34 @@ import { describe, it, expect } from "vitest";
 import { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } from "./duration";
 
 describe("parseDuration", () => {
-  it("parses minutes", () => {
-    expect(parseDuration("5m")).toBe(300);
-    expect(parseDuration("30m")).toBe(1800);
-    expect(parseDuration("1m")).toBe(60);
+  it.each([
+    ["5m", 300],
+    ["30m", 1800],
+    ["1m", 60],
+    ["90s", 90],
+    ["1800s", 1800],
+    ["300", 300],
+    ["1800", 1800],
+    ["  5m  ", 300],
+    ["5M", 300],
+    ["90S", 90],
+  ] as const)("parses %s as %i seconds", (input, expected) => {
+    expect(parseDuration(input)).toBe(expected);
   });
 
-  it("parses seconds", () => {
-    expect(parseDuration("90s")).toBe(90);
-    expect(parseDuration("1800s")).toBe(1800);
-  });
-
-  it("rejects hours that exceed max", () => {
-    expect(() => parseDuration("1h")).toThrow("exceeds maximum"); // 3600 > 1800
-  });
-
-  it("rejects non-integer hour values", () => {
-    expect(() => parseDuration("0.5h")).toThrow("Invalid duration");
-  });
-
-  it("treats bare numbers as seconds", () => {
-    expect(parseDuration("300")).toBe(300);
-    expect(parseDuration("1800")).toBe(1800);
-  });
-
-  it("trims whitespace", () => {
-    expect(parseDuration("  5m  ")).toBe(300);
-  });
-
-  it("is case-insensitive", () => {
-    expect(parseDuration("5M")).toBe(300);
-    expect(parseDuration("90S")).toBe(90);
-  });
-
-  it("rejects empty input", () => {
-    expect(() => parseDuration("")).toThrow("Duration cannot be empty");
-    expect(() => parseDuration("   ")).toThrow("Duration cannot be empty");
-  });
-
-  it("rejects non-numeric input", () => {
-    expect(() => parseDuration("abc")).toThrow("Invalid duration");
-    expect(() => parseDuration("five minutes")).toThrow("Invalid duration");
-  });
-
-  it("rejects zero duration", () => {
-    expect(() => parseDuration("0s")).toThrow("greater than zero");
-    expect(() => parseDuration("0m")).toThrow("greater than zero");
-  });
-
-  it("rejects durations exceeding 30 minutes", () => {
-    expect(() => parseDuration("31m")).toThrow("exceeds maximum");
-    expect(() => parseDuration("1801")).toThrow("exceeds maximum");
-    expect(() => parseDuration("1h")).toThrow("exceeds maximum");
-  });
-
-  it("accepts exactly 30 minutes", () => {
-    expect(parseDuration("30m")).toBe(1800);
-    expect(parseDuration("1800s")).toBe(1800);
-    expect(parseDuration("1800")).toBe(1800);
+  it.each([
+    ["empty input", "", "Duration cannot be empty"],
+    ["whitespace-only input", "   ", "Duration cannot be empty"],
+    ["non-numeric text", "abc", "Invalid duration"],
+    ["word-based duration", "five minutes", "Invalid duration"],
+    ["non-integer hours", "0.5h", "Invalid duration"],
+    ["zero seconds", "0s", "greater than zero"],
+    ["zero minutes", "0m", "greater than zero"],
+    ["minutes over the maximum", "31m", "exceeds maximum"],
+    ["bare seconds over the maximum", "1801", "exceeds maximum"],
+    ["hours over the maximum", "1h", "exceeds maximum"],
+  ] as const)("rejects %s", (_label, input, expectedMessage) => {
+    expect(() => parseDuration(input)).toThrow(expectedMessage);
   });
 });
 
