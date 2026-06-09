@@ -41,8 +41,8 @@ describe("framework redaction entry point", () => {
 
     const out = redactString(text, [shorter, longer]);
 
-    expect(out).toContain("[REDACTED]");
-    expect(out).not.toContain(longer);
+    expect(out).toBe("value=[REDACTED]");
+    expect(out).not.toContain("-beta-gamma");
     expect(out).not.toContain(shorter);
   });
 
