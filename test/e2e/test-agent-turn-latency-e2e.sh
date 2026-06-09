@@ -13,6 +13,10 @@
 #   - NVIDIA_API_KEY set (real key, starts with nvapi-)
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+#
+# Environment:
+#   NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS - install attempts for transient
+#                                            provider validation (default: 2)
 
 # Do not use errexit because this test records pass/fail counts and exits
 # explicitly after critical failures or at the final summary.
@@ -48,6 +52,12 @@ fail() {
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
 }
 
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
+
 section() {
   echo ""
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
@@ -57,6 +67,14 @@ info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 is_positive_int() {
   [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_transient_provider_validation_log() {
+  local log_path="$1"
+  [ -f "$log_path" ] || return 1
+
+  grep -qiE 'endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation' "$log_path" \
+    && grep -qiE 'timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|temporar' "$log_path"
 }
 
 monotonic_ms() {
@@ -266,7 +284,7 @@ run_install() {
   local sandbox="$2"
   local agent="$3"
   local log_path="$4"
-  local install_pid tail_pid install_exit
+  local install_pid tail_pid install_exit attempt
 
   section "Install ${label}"
   info "Pre-cleaning sandbox ${sandbox} and the nemoclaw gateway..."
@@ -289,15 +307,40 @@ run_install() {
     unset NEMOCLAW_AGENT
   fi
 
-  info "Running install.sh for ${label} with ${TURN_PROVIDER_KEY} / ${TURN_MODEL}..."
-  bash install.sh --non-interactive --yes-i-accept-third-party-software >"$log_path" 2>&1 &
-  install_pid=$!
-  tail -f "$log_path" --pid="$install_pid" 2>/dev/null &
-  tail_pid=$!
-  wait "$install_pid"
-  install_exit=$?
-  kill "$tail_pid" 2>/dev/null || true
-  wait "$tail_pid" 2>/dev/null || true
+  for ((attempt = 1; attempt <= TURN_INSTALL_ATTEMPTS; attempt++)); do
+    if [ "$attempt" -gt 1 ]; then
+      info "Retrying ${label} install after transient provider validation failure..."
+      destroy_sandbox "$sandbox"
+    fi
+
+    info "Running install.sh for ${label} with ${TURN_PROVIDER_KEY} / ${TURN_MODEL} (attempt ${attempt}/${TURN_INSTALL_ATTEMPTS})..."
+    bash install.sh --non-interactive --yes-i-accept-third-party-software >"$log_path" 2>&1 &
+    install_pid=$!
+    tail -f "$log_path" --pid="$install_pid" 2>/dev/null &
+    tail_pid=$!
+    wait "$install_pid"
+    install_exit=$?
+    kill "$tail_pid" 2>/dev/null || true
+    wait "$tail_pid" 2>/dev/null || true
+
+    if [ "$install_exit" -eq 0 ]; then
+      break
+    fi
+
+    if is_transient_provider_validation_log "$log_path"; then
+      if [ "$attempt" -lt "$TURN_INSTALL_ATTEMPTS" ]; then
+        info "${label}: install attempt ${attempt}/${TURN_INSTALL_ATTEMPTS} hit transient provider validation; retrying..."
+        tail -40 "$log_path" || true
+        continue
+      fi
+
+      skip "${label}: install skipped after ${TURN_INSTALL_ATTEMPTS} transient provider validation attempt(s)"
+      tail -80 "$log_path" || true
+      return 1
+    fi
+
+    break
+  done
 
   nemoclaw_refresh_install_env
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -521,6 +564,8 @@ MAX_TURN_SECONDS="${NEMOCLAW_TURN_LATENCY_MAX_SECONDS:-300}"
 is_positive_int "$MAX_TURN_SECONDS" || MAX_TURN_SECONDS=300
 COMMAND_TIMEOUT_SECONDS="${NEMOCLAW_TURN_LATENCY_COMMAND_TIMEOUT_SECONDS:-$((MAX_TURN_SECONDS + 30))}"
 is_positive_int "$COMMAND_TIMEOUT_SECONDS" || COMMAND_TIMEOUT_SECONDS=$((MAX_TURN_SECONDS + 30))
+TURN_INSTALL_ATTEMPTS="${NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS:-2}"
+is_positive_int "$TURN_INSTALL_ATTEMPTS" || TURN_INSTALL_ATTEMPTS=2
 
 OPENCLAW_TURN_MS=""
 HERMES_TURN_MS=""

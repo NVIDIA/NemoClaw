@@ -60,6 +60,19 @@ describe("assertion modules", () => {
     }
   });
 
+  it("test_should_keep_snapshot_suite_distinct_from_snapshot_lifecycle", () => {
+    const snapshot = assertionGroupForSuite("snapshot");
+    const snapshotLifecycle = assertionGroupForSuite("snapshot-lifecycle");
+
+    expect(snapshot?.steps.map((step) => step.id)).toEqual(["runtime.snapshot.sandbox-listed"]);
+    expect(snapshot?.steps.map((step) => step.implementation?.ref)).toEqual([
+      "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh",
+    ]);
+    expect(snapshotLifecycle?.steps.map((step) => step.implementation?.ref)).toEqual([
+      "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh",
+    ]);
+  });
+
   it("test_should_require_each_assertion_group_to_have_steps", () => {
     const emptyGroup: AssertionGroup = { id: "empty", phase: "runtime", steps: [] };
 

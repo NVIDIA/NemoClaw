@@ -181,6 +181,36 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
   });
 
+  it("records the upstream provider and model as a self-describing annotation", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
+  it("prepends a grep-friendly YAML comment header naming the upstream route", () => {
+    runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+    });
+    const raw = fs.readFileSync(path.join(tmpDir, ".hermes", "config.yaml"), "utf-8");
+
+    expect(raw.startsWith("# Managed by NemoClaw")).toBe(true);
+    expect(raw).toContain("# Upstream provider: nvidia-prod\n");
+    expect(raw).toContain("# Upstream model: nvidia/nemotron-3-super-120b-a12b\n");
+    const filtered = raw
+      .split("\n")
+      .filter((line) => /provider|model|api_mode/.test(line))
+      .join("\n");
+    expect(filtered).toContain("nvidia-prod");
+    expect(filtered).toContain("nvidia/nemotron-3-super-120b-a12b");
+  });
+
   it("flags bare API-named .env secrets while allowing API server config", () => {
     const rawSecret = "SENTINEL_RAW_SECRET_VALUE";
 

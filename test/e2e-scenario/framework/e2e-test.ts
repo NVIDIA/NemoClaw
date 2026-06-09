@@ -12,6 +12,7 @@ import {
   StateClient,
 } from "./clients/index.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
+import { EnvironmentPhaseFixture, OnboardingPhaseFixture } from "./phases/index.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 
@@ -25,6 +26,8 @@ export interface E2EScenarioFixtures {
   sandbox: SandboxClient;
   provider: ProviderClient;
   state: StateClient;
+  environment: EnvironmentPhaseFixture;
+  onboard: OnboardingPhaseFixture;
 }
 
 export const test = base.extend<E2EScenarioFixtures>({
@@ -76,6 +79,12 @@ export const test = base.extend<E2EScenarioFixtures>({
   },
   state: async ({}, use) => {
     await use(new StateClient());
+  },
+  environment: async ({ host }, use) => {
+    await use(new EnvironmentPhaseFixture(host));
+  },
+  onboard: async ({ cleanup, host, secrets }, use) => {
+    await use(new OnboardingPhaseFixture(host, secrets, cleanup));
   },
 });
 

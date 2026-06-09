@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,docker-unreachable-gateway-start-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,strict-tool-call-probe-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,docker-unreachable-gateway-start-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,strict-tool-call-probe-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
         required: false
         type: string
         default: ""
@@ -53,6 +53,7 @@ jobs:
       strict_tool_call_probe: ${{ steps.select.outputs.strict_tool_call_probe }}
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
+      whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
     steps:
       - id: select
         env:
@@ -120,6 +121,12 @@ jobs:
             echo "openclaw_plugin_runtime_exdev=true" >> "$GITHUB_OUTPUT"
           else
             echo "openclaw_plugin_runtime_exdev=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "whatsapp-qr-compact-e2e"; then
+            echo "whatsapp_qr_compact=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "whatsapp_qr_compact=false" >> "$GITHUB_OUTPUT"
           fi
 
   dashboard-remote-bind-e2e:
@@ -429,4 +436,41 @@ jobs:
             /tmp/nemoclaw-e2e-openclaw-plugin-exdev-onboard.log
             /tmp/nemoclaw-e2e-openclaw-plugin-exdev-agent.log
             /tmp/nemoclaw-e2e-openclaw-plugin-exdev-df.log
+          if-no-files-found: ignore
+
+  # ── WhatsApp compact-QR reporter-workflow E2E ──────────────────
+  # Coverage guard for #4522. Drives the real @openclaw/whatsapp +
+  # openclaw renderQrTerminal path (the symbol the in-sandbox
+  # `openclaw channels login --channel whatsapp` onQr callback invokes)
+  # at the version bundled in Dockerfile.base, and asserts the pairing QR
+  # renders compact with the NemoClaw preload and oversized without it.
+  # Hermetic: only needs node + npm (no Docker, GPU, or NVIDIA_API_KEY).
+  whatsapp-qr-compact-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.whatsapp_qr_compact == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run WhatsApp compact-QR reporter-workflow E2E test
+        run: bash test/e2e/test-whatsapp-qr-compact-e2e.sh
+
+      - name: Upload WhatsApp compact-QR E2E logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: whatsapp-qr-compact-e2e-logs
+          path: |
+            /tmp/nemoclaw-e2e-whatsapp-qr-install.log
           if-no-files-found: ignore

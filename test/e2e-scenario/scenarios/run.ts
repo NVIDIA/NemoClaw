@@ -175,16 +175,24 @@ async function main() {
 // A scenario fails iff:
 //   positive (no expectedFailure): any phase result failed.
 //   negative (expectedFailure declared): the synthetic
-//     negative-contract phase did not match, OR the runtime
-//     control group's required side-effect step did not pass.
+//     negative-contract phase did not match, OR state-validation
+//     did not prove the declared forbidden side effects stayed absent.
 //
 // The matcher decides exit code for negatives so that a scenario
 // that failed for the right reason in the right phase is no longer
-// reported as red just because setup did not complete. Until the
-// forbidden-side-effect probe lands, the required pending step in
-// runtimeControlGroups keeps negatives visibly red on the side-effect
-// axis even when phase + errorClass match.
-function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
+// reported as red just because setup did not complete. Forbidden
+// side effects stay visible through the typed state-validation probes.
+function forbiddenSideEffectProbeId(sideEffect: string): string {
+  if (sideEffect === "gateway-started") {
+    return "state-validation.gateway-absent";
+  }
+  if (sideEffect === "sandbox-created") {
+    return "state-validation.sandbox-absent";
+  }
+  return `state-validation.${sideEffect}`;
+}
+
+export function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
   if (!plan.expectedFailure) {
     return results.some((result) => result.status === "failed");
   }
@@ -192,14 +200,18 @@ function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]):
   if (!contractPhase || contractPhase.status !== "passed") {
     return true;
   }
-  const runtime = results.find((result) => result.phase === "runtime");
-  const sideEffectStep = runtime?.assertions.find(
-    (assertion) => assertion.id === "runtime.expected-failure.no-side-effects",
-  );
-  if (!sideEffectStep || sideEffectStep.status !== "passed") {
+  const requiredSideEffectProbes = (plan.expectedFailure.forbiddenSideEffects ?? []).map(forbiddenSideEffectProbeId);
+  if (requiredSideEffectProbes.length === 0) {
+    return false;
+  }
+  const stateValidation = results.find((result) => result.phase === "state-validation");
+  if (!stateValidation || stateValidation.status !== "passed") {
     return true;
   }
-  return false;
+  const passedActionIds = new Set(
+    stateValidation.actions.filter((action) => action.status === "passed").map((action) => action.id),
+  );
+  return requiredSideEffectProbes.some((id) => !passedActionIds.has(id));
 }
 
 // Only execute when invoked directly as a script. Importing this module from
