@@ -23,14 +23,18 @@ spec:
     messaging: []
     # Lifecycle phase opt-in. The Vitest live runner dispatches this
     # profile through `LifecyclePhaseFixture.simulate(...)`, which:
-    #   1. stops the OpenShell gateway runtime, and
-    #   2. `docker stop`s the labeled sandbox container.
+    #   1. `docker stop`s the labeled sandbox container (gateway is
+    #      left HEALTHY; see scenarios/baseline.ts for why a real
+    #      gateway restart can't be expressed from `ubuntu-latest`),
+    #   2. invokes `nemoclaw <name> status` so any destructive
+    #      registry/container path runs against host-observable
+    #      state.
     # The host-side state-validation probes
     # (`local-registry-entry-present`, `docker-sandbox-container-present`)
-    # then assert that `nemoclaw <name> status` recovers the sandbox
-    # without destroying registry state. On unfixed code the registry
-    # entry is wiped by the `missing` branch in
-    # `src/lib/actions/sandbox/{status,gateway-state}.ts` and the
+    # then assert that the registry entry and labeled container
+    # survive the round-trip. On a regression that re-introduces
+    # unconditional `registry.removeSandbox` in the `missing` branch
+    # of `src/lib/actions/sandbox/{status,gateway-state}.ts`, the
     # `local-registry-entry-present` probe fails. See #4423.
     lifecycle: post-reboot-recovery
   state:
