@@ -27,6 +27,10 @@ export interface OnboardingSecrets {
   required(name: string): string;
 }
 
+export interface OnboardingCleanup {
+  add(name: string, run: () => Promise<void> | void): void;
+}
+
 export interface OnboardingOptions {
   sandboxName?: string;
   timeoutMs?: number;
@@ -89,6 +93,7 @@ export class OnboardingPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
     private readonly secrets: OnboardingSecrets,
+    private readonly cleanup?: OnboardingCleanup,
   ) {}
 
   async from(environment: EnvironmentReady, options: OnboardingOptions = {}): Promise<NemoClawInstance> {
@@ -115,6 +120,7 @@ export class OnboardingPhaseFixture {
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
     assertExitZero(result, "cloud-openclaw onboarding");
+    this.registerSandboxCleanup(sandboxName);
     return {
       onboarding: environment.onboarding,
       sandboxName,
@@ -169,5 +175,17 @@ export class OnboardingPhaseFixture {
     } finally {
       await rm(shimDir, { force: true, recursive: true });
     }
+  }
+
+  private registerSandboxCleanup(sandboxName: string): void {
+    if (!this.cleanup) return;
+    this.cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, async () => {
+      const result = await this.host.nemoclaw([sandboxName, "destroy", "--yes"], {
+        artifactName: `cleanup-destroy-${artifactLabel(sandboxName)}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+      });
+      assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+    });
   }
 }

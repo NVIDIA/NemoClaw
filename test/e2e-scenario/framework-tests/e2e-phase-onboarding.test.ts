@@ -15,6 +15,11 @@ interface RunnerCall {
   options?: ShellProbeRunOptions;
 }
 
+interface CleanupCall {
+  name: string;
+  run: () => Promise<void> | void;
+}
+
 function shellResult(exitCode: number, output = ""): ShellProbeResult {
   return {
     command: [],
@@ -42,6 +47,14 @@ class FakeRunner implements CommandRunner {
   async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
     return this.responses.shift() ?? shellResult(0);
+  }
+}
+
+class FakeCleanup {
+  readonly calls: CleanupCall[] = [];
+
+  add(name: string, run: () => Promise<void> | void): void {
+    this.calls.push({ name, run });
   }
 }
 
@@ -141,11 +154,40 @@ describe("onboarding phase fixture", () => {
     ).rejects.toThrow(/requires an available Docker runtime/);
   });
 
+  it("registers sandbox cleanup after successful cloud OpenClaw onboarding", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+      cleanup,
+    );
+
+    await onboard.from(ready(), { sandboxName: "e2e-cleanup" });
+
+    expect(cleanup.calls).toHaveLength(1);
+    expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-cleanup");
+    await cleanup.calls[0]?.run();
+    expect(runner.calls[1]).toMatchObject({
+      command: "nemoclaw",
+      args: ["e2e-cleanup", "destroy", "--yes"],
+      options: {
+        artifactName: "cleanup-destroy-e2e-cleanup",
+        timeoutMs: 900_000,
+      },
+    });
+    expect(runner.calls[1]?.options?.env).toMatchObject({
+      PATH: expect.any(String),
+    });
+  });
+
   it("runs the no-Docker negative path with a failing Docker shim", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(7, "Cannot connect to the Docker daemon"));
     const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
 
     const instance = await onboard.from(
       ready({
@@ -182,6 +224,7 @@ describe("onboarding phase fixture", () => {
     });
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
     expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
+    expect(cleanup.calls).toEqual([]);
   });
 
   it("does not add an empty PATH segment when the no-Docker base env has no PATH", async () => {
