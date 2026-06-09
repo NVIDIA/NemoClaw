@@ -112,6 +112,21 @@ describe("probesForState maps typed expected-state into probe ids", () => {
     };
     expect(probesForState(state)).toEqual([]);
   });
+
+  it("post-reboot-recovery-ready locks down host-side invariants only", () => {
+    // The post-reboot scenario locks the user-visible regression
+    // surface: registry preservation and Docker container
+    // preservation. Runtime liveness probes (gateway/sandbox) are
+    // intentionally omitted because they're environmental on
+    // `ubuntu-latest` after a simulated reboot and would mask the
+    // host-side signal. See the comment on `postRebootRecoveryReady`
+    // in `scenarios/expected-states.ts`.
+    expect(probesForState(requireExpectedState("post-reboot-recovery-ready"))).toEqual([
+      "cli-installed",
+      "local-registry-entry-present",
+      "docker-sandbox-container-present",
+    ]);
+  });
 });
 
 describe("compiler emits state-validation phase actions from expected-state registry", () => {
