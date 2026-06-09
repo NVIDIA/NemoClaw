@@ -431,7 +431,9 @@ describe("OpenAI-compatible inference probes", () => {
       );
 
       expect(result).toMatchObject({ ok: false });
-      expect(result.message).toMatch(/cannot be validated.*structured Chat Completions tool calls/i);
+      expect(result.message).toMatch(
+        /cannot be validated.*structured Chat Completions tool calls/i,
+      );
     });
   });
 
@@ -651,9 +653,7 @@ exit 0
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
         for (const call of ["1", "2"]) {
           const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-          expect(args).toContain(
-            "https://api.example.com/v1/chat/completions?key=secret%20key",
-          );
+          expect(args).toContain("https://api.example.com/v1/chat/completions?key=secret%20key");
           expect(args).not.toContain("Authorization: Bearer");
         }
       } finally {

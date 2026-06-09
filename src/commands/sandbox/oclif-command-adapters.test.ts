@@ -200,9 +200,9 @@ describe("sandbox oclif command adapters", () => {
   });
 
   it("rejects invalid diagnostic parser-owned flags before dispatch", async () => {
-    await expect(SandboxConfigGetCommand.run(["alpha", "--format", "xml"], rootDir)).rejects.toThrow(
-      /format|json|yaml/i,
-    );
+    await expect(
+      SandboxConfigGetCommand.run(["alpha", "--format", "xml"], rootDir),
+    ).rejects.toThrow(/format|json|yaml/i);
     await expect(SandboxDoctorCliCommand.run(["alpha", "--bogus"], rootDir)).rejects.toThrow(
       /bogus/i,
     );

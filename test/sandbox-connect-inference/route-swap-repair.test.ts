@@ -76,9 +76,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
       // Override must be loud (#3726), not a silent status-style line.
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("differs from the recorded route");
-      expect(combined).toContain(
-        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
-      );
+      expect(combined).toContain("Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514");
     },
   );
 
@@ -104,9 +102,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("differs from the recorded route");
-      expect(combined).toContain(
-        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
-      );
+      expect(combined).toContain("Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514");
       expect(state.inferenceSetCalls).toContainEqual([
         "--provider",
         "anthropic-prod",
@@ -192,27 +188,20 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const dockerCalls = state.dockerCalls as string[][];
-      const inferenceExecCalls = state.sandboxExecCalls.filter(
-        (call: string[]) =>
-          JSON.stringify(call).includes("inference.local/v1/models"),
+      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
+        JSON.stringify(call).includes("inference.local/v1/models"),
       );
       expect(state.inferenceSetCalls.length).toBe(0);
       expect(inferenceExecCalls.length).toBe(2);
-      expect(
-        dockerCalls.some((call) =>
-          call.join(" ").includes("get service kube-dns"),
-        ),
-      ).toBe(true);
-      expect(
-        dockerCalls.some((call) =>
-          call.join(" ").includes("get endpoints kube-dns"),
-        ),
-      ).toBe(false);
+      expect(dockerCalls.some((call) => call.join(" ").includes("get service kube-dns"))).toBe(
+        true,
+      );
+      expect(dockerCalls.some((call) => call.join(" ").includes("get endpoints kube-dns"))).toBe(
+        false,
+      );
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain(
-        "inference.local is unavailable inside 'stale-dns-sandbox'",
-      );
+      expect(combined).toContain("inference.local is unavailable inside 'stale-dns-sandbox'");
       expect(combined).toContain("inference.local route repaired");
     },
   );
@@ -253,10 +242,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "nameserver 192.168.127.1\n",
       );
       expect(
-        fs.readFileSync(
-          path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"),
-          "utf-8",
-        ),
+        fs.readFileSync(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"), "utf-8"),
       ).toContain("nameserver ${GVPROXY_GATEWAY_IP}");
 
       const combined = (result.stdout || "") + (result.stderr || "");
@@ -355,22 +341,12 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const curlCalls = state.curlCalls as string[][];
       const curlEnvs = state.curlEnvs as Record<string, string>[];
       expect(state.inferenceSetCalls).toEqual([
-        [
-          "--provider",
-          "ollama-local",
-          "--model",
-          "qwen3:0.6b",
-          "--no-verify",
-          "--timeout",
-          "321",
-        ],
+        ["--provider", "ollama-local", "--model", "qwen3:0.6b", "--no-verify", "--timeout", "321"],
       ]);
       if (!isHostWsl()) {
-        expect(
-          curlCalls.some((call) =>
-            call.join(" ").includes("127.0.0.1:11435/v1/models"),
-          ),
-        ).toBe(true);
+        expect(curlCalls.some((call) => call.join(" ").includes("127.0.0.1:11435/v1/models"))).toBe(
+          true,
+        );
       }
       expect(curlCalls.flat().join(" ")).not.toContain("Authorization: Bearer");
       for (const [index, call] of curlCalls.entries()) {
@@ -421,8 +397,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const result = runConnect(tmpDir, sandboxName, {
         ALL_PROXY: "http://127.0.0.1:9",
         HTTP_PROXY: "http://127.0.0.1:9",
-        NODE_OPTIONS:
-          `${process.env.NODE_OPTIONS ?? ""} --require=${wslPlatformPreload}`.trim(),
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${wslPlatformPreload}`.trim(),
         NO_PROXY: "",
         OPENSHELL_TEST_FAIL_LOCALHOST_OLLAMA: "1",
         WSL_DISTRO_NAME: "Ubuntu",
@@ -434,20 +409,10 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const curlCalls = state.curlCalls as string[][];
       const curlEnvs = state.curlEnvs as Record<string, string>[];
       const windowsHostIndexes = curlCalls
-        .map((call, index) =>
-          call.join(" ").includes("host.docker.internal:11434") ? index : -1,
-        )
+        .map((call, index) => (call.join(" ").includes("host.docker.internal:11434") ? index : -1))
         .filter((index) => index >= 0);
       expect(state.inferenceSetCalls).toEqual([
-        [
-          "--provider",
-          "ollama-local",
-          "--model",
-          "qwen3:0.6b",
-          "--no-verify",
-          "--timeout",
-          "180",
-        ],
+        ["--provider", "ollama-local", "--model", "qwen3:0.6b", "--no-verify", "--timeout", "180"],
       ]);
       expect(windowsHostIndexes.length).toBeGreaterThan(0);
       for (const index of windowsHostIndexes) {
@@ -455,14 +420,10 @@ describe("sandbox connect inference route swap (#1248)", () => {
         expect(proxyBypass).toContain("host.docker.internal");
         expect(curlEnvs[index]?.ALL_PROXY || "").toBe("");
       }
-      expect(state.sandboxConnectCalls).toEqual([
-        ["sandbox", "connect", sandboxName],
-      ]);
+      expect(state.sandboxConnectCalls).toEqual([["sandbox", "connect", sandboxName]]);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain(
-        "Resetting inference route to ollama-local/qwen3:0.6b",
-      );
+      expect(combined).toContain("Resetting inference route to ollama-local/qwen3:0.6b");
       expect(combined).toContain("inference.local route repaired");
       expect(combined).not.toContain("Ollama auth proxy token is missing");
     },

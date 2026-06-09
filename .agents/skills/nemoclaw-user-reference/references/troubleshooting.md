@@ -1013,8 +1013,9 @@ nemoclaw onboard
 These are build-time settings baked into the sandbox image.
 Changing them after onboarding requires re-running `nemoclaw onboard` to rebuild the image.
 
-When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost` and `127.0.0.1` to `NO_PROXY` for managed subprocesses.
-This keeps local Ollama health checks and model pulls from being routed through a corporate or desktop proxy while preserving the proxy for external hosts.
+When `HTTP_PROXY` or `HTTPS_PROXY` is set on the host, NemoClaw adds `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`, the container-host aliases `host.docker.internal` and `host.containers.internal`, and the managed inference hostname `inference.local` to `NO_PROXY` for host-side subprocesses and for the env forwarded into `openshell sandbox create`.
+This keeps local Ollama health checks, model pulls, and managed inference traffic from being chained through a corporate or desktop proxy at the sandbox-create boundary, while preserving the proxy for external hosts.
+Inside the running sandbox, processes continue to use the OpenShell L7 proxy for `inference.local` so OpenShell's internal routing, DNS, and audit boundaries stay intact.
 
 ### Agent cannot reach a host-side HTTP service
 
@@ -1029,8 +1030,13 @@ Bypassing the proxy with `--noproxy '*'` also bypasses network policy enforcemen
 First, make sure the host-side service listens on a non-loopback address.
 For example, a health endpoint on port `50001` should be reachable from the host IP, not only from `127.0.0.1`:
 
-```console
-$ curl -s http://10.0.0.5:50001/health
+```bash
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1063,8 +1069,13 @@ nemoclaw my-assistant policy-add --from-file ./host-memory-api.yaml
 
 After you apply the policy, retry the request from inside the sandbox without disabling the proxy:
 
-```console
-$ curl -s http://10.0.0.5:50001/health
+```bash
+curl -s http://10.0.0.5:50001/health
+```
+
+Expected output:
+
+```json
 {"status":"ok"}
 ```
 
@@ -1154,10 +1165,23 @@ OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is n
 Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
 The sandbox then sees a DNS failure or `connection refused`:
 
-```console
-$ getent hosts host.docker.internal
+```bash
+getent hosts host.docker.internal
+```
+
+Expected output:
+
+```text
 172.17.0.1      host.docker.internal host.openshell.internal
-$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+```bash
+no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+```
+
+Expected output:
+
+```text
 * connect to 172.17.0.1 port 11434 failed: Connection refused
 ```
 
@@ -1494,8 +1518,13 @@ A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothin
 
 Confirm the agent is healthy with the API health endpoint instead:
 
-```console
-$ curl -sf http://127.0.0.1:8642/health
+```bash
+curl -sf http://127.0.0.1:8642/health
+```
+
+Expected output:
+
+```json
 {"status":"ok","platform":"hermes-agent"}
 ```
 
@@ -1516,9 +1545,9 @@ Side-by-side agents are supported, but each sandbox name has one agent type.
 Pick a distinct sandbox name (the Hermes default is `hermes`; a common pattern is `my-hermes`) so Hermes and OpenClaw sandboxes can coexist on the same host.
 To convert an existing sandbox to Hermes instead, destroy and re-onboard:
 
-```console
-$ nemoclaw <name> destroy
-$ NEMOCLAW_AGENT=hermes nemohermes onboard
+```bash
+nemoclaw <name> destroy
+NEMOCLAW_AGENT=hermes nemohermes onboard
 ```
 
 ### `nemohermes: command not found` immediately after install
@@ -1528,16 +1557,16 @@ The installer drops the shim in the same directory as `nemoclaw`; if `nemoclaw` 
 
 Verify the install:
 
-```console
-$ command -v nemoclaw
-$ command -v nemohermes
+```bash
+command -v nemoclaw
+command -v nemohermes
 ```
 
 If only `nemoclaw` resolves, re-run the installer with `NEMOCLAW_AGENT=hermes` set so the shim is published:
 
-```console
-$ export NEMOCLAW_AGENT=hermes
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+export NEMOCLAW_AGENT=hermes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Equivalently, every `nemohermes <cmd>` invocation is `NEMOCLAW_AGENT=hermes nemoclaw <cmd>`.
@@ -1549,15 +1578,15 @@ Pick OAuth when you have a Nous Portal account and an interactive terminal; pick
 
 Set the method explicitly so the wizard skips the prompt:
 
-```console
-$ # OAuth (default; interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=oauth
-$ nemohermes onboard
+```bash
+# OAuth (default; interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=oauth
+nemohermes onboard
 
-$ # API key (non-interactive)
-$ export NEMOCLAW_HERMES_AUTH_METHOD=api-key
-$ export NOUS_API_KEY=nous_...
-$ nemohermes onboard --non-interactive
+# API key (non-interactive)
+export NEMOCLAW_HERMES_AUTH_METHOD=api-key
+export NOUS_API_KEY=nous_...
+nemohermes onboard --non-interactive
 ```
 
 `NEMOCLAW_HERMES_AUTH_METHOD` accepts `oauth`, `nous-portal-oauth`, `api-key`, and `nous-api-key`.
@@ -1566,7 +1595,7 @@ The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-co
 If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
 Copy them to a browser on any other machine to complete the flow.
 
-### API client returns `401 Unauthorized` against port 8642
+## API client returns `401 Unauthorized` against port 8642
 
 Hermes uses bearer-token header authentication for client requests, not an OpenClaw-style URL fragment.
 A request without an `Authorization: Bearer <token>` header (or with an OpenClaw `#token=` fragment appended to the URL) is rejected with `401`.
@@ -1574,8 +1603,8 @@ A request without an `Authorization: Bearer <token>` header (or with an OpenClaw
 Configure your OpenAI-compatible client to pass the Hermes API key in the `Authorization` header.
 Stored credentials (including `NOUS_API_KEY` and `OPENAI_API_KEY`) are listed by:
 
-```console
-$ nemohermes credentials list
+```bash
+nemohermes credentials list
 ```
 
 Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
@@ -1592,9 +1621,9 @@ Configure Hermes web search from the agent's own configuration inside the sandbo
 This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
 For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
 
-```console
-$ export TELEGRAM_BOT_TOKEN=...
-$ export DISCORD_BOT_TOKEN=...
-$ export SLACK_BOT_TOKEN=...
-$ nemohermes onboard --resume --non-interactive
+```bash
+export TELEGRAM_BOT_TOKEN=...
+export DISCORD_BOT_TOKEN=...
+export SLACK_BOT_TOKEN=...
+nemohermes onboard --resume --non-interactive
 ```

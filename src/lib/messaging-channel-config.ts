@@ -49,10 +49,7 @@ export function getMessagingChannelConfigEnvKeys(key: string): readonly string[]
   return [canonical];
 }
 
-export function normalizeMessagingChannelConfigValue(
-  key: string,
-  value: unknown,
-): string | null {
+export function normalizeMessagingChannelConfigValue(key: string, value: unknown): string | null {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return null;
   const normalized = normalizeValue(value);

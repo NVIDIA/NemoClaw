@@ -7,37 +7,36 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } = require(
-  "../../../dist/lib/onboard/providers",
-) as {
-  buildProviderArgs: (
-    action: "create" | "update",
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-  ) => string[];
-  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
-  upsertProvider: (
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-    env: Record<string, string | undefined>,
-    runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
-  ) => { ok: boolean; status?: number; message?: string };
-  upsertMessagingProviders: (
-    tokenDefs: Array<{
-      name: string;
-      envKey: string;
-      token: string | null;
-      providerType?: string;
-    }>,
-    runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; bestEffort?: boolean },
-  ) => string[];
-};
+const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } =
+  require("../../../dist/lib/onboard/providers") as {
+    buildProviderArgs: (
+      action: "create" | "update",
+      name: string,
+      type: string,
+      credentialEnv: string,
+      baseUrl: string | null,
+    ) => string[];
+    providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+    upsertProvider: (
+      name: string,
+      type: string,
+      credentialEnv: string,
+      baseUrl: string | null,
+      env: Record<string, string | undefined>,
+      runOpenshell: RunOpenshell,
+      options?: { replaceExisting?: boolean },
+    ) => { ok: boolean; status?: number; message?: string };
+    upsertMessagingProviders: (
+      tokenDefs: Array<{
+        name: string;
+        envKey: string;
+        token: string | null;
+        providerType?: string;
+      }>,
+      runOpenshell: RunOpenshell,
+      options?: { replaceExisting?: boolean; bestEffort?: boolean },
+    ) => string[];
+  };
 
 describe("onboard provider helpers", () => {
   it("builds create arguments for generic providers", () => {
@@ -165,7 +164,9 @@ describe("onboard provider helpers", () => {
     expect(commands).toHaveLength(2);
     expect(commands[0]).toMatch(/provider get/);
     expect(commands[1]).toMatch(/provider update/);
-    expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+    expect(commands[1]).toMatch(
+      /--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/,
+    );
   });
 
   it("omits --credential from the update args when the env value is empty", () => {
@@ -196,18 +197,11 @@ describe("onboard provider helpers", () => {
     // create cannot omit credentials — OpenShell rejects empty credential
     // maps on creation. The caller is responsible for staging a value.
     const commands: string[] = [];
-    upsertProvider(
-      "fresh-provider",
-      "generic",
-      "FRESH_TOKEN",
-      null,
-      {},
-      (command) => {
-        commands.push(command.join(" "));
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-        return { status: 0, stdout: "", stderr: "" };
-      },
-    );
+    upsertProvider("fresh-provider", "generic", "FRESH_TOKEN", null, {}, (command) => {
+      commands.push(command.join(" "));
+      if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "" };
+    });
 
     expect(commands).toHaveLength(2);
     expect(commands[1]).toMatch(/^provider create --name fresh-provider /);
@@ -347,5 +341,107 @@ describe("onboard provider helpers", () => {
       "provider delete alpha-brave-search",
       "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",
     ]);
+  });
+
+  it("recovers from FailedPrecondition by detaching stale sandboxes and retrying delete", () => {
+    const commands: string[] = [];
+    let deleteAttempt = 0;
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "spark-nemo-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "tg-test",
+          providerType: "generic",
+        },
+      ],
+      (command) => {
+        const joined = command.join(" ");
+        commands.push(joined);
+        if (joined === "provider get spark-nemo-telegram-bridge") {
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        if (joined === "provider delete spark-nemo-telegram-bridge") {
+          deleteAttempt += 1;
+          if (deleteAttempt === 1) {
+            return {
+              status: 1,
+              stdout: "",
+              stderr:
+                "Error: \xc3\x97 status: FailedPrecondition, message: \"provider 'spark-nemo-telegram-bridge' is attached to sandbox(es): spark-nemo\"",
+            };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      { replaceExisting: true },
+    );
+
+    expect(providers).toEqual(["spark-nemo-telegram-bridge"]);
+    expect(commands).toEqual([
+      "provider get spark-nemo-telegram-bridge",
+      "provider delete spark-nemo-telegram-bridge",
+      "sandbox provider detach spark-nemo spark-nemo-telegram-bridge",
+      "provider delete spark-nemo-telegram-bridge",
+      "provider create --name spark-nemo-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN",
+    ]);
+  });
+
+  it("surfaces detach failures in the final error when delete retry still fails", () => {
+    let originalExit: typeof process.exit = process.exit;
+    let captured = "";
+    const captureErr = (() => {
+      const original = console.error;
+      console.error = (msg: string) => {
+        captured += `${msg}\n`;
+      };
+      return () => {
+        console.error = original;
+      };
+    })();
+    process.exit = ((code?: number) => {
+      throw new Error(`exit(${code})`);
+    }) as never;
+    try {
+      expect(() =>
+        upsertMessagingProviders(
+          [
+            {
+              name: "ghost-nemo-telegram-bridge",
+              envKey: "TELEGRAM_BOT_TOKEN",
+              token: "tg-test",
+              providerType: "generic",
+            },
+          ],
+          (command) => {
+            const joined = command.join(" ");
+            if (joined === "provider get ghost-nemo-telegram-bridge") {
+              return { status: 0, stdout: "", stderr: "" };
+            }
+            if (joined === "provider delete ghost-nemo-telegram-bridge") {
+              return {
+                status: 1,
+                stdout: "",
+                stderr:
+                  "Error: status: FailedPrecondition, message: \"provider 'ghost-nemo-telegram-bridge' is attached to sandbox(es): ghost-nemo\"",
+              };
+            }
+            if (joined === "sandbox provider detach ghost-nemo ghost-nemo-telegram-bridge") {
+              return { status: 1, stdout: "", stderr: "Error: gateway unreachable" };
+            }
+            return { status: 0, stdout: "", stderr: "" };
+          },
+          { replaceExisting: true },
+        ),
+      ).toThrow(/exit\(1\)/);
+      expect(captured).toContain("ghost-nemo-telegram-bridge");
+      expect(captured).toContain("detach failures");
+      expect(captured).toContain("ghost-nemo");
+      expect(captured).toContain("gateway unreachable");
+    } finally {
+      process.exit = originalExit;
+      captureErr();
+    }
   });
 });

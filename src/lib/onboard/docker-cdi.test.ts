@@ -79,11 +79,7 @@ describe("docker-cdi parsing", () => {
 
     expect(hasNvidiaCdiSpec(["/etc/cdi"], fs.readdirImpl, fs.readFileImpl)).toBe(true);
     expect(
-      hasNvidiaCdiSpec(
-        ["/etc/cdi"],
-        () => ["nvidia-extra.yaml", "notes.yaml"],
-        fs.readFileImpl,
-      ),
+      hasNvidiaCdiSpec(["/etc/cdi"], () => ["nvidia-extra.yaml", "notes.yaml"], fs.readFileImpl),
     ).toBe(false);
   });
 });

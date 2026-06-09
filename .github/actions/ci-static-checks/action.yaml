@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-static-checks
+description: Run static CI checks shared by pull_request and main workflows.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: "22"
+        cache: npm
+
+    - name: Install hadolint
+      shell: bash
+      run: |
+        set -euo pipefail
+        HADOLINT_VERSION="v2.14.0"
+        HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+        HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"
+        curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
+        ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
+        [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
+        chmod +x /usr/local/bin/hadolint
+
+    - name: Install dependencies
+      shell: bash
+      run: npm install --ignore-scripts
+
+    - name: Validate config schemas
+      shell: bash
+      run: npm run validate:configs
+
+    - name: Run static hook checks
+      shell: bash
+      run: |
+        npx prek run --all-files --stage pre-push \
+          --skip tsc-plugin \
+          --skip tsc-js \
+          --skip tsc-cli \
+          --skip version-tag-sync \
+          --skip test-cli \
+          --skip test-plugin \
+          --skip source-shape-test-budget \
+          --skip test-file-size-budget \
+          --skip test-skills-yaml
+
+    - name: Run source-shape budget
+      shell: bash
+      run: npm run source-shape:check
+
+    - name: Run test file size budget
+      shell: bash
+      run: npm run test-size:check
+
+    - name: Run skills YAML tests
+      shell: bash
+      run: npx vitest run test/skills-frontmatter.test.ts
+
+    - name: Verify platform matrix is in sync
+      shell: bash
+      run: python3 scripts/generate-platform-docs.py --check

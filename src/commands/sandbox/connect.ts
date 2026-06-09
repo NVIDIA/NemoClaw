@@ -21,7 +21,9 @@ export default class ConnectCliCommand extends NemoClawCommand {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
-    "probe-only": Flags.boolean({ description: "Recover and check the sandbox without opening SSH" }),
+    "probe-only": Flags.boolean({
+      description: "Recover and check the sandbox without opening SSH",
+    }),
     "dangerously-skip-permissions": Flags.boolean({ hidden: true }),
   };
 

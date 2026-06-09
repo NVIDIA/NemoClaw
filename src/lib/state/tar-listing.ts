@@ -2,14 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import {
-  closeSync,
-  mkdtempSync,
-  openSync,
-  readSync,
-  rmSync,
-  statSync,
-} from "node:fs";
+import { closeSync, mkdtempSync, openSync, readSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -85,8 +78,7 @@ export function runTarListing(
       return `${failureLabel} failed (exit ${status}): ${(result.stderr || "").substring(0, 200)}`;
     }
 
-    const listingSize = statSync(listingPath).size;
-    if (listingSize > TAR_LISTING_MAX_OUTPUT_BYTES) {
+    if (statSync(listingPath).size > TAR_LISTING_MAX_OUTPUT_BYTES) {
       return `${failureLabel} exceeded ${TAR_LISTING_MAX_OUTPUT_BYTES} bytes`;
     }
 

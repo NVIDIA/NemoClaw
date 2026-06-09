@@ -792,6 +792,29 @@ reviews:
     - path: "src/commands/sandbox/agents/**"
       instructions: *e2e-sessions-agents-cli
 
+    - path: "test/e2e/test-jetson-nvmap-gpu.sh"
+      instructions: &e2e-jetson-nvmap |
+        This script is the reporter-workflow E2E for #4231: on a Jetson Orin
+        host it onboards with GPU, inspects the sandbox user's groups and
+        /dev/nvmap, runs the cuInit(0) CUDA proof inside the sandbox, and
+        asserts `nemoclaw status` reports `(CUDA verified)`. It validates that
+        the Jetson Docker GPU recreate grants the sandbox user the host group
+        owning /dev/nvmap so CUDA can initialize. Invisible to unit tests
+        because it needs real Tegra device nodes and a live sandbox.
+
+        **E2E test recommendation:**
+        - `gpu-jetson-nvmap-e2e` — Jetson /dev/nvmap CUDA usability + status
+          proof (Jetson-gated; needs a Jetson/Tegra GPU runner with
+          `vars.JETSON_E2E_ENABLED=true`)
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=gpu-jetson-nvmap-e2e
+        ```
+
+    - path: "src/lib/onboard/docker-gpu-patch.ts"
+      instructions: *e2e-jetson-nvmap
+
     - path: ".github/workflows/nightly-e2e.yaml"
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect

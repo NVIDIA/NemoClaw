@@ -21,8 +21,16 @@ export function isHostAliasFailure(error: unknown): error is Required<HostAliasF
   );
 }
 
-const sandboxNameArg = Args.string({ name: "sandbox", description: "Sandbox name", required: true });
-const hostnameArg = Args.string({ name: "hostname", description: "Host alias name", required: true });
+const sandboxNameArg = Args.string({
+  name: "sandbox",
+  description: "Sandbox name",
+  required: true,
+});
+const hostnameArg = Args.string({
+  name: "hostname",
+  description: "Host alias name",
+  required: true,
+});
 const ipArg = Args.string({ name: "ip", description: "IP address", required: true });
 
 export const hostAliasSandboxArgs = {

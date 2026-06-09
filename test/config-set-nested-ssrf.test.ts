@@ -65,9 +65,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry: () => {} },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -148,9 +150,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry: () => {} },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -226,9 +230,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -312,9 +318,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry: () => {} },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -392,9 +400,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry: () => {} },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -471,9 +481,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { appendAuditEntry: () => {} },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -580,9 +592,11 @@ describe("config set nested URL SSRF enforcement", () => {
       exports: { saveCredential, promptSecret: vi.fn() },
     } as any;
 
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`process.exit:${code ?? 0}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`process.exit:${code ?? 0}`);
+      });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 

@@ -31,6 +31,23 @@ The startup script (`nemoclaw-start.sh`) applies the same limit.
 
 Adjust the value with the `--ulimit nproc=512:512` flag if you launch with `docker run` directly.
 
+## Open File Descriptor Limits
+
+The same ENTRYPOINT also sets `ulimit -n 65536` to cap the number of open file
+descriptors a sandbox user can hold. Without this cap the sandbox inherits the
+Docker daemon default (`nofile` ~1048576), which can exceed the host runtime
+limit and lets a runaway process exhaust file descriptors. The startup script
+(`nemoclaw-start.sh`) applies the same limit.
+
+Adjust the value via the `--ulimit nofile=65536:65536` flag if launching with
+`docker run` directly.
+
+Like the process limit, this is applied to the PID 1 entrypoint process tree
+(gateway + agent). `openshell sandbox connect` shells are spawned outside that
+tree and still inherit the runtime default (tracked upstream in
+NVIDIA/OpenShell#1452), so enforce both limits at the container runtime when
+that residual matters to you.
+
 ## Dropping Linux Capabilities
 
 The NemoClaw entrypoint drops dangerous capabilities from the process bounding set before it starts agent services.
@@ -51,6 +68,7 @@ when you launch the image directly:
 docker run --rm \
     --cap-drop=ALL \
     --ulimit nproc=512:512 \
+    --ulimit nofile=65536:65536 \
     nemoclaw-sandbox
 ```
 
@@ -68,6 +86,9 @@ services:
       nproc:
         soft: 512
         hard: 512
+      nofile:
+        soft: 65536
+        hard: 65536
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -132,4 +153,5 @@ The `test/e2e/e2e-cloud-experimental/checks/04-landlock-readonly.sh` script vali
 - [#807](https://github.com/NVIDIA/NemoClaw/issues/807): gcc in sandbox image
 - [#808](https://github.com/NVIDIA/NemoClaw/issues/808): netcat in sandbox image
 - [#809](https://github.com/NVIDIA/NemoClaw/issues/809): No process limit
+- [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527): Cap open file descriptors (nofile)
 - [#797](https://github.com/NVIDIA/NemoClaw/issues/797): Drop Linux capabilities

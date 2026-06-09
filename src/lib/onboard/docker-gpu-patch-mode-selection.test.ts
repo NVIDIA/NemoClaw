@@ -50,9 +50,11 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     // path diverges from how the supervisor expects the container to be wired
     // and never reconnects. When a CDI spec is present we must select the CDI
     // mode (`--device nvidia.com/gpu=all`) ahead of --gpus.
-    expect(
-      buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind),
-    ).toEqual(["cdi", "gpus", "nvidia-runtime"]);
+    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual([
+      "cdi",
+      "gpus",
+      "nvidia-runtime",
+    ]);
 
     // Every probe (including --gpus) would succeed on this host, yet CDI wins.
     const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));

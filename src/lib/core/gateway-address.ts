@@ -29,9 +29,7 @@ export const GATEWAY_BIND_ADDRESS = parseGatewayBindAddress();
 export function getGatewayConnectHost(
   bindAddress: GatewayBindAddress = GATEWAY_BIND_ADDRESS,
 ): string {
-  return bindAddress === WILDCARD_GATEWAY_BIND_ADDRESS
-    ? DEFAULT_GATEWAY_BIND_ADDRESS
-    : bindAddress;
+  return bindAddress === WILDCARD_GATEWAY_BIND_ADDRESS ? DEFAULT_GATEWAY_BIND_ADDRESS : bindAddress;
 }
 
 export function getGatewayHttpEndpoint(

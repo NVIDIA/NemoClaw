@@ -454,10 +454,15 @@ test_sbx_04_log_streaming() {
 
 # ── TC-SBX-09: Tmux Session Flow ────────────────────────────────────────────
 # OpenClaw's bundled tmux-session flow shells out to `tmux` inside the sandbox.
-# The sandbox image must ship tmux (issue #4513) or that flow fails with
-# `tmux: command not found`. Assert the binary is present and can drive a full
-# detached session lifecycle (new-session → list → kill), which is the exact
-# shape the bundled flow exercises.
+# The sandbox image must ship tmux (issue #4513) AND the sandbox landlock policy
+# must grant the devpts PTY devices so tmux can actually allocate a window.
+#
+# History: #4606 installed tmux but the lifecycle drive then failed with
+# `create window failed: fork failed: Permission denied`; #4640 degraded that
+# branch to a soft skip. The real cause was landlock denying /dev/ptmx +
+# /dev/pts (EACCES on forkpty()), not a fork/seccomp/nproc limit. The base
+# policy now grants /dev/pts, so this drive MUST pass — a `fork failed` here is
+# a hard regression of #4513, never a skip.
 test_sbx_09_tmux_session_flow() {
   log "=== TC-SBX-09: Tmux Session Flow ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-09" || return
@@ -470,6 +475,29 @@ test_sbx_09_tmux_session_flow() {
   fi
   pass "TC-SBX-09: tmux is installed in the sandbox ($(echo "$which_out" | head -1))"
 
+  # Pin the #4513 root cause directly: PTY allocation must succeed. This opens
+  # /dev/ptmx and a /dev/pts/<n> slave the same way tmux's forkpty() does, and
+  # fails fast with the underlying EACCES if the devpts grant ever regresses.
+  # Guarded on python3 (a diagnostic) so a missing interpreter cannot be
+  # mistaken for a devpts regression — the tmux lifecycle below is the gate.
+  # The PTY_OK sentinel is emitted by a shell `&& echo` only after openpty()
+  # exits 0 — it is deliberately NOT a literal inside the python source, because
+  # a Python traceback echoes the failing source line and would otherwise make
+  # `grep PTY_OK` match on the very EACCES regression this probe guards against.
+  # PY3_MISSING is gated solely on `command -v`, so an openpty() failure with
+  # python3 present falls through to `fail`, never to the soft skip.
+  local pty_out
+  pty_out=$(sandbox_exec "if command -v python3 >/dev/null 2>&1; then \
+    python3 -c 'import os; _,s=os.openpty(); print(os.ttyname(s))' && echo PTY_OK; \
+    else echo PY3_MISSING; fi" 2>&1) || true
+  if echo "$pty_out" | grep -q "PTY_OK"; then
+    pass "TC-SBX-09: PTY allocation works (slave $(echo "$pty_out" | grep -E '^/dev/pts/' | head -1))"
+  elif echo "$pty_out" | grep -q "PY3_MISSING"; then
+    log "TC-SBX-09: python3 unavailable; skipping direct openpty() probe (tmux lifecycle still gates devpts)"
+  else
+    fail "TC-SBX-09: PTY allocation" "openpty() failed — devpts not granted by sandbox policy (#4513): $(echo "$pty_out" | head -3)"
+  fi
+
   # Drive a detached session lifecycle the way the bundled flow does. tmux needs
   # a writable socket dir; /tmp is on the sandbox write set.
   local sess="nemoclaw-e2e-tmux-$$"
@@ -481,16 +509,10 @@ test_sbx_09_tmux_session_flow() {
 
   if echo "$flow_out" | grep -q "TMUX_FLOW_OK" && echo "$flow_out" | grep -q "${sess}"; then
     pass "TC-SBX-09: tmux new/list/kill session lifecycle works"
-  elif echo "$flow_out" | grep -qE "fork failed: (Permission denied|Resource temporarily unavailable|Operation not permitted)"; then
-    # Sandbox hardening (seccomp + no-new-privileges + nproc cap) can refuse
-    # tmux's fork-to-spawn child window under the e2e SSH session account.
-    # The binary-presence assertion above already covers the install surface;
-    # the lifecycle drive depends on runtime capabilities that are
-    # environment-dependent and not in scope of this case.
-    sandbox_exec "TMUX_TMPDIR=/tmp tmux kill-session -t '${sess}' 2>/dev/null || true" >/dev/null 2>&1 || true
-    skip "TC-SBX-09" "tmux lifecycle drive blocked by sandbox fork policy: $(echo "$flow_out" | head -3)"
   else
-    # Best-effort cleanup in case kill-session never ran.
+    # Best-effort cleanup in case kill-session never ran. A `fork failed`
+    # message here means the devpts grant regressed — fail loudly (#4513),
+    # do not skip.
     sandbox_exec "TMUX_TMPDIR=/tmp tmux kill-session -t '${sess}' 2>/dev/null || true" >/dev/null 2>&1 || true
     fail "TC-SBX-09: Tmux Session Flow" "Session lifecycle failed: $(echo "$flow_out" | head -5)"
   fi

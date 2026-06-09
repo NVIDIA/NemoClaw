@@ -22,8 +22,7 @@ describe("onboard channel state helpers", () => {
     expect(
       resolveDisabledChannels("alpha", {
         loadSession: () => ({ disabledChannels: null }),
-        getRegistryDisabledChannels: (sandboxName) =>
-          sandboxName === "alpha" ? ["discord"] : [],
+        getRegistryDisabledChannels: (sandboxName) => (sandboxName === "alpha" ? ["discord"] : []),
       }),
     ).toEqual(["discord"]);
   });

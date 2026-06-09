@@ -30,7 +30,10 @@ type EnsureDockerOutcome = {
   sgArgs: string[];
 };
 
-function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): EnsureDockerOutcome {
+function runEnsureDocker(
+  env: Record<string, string>,
+  installerArgs: string[],
+): EnsureDockerOutcome {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-docker-group-"));
   const sgLog = path.join(tmp, "sg-args.txt");
   const sgStub = path.join(tmp, "sg");
@@ -54,11 +57,9 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
   // Stub `sg`: record the args the installer asked us to execute, then exit 0.
   // Without this stub, `exec sg docker -c …` would replace the test process
   // with a real group switch — flaky and platform-dependent.
-  fs.writeFileSync(
-    sgStub,
-    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${sgLog}"\nexit 0\n`,
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(sgStub, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${sgLog}"\nexit 0\n`, {
+    mode: 0o755,
+  });
 
   // Backslashes must be escaped before quotes — otherwise a literal `\` in
   // an installer arg would slip through unescaped (CodeQL: incomplete string
@@ -118,7 +119,10 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
   });
 
   const sgArgs = fs.existsSync(sgLog)
-    ? fs.readFileSync(sgLog, "utf-8").split("\n").filter((line) => line.length > 0)
+    ? fs
+        .readFileSync(sgLog, "utf-8")
+        .split("\n")
+        .filter((line) => line.length > 0)
     : [];
 
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, sgArgs };

@@ -146,6 +146,8 @@ describe("verifyWebSearchInsideSandbox", () => {
       throw new Error("boom");
     });
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, throwing);
-    expect(throwing.warn).toHaveBeenCalledWith("  ⚠ Web search verification probe failed (non-fatal).");
+    expect(throwing.warn).toHaveBeenCalledWith(
+      "  ⚠ Web search verification probe failed (non-fatal).",
+    );
   });
 });

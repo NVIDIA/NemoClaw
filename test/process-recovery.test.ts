@@ -127,9 +127,9 @@ describe("classifyForwardHealthWithReachability", () => {
       [{ sandboxName: "beta", port: "18790", status: "dead" }],
     ];
     for (const entries of inputs) {
-      expect(
-        classifyForwardHealthWithReachability(entries, "beta", "18790", () => true),
-      ).toBe(true);
+      expect(classifyForwardHealthWithReachability(entries, "beta", "18790", () => true)).toBe(
+        true,
+      );
     }
   });
 
@@ -219,17 +219,14 @@ beta  127.0.0.1  18789  12345  running`;
       recovered: false,
       forwardRecovered: true,
     });
-    expect(runOpenshell).toHaveBeenCalledWith(
-      ["forward", "stop", "18789", "beta"],
-      { ignoreError: true, stdio: "ignore" },
-    );
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "beta"], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
     expect(
       runOpenshell.mock.calls.some(
         ([args]) =>
-          Array.isArray(args) &&
-          args[0] === "forward" &&
-          args[1] === "stop" &&
-          args.length === 3,
+          Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
   });

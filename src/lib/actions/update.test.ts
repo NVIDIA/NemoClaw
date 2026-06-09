@@ -60,7 +60,9 @@ describe("runUpdateAction", () => {
     expect(result.status).toBe(0);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Current NemoHermes version: 0.1.0"));
     expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash"),
+      expect.stringContaining(
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash",
+      ),
     );
   });
 
@@ -91,7 +93,9 @@ describe("runUpdateAction", () => {
     try {
       const rootDir = path.join(home, ".nemoclaw", "source");
       fs.mkdirSync(path.join(rootDir, ".git"), { recursive: true });
-      const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "", stderr: "", signal: null } as never));
+      const spawnSyncImpl = vi.fn(
+        () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+      );
 
       const result = await runUpdateAction(
         { yes: true },
@@ -115,7 +119,9 @@ describe("runUpdateAction", () => {
 
   it("prompts before running the maintained installer", async () => {
     const prompt = vi.fn(async () => "yes");
-    const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "", stderr: "", signal: null } as never));
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
 
     const result = await runUpdateAction(
       {},
@@ -131,7 +137,9 @@ describe("runUpdateAction", () => {
 
     expect(result.status).toBe(0);
     expect(result.ranInstaller).toBe(true);
-    expect(prompt).toHaveBeenCalledWith(expect.stringContaining("Run the maintained NemoClaw installer"));
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringContaining("Run the maintained NemoClaw installer"),
+    );
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       "bash",
       ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
@@ -141,7 +149,9 @@ describe("runUpdateAction", () => {
 
   it("--yes runs the maintained installer without prompting", async () => {
     const prompt = vi.fn(async () => "no");
-    const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "", stderr: "", signal: null } as never));
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
 
     const result = await runUpdateAction(
       { yes: true },
@@ -184,7 +194,9 @@ describe("runUpdateAction", () => {
   });
 
   it("does not pass shell startup or release override env into the installer shell", async () => {
-    const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "", stderr: "", signal: null } as never));
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
 
     await runUpdateAction(
       { yes: true },
@@ -215,7 +227,9 @@ describe("runUpdateAction", () => {
   });
 
   it("preserves the Hermes agent selection while sanitizing installer env", async () => {
-    const spawnSyncImpl = vi.fn(() => ({ status: 0, stdout: "", stderr: "", signal: null } as never));
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
     const log = vi.fn();
 
     await runUpdateAction(
@@ -242,7 +256,9 @@ describe("runUpdateAction", () => {
     expect(options?.env?.NEMOCLAW_AGENT).toBe("hermes");
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Running maintained NemoHermes installer"));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Running maintained NemoHermes installer"),
+    );
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("Installer completed. Run `nemohermes upgrade-sandboxes --check`"),
     );
@@ -290,17 +306,20 @@ describe("detectInstallType", () => {
 
 describe("getMaintainedNemoClawVersionFromGitTag", () => {
   it("resolves the version tag that points at the maintained lkg tag", () => {
-    const spawnSyncImpl = vi.fn(() => ({
-      status: 0,
-      stdout: [
-        "abc123\trefs/tags/lkg",
-        "older\trefs/tags/v0.0.36",
-        "abc123\trefs/tags/v0.0.37",
-        "future\trefs/tags/v0.1.0",
-      ].join("\n"),
-      stderr: "",
-      signal: null,
-    }) as never);
+    const spawnSyncImpl = vi.fn(
+      () =>
+        ({
+          status: 0,
+          stdout: [
+            "abc123\trefs/tags/lkg",
+            "older\trefs/tags/v0.0.36",
+            "abc123\trefs/tags/v0.0.37",
+            "future\trefs/tags/v0.1.0",
+          ].join("\n"),
+          stderr: "",
+          signal: null,
+        }) as never,
+    );
 
     expect(getMaintainedNemoClawVersionFromGitTag({ spawnSyncImpl })).toBe("0.0.37");
     expect(spawnSyncImpl).toHaveBeenCalledWith(

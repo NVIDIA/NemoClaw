@@ -50,7 +50,10 @@ export interface SandboxCancelRollback {
   isArmed(): boolean;
 }
 
-export function buildCancelRollbackMessage(sandboxName: string, deleteSucceeded: boolean): string[] {
+export function buildCancelRollbackMessage(
+  sandboxName: string,
+  deleteSucceeded: boolean,
+): string[] {
   if (deleteSucceeded) {
     return [
       "",
