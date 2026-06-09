@@ -3,10 +3,20 @@
 
 import { getCredential } from "../credentials/store";
 
-const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } = require("../inference/onboard-probes") as {
-  probeAnthropicEndpoint(endpointUrl: string, model: string, apiKey: string | null | undefined): any;
-  probeOpenAiLikeEndpoint(endpointUrl: string, model: string, apiKey: string | null | undefined, options?: Record<string, unknown>): any;
-};
+const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
+  require("../inference/onboard-probes") as {
+    probeAnthropicEndpoint(
+      endpointUrl: string,
+      model: string,
+      apiKey: string | null | undefined,
+    ): any;
+    probeOpenAiLikeEndpoint(
+      endpointUrl: string,
+      model: string,
+      apiKey: string | null | undefined,
+      options?: Record<string, unknown>,
+    ): any;
+  };
 
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
@@ -70,6 +80,11 @@ export interface InferenceSelectionValidationHelpers {
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
+  function printValidationFailure(label: string): void {
+    console.error(`  ${label} endpoint validation failed.`);
+    console.error("  Validation details were omitted to avoid exposing credentials.");
+  }
+
   async function validateOpenAiLikeSelection(
     label: string,
     endpointUrl: string,
@@ -89,8 +104,7 @@ export function createInferenceSelectionValidationHelpers(
     const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
     const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
     if (!probe.ok) {
-      console.error(`  ${label} endpoint validation failed.`);
-      console.error(`  ${probe.message}`);
+      printValidationFailure(label);
       if (deps.isNonInteractive()) {
         process.exit(1);
       }
@@ -125,8 +139,7 @@ export function createInferenceSelectionValidationHelpers(
     const apiKey = getCredential(credentialEnv);
     const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
     if (!probe.ok) {
-      console.error(`  ${label} endpoint validation failed.`);
-      console.error(`  ${probe.message}`);
+      printValidationFailure(label);
       if (deps.isNonInteractive()) {
         process.exit(1);
       }
@@ -163,12 +176,13 @@ export function createInferenceSelectionValidationHelpers(
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {
-        console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
+        console.log(
+          `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
+        );
       }
       return { ok: true, api: probe.api ?? "openai-completions" };
     }
-    console.error(`  ${label} endpoint validation failed.`);
-    console.error(`  ${probe.message}`);
+    printValidationFailure(label);
     if (deps.isNonInteractive()) {
       process.exit(1);
     }
@@ -198,8 +212,7 @@ export function createInferenceSelectionValidationHelpers(
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
       return { ok: true, api: probe.api };
     }
-    console.error(`  ${label} endpoint validation failed.`);
-    console.error(`  ${probe.message}`);
+    printValidationFailure(label);
     if (deps.isNonInteractive()) {
       process.exit(1);
     }

@@ -159,9 +159,9 @@ function validateSelectedAgentEffects(payload: ModelSetupManifest, manifestPath:
   );
   if (unknownEffectKeys.length > 0) {
     throw new Error(
-      `${manifestPath}: unknown effects for agent '${payload.agent}': ${
-        unknownEffectKeys.join(", ")
-      }`,
+      `${manifestPath}: unknown effects for agent '${payload.agent}': ${unknownEffectKeys.join(
+        ", ",
+      )}`,
     );
   }
 

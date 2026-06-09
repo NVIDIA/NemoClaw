@@ -126,9 +126,7 @@ export async function resetSandboxSession(
   if (payload.ok === false || payload.error) {
     const code = payload.error?.code ?? "unknown";
     const message = payload.error?.message ?? "no message";
-    console.error(
-      `  Gateway refused sessions.reset for '${canonicalKey}': [${code}] ${message}`,
-    );
+    console.error(`  Gateway refused sessions.reset for '${canonicalKey}': [${code}] ${message}`);
     process.exit(1);
   }
   if (payload.ok !== true || typeof payload.key !== "string") {

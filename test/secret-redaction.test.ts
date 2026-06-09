@@ -77,17 +77,21 @@ describe("secret redaction consistency (#1736)", () => {
         { mode: 0o755 },
       );
       try {
-        const result = spawnSync("bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmp,
-            NEMOCLAW_NODE: process.execPath,
-            TMPDIR: tmp,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        const result = spawnSync(
+          "bash",
+          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          {
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              HOME: tmp,
+              NEMOCLAW_NODE: process.execPath,
+              TMPDIR: tmp,
+              PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            },
+            timeout: 30_000,
           },
-          timeout: 30_000,
-        });
+        );
         expect(result.status).toBe(0);
         expect(result.stdout).toContain("NVIDIA_API_KEY=<REDACTED>");
         expect(result.stdout).not.toContain("nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -129,17 +133,21 @@ describe("secret redaction consistency (#1736)", () => {
         { mode: 0o755 },
       );
       try {
-        const result = spawnSync("/bin/bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmp,
-            NEMOCLAW_NODE: process.execPath,
-            TMPDIR: tmp,
-            PATH: fakeBin,
+        const result = spawnSync(
+          "/bin/bash",
+          [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"],
+          {
+            encoding: "utf-8",
+            env: {
+              ...process.env,
+              HOME: tmp,
+              NEMOCLAW_NODE: process.execPath,
+              TMPDIR: tmp,
+              PATH: fakeBin,
+            },
+            timeout: 30_000,
           },
-          timeout: 30_000,
-        });
+        );
         expect(result.status).toBe(0);
         expect(result.stdout).toContain("<REDACTED>");
         expect(result.stdout).not.toContain("nvapi-");

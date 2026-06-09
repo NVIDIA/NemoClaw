@@ -7,10 +7,5 @@
  * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
  */
 export function validateSkillName(name: string): boolean {
-  return (
-    name.length > 0 &&
-    name !== "." &&
-    name !== ".." &&
-    /^[A-Za-z0-9._-]+$/.test(name)
-  );
+  return name.length > 0 && name !== "." && name !== ".." && /^[A-Za-z0-9._-]+$/.test(name);
 }

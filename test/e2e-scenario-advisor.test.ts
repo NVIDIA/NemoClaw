@@ -19,7 +19,9 @@ import {
 // downstream consumers (sticky comment, CI loop dispatch) depend on is
 // asserted here.
 
-function metadata(overrides: Partial<{ baseRef: string; headRef: string; changedFiles: string[] }> = {}) {
+function metadata(
+  overrides: Partial<{ baseRef: string; headRef: string; changedFiles: string[] }> = {},
+) {
   return {
     baseRef: "origin/main",
     headRef: "HEAD",
@@ -97,7 +99,9 @@ describe("E2E scenario advisor — normalization contract", () => {
     expect(normalized.required[0]?.dispatchCommand).not.toContain("--field scenarios=");
     // Canonical single-scenario command must use plural --field scenarios=<id>
     // and must never contain the legacy suite_filter input.
-    expect(normalized.optional[0]?.dispatchCommand).toContain("--field scenarios=ubuntu-repo-cloud-openclaw");
+    expect(normalized.optional[0]?.dispatchCommand).toContain(
+      "--field scenarios=ubuntu-repo-cloud-openclaw",
+    );
     expect(normalized.optional[0]?.dispatchCommand).not.toContain("suite_filter");
   });
 
@@ -272,10 +276,7 @@ describe("E2E scenario advisor — normalization contract", () => {
   it("filters relevantChangedFiles to the metadata changedFiles set", () => {
     const normalized = normalizeScenarioAdvisorResult(
       {
-        relevantChangedFiles: [
-          "test/e2e-scenario/runtime/run-scenario.sh",
-          "fabricated/file.txt",
-        ],
+        relevantChangedFiles: ["test/e2e-scenario/runtime/run-scenario.sh", "fabricated/file.txt"],
         required: [],
         optional: [],
         noScenarioE2eReason: "no impact",
@@ -283,9 +284,7 @@ describe("E2E scenario advisor — normalization contract", () => {
       },
       metadata({ changedFiles: ["test/e2e-scenario/runtime/run-scenario.sh"] }),
     );
-    expect(normalized.relevantChangedFiles).toEqual([
-      "test/e2e-scenario/runtime/run-scenario.sh",
-    ]);
+    expect(normalized.relevantChangedFiles).toEqual(["test/e2e-scenario/runtime/run-scenario.sh"]);
   });
 
   it("supplies a default noScenarioE2eReason when none provided and there are no recommendations", () => {
@@ -328,7 +327,9 @@ describe("E2E scenario advisor — summary and comment rendering", () => {
   it("renders a summary that surfaces required scenarios with their dispatch line", () => {
     const summary = renderScenarioSummary(sampleResult());
     expect(summary).toContain("e2e-scenarios-all");
-    expect(summary).toContain(canonicalDispatchCommand("e2e-scenarios-all.yaml", "e2e-scenarios-all"));
+    expect(summary).toContain(
+      canonicalDispatchCommand("e2e-scenarios-all.yaml", "e2e-scenarios-all"),
+    );
   });
 
   it("builds a sticky scenario comment with the marker and run url", () => {

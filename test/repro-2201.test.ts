@@ -36,7 +36,6 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath); // need node on PATH for shebangs
 const tmpFixtures: string[] = [];
 
-
 afterEach(() => {
   for (const dir of tmpFixtures.splice(0)) {
     try {
@@ -311,78 +310,70 @@ function readSessionMessagingPlan(
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
-  it(
-    "rebuild openclaw after hermes was onboarded last (reporter scenario)",
-    { timeout: 60_000 },
-    () => {
-      // Exact scenario from the bug report: user has openclaw + hermes,
-      // hermes was onboarded last, then runs `nemoclaw openclaw rebuild`.
-      const f = createFixture({
-        rebuildTarget: { name: "openclaw", agent: null },
-        lastOnboarded: { name: "hermes", agent: "hermes" },
-      });
-      runRebuild(f);
-      // With fix: session.agent = null (synced from openclaw registry entry)
-      // Without fix: session.agent stays "hermes" (from hermes onboard)
-      expect(readSessionAgent(f)).toBeNull();
-    },
-  );
+  it("rebuild openclaw after hermes was onboarded last (reporter scenario)", {
+    timeout: 60_000,
+  }, () => {
+    // Exact scenario from the bug report: user has openclaw + hermes,
+    // hermes was onboarded last, then runs `nemoclaw openclaw rebuild`.
+    const f = createFixture({
+      rebuildTarget: { name: "openclaw", agent: null },
+      lastOnboarded: { name: "hermes", agent: "hermes" },
+    });
+    runRebuild(f);
+    // With fix: session.agent = null (synced from openclaw registry entry)
+    // Without fix: session.agent stays "hermes" (from hermes onboard)
+    expect(readSessionAgent(f)).toBeNull();
+  });
 
-  it(
-    "rebuild hermes after openclaw was onboarded last (reverse scenario)",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({
-        rebuildTarget: { name: "hermes", agent: "hermes" },
-        lastOnboarded: { name: "openclaw", agent: null },
-      });
-      runRebuild(f);
-      // With fix: session.agent = "hermes" (synced from hermes registry entry)
-      // Without fix: session.agent stays null (from openclaw onboard)
-      expect(readSessionAgent(f)).toBe("hermes");
-    },
-  );
+  it("rebuild hermes after openclaw was onboarded last (reverse scenario)", {
+    timeout: 60_000,
+  }, () => {
+    const f = createFixture({
+      rebuildTarget: { name: "hermes", agent: "hermes" },
+      lastOnboarded: { name: "openclaw", agent: null },
+    });
+    runRebuild(f);
+    // With fix: session.agent = "hermes" (synced from hermes registry entry)
+    // Without fix: session.agent stays null (from openclaw onboard)
+    expect(readSessionAgent(f)).toBe("hermes");
+  });
 
-  it(
-    "does not inherit messaging plan config from a stale session for another sandbox",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({
-        rebuildTarget: { name: "openclaw", agent: null },
-        lastOnboarded: {
-          name: "hermes",
-          agent: "hermes",
-          messagingConfig: {
-            TELEGRAM_ALLOWED_IDS: "999",
-            TELEGRAM_REQUIRE_MENTION: "1",
-          },
+  it("does not inherit messaging plan config from a stale session for another sandbox", {
+    timeout: 60_000,
+  }, () => {
+    const f = createFixture({
+      rebuildTarget: { name: "openclaw", agent: null },
+      lastOnboarded: {
+        name: "hermes",
+        agent: "hermes",
+        messagingConfig: {
+          TELEGRAM_ALLOWED_IDS: "999",
+          TELEGRAM_REQUIRE_MENTION: "1",
         },
-      });
-      runRebuild(f);
-      expect(readSessionMessagingPlan(f)).toBeNull();
-    },
-  );
+      },
+    });
+    runRebuild(f);
+    expect(readSessionMessagingPlan(f)).toBeNull();
+  });
 });
 
 describe("Issue #2301: rebuild forwards stored --from Dockerfile to onboard", () => {
-  it(
-    "rebuild does not hit fromDockerfile conflict when session has a stored --from path",
-    { timeout: 60_000 },
-    () => {
-      // Scenario: user onboarded with --from /path/to/Dockerfile, then
-      // runs rebuild.  Without the fix, onboard's conflict check sees
-      // requestedFrom=null vs recordedFrom="/path/to/Dockerfile" and
-      // exits with a conflict error.
-      const f = createFixture({
-        rebuildTarget: { name: "openclaw", agent: null },
-        lastOnboarded: { name: "openclaw", agent: null },
-        fromDockerfile: "/tmp/custom/Dockerfile",
-      });
-      const result = runRebuild(f);
-      // Without fix: exits with "Session was started with --from ..."
-      // With fix: rebuild proceeds past conflict check (may still fail
-      // later in the fake-env backup step — that's expected with stubs).
-      expect(result.stderr).not.toMatch(/Session was started with --from/);
-    },
-  );
+  it("rebuild does not hit fromDockerfile conflict when session has a stored --from path", {
+    timeout: 60_000,
+  }, () => {
+    // Scenario: user onboarded with --from /path/to/Dockerfile, then
+    // runs rebuild.  Without the fix, onboard's conflict check sees
+    // requestedFrom=null vs recordedFrom="/path/to/Dockerfile" and
+    // exits with a conflict error.
+    const f = createFixture({
+      rebuildTarget: { name: "openclaw", agent: null },
+      lastOnboarded: { name: "openclaw", agent: null },
+      fromDockerfile: "/tmp/custom/Dockerfile",
+    });
+    const result = runRebuild(f);
+    // Without fix: exits with "Session was started with --from ..."
+    // With fix: rebuild proceeds past conflict check (may still fail
+    // later in the fake-env backup step — that's expected with stubs).
+    expect(result.stderr).not.toMatch(/Session was started with --from/);
+  });
 });

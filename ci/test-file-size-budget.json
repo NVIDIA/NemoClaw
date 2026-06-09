@@ -3,15 +3,15 @@
   "defaultMaxLines": 1500,
   "legacyMaxLines": {
     "nemoclaw/src/commands/migration-state.test.ts": 1566,
-    "src/lib/inference/nim.test.ts": 2079,
+    "src/lib/inference/nim.test.ts": 2068,
     "src/lib/onboard/preflight.test.ts": 1905,
-    "test/channels-add-preset.test.ts": 1895,
-    "test/generate-openclaw-config.test.ts": 2106,
-    "test/install-preflight.test.ts": 4397,
-    "test/nemoclaw-start.test.ts": 5300,
+    "test/channels-add-preset.test.ts": 1866,
+    "test/generate-openclaw-config.test.ts": 2091,
+    "test/install-preflight.test.ts": 4396,
+    "test/nemoclaw-start.test.ts": 5289,
     "test/onboard-messaging.test.ts": 2108,
-    "test/onboard-selection.test.ts": 7156,
-    "test/onboard.test.ts": 4886,
-    "test/policies.test.ts": 2763
+    "test/onboard-selection.test.ts": 6922,
+    "test/onboard.test.ts": 4873,
+    "test/policies.test.ts": 2766
   }
 }

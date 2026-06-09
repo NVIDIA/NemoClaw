@@ -67,11 +67,9 @@ function writeLocalGatewayProbeStubs(
   );
   fs.writeFileSync(
     path.join(setup.localBin, "ss"),
-    [
-      "#!/usr/bin/env bash",
-      `printf 'ss:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`,
-      ssBody,
-    ].join("\n"),
+    ["#!/usr/bin/env bash", `printf 'ss:%s\\n' "$*" >> ${JSON.stringify(hostCalls)}`, ssBody].join(
+      "\n",
+    ),
     { mode: 0o755 },
   );
 }
@@ -243,7 +241,9 @@ describe("CLI dispatch", () => {
         detail: "openshell-gateway is running, listening on port 8080, and verified by OpenShell",
       }),
     );
-    expect(report.checks.filter((check) => check.group === "Gateway" && check.status === "fail")).toEqual([]);
+    expect(
+      report.checks.filter((check) => check.group === "Gateway" && check.status === "fail"),
+    ).toEqual([]);
     expect(report.status).toBe("ok");
 
     const calls = fs.readFileSync(hostCalls, "utf8");
@@ -277,7 +277,8 @@ describe("CLI dispatch", () => {
       expect.objectContaining({
         group: "Gateway",
         status: "info",
-        detail: "openshell-gateway process and port 8080 are present, but the named gateway is not verified",
+        detail:
+          "openshell-gateway process and port 8080 are present, but the named gateway is not verified",
       }),
     );
     expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
@@ -314,7 +315,8 @@ describe("CLI dispatch", () => {
       expect.objectContaining({
         group: "Gateway",
         status: "info",
-        detail: "local probe skipped (pgrep, ss unavailable); OpenShell reports the named gateway connected",
+        detail:
+          "local probe skipped (pgrep, ss unavailable); OpenShell reports the named gateway connected",
       }),
     );
     expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
@@ -456,5 +458,4 @@ describe("CLI dispatch", () => {
       fs.rmSync(shimDir, { recursive: true, force: true });
     }
   });
-
 });

@@ -15,7 +15,9 @@ describe("nemoclaw update command", () => {
   it("appears in root help as an Upgrade command", () => {
     const output = execSync(`node "${CLI}" help`, { encoding: "utf-8" });
     expect(output).toContain("Upgrade");
-    expect(output).toMatch(/nemoclaw update\s+Run the maintained NemoClaw installer update flow\s+\(--check, --yes\|-y\)/);
+    expect(output).toMatch(
+      /nemoclaw update\s+Run the maintained NemoClaw installer update flow\s+\(--check, --yes\|-y\)/,
+    );
   });
 
   it("prints oclif help for update-specific flags", () => {

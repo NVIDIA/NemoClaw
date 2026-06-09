@@ -10,7 +10,10 @@ import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
 type Agent = { name: string } | null;
 type WebSearchConfig = { fetchEnabled: true };
 
-function messagingPlan(channels: readonly string[], disabledChannels: readonly string[] = []): SandboxMessagingPlan {
+function messagingPlan(
+  channels: readonly string[],
+  disabledChannels: readonly string[] = [],
+): SandboxMessagingPlan {
   const disabled = new Set(disabledChannels);
   return {
     schemaVersion: 1,
@@ -44,20 +47,23 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
     load: vi.fn(() => session),
     activeSandbox: vi.fn(() => ({ messaging: { plan: messagingPlan(["telegram"]) } })),
     mergeChannels: vi.fn(
-      (
-        selected: string[],
-        recorded: string[],
-        active: string[] | null | undefined,
-      ) => (selected.length > 0 ? selected : active ?? recorded),
+      (selected: string[], recorded: string[], active: string[] | null | undefined) =>
+        selected.length > 0 ? selected : (active ?? recorded),
     ),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
         _sandboxName: string,
-        options: Parameters<PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]>[1],
+        options: Parameters<
+          PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]
+        >[1],
       ) => ({
-        policyPresets: (options.recordedPolicyPresets ?? []).filter((name) => name !== "unsupported"),
-        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes("unsupported"),
+        policyPresets: (options.recordedPolicyPresets ?? []).filter(
+          (name) => name !== "unsupported",
+        ),
+        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes(
+          "unsupported",
+        ),
         disabledMessagingPolicyPresetApplied: false,
       }),
     ),

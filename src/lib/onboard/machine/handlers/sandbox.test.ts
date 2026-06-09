@@ -22,7 +22,10 @@ describe("handleSandboxState", () => {
 
     const result = await handleSandboxState(baseOptions(deps));
 
-    expect(calls.startStep).toHaveBeenCalledWith("sandbox", { provider: "provider", model: "model" });
+    expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+      provider: "provider",
+      model: "model",
+    });
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, ["telegram"], "my-assistant");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.createSandbox).toHaveBeenCalledWith(
@@ -40,10 +43,20 @@ describe("handleSandboxState", () => {
       null,
       [],
     );
-    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", expect.objectContaining({ model: "model", provider: "provider" }));
+    expect(calls.updateSandbox).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ model: "model", provider: "provider" }),
+    );
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
-    expect(calls.complete).toHaveBeenCalledWith("sandbox", expect.objectContaining({ sandboxName: "my-assistant" }));
-    expect(result).toMatchObject({ sandboxName: "my-assistant", selectedMessagingChannels: ["telegram"], webSearchSupported: true });
+    expect(calls.complete).toHaveBeenCalledWith(
+      "sandbox",
+      expect.objectContaining({ sandboxName: "my-assistant" }),
+    );
+    expect(result).toMatchObject({
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+      webSearchSupported: true,
+    });
     expect(result.stateResult).toEqual({
       type: "transition",
       next: "openclaw",
@@ -61,7 +74,11 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
 
-    const result = await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
@@ -86,7 +103,9 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
     });
 
-    expect(calls.note).toHaveBeenCalledWith("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.",
+    );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();
   });
@@ -138,12 +157,17 @@ describe("handleSandboxState", () => {
   });
 
   it("recreates when a saved web search sandbox is no longer supported", async () => {
-    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       agentSupportsWebSearch: () => false,
       getSandboxReuseState: () => "ready",
-      updateSession: vi.fn((mutator: (value: Session) => Session | void) => mutator(session) ?? session),
+      updateSession: vi.fn(
+        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
+      ),
     });
 
     await handleSandboxState({
@@ -156,13 +180,18 @@ describe("handleSandboxState", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  Web search is not yet supported by this sandbox image. Clearing stale config.",
     );
-    expect(calls.note).toHaveBeenCalledWith("  [resume] Web Search configuration changed; recreating sandbox.");
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Web Search configuration changed; recreating sandbox.",
+    );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
   it("drops saved web search config when credential revalidation returns to provider selection", async () => {
-    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
     session.steps.sandbox.status = "complete";
     const backToSelection = Object.freeze({ kind: "NEMOCLAW_BACK_TO_SELECTION" });
     const { deps, calls } = createDeps({
@@ -196,5 +225,4 @@ describe("handleSandboxState", () => {
     );
     expect(result.webSearchConfig).toBeNull();
   });
-
 });

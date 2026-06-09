@@ -95,9 +95,7 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
-  );
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
     for (const [key, value] of Object.entries(values)) {
       if (value === undefined) {
@@ -191,9 +189,7 @@ describe("ManifestCompiler", () => {
       "slack:json-fragment",
       "whatsapp:json-fragment",
     ]);
-    expect(JSON.stringify(plan.agentRender)).toContain(
-      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-    );
+    expect(JSON.stringify(plan.agentRender)).toContain("openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     expect(plan.buildSteps).toEqual([
       {
         channelId: "wechat",
@@ -365,10 +361,7 @@ describe("ManifestCompiler", () => {
         },
       },
     ]);
-    const plan = await new ManifestCompiler(
-      createBuiltInChannelManifestRegistry(),
-      hooks,
-    ).compile({
+    const plan = await new ManifestCompiler(createBuiltInChannelManifestRegistry(), hooks).compile({
       sandboxName: "demo",
       agent: "openclaw",
       workflow: "onboard",
@@ -390,16 +383,9 @@ describe("ManifestCompiler", () => {
       "telegram-config-prompt",
       "telegram-get-me-reachability",
     ]);
-    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual([
-      "telegram",
-      "telegram",
-    ]);
+    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
+    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
       "telegram",
@@ -500,10 +486,7 @@ describe("ManifestCompiler", () => {
         },
       },
     ]);
-    const plan = await new ManifestCompiler(
-      createBuiltInChannelManifestRegistry(),
-      hooks,
-    ).compile({
+    const plan = await new ManifestCompiler(createBuiltInChannelManifestRegistry(), hooks).compile({
       sandboxName: "demo",
       agent: "openclaw",
       workflow: "onboard",
@@ -536,11 +519,15 @@ describe("ManifestCompiler", () => {
           configuredChannels: ["telegram"],
         });
 
-        expect(plan.channels[0]?.inputs.find((input) => input.inputId === "botToken")).toMatchObject({
+        expect(
+          plan.channels[0]?.inputs.find((input) => input.inputId === "botToken"),
+        ).toMatchObject({
           kind: "secret",
           credentialAvailable: true,
         });
-        expect(plan.channels[0]?.inputs.find((input) => input.inputId === "allowedIds")).toMatchObject({
+        expect(
+          plan.channels[0]?.inputs.find((input) => input.inputId === "allowedIds"),
+        ).toMatchObject({
           kind: "config",
           value: "123456789",
         });
@@ -603,16 +590,9 @@ describe("ManifestCompiler", () => {
       disabled: true,
     });
     expect(plan.disabledChannels).toEqual(["telegram"]);
-    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual([
-      "telegram",
-    ]);
-    expect(plan.agentRender.map((render) => render.channelId)).toEqual([
-      "telegram",
-      "telegram",
-    ]);
+    expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
+    expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
+    expect(plan.agentRender.map((render) => render.channelId)).toEqual(["telegram", "telegram"]);
     expect(plan.buildSteps).toEqual([]);
     expect(plan.stateUpdates.map((entry) => entry.channelId)).toEqual([
       "telegram",
@@ -762,10 +742,7 @@ describe("ManifestCompiler", () => {
         handler: "matrix.probeHost",
       }),
     );
-    expect(hookCalls).toEqual([
-      "enroll",
-      "reachability:!room:example.com",
-    ]);
+    expect(hookCalls).toEqual(["enroll", "reachability:!room:example.com"]);
     expect(JSON.stringify(plan)).not.toContain("raw-matrix-token");
   });
 });

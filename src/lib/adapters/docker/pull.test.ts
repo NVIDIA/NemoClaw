@@ -60,9 +60,7 @@ describe("docker pull progress watchdog", () => {
     expect(dockerPullProgressSignature("b39b21d4717d: Download complete ")).toBe(
       "layer:b39b21d4717d:Download complete",
     );
-    expect(
-      dockerPullProgressSignature("#12 sha256:abc123 25.4MB/100MB 4.0s 10.1MB/s"),
-    ).toBeNull();
+    expect(dockerPullProgressSignature("#12 sha256:abc123 25.4MB/100MB 4.0s 10.1MB/s")).toBeNull();
   });
 
   it("spawns plain docker pull without unsupported progress flags", async () => {

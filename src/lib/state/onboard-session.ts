@@ -251,9 +251,7 @@ function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readStringRecord(
-  value: SessionJsonValue | undefined,
-): Record<string, string> | null {
+function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
   if (!isObject(value)) return null;
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(value)) {
@@ -387,7 +385,9 @@ function inferMachineStateEnteredAt(session: Session, state: OnboardMachineState
   }
 
   if (nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) === state) {
-    const completedStep = session.lastCompletedStep ? session.steps[session.lastCompletedStep] : null;
+    const completedStep = session.lastCompletedStep
+      ? session.steps[session.lastCompletedStep]
+      : null;
     return completedStep?.completedAt ?? session.updatedAt;
   }
 
@@ -399,7 +399,11 @@ function inferMachineSnapshot(session: Session): OnboardMachineSnapshot {
   return createMachineSnapshot(state, inferMachineStateEnteredAt(session, state));
 }
 
-function transitionMachineSnapshot(session: Session, state: OnboardMachineState, now: string): void {
+function transitionMachineSnapshot(
+  session: Session,
+  state: OnboardMachineState,
+  now: string,
+): void {
   const current = session.machine ?? createMachineSnapshot("init", session.startedAt);
   if (current.state === state) {
     session.machine = {
@@ -455,7 +459,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
-    machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+    machine:
+      parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
       createMachineSnapshot("init", startedAt),
     steps,
   };
@@ -898,7 +903,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
-  if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
+  if (
+    typeof updates.routerPid === "number" &&
+    Number.isInteger(updates.routerPid) &&
+    updates.routerPid > 0
+  ) {
     safe.routerPid = updates.routerPid;
   }
   if (typeof updates.routerCredentialHash === "string") {
@@ -937,7 +946,10 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;
   }
-  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+  if (
+    isObject(updates.telegramConfig) &&
+    typeof updates.telegramConfig.requireMention === "boolean"
+  ) {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
     safe.telegramConfig = null;
@@ -992,7 +1004,11 @@ function markStepStartedWithOptions(stepName: string, options: StepMutationOptio
   return updatedSession;
 }
 
-function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates = {}, options: StepMutationOptions = {}): Session {
+function markStepCompleteWithOptions(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
   let shouldEmit = false;
@@ -1023,7 +1039,11 @@ function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates =
   }
   if (shouldEmit) {
     emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+      createOnboardMachineEvent({
+        type: "state.completed",
+        session: updatedSession,
+        step: stepName,
+      }),
     );
   }
   return updatedSession;
@@ -1045,7 +1065,10 @@ export function markStepComplete(
   return markStepCompleteWithOptions(stepName, updates, options);
 }
 
-export function markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Session {
+export function markStepCompleteRecordOnly(
+  stepName: string,
+  updates: SessionUpdates = {},
+): Session {
   return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
 }
 
@@ -1054,7 +1077,8 @@ export function markStepSkipped(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+      return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
@@ -1070,7 +1094,11 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-function markStepFailedWithOptions(stepName: string, message: string | null = null, options: StepMutationOptions = {}): Session {
+function markStepFailedWithOptions(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];

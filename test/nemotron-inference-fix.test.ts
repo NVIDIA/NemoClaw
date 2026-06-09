@@ -290,16 +290,12 @@ main().catch((err) => {
 
     const deepSeekBody = JSON.parse(records[0].body);
     expect(deepSeekBody.chat_template_kwargs).toEqual({ thinking: false });
-    expect(records[0].headers["content-length"]).toBe(
-      String(Buffer.byteLength(records[0].body)),
-    );
+    expect(records[0].headers["content-length"]).toBe(String(Buffer.byteLength(records[0].body)));
     expect(records[0].headers["content-length"]).not.toBe("999");
 
     const kimiBody = JSON.parse(records[1].body);
     expect(kimiBody.chat_template_kwargs).toEqual({ thinking: false });
-    expect(records[1].headers["content-length"]).toBe(
-      String(Buffer.byteLength(records[1].body)),
-    );
+    expect(records[1].headers["content-length"]).toBe(String(Buffer.byteLength(records[1].body)));
     expect(records[1].headers["content-length"]).not.toBe("999");
 
     const otherBody = JSON.parse(records[2].body);

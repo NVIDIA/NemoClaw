@@ -102,9 +102,7 @@ describe("built-in channel manifests", () => {
   it("registers the phase-1 built-in manifests without consuming them in workflows", () => {
     const registry = createBuiltInChannelManifestRegistry();
 
-    expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(
-      knownChannelNames(),
-    );
+    expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(knownChannelNames());
     expect(registry.list().map((manifest) => manifest.id)).toEqual(knownChannelNames());
     expect(registry.listAvailable({ agent: "openclaw" }).map((manifest) => manifest.id)).toEqual([
       "telegram",
@@ -228,9 +226,7 @@ describe("built-in channel manifests", () => {
         placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
       },
     ]);
-    expect(hermesLines).toContain(
-      "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-    );
+    expect(hermesLines).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN");
     expect(hermesLines).toContain("TELEGRAM_ALLOWED_USERS=123456789");
     expect(renderJson(telegramManifest)).toContain("channels.telegram.accounts.default");
     expect(renderJson(telegramManifest)).toContain("groupPolicy");
@@ -293,9 +289,7 @@ describe("built-in channel manifests", () => {
       reactions: true,
       channel_prompts: {},
     });
-    expect(hermesLines).toContain(
-      "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
-    );
+    expect(hermesLines).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN");
     expect(hermesLines).toContain("NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594");
     expect(hermesLines).toContain("DISCORD_ALLOWED_USERS=1005536447329222676");
     expect(renderJson(discordManifest)).toContain("channels.discord.accounts.default");
@@ -350,12 +344,8 @@ describe("built-in channel manifests", () => {
         placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       },
     ]);
-    expect(hermesLines).toContain(
-      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-    );
-    expect(hermesLines).toContain(
-      "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    );
+    expect(hermesLines).toContain("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN");
+    expect(hermesLines).toContain("SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(hermesLines).toContain("SLACK_ALLOWED_USERS=U0123456789");
     expect(renderJson(slackManifest)).toContain("channels.slack.accounts.default");
     expect(renderJson(slackManifest)).toContain("allowedIds.slack.channels");

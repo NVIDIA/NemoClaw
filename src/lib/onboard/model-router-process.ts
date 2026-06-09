@@ -70,10 +70,7 @@ function splitCommandLine(commandLine: string): string[] | null {
 
 function readProcCommandLine(pid: number): string[] | null {
   try {
-    return fs
-      .readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .split("\0")
-      .filter(Boolean);
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
   } catch {
     return null;
   }

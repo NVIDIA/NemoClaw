@@ -202,7 +202,9 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
  * failure.
  */
 export function selectVllmModelFromEnv(env: NodeJS.ProcessEnv = process.env): VllmModelDef | null {
-  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim().toLowerCase();
+  const requested = String(env.NEMOCLAW_VLLM_MODEL ?? "")
+    .trim()
+    .toLowerCase();
   if (!requested) return null;
   const match = VLLM_MODELS.find(
     (model) => model.envValue.toLowerCase() === requested || model.id.toLowerCase() === requested,

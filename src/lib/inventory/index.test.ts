@@ -365,9 +365,7 @@ describe("inventory commands", () => {
       .mockReturnValue([{ channel: "telegram", conflicts: 7 }]);
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          withMessaging({ name: "alpha", model: "m" }, ["telegram"]),
-        ],
+        sandboxes: [withMessaging({ name: "alpha", model: "m" }, ["telegram"])],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,
@@ -423,9 +421,7 @@ describe("inventory commands", () => {
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
     expect(
-      lines.some((l) =>
-        l.includes("'alice' and 'bob' share the same telegram credential"),
-      ),
+      lines.some((l) => l.includes("'alice' and 'bob' share the same telegram credential")),
     ).toBe(true);
   });
 
@@ -470,9 +466,7 @@ describe("inventory commands", () => {
       );
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          withMessaging({ name: "alpha", model: "m", agent: "hermes" }, ["telegram"]),
-        ],
+        sandboxes: [withMessaging({ name: "alpha", model: "m", agent: "hermes" }, ["telegram"])],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,
@@ -495,9 +489,7 @@ describe("inventory commands", () => {
     const readGatewayLog = vi.fn();
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          withMessaging({ name: "alpha", model: "m" }, ["telegram"]),
-        ],
+        sandboxes: [withMessaging({ name: "alpha", model: "m" }, ["telegram"])],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,
@@ -756,9 +748,7 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          { name: "alpha", model: "stored-model", provider: "stored-provider" },
-        ],
+        sandboxes: [{ name: "alpha", model: "stored-model", provider: "stored-provider" }],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),

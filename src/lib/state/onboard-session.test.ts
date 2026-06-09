@@ -186,7 +186,11 @@ describe("onboard session", () => {
     expect(loaded.status).toBe("in_progress");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
+    session.markStepComplete(
+      "preflight",
+      { sandboxName: "my-assistant" },
+      { updateMachine: false },
+    );
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("complete");
     expect(loaded.sandboxName).toBe("my-assistant");
@@ -282,7 +286,9 @@ describe("onboard session", () => {
     type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
       machine?: unknown;
     };
-    const legacy = session.createSession({ lastCompletedStep: "policies" }) as unknown as LegacySession;
+    const legacy = session.createSession({
+      lastCompletedStep: "policies",
+    }) as unknown as LegacySession;
     legacy.steps.policies.status = "complete";
     legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
     legacy.machine = {
@@ -339,11 +345,7 @@ describe("onboard session", () => {
       credentialEnv: "NVIDIA_API_KEY",
     });
     expect(emitted[1].context.endpointOrigin).toBe("https://example.com");
-    expect(emitted[1].metadata.fields).toEqual([
-      "sandboxName",
-      "endpointUrl",
-      "credentialEnv",
-    ]);
+    expect(emitted[1].metadata.fields).toEqual(["sandboxName", "endpointUrl", "credentialEnv"]);
     expect(emitted[4]).toMatchObject({
       type: "state.failed",
       state: "sandbox",
@@ -390,10 +392,7 @@ describe("onboard session", () => {
     session.completeSession();
     session.completeSession();
 
-    expect(emitted.map((event) => event.type)).toEqual([
-      "state.skipped",
-      "onboard.completed",
-    ]);
+    expect(emitted.map((event) => event.type)).toEqual(["state.skipped", "onboard.completed"]);
     expect(emitted).toHaveLength(2);
   });
 
@@ -1030,9 +1029,7 @@ describe("onboard session", () => {
     ]);
     const saved = session.saveSession(created);
     const loaded = requireLoadedSession(session.loadSession());
-    expect(saved.messagingPlan?.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-    ]);
+    expect(saved.messagingPlan?.channels.map((channel) => channel.channelId)).toEqual(["telegram"]);
     expect(loaded.messagingPlan?.channels.map((channel) => channel.channelId)).toEqual([
       "telegram",
     ]);

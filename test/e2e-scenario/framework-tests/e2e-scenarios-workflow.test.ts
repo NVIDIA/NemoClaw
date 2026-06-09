@@ -36,7 +36,7 @@ describe("e2e-scenarios workflow boundary", () => {
     expect(validateE2eScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("routes_every_typed_scenario_id_to_its_resolved_runner", () => {
+  it("routes every typed scenario ID to its resolved runner", () => {
     const scenarios = listScenarios().sort((left, right) => left.id.localeCompare(right.id));
     const routes = routesFromWorkflow();
     const typedIds = scenarios.map((scenario) => scenario.id);
@@ -54,7 +54,9 @@ describe("e2e-scenarios workflow boundary", () => {
         : [`${scenario.id}: workflow=${workflowRunner}, typed=${resolvedRunner}`];
     });
 
-    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual([]);
+    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual(
+      [],
+    );
     expect(extra, `workflow ROUTES has unknown scenario IDs: ${extra.join(", ")}`).toEqual([]);
     expect(
       runnerMismatches,

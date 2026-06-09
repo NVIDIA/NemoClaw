@@ -588,10 +588,18 @@ describe("tryAutoApplyUfwRule (#4265)", () => {
     const result = await tryAutoApplyUfwRule(reach, { runImpl, optedIn: true, port: 8080 });
     expect(result).toEqual({ applied: true, reason: "applied", detail: "Rule added" });
     expect(recorded[3]).toEqual([
-      "sudo", "-n", "ufw", "allow",
-      "from", "172.18.0.0/16",
-      "to", "172.18.0.1",
-      "port", "8080", "proto", "tcp",
+      "sudo",
+      "-n",
+      "ufw",
+      "allow",
+      "from",
+      "172.18.0.0/16",
+      "to",
+      "172.18.0.1",
+      "port",
+      "8080",
+      "proto",
+      "tcp",
     ]);
   });
 });

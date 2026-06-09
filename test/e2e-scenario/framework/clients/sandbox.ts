@@ -32,16 +32,23 @@ export class SandboxClient {
     );
   }
 
-  list(): Promise<ShellProbeResult> {
-    return this.openshell(["sandbox", "list"], { artifactName: "sandbox-list" });
+  list(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    return this.openshell(["sandbox", "list"], { artifactName: "sandbox-list", ...options });
   }
 
-  status(name: string): Promise<ShellProbeResult> {
+  status(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}` });
+    return this.openshell(["sandbox", "status", name], {
+      artifactName: `sandbox-status-${name}`,
+      ...options,
+    });
   }
 
-  exec(name: string, command: string[], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  exec(
+    name: string,
+    command: string[],
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     validateSandboxName(name);
     return this.openshell(["sandbox", "exec", name, "--", ...command], {
       artifactName: `sandbox-exec-${name}`,
@@ -49,14 +56,14 @@ export class SandboxClient {
     });
   }
 
-  async expectRunning(name: string): Promise<ShellProbeResult> {
-    const result = await this.status(name);
+  async expectRunning(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    const result = await this.status(name, options);
     assertExitZero(result, `openshell sandbox status ${name}`);
     return result;
   }
 }
 
-function validateSandboxName(name: string): void {
+export function validateSandboxName(name: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
     throw new Error(`sandbox name is invalid for fixture client: ${name}`);
   }

@@ -15,9 +15,7 @@ import type {
  *
  * Returns `null` when the entry has no compiled messaging plan.
  */
-export function resolveActiveChannelsFromEntry(
-  entry: ConflictRegistryEntry,
-): string[] | null {
+export function resolveActiveChannelsFromEntry(entry: ConflictRegistryEntry): string[] | null {
   if (entry.messaging?.plan) {
     return getActiveChannelIdsFromPlan(entry.messaging.plan);
   }
@@ -45,10 +43,7 @@ function resolveChannelHashesFromEntry(
  * Disabled channels must not block another sandbox from claiming the same
  * token: the bridge is paused so the credential is not in use.
  */
-export function hasStoredChannelInEntry(
-  entry: ConflictRegistryEntry,
-  channel: string,
-): boolean {
+export function hasStoredChannelInEntry(entry: ConflictRegistryEntry, channel: string): boolean {
   return resolveActiveChannelsFromEntry(entry)?.includes(channel) ?? false;
 }
 
@@ -140,11 +135,7 @@ export function findConflictsInEntries(
   requests: readonly ConflictRequest[],
   entries: readonly ConflictRegistryEntry[],
 ): ConflictMatch[] {
-  const others = entries.filter(
-    (e) =>
-      e.name !== currentSandbox &&
-      e.messaging?.plan != null,
-  );
+  const others = entries.filter((e) => e.name !== currentSandbox && e.messaging?.plan != null);
   return requests.flatMap((request) =>
     others.flatMap((entry) => {
       const reason = conflictReasonForRequest(entry, request);

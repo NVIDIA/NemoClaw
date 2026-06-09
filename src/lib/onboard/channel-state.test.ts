@@ -6,10 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { resolveDisabledChannels } from "./channel-state";
 
-function plan(
-  sandboxName: string,
-  disabledChannels: readonly string[],
-): SandboxMessagingPlan {
+function plan(sandboxName: string, disabledChannels: readonly string[]): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
     sandboxName,
@@ -58,8 +55,7 @@ describe("onboard channel state helpers", () => {
       resolveDisabledChannels("alpha", {
         readMessagingPlanFromEnv: () => null,
         loadSession: () => ({ sandboxName: "other", messagingPlan: plan("other", []) }),
-        getRegistryDisabledChannels: (sandboxName) =>
-          sandboxName === "alpha" ? ["discord"] : [],
+        getRegistryDisabledChannels: (sandboxName) => (sandboxName === "alpha" ? ["discord"] : []),
       }),
     ).toEqual(["discord"]);
   });

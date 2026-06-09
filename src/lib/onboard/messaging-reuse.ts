@@ -3,7 +3,10 @@
 
 type MessagingChannel = { name: string; envKey: string };
 
-export function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
+export function getMessagingProviderNamesForChannel(
+  sandboxName: string,
+  channel: string,
+): string[] {
   if (channel === "discord") return [`${sandboxName}-discord-bridge`];
   if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
   if (channel === "wechat") return [`${sandboxName}-wechat-bridge`];
@@ -36,7 +39,11 @@ export function getNonInteractiveStoredMessagingChannels(
     const knownSessionChannels = getKnownMessagingChannels(sessionChannels, messagingChannels);
     return knownSessionChannels;
   }
-  if (resume || !sandboxName || messagingChannels.some((channel) => hasMessagingToken(channel.envKey))) {
+  if (
+    resume ||
+    !sandboxName ||
+    messagingChannels.some((channel) => hasMessagingToken(channel.envKey))
+  ) {
     return null;
   }
 

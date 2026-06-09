@@ -6,7 +6,11 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import { EnvironmentPhaseFixture, type DockerRuntimeReady } from "../framework/phases/index.ts";
-import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../framework/shell-probe.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../framework/shell-probe.ts";
 import type { ScenarioEnvironment } from "../scenarios/types.ts";
 
 interface RunnerCall {
@@ -39,7 +43,10 @@ class FakeRunner implements CommandRunner {
     this.responses.push(response);
   }
 
-  async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
+  async run(
+    command: TrustedShellCommand,
+    options?: ShellProbeRunOptions,
+  ): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
     const response = this.responses.shift() ?? shellResult(0);
     if (response instanceof Error) {
@@ -61,7 +68,9 @@ describe("environment phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(0, "Docker is available\n"));
-    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner, { cliPath: "./bin/nemoclaw.js" }));
+    const environment = new EnvironmentPhaseFixture(
+      new HostCliClient(runner, { cliPath: "./bin/nemoclaw.js" }),
+    );
 
     const ready = await environment.assertReady(cloudOpenClawEnvironment);
 
@@ -132,19 +141,23 @@ describe("environment phase fixture", () => {
     });
   });
 
-  it("fails if a no-Docker negative scenario unexpectedly has Docker", async () => {
+  it("records Docker availability for no-Docker negative scenarios without blocking simulation", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(0, "Docker is available\n"));
     const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
 
-    await expect(
-      environment.assertReady({
-        ...cloudOpenClawEnvironment,
-        runtime: "docker-missing",
-        onboarding: "cloud-openclaw-no-docker",
-      }),
-    ).rejects.toThrow(/expected Docker to be unavailable/);
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      runtime: "docker-missing",
+      onboarding: "cloud-openclaw-no-docker",
+    });
+
+    expect(ready.docker).toMatchObject({
+      id: "docker-missing",
+      expectation: "missing",
+      available: true,
+    });
   });
 
   it("records optional Docker as unavailable without failing", async () => {
@@ -285,15 +298,15 @@ describe("environment phase fixture", () => {
     const runner = new FakeRunner();
     const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
 
-    await expect(environment.assertReady({ ...cloudOpenClawEnvironment, install: "tarball" })).rejects.toThrow(
-      /Unsupported scenario install 'tarball'/,
-    );
+    await expect(
+      environment.assertReady({ ...cloudOpenClawEnvironment, install: "tarball" }),
+    ).rejects.toThrow(/Unsupported scenario install 'tarball'/);
     expect(runner.calls).toEqual([]);
 
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
-    await expect(environment.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" })).rejects.toThrow(
-      /Unsupported scenario runtime 'podman-running'/,
-    );
+    await expect(
+      environment.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" }),
+    ).rejects.toThrow(/Unsupported scenario runtime 'podman-running'/);
   });
 
   it("exposes the environment phase on the Vitest scenario context", () => {

@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  hasExplicitContextWindow,
-  parsePositiveInteger,
-} from "./ollama-runtime-context";
+import { hasExplicitContextWindow, parsePositiveInteger } from "./ollama-runtime-context";
 
 const MAX_AUTODETECTED_VLLM_CONTEXT_WINDOW = 4_194_304;
 

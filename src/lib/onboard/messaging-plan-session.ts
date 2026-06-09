@@ -30,7 +30,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Derive configured channel ids from a plan. */
-export function getChannelsFromPlan(plan: SandboxMessagingPlan | null | undefined): string[] | null {
+export function getChannelsFromPlan(
+  plan: SandboxMessagingPlan | null | undefined,
+): string[] | null {
   if (!plan) return null;
   return plan.channels.map((c) => c.channelId);
 }

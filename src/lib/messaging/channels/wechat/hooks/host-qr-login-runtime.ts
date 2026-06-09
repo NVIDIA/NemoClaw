@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { saveCredential } from "../../../../credentials/store";
-import {
-  HOST_QR_LOGIN_HANDLERS,
-  type HostQrLoginResult,
-} from "../../../../host-qr-handlers";
+import { HOST_QR_LOGIN_HANDLERS, type HostQrLoginResult } from "../../../../host-qr-handlers";
 import { wechatManifest } from "../manifest";
 import type { WechatIlinkLoginHookOptions, WechatLoginResult } from "./ilink-login";
 

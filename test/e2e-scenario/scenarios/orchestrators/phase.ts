@@ -75,7 +75,10 @@ function buildProbeContext(ctx: RunContext, step: AssertionStep): ProbeContext {
       if (eq <= 0) continue;
       const key = trimmed.slice(0, eq);
       let value = trimmed.slice(eq + 1);
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
         value = value.slice(1, -1);
       }
       contextEnv[key] = value;
@@ -159,7 +162,10 @@ export class PhaseOrchestrator {
     // calls the named function with its single positional arg; shell
     // executes the script directly. We always go through bash -lc so
     // sourced shell helpers see a normal interactive-style env.
-    const dispatchAction = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh");
+    const dispatchAction = path.join(
+      REPO_ROOT,
+      "test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh",
+    );
     const useDispatchLauncher = action.kind === "shell-fn" && fs.existsSync(dispatchAction);
     const bashArgs: string[] = useDispatchLauncher
       ? [dispatchAction, action.fn ?? "", action.arg ?? "", scriptPath]
@@ -287,7 +293,9 @@ export class PhaseOrchestrator {
     const startedAt = Date.now();
     const rawAttempts = step.reliability?.retry?.attempts;
     const maxAttempts =
-      typeof rawAttempts === "number" && Number.isFinite(rawAttempts) ? Math.max(1, Math.floor(rawAttempts)) : 1;
+      typeof rawAttempts === "number" && Number.isFinite(rawAttempts)
+        ? Math.max(1, Math.floor(rawAttempts))
+        : 1;
     let attempts = 0;
     let lastOutcome: StepAttemptOutcome = { status: "failed", message: "step did not run" };
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -331,7 +339,11 @@ export class PhaseOrchestrator {
     return step.reliability?.retry?.on.includes(classifier) ?? false;
   }
 
-  private async executeStep(ctx: RunContext, step: AssertionStep, _attempt: number): Promise<StepAttemptOutcome> {
+  private async executeStep(
+    ctx: RunContext,
+    step: AssertionStep,
+    _attempt: number,
+  ): Promise<StepAttemptOutcome> {
     const kind = step.implementation?.kind;
     if (kind === "shell") {
       return this.runShellStep(ctx, step);
@@ -441,7 +453,10 @@ export class PhaseOrchestrator {
         }
         const key = trimmed.slice(0, eq);
         let value = trimmed.slice(eq + 1);
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        if (
+          (value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))
+        ) {
           value = value.slice(1, -1);
         }
         env[key] = value;
@@ -545,6 +560,9 @@ export class PhaseOrchestrator {
   private writePhaseResult(ctx: RunContext, result: PhaseResult) {
     const outputDir = path.join(ctx.contextDir, ".e2e");
     fs.mkdirSync(outputDir, { recursive: true });
-    fs.writeFileSync(path.join(outputDir, `${result.phase}.result.json`), `${JSON.stringify(result, null, 2)}\n`);
+    fs.writeFileSync(
+      path.join(outputDir, `${result.phase}.result.json`),
+      `${JSON.stringify(result, null, 2)}\n`,
+    );
   }
 }

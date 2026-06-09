@@ -13,13 +13,7 @@ import {
 } from "../../state/onboard-session";
 import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
-import {
-  advanceTo,
-  branchTo,
-  completeOnboardMachine,
-  failOnboardMachine,
-  retryTo,
-} from "./result";
+import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import { InvalidOnboardMachineTransitionError } from "./transitions";
 

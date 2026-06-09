@@ -226,26 +226,22 @@ describe("nemoclaw <name> recover", () => {
     },
   );
 
-  it(
-    "no-ops when both the gateway and the forward are healthy",
-    testTimeoutOptions(20_000),
-    () => {
-      const fixture = setupFixture({
-        sandboxName: "healthy-sandbox",
-        gatewayProbe: "RUNNING",
-        forwardListStatus: "running",
-      });
-      const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+  it("no-ops when both the gateway and the forward are healthy", testTimeoutOptions(20_000), () => {
+    const fixture = setupFixture({
+      sandboxName: "healthy-sandbox",
+      gatewayProbe: "RUNNING",
+      forwardListStatus: "running",
+    });
+    const result = runRecover(fixture);
+    expect(result.status).toBe(0);
 
-      const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("gateway is running in 'healthy-sandbox'");
-      expect(combined).not.toContain("Re-establishing");
-      expect(combined).not.toContain("restored dashboard port forward");
+    const combined = (result.stdout || "") + (result.stderr || "");
+    expect(combined).toContain("gateway is running in 'healthy-sandbox'");
+    expect(combined).not.toContain("Re-establishing");
+    expect(combined).not.toContain("restored dashboard port forward");
 
-      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
-      expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
-      expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
-    },
-  );
+    const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+    expect(calls.some((l) => l.startsWith("forward stop "))).toBe(false);
+    expect(calls.some((l) => l.startsWith("forward start "))).toBe(false);
+  });
 });

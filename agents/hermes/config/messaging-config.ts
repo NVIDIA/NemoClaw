@@ -111,8 +111,7 @@ function buildWechatEnvLines(
   wechatConfig: WechatConfig,
 ): string[] {
   const lines: string[] = [];
-  const accountId =
-    typeof wechatConfig.accountId === "string" ? wechatConfig.accountId.trim() : "";
+  const accountId = typeof wechatConfig.accountId === "string" ? wechatConfig.accountId.trim() : "";
   if (!accountId) {
     throw new Error("wechat is enabled but wechatConfig.accountId is missing");
   }
@@ -189,7 +188,13 @@ function collectSlackAllowedChannels(slackConfig: SlackConfig): string[] {
   const channels = Array.isArray(slackConfig.allowedChannels) ? slackConfig.allowedChannels : [];
   return [
     ...new Set(
-      channels.map((channel) => String(channel).replace(/[\r\n]/g, "").trim()).filter(Boolean),
+      channels
+        .map((channel) =>
+          String(channel)
+            .replace(/[\r\n]/g, "")
+            .trim(),
+        )
+        .filter(Boolean),
     ),
   ];
 }
