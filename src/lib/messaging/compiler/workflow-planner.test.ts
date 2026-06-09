@@ -666,9 +666,6 @@ describe("MessagingWorkflowPlanner", () => {
       sandboxEntry: {
         name: "demo",
         messagingChannels: ["telegram"],
-        providerCredentialHashes: {
-          TELEGRAM_BOT_TOKEN: "sha256:test",
-        },
       },
     });
 

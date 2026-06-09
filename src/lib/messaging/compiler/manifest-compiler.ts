@@ -299,8 +299,7 @@ function readInputEnvValue(input: ChannelInputSpec): MessagingSerializableValue 
     const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
     if (resolved.value) return resolved.value;
   }
-  const value = process.env[input.envKey];
-  const normalized = value?.replace(/\r/g, "").trim();
+  const normalized = process.env[input.envKey]?.replace(/\r/g, "").trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 

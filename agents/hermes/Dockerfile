@@ -86,10 +86,14 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
-# Copy startup script
+# Copy startup script and the secret-boundary validator. The validator is the
+# single source of truth shared between start.sh (cold start) and the host-side
+# gateway recovery script (src/lib/agent/runtime.ts) so `sandbox recover` enforces
+# the same boundary as the initial entrypoint.
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b

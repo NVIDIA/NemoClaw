@@ -55,11 +55,11 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 42 entries", () => {
-      // 36 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 36 visible includes the sessions group (root + list + reset + delete)
+    it("should return exactly 43 entries", () => {
+      // 37 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 37 visible includes the sessions group (root + list + reset + delete)
       // and the agents pair (add + delete).
-      expect(sandboxCommands()).toHaveLength(42);
+      expect(sandboxCommands()).toHaveLength(43);
     });
 
     it("every entry has scope sandbox", () => {
@@ -213,9 +213,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 25 unique action tokens including empty string", () => {
+    it("returns exactly 26 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(25);
+      expect(tokens).toHaveLength(26);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agents",
@@ -226,6 +226,7 @@ describe("command-registry", () => {
         "doctor",
         "logs",
         "policy-add",
+        "policy-explain",
         "policy-remove",
         "policy-list",
         "hosts-add",

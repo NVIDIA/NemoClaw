@@ -235,9 +235,11 @@ describe("uninstall run plan", () => {
     const killed: number[] = [];
     const exited = new Set<number>();
     // Simulate the persisted PID file under ~/.nemoclaw/.
-    const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-pidfile";
-    const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
-    fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-test-2759-pidfile-"),
+    );
+    const pidFile = path.join(tmpHome, ".nemoclaw", "ollama-auth-proxy.pid");
+    fs.mkdirSync(path.join(tmpHome, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(pidFile, "44321\n");
 
     try {
@@ -462,9 +464,11 @@ describe("uninstall run plan", () => {
     const logs: string[] = [];
     const warnings: string[] = [];
     const signals: NodeJS.Signals[] = [];
-    const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-stuck";
-    const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
-    fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-test-2759-stuck-"),
+    );
+    const pidFile = path.join(tmpHome, ".nemoclaw", "ollama-auth-proxy.pid");
+    fs.mkdirSync(path.join(tmpHome, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(pidFile, "44322\n");
 
     try {

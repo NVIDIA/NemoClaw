@@ -2840,6 +2840,14 @@ for line in sys.stdin:
   else
     fail "M-S17c: Slack proof did not use the installed OpenClaw Slack send helper (proof=${sl_proof_kind:-missing})"
   fi
+  # M-S17d (#4752): a denied explicit @-mention prepares no command but must
+  # still emit exactly one bounded sender-facing feedback action.
+  if echo "$sl_channel_proof" | grep -q '"deniedFeedbackCount":1' \
+    && echo "$sl_channel_proof" | grep -q '"deniedFeedbackMethod":"chat.postEphemeral"'; then
+    pass "M-S17d: denied Slack @mention sent exactly one bounded sender feedback action"
+  else
+    fail "M-S17d: denied Slack @mention did not send bounded sender feedback: ${sl_channel_proof:0:500}"
+  fi
 elif [ "$fake_slack_ready" != "1" ]; then
   skip "M-S17: fake Slack API was not ready"
 elif [ -z "$sl_allowed_user" ]; then

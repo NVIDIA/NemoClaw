@@ -823,7 +823,6 @@ export async function rebuildSandbox(
     ...(hasRebuildHermesToolGateways
       ? { hermesToolGateways: [...rebuildHermesToolGateways] }
       : {}),
-    ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {
     registry.updateSandbox(sandboxName, preservedRegistryFields);

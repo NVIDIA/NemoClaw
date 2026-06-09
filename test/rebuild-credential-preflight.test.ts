@@ -51,7 +51,6 @@ function createFixture(opts: {
   agent?: string | null;
   hermesAuthMethod?: string | null;
   messagingChannels?: string[] | null;
-  providerCredentialHashes?: Record<string, string>;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
 }) {
@@ -64,7 +63,6 @@ function createFixture(opts: {
     agent = null,
     hermesAuthMethod = null,
     messagingChannels = null,
-    providerCredentialHashes,
     dockerBuildExitCode = 0,
     providerRegistered = true,
   } = opts;
@@ -87,7 +85,6 @@ function createFixture(opts: {
           policies: [],
           agent,
           messagingChannels,
-          ...(providerCredentialHashes ? { providerCredentialHashes } : {}),
         },
       },
     }),
@@ -368,7 +365,6 @@ describe("Issue #2273: atomic rebuild", () => {
         const f = createFixture({
           agent: "hermes",
           messagingChannels: ["discord"],
-          providerCredentialHashes: { DISCORD_BOT_TOKEN: "hash-discord" },
           credentialEnv: "NVIDIA_API_KEY",
           savedCredential: {
             key: "NVIDIA_API_KEY",

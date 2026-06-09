@@ -96,8 +96,7 @@ function hasValidFunctionCallPayload(value) {
 function isStructuredChatCompletionsToolCall(value) {
   if (!value || typeof value !== "object") return false;
   if (value.type !== "function") return false;
-  const fn = value.function;
-  return hasValidFunctionCallPayload(fn);
+  return hasValidFunctionCallPayload(value.function);
 }
 
 function containsToolCallLikeValue(value) {

@@ -21,6 +21,19 @@ describe("onboard Hermes dashboard helpers", () => {
     ).toThrow(/must not equal the Hermes API port/);
   });
 
+  it("rejects the internal dashboard port colliding with the OpenClaw dashboard port", () => {
+    // The external port was already guarded against effectivePort; the internal
+    // port must be too, or NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT set to the
+    // chat-UI port silently collides at forward time.
+    expect(() =>
+      resolveHermesDashboardOnboardState({
+        agentName: "hermes",
+        effectivePort: 19119,
+        env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
+      }),
+    ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT must not equal the Hermes API port/);
+  });
+
   it("tracks registry drift for enabled dashboard settings", () => {
     const state = resolveHermesDashboardOnboardState({
       agentName: "hermes",
