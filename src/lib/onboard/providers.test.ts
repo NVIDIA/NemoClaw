@@ -94,10 +94,20 @@ describe("onboard provider helpers", () => {
     expect(args).toContain("ANTHROPIC_BASE_URL=https://api.anthropic.example.com");
   });
 
-  it("advertises the Hermes Provider model families in the menu label", () => {
+  it("advertises every Hermes Provider model family in the menu label", () => {
     const label = REMOTE_PROVIDER_CONFIG.hermesProvider.label;
     expect(label.startsWith("Hermes Provider")).toBe(true);
-    for (const family of ["Moonshot", "Z-AI", "MiniMax", "Qwen", "Xiaomi"]) {
+    for (const family of [
+      "Moonshot",
+      "Z-AI",
+      "MiniMax",
+      "Qwen",
+      "Xiaomi",
+      "Tencent",
+      "StepFun",
+      "xAI",
+      "Arcee",
+    ]) {
       expect(label).toContain(family);
     }
   });

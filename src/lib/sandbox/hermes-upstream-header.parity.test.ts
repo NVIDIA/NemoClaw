@@ -67,8 +67,11 @@ describe("buildHermesUpstreamHeader parity", () => {
     };
     const header = buildHostHeader(malicious);
     expect(header.includes("\nmodel:")).toBe(false);
-    expect(header).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/);
+    // Sanitizer strips C0 controls (0x00-0x1F), DEL (0x7F), and C1 controls
+    // (0x80-0x9F). Exclude 0x0A from the assertion only because the
+    // multi-line header itself separates comment lines with \n.
     for (const line of header.split("\n")) {
+      expect(line).not.toMatch(/[\x00-\x09\x0B-\x1F\x7F-\x9F]/);
       if (line.length > 0) expect(line.startsWith("#")).toBe(true);
     }
   });
@@ -80,6 +83,8 @@ describe("buildHermesUpstreamHeader parity", () => {
         model: "y".repeat(1024),
       },
     });
+    // Worst-case line ≈ "# Upstream provider: " (21 chars) + 128-char value
+    // ceiling = ~149 chars; 180 leaves headroom for future prefix tweaks.
     for (const line of header.split("\n")) {
       expect(line.length).toBeLessThan(180);
     }
