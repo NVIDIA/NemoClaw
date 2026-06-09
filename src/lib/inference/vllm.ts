@@ -5,12 +5,16 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-const { runCapture, runShell } = require("../runner");
-const { dockerCapture, dockerSpawn } = require("../adapters/docker");
-const { VLLM_PORT } = require("../core/ports");
-const { getGpuIndicesByName } = require("./nim");
 import {
-  DEFAULT_VLLM_MODEL,
+  dockerCapture,
+  dockerPullWithProgressWatchdog,
+  dockerSpawn,
+} from "../adapters/docker";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { VLLM_PORT } from "../core/ports";
+import { runCapture, runShell } from "../runner";
+import { getGpuIndicesByName } from "./nim";
+import {
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
@@ -21,11 +25,11 @@ import {
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
-interface VllmProfile {
+export interface VllmProfile {
   name: string;            // human label, e.g. "DGX Spark"
   image: string;           // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
-  // because Spark/Station can host a 27B model, but generic discrete-GPU
+  // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
   // cards.
   defaultModel: VllmModelDef;
@@ -37,21 +41,18 @@ interface VllmProfile {
   // dockerRunFlags at install time. Used by Station to pick the GB300 GPU
   // out of a mixed-GPU host instead of using `--gpus all`.
   buildDockerRunFlags?: () => string[];
-  // Approximate first-run time shown in the confirmation prompt.
-  estimatedMinutes: string;
-  // Image-pull deadline. First run on a slow link can be several minutes.
+  // Maximum wall-clock safety budget for image pulls. The Docker adapter uses
+  // a shorter progress watchdog for stalls, so slow-but-moving pulls can keep
+  // going until this last-ditch cap.
   pullTimeoutSec: number;
-  // Marker emitter sees container output line by line. The patterns below
-  // map a line to a user-visible "==> ..." progress marker. Order matters:
-  // first matching entry wins.
-  progressMarkers: { match: RegExp; emit: string }[];
-  // Fatal patterns abort the install with the matching message.
-  fatalMarkers: { match: RegExp; reason: string }[];
-  // Pattern that means "vLLM is up and serving".
-  readyMarker: RegExp;
   // Wall-clock budget for the load phase (after pull, before ready).
   loadTimeoutSec: number;
 }
+
+const VLLM_IMAGES = {
+  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+} as const;
 
 function nemotronNanoModel(): VllmModelDef {
   const match = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-nano-4b");
@@ -59,7 +60,21 @@ function nemotronNanoModel(): VllmModelDef {
   return match;
 }
 
+function qwen27bFP8Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
+  return match;
+}
+
+function qwen35bNvfp4Model(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
+  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-35b-a3b-nvfp4 entry");
+  return match;
+}
+
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
+const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
+const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 
 function pickHfTokenEntry(
   env: NodeJS.ProcessEnv = process.env,
@@ -105,8 +120,8 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
-  image: "nvcr.io/nvidia/vllm:26.03.post1-py3",
-  defaultModel: DEFAULT_VLLM_MODEL,
+  image: VLLM_IMAGES.ngc2605Post1,
+  defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: [
     "--gpus",
@@ -117,33 +132,15 @@ const SPARK_PROFILE: VllmProfile = {
     "-e",
     "HF_HOME=/root/.cache/huggingface",
   ],
-  estimatedMinutes: "10–30 minutes",
-  pullTimeoutSec: 900,
+  pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
-  progressMarkers: [
-    {
-      match: /Successfully installed vllm|already satisfied: vllm/,
-      emit: "fastsafetensors extra ready",
-    },
-    {
-      match: /Loading model weights from|Loading safetensors checkpoint/,
-      emit: "Loading model weights into VRAM",
-    },
-    { match: /Loading model weights took|Model loading took/, emit: "Model weights loaded" },
-  ],
-  fatalMarkers: [
-    { match: /CUDA out of memory|torch\.OutOfMemoryError/, reason: "CUDA out of memory" },
-    { match: /ImportError|ModuleNotFoundError/, reason: "Python import error" },
-    { match: /OSError: \[Errno 28\]|No space left on device/, reason: "out of disk space" },
-  ],
-  readyMarker: /Uvicorn running on|Application startup complete/,
 };
 
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
-  image: SPARK_PROFILE.image,
-  defaultModel: SPARK_PROFILE.defaultModel,
+  image: VLLM_IMAGES.ngc2605Post1,
+  defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
@@ -164,28 +161,20 @@ const STATION_PROFILE: VllmProfile = {
       "HF_HOME=/root/.cache/huggingface",
     ];
   },
-  estimatedMinutes: SPARK_PROFILE.estimatedMinutes,
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
   loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
-  progressMarkers: SPARK_PROFILE.progressMarkers,
-  fatalMarkers: SPARK_PROFILE.fatalMarkers,
-  readyMarker: SPARK_PROFILE.readyMarker,
 };
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
-  image: SPARK_PROFILE.image,
+  image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
-  estimatedMinutes: SPARK_PROFILE.estimatedMinutes,
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
   loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
-  progressMarkers: SPARK_PROFILE.progressMarkers,
-  fatalMarkers: SPARK_PROFILE.fatalMarkers,
-  readyMarker: SPARK_PROFILE.readyMarker,
 };
 
 export function detectVllmProfile(
@@ -209,6 +198,14 @@ function emit(line: string): void {
   process.stdout.write(`  ==> ${line}\n`);
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${String(seconds)}s`;
+  return `${String(minutes)}m ${String(seconds)}s`;
+}
+
 function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   if (!runCapture(["sh", "-c", "command -v docker"], { ignoreError: true }).trim()) {
     return { ok: false, reason: "docker not found on PATH" };
@@ -216,22 +213,28 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   if (!runCapture(["sh", "-c", "command -v nvidia-smi"], { ignoreError: true }).trim()) {
     return { ok: false, reason: "nvidia-smi not found — vLLM requires NVIDIA drivers" };
   }
+  if (!runCapture(["sh", "-c", "command -v curl"], { ignoreError: true }).trim()) {
+    return { ok: false, reason: "curl not found on PATH — vLLM readiness checks require curl" };
+  }
   return { ok: true };
 }
 
-function pullImage(profile: VllmProfile): { ok: boolean; reason?: string } {
+export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
-  // GNU `timeout` enforces the pull deadline. macOS BSD coreutils omits it;
-  // fall back to a plain `docker pull` there.
-  const hasTimeout = !!runCapture(["sh", "-c", "command -v timeout"], {
-    ignoreError: true,
-  }).trim();
-  const prefix = hasTimeout ? `timeout ${String(profile.pullTimeoutSec)} ` : "";
-  const result = runShell(`${prefix}docker pull ${profile.image}`, {
-    ignoreError: true,
-    suppressOutput: true,
+  const result = await dockerPullWithProgressWatchdog(profile.image, {
+    maxTimeoutMs: profile.pullTimeoutSec * 1000,
+    logLine: emit,
   });
   if (result.status !== 0) {
+    if (result.timeoutKind === "stall") {
+      return { ok: false, reason: "docker pull stalled with no progress" };
+    }
+    if (result.timeoutKind === "max") {
+      return {
+        ok: false,
+        reason: `docker pull exceeded ${String(profile.pullTimeoutSec)}s safety budget`,
+      };
+    }
     return { ok: false, reason: `docker pull failed (exit ${String(result.status)})` };
   }
   return { ok: true };
@@ -247,14 +250,16 @@ function downloadModel(
     const proc = dockerSpawn(
       [
         "run",
+        "-t",
         "--rm",
+        "--entrypoint",
+        "hf",
         "-v",
         `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
         "-e",
         "HF_HOME=/root/.cache/huggingface",
         ...buildHfTokenDockerArgs(),
         profile.image,
-        "hf",
         "download",
         model.id,
       ],
@@ -263,45 +268,56 @@ function downloadModel(
 
     const tail: string[] = [];
     const TAIL_MAX = 50;
-    let totalFiles = 0;
-    let lastEmittedPct = -1;
+    let resolved = false;
+    const start = Date.now();
+    let lastOutputAt = start;
+    let lastOutputEndedCleanly = true;
+    const heartbeat = setInterval(() => {
+      const now = Date.now();
+      if (now - lastOutputAt >= MODEL_DOWNLOAD_HEARTBEAT_MS) {
+        if (!lastOutputEndedCleanly) process.stdout.write("\n");
+        emit(`Model download still running (${formatElapsed(now - start)} elapsed; no new output)`);
+        lastOutputAt = now;
+        lastOutputEndedCleanly = true;
+      }
+    }, MODEL_DOWNLOAD_HEARTBEAT_MS);
+    heartbeat.unref?.();
 
-    function onChunk(buf: Buffer): void {
-      const text = buf.toString();
-      // tqdm uses \r to overwrite a line; split on either to catch updates.
+    function done(result: { ok: boolean; reason?: string }): void {
+      if (resolved) return;
+      resolved = true;
+      clearInterval(heartbeat);
+      resolve(result);
+    }
+
+    function rememberTail(text: string): void {
       for (const segment of text.split(/[\r\n]+/)) {
         if (!segment) continue;
         tail.push(segment);
         if (tail.length > TAIL_MAX) tail.shift();
       }
-      const fetchMatch = text.match(/Fetching (\d+) files:/);
-      if (fetchMatch && totalFiles !== Number(fetchMatch[1])) {
-        totalFiles = Number(fetchMatch[1]);
-        emit(`Downloading ${String(totalFiles)} files`);
-      }
-      // Pull every percent update tqdm emits and only print when a new
-      // 25% milestone is crossed (25/50/75).
-      for (const m of text.matchAll(/(\d+)%\|/g)) {
-        const pct = Number(m[1]);
-        const milestone = Math.floor(pct / 25) * 25;
-        if (milestone > 0 && milestone < 100 && milestone > lastEmittedPct) {
-          lastEmittedPct = milestone;
-          emit(`Download progress: ${String(milestone)}%`);
-        }
-      }
     }
 
-    proc.stdout.on("data", onChunk);
-    proc.stderr.on("data", onChunk);
+    function onChunk(buf: Buffer, stream: NodeJS.WriteStream): void {
+      lastOutputAt = Date.now();
+      stream.write(buf);
+      const text = buf.toString();
+      lastOutputEndedCleanly = /[\r\n]$/.test(text);
+      rememberTail(text);
+    }
+
+    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, process.stdout));
+    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, process.stderr));
 
     proc.on("error", (err: Error) => {
-      resolve({ ok: false, reason: `spawn error: ${err.message}` });
+      done({ ok: false, reason: `spawn error: ${err.message}` });
     });
 
     proc.on("exit", (code: number | null) => {
       if (code === 0) {
+        if (!lastOutputEndedCleanly) process.stdout.write("\n");
         emit("Model download complete");
-        resolve({ ok: true });
+        done({ ok: true });
         return;
       }
       // Surface the last few raw lines so a failure has actionable context.
@@ -310,9 +326,26 @@ function downloadModel(
         for (const line of tail) process.stderr.write(`    ${line}\n`);
         process.stderr.write("  ---\n");
       }
-      resolve({ ok: false, reason: `hf download failed (exit ${String(code)})` });
+      done({ ok: false, reason: `hf download failed (exit ${String(code)})` });
     });
   });
+}
+
+// Build the `docker run` command for the long-lived vLLM inference container.
+// Exported for testing. `--restart unless-stopped` makes the container come
+// back after a host reboot or Docker daemon restart (#4886); without a restart
+// policy the container stays down after a reboot and `nemoclaw inference get`
+// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+export function buildVllmRunCommand(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  runFlags: string,
+): string {
+  const extra = runFlags ? ` ${runFlags}` : "";
+  return (
+    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
+    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  );
 }
 
 function startContainer(
@@ -336,9 +369,7 @@ function startContainer(
   // the value stays out of /proc/<pid>/cmdline.
   const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
   const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd =
-    `docker run -d ${flags} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} ${profile.image} bash -c ${JSON.stringify(buildVllmServeCommand(model))}`;
+  const cmd = buildVllmRunCommand(profile, model, flags);
   const result = runShell(cmd, {
     ignoreError: true,
     suppressOutput: true,
@@ -350,17 +381,58 @@ function startContainer(
   return { ok: true };
 }
 
-// Stream `docker logs -f` and classify each line. Resolves on ready, fatal,
-// timeout, or container exit.
-function streamLogsUntilReady(
-  profile: VllmProfile,
-): Promise<{ ok: boolean; reason?: string }> {
+function vllmModelsEndpoint(): string {
+  return `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`;
+}
+
+function vllmEndpointReady(): boolean {
+  const response = runCapture(
+    [
+      "curl",
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        vllmModelsEndpoint(),
+      ]),
+    ],
+    { ignoreError: true },
+  ).trim();
+  if (!response) return false;
+  try {
+    const parsed = JSON.parse(response) as { data?: unknown };
+    return Array.isArray(parsed.data);
+  } catch {
+    return false;
+  }
+}
+
+function readContainerLogTail(profile: VllmProfile, lineCount = 80): string[] {
+  const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
+    ignoreError: true,
+  }).trim();
+  if (!output) return [];
+  return output.split(/\r?\n/).slice(-lineCount);
+}
+
+function printContainerLogTail(profile: VllmProfile): void {
+  const tail = readContainerLogTail(profile);
+  if (tail.length === 0) return;
+  process.stderr.write(`  --- Last ${String(tail.length)} vLLM log lines: ---\n`);
+  for (const line of tail) process.stderr.write(`    ${line}\n`);
+  process.stderr.write("  ---\n");
+}
+
+// Poll the real OpenAI-compatible models endpoint instead of interpreting
+// vLLM startup logs. Logs stay quiet on the happy path and print only on
+// failure.
+function waitForVllmReady(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   return new Promise((resolve) => {
-    const proc = dockerSpawn(["logs", "-f", profile.containerName], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
     let resolved = false;
     const start = Date.now();
+    let lastHeartbeatAt = start;
 
     let tick: ReturnType<typeof setInterval> | null = null;
 
@@ -371,71 +443,36 @@ function streamLogsUntilReady(
         clearInterval(tick);
         tick = null;
       }
-      try {
-        proc.kill();
-      } catch {
-        /* ignored */
-      }
       resolve(result);
     }
 
-    function processLine(line: string): void {
-      if (!line || resolved) return;
-      for (const fatal of profile.fatalMarkers) {
-        if (fatal.match.test(line)) {
-          emit(`ERROR: ${fatal.reason}`);
-          done({ ok: false, reason: fatal.reason });
-          return;
-        }
-      }
-      for (const m of profile.progressMarkers) {
-        if (m.match.test(line)) {
-          emit(m.emit);
-          break;
-        }
-      }
-      if (profile.readyMarker.test(line)) {
+    function poll(): void {
+      if (resolved) return;
+      if (vllmEndpointReady()) {
         emit(`vLLM is serving on :${String(VLLM_PORT)}`);
         done({ ok: true });
+        return;
       }
-    }
-
-    function consumeChunk(buffer: string, raw: Buffer): string {
-      const segments = (buffer + raw.toString()).split(/\r?\n/);
-      const nextBuffer = segments.pop() ?? "";
-      for (const line of segments) processLine(line);
-      return nextBuffer;
-    }
-
-    let stdoutBuffer = "";
-    let stderrBuffer = "";
-    proc.stdout.on("data", (raw: Buffer) => {
-      stdoutBuffer = consumeChunk(stdoutBuffer, raw);
-    });
-    proc.stderr.on("data", (raw: Buffer) => {
-      stderrBuffer = consumeChunk(stderrBuffer, raw);
-    });
-
-    tick = setInterval(() => {
-      if ((Date.now() - start) / 1000 > profile.loadTimeoutSec) {
+      const now = Date.now();
+      if ((now - start) / 1000 > profile.loadTimeoutSec) {
         done({
           ok: false,
           reason: `model load exceeded ${String(profile.loadTimeoutSec)}s`,
         });
+        return;
       }
-    }, 5000);
+      if (!containerStillRunning(profile)) {
+        done({ ok: false, reason: "vLLM container exited before readiness" });
+        return;
+      }
+      if (now - lastHeartbeatAt >= VLLM_LAUNCH_HEARTBEAT_MS) {
+        lastHeartbeatAt = now;
+        emit(`Still waiting for vLLM (${formatElapsed(now - start)} elapsed; API not ready)`);
+      }
+    }
 
-    proc.on("error", (err: Error) => {
-      done({ ok: false, reason: `docker logs spawn error: ${err.message}` });
-    });
-
-    proc.on("close", (code: number | null) => {
-      if (resolved) return;
-      processLine(stdoutBuffer);
-      processLine(stderrBuffer);
-      if (resolved) return;
-      done({ ok: false, reason: `docker logs exited with code ${String(code)}` });
-    });
+    tick = setInterval(poll, 5000);
+    poll();
   });
 }
 
@@ -461,7 +498,8 @@ export async function installVllm(
 ): Promise<{ ok: boolean }> {
   // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
   // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Spark/Station to Qwen3.6-27B.
+  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
+  // Qwen3.6-35B-A3B NVFP4 checkpoint.
   // Validate gated-model access (HF_TOKEN required for models like
   // DeepSeek-R1 Distill 70B) before touching docker so the user does not
   // burn a multi-minute pull on a 401.
@@ -488,9 +526,7 @@ export async function installVllm(
   if (!proceed) return { ok: false };
 
   console.log("");
-  console.log(
-    `  Installing vLLM. This can take ${profile.estimatedMinutes}; progress markers (==>) will print below.`,
-  );
+  console.log("  Installing vLLM. Progress will print below.");
 
   const prereqs = dockerPrereqsOk();
   if (!prereqs.ok) {
@@ -498,7 +534,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const pull = pullImage(profile);
+  const pull = await pullImage(profile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
     return { ok: false };
@@ -516,11 +552,12 @@ export async function installVllm(
     return { ok: false };
   }
 
-  emit("Waiting for vLLM to install dependencies and load model");
-  emit("    First-run downloads model weights; subsequent runs reuse the cache");
+  emit("Launching vLLM");
+  emit(`Launch can take 5 minutes to ${String(Math.ceil(profile.loadTimeoutSec / 60))} minutes`);
 
-  const ready = await streamLogsUntilReady(profile);
+  const ready = await waitForVllmReady(profile);
   if (!ready.ok) {
+    printContainerLogTail(profile);
     runShell(`docker stop ${profile.containerName}`, {
       ignoreError: true,
       suppressOutput: true,

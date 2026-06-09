@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-plugin-coverage
+description: Run shared plugin Vitest coverage and ratchet checks.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: "22"
+        cache: npm
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        npm install --ignore-scripts
+        cd nemoclaw && npm install --ignore-scripts
+
+    - name: Run plugin coverage
+      shell: bash
+      run: |
+        npx vitest run --project plugin \
+          --coverage \
+          --coverage.reporter=text-summary \
+          --coverage.reporter=json-summary \
+          --coverage.reportsDirectory=coverage/plugin \
+          --coverage.include="nemoclaw/src/**/*.ts" \
+          --coverage.exclude="**/*.test.ts"
+        npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"

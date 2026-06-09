@@ -60,7 +60,7 @@ export class ScenarioBuilder {
     return this;
   }
 
-  expectedFailure(expectedFailure: Record<string, unknown>): ScenarioBuilder {
+  expectedFailure(expectedFailure: import("./types.ts").ExpectedFailureContract): ScenarioBuilder {
     this.definition.expectedFailure = expectedFailure;
     return this;
   }

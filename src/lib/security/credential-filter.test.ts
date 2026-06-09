@@ -1,19 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   isConfigValue,
   isCredentialField,
-  stripCredentials,
-  sanitizeConfigFile,
   isSensitiveFile,
+  sanitizeConfigFile,
   shouldScanSnapshotFileForCredentials,
+  stripCredentials,
 } from "./credential-filter.js";
 
 describe("isCredentialField", () => {
@@ -130,6 +129,23 @@ describe("sanitizeConfigFile", () => {
     sanitizeConfigFile(configPath);
     // Should not throw, file unchanged
     expect(readFileSync(configPath, "utf-8")).toBe("not json at all");
+  });
+
+  it("does not follow config-file symlinks while sanitizing", () => {
+    const targetPath = join(tmpDir, "target.json");
+    const linkPath = join(tmpDir, "openclaw.json");
+    writeFileSync(targetPath, JSON.stringify({ apiKey: "sk-secret" }));
+    try {
+      symlinkSync(targetPath, linkPath);
+    } catch (error) {
+      const code = error && typeof error === "object" ? (error as { code?: string }).code : "";
+      if (code === "EPERM" || code === "EACCES") return;
+      throw error;
+    }
+
+    sanitizeConfigFile(linkPath);
+
+    expect(JSON.parse(readFileSync(targetPath, "utf-8"))).toEqual({ apiKey: "sk-secret" });
   });
 });
 

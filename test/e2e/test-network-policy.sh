@@ -8,7 +8,7 @@
 #
 # Covers:
 #   TC-NET-01: Deny-by-default egress (blocked URL returns 403)
-#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via pip)
+#   TC-NET-02: Whitelisted endpoint access (PyPI reachable via curl GET; POST blocked)
 #   TC-NET-03: Live policy-add without restart (slack preset)
 #   TC-NET-04: policy-add --dry-run (no changes applied)
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
@@ -18,6 +18,7 @@
 #   TC-NET-09: SSRF validation (dangerous IPs rejected)
 #   TC-NET-10: OpenClaw web_fetch can reach approved host gateway target,
 #              while OpenShell still denies unapproved host gateway ports
+#   TC-NET-11: Homebrew preset installs and runs a formula end-to-end
 #
 # Prerequisites:
 #   - Docker running
@@ -37,6 +38,8 @@ source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_NAME="e2e-net-policy"
 LOG_FILE="test-network-policy-$(date +%Y%m%d-%H%M%S).log"
+SANDBOX_EXEC_TIMEOUT_SECONDS=120
+PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS=300
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -174,6 +177,7 @@ EOF
 # Execute a command inside the sandbox via SSH.
 sandbox_exec() {
   local cmd="$1"
+  local timeout_seconds="${2:-$SANDBOX_EXEC_TIMEOUT_SECONDS}"
   local ssh_cfg
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
@@ -183,7 +187,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout "$timeout_seconds" ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -305,19 +309,148 @@ test_net_02_whitelist_access() {
     return
   fi
 
-  log "  Probing PyPI from inside sandbox using pip..."
+  log "  Probing PyPI read-only access from inside sandbox using curl..."
+
+  local pypi_code
+  pypi_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://pypi.org/simple/requests/ 2>&1" 2>&1) || true
+  log "  pypi.org GET status: $pypi_code"
+
+  if [ "$pypi_code" = "200" ]; then
+    pass "TC-NET-02: pypi.org reachable via curl GET after preset applied"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to pypi.org did not return 200: ${pypi_code:0:200}"
+  fi
+
+  local files_code
+  files_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/rg/ 2>&1" 2>&1) || true
+  log "  files.pythonhosted.org GET status: $files_code"
+
+  if echo "$files_code" | grep -qE "^([23][0-9][0-9]|404)$"; then
+    pass "TC-NET-02: files.pythonhosted.org returns a real HTTP status via curl GET"
+  else
+    fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org did not return a real HTTP status: ${files_code:0:200}"
+  fi
+
+  local post_code
+  post_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' -X POST --max-time 20 https://pypi.org/simple/le/ 2>&1" 2>&1) || true
+  log "  pypi.org POST status: $post_code"
+
+  if [ "$post_code" = "403" ]; then
+    pass "TC-NET-02: PyPI POST remains blocked under read-only preset"
+  else
+    fail "TC-NET-02: Whitelist" "curl POST to pypi.org should remain blocked with 403: ${post_code:0:200}"
+  fi
+
+  # #4014 validates network-policy egress only. Keep pip as a log-only
+  # diagnostic so package-manager behavior cannot fail this regression.
+  log "  Optional diagnostic: probing PyPI from inside sandbox using pip..."
 
   local response
   response=$(sandbox_exec "rm -rf /tmp/pip-test && pip download --no-deps --no-cache-dir --dest /tmp/pip-test requests 2>&1 && echo PIP_OK || echo PIP_FAIL" 2>&1) || true
 
-  log "  Response: ${response:0:300}"
+  log "  pip diagnostic response: ${response:0:300}"
 
   if echo "$response" | grep -q "PIP_OK"; then
-    pass "TC-NET-02: PyPI reachable via pip after preset applied"
+    log "  pip diagnostic succeeded after pypi preset was applied"
   elif echo "$response" | grep -qiE "Downloading|Successfully"; then
-    pass "TC-NET-02: PyPI reachable via pip (download started)"
+    log "  pip diagnostic reached PyPI after pypi preset was applied"
   else
-    fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
+    log "  pip diagnostic did not succeed; ignoring for #4014 because curl egress checks are authoritative: ${response:0:200}"
+  fi
+}
+
+# =============================================================================
+# TC-NET-11: Homebrew preset install/use path
+# =============================================================================
+test_net_11_brew_install_hello() {
+  log "=== TC-NET-11: Homebrew Preset Installs and Runs hello ==="
+
+  log "  Adding brew preset for Homebrew formula install test..."
+  if ! apply_preset "brew"; then
+    fail "TC-NET-11: Setup" "Could not apply brew preset"
+    return
+  fi
+
+  local policy_list
+  if ! policy_list=$(nemoclaw "$SANDBOX_NAME" policy-list 2>&1); then
+    fail "TC-NET-11: policy-list" "policy-list failed after brew preset: ${policy_list:0:500}"
+    return
+  fi
+  log "  policy-list: ${policy_list:0:600}"
+  if printf '%s\n' "$policy_list" | grep -E "^[[:space:]]*●[[:space:]]+brew[[:space:]]" >/dev/null; then
+    pass "TC-NET-11: policy-list shows brew applied"
+  else
+    fail "TC-NET-11: policy-list" "brew preset not marked applied: ${policy_list:0:500}"
+    return
+  fi
+
+  local connect_probe connect_rc=0
+  connect_probe=$(run_with_timeout 60 nemoclaw "$SANDBOX_NAME" connect --probe-only 2>&1) || connect_rc=$?
+  log "  connect --probe-only: ${connect_probe:0:500}"
+  if [[ $connect_rc -eq 0 ]]; then
+    pass "TC-NET-11: nemoclaw connect --probe-only reaches sandbox"
+  else
+    fail "TC-NET-11: connect --probe-only" "connect probe failed: ${connect_probe:0:500}"
+    return
+  fi
+
+  log "  Probing Homebrew policy endpoints and installing hello through the wrapper..."
+  local brew_probe_script brew_probe_b64 response
+  brew_probe_script="$(
+    cat <<'BREW_PROBE'
+set -euo pipefail
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+
+check_status() {
+  local name="$1"
+  local url="$2"
+  local status
+  status=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$url") || {
+    echo "BREW_ENDPOINT_${name}_CURL_FAILED"
+    return 1
+  }
+  case "$status" in
+    2??|3??|401)
+      echo "BREW_ENDPOINT_${name}_OK_${status}"
+      ;;
+    *)
+      echo "BREW_ENDPOINT_${name}_BAD_${status}"
+      return 1
+      ;;
+  esac
+}
+
+check_status formulae https://formulae.brew.sh
+check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
+echo "BREW_ENDPOINT_github_OK"
+check_status ghcr https://ghcr.io/v2/
+
+command -v brew
+brew --prefix
+brew install --quiet hello
+command -v hello
+hello
+BREW_PROBE
+  )"
+  brew_probe_b64="$(printf '%s' "$brew_probe_script" | base64 | tr -d '\n')"
+  response=$(sandbox_exec "printf '%s' '${brew_probe_b64}' | base64 -d > /tmp/nemoclaw-brew-e2e.sh
+bash /tmp/nemoclaw-brew-e2e.sh" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1) || true
+
+  log "  Response: ${response:0:1000}"
+
+  if echo "$response" | grep -q "BREW_ENDPOINT_formulae_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_raw_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_github_OK" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_ghcr_OK_" \
+    && echo "$response" | grep -q "/usr/local/bin/brew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew/bin/hello" \
+    && echo "$response" | grep -q "Hello, world!"; then
+    pass "TC-NET-11: brew preset installed hello and ran the formula command"
+  else
+    fail "TC-NET-11: Homebrew install" "brew install/use path failed: ${response:0:500}"
   fi
 }
 
@@ -428,6 +561,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 # =============================================================================
 test_net_08_jira_per_binary_enforcement() {
   log "=== TC-NET-08: Jira Per-Binary Policy Enforcement ==="
+  local curl_probe_url="https://api.atlassian.com/oauth/token/accessible-resources"
 
   log "  Step 1: Applying jira preset..."
   if ! apply_preset "jira"; then
@@ -464,13 +598,14 @@ req.on('error', (error) => console.log('NODE_ERROR_' + (error.code || error.mess
   log "  Step 3: Verify curl remains blocked by the Jira preset..."
   local curl_before
   curl_before=$(sandbox_exec "set +e
-OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 https://auth.atlassian.com 2>&1)
+OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 ${curl_probe_url} 2>&1)
 RC=\$?
 echo \"\$OUT CURL_RC_\$RC\"
 " 2>&1) || true
   log "  Curl before explicit approval: $curl_before"
 
-  if echo "$curl_before" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+  if echo "$curl_before" | grep -qE "CURL_STATUS_[1-9][0-9][0-9]" \
+    && ! echo "$curl_before" | grep -qE "CURL_STATUS_403.*CURL_APPCONNECT_0(\.0+)?( |$)"; then
     fail "TC-NET-08: Curl pre-approval" "curl reached Atlassian without explicit approval ($curl_before)"
     return
   elif echo "$curl_before" | grep -qE "CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden"; then
@@ -485,9 +620,9 @@ echo \"\$OUT CURL_RC_\$RC\"
     return
   fi
 
-  log "  Step 4: Explicitly allow curl to auth.atlassian.com via OpenShell policy update..."
+  log "  Step 4: Explicitly allow curl to api.atlassian.com via OpenShell policy update..."
   if ! openshell policy update "$SANDBOX_NAME" \
-    --add-endpoint auth.atlassian.com:443:read-only:rest:enforce \
+    --add-endpoint api.atlassian.com:443:read-only:rest:enforce \
     --binary /usr/bin/curl \
     --binary /usr/local/bin/curl \
     --wait 2>&1 | tee -a "$LOG_FILE"; then
@@ -499,13 +634,17 @@ echo \"\$OUT CURL_RC_\$RC\"
   log "  Step 5: Verify curl reaches Atlassian after explicit approval..."
   local curl_after
   curl_after=$(sandbox_exec "set +e
-OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code}' --max-time 10 https://auth.atlassian.com 2>&1)
+rm -f /tmp/nemoclaw-jira-curl-body
+OUT=\$(curl -sS -o /tmp/nemoclaw-jira-curl-body -w 'CURL_STATUS_%{http_code}' --max-time 10 ${curl_probe_url} 2>&1)
 RC=\$?
-echo \"\$OUT CURL_RC_\$RC\"
+printf '%s CURL_RC_%s CURL_BODY_' \"\$OUT\" \"\$RC\"
+head -c 120 /tmp/nemoclaw-jira-curl-body 2>/dev/null || true
+printf '\n'
 " 2>&1) || true
   log "  Curl after explicit approval: $curl_after"
 
-  if echo "$curl_after" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+  if echo "$curl_after" | grep -qE "CURL_STATUS_401" \
+    && echo "$curl_after" | grep -qE "Unauthorized|unauthorized"; then
     pass "TC-NET-08: curl reaches Atlassian after explicit approval ($curl_after)"
   else
     fail "TC-NET-08: Curl post-approval" "curl did not reach Atlassian after explicit approval ($curl_after)"
@@ -974,6 +1113,7 @@ main() {
   setup_sandbox
 
   test_net_01_deny_default
+  test_net_11_brew_install_hello
   test_net_02_whitelist_access
   test_net_03_live_policy_add
   test_net_04_dry_run

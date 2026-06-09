@@ -103,7 +103,7 @@ describe("internal oclif namespace", () => {
     expect(JSON.parse(ref.stdout)).toEqual({ installRef: "v2.0.0" });
     expect(env.status).toBe(0);
     expect(JSON.parse(env.stdout)).toMatchObject({
-      installRef: "latest",
+      installRef: "lkg",
       provider: { normalized: "nim-local", raw: "nim", valid: true },
     });
   });

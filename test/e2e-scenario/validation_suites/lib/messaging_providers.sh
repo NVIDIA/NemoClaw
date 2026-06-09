@@ -104,13 +104,19 @@ e2e_messaging_read_config_surface() {
     return 0
   fi
   path="$(e2e_messaging_agent_config_path)"
-  if [[ -n "${E2E_DRY_RUN:-}" ]]; then
-    printf '%s=PLACEHOLDER\n' "$(e2e_messaging_config_key)"
-    return 0
-  fi
   if [[ -f "${path}" ]]; then
     cat "${path}"
     return 0
+  fi
+  local sandbox_name
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  if [[ -n "${sandbox_name}" && "${path}" == /sandbox/* ]]; then
+    local remote
+    remote="$(timeout 30 openshell sandbox exec --name "${sandbox_name}" -- cat "${path}" 2>/dev/null || true)"
+    if [[ -n "${remote}" ]]; then
+      printf '%s\n' "${remote}"
+      return 0
+    fi
   fi
   e2e_fail "expected-state.messaging.config-surface missing config content/path for ${path}"
 }
@@ -167,9 +173,6 @@ e2e_messaging_assert_literal_payload() {
   local assertion_id="${1:?assertion id required}"
   local payload="${2:?payload required}"
   local observed="${3:-}"
-  if [[ -z "${observed}" && -n "${E2E_DRY_RUN:-}" ]]; then
-    observed="${payload}"
-  fi
   if [[ -z "${observed}" ]]; then
     e2e_fail "${assertion_id} missing observed payload output"
   fi

@@ -2,12 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import {
-  ONBOARD_MACHINE_EVENT_TYPES,
-  ONBOARD_MACHINE_STATES,
-  ONBOARD_NON_TERMINAL_MACHINE_STATES,
-} from "./types";
 import {
   assertValidOnboardMachineTransition,
   canTransitionOnboardMachineState,
@@ -20,6 +14,11 @@ import {
   ONBOARD_MACHINE_NEXT_STATES,
   ONBOARD_MACHINE_TRANSITIONS,
 } from "./transitions";
+import {
+  ONBOARD_MACHINE_EVENT_TYPES,
+  ONBOARD_MACHINE_STATES,
+  ONBOARD_NON_TERMINAL_MACHINE_STATES,
+} from "./types";
 
 const canonicalDirectTransitions = [
   ["init", "preflight", "advance"],
@@ -70,6 +69,7 @@ describe("onboard machine vocabulary", () => {
       "state.repair.started",
       "state.repair.completed",
       "state.repair.failed",
+      "state.result.skipped",
       "context.updated",
       "resume.conflict",
       "hook.started",
