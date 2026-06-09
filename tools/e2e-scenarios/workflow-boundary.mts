@@ -217,24 +217,71 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   rejectAutomaticTriggers(errors, triggers);
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
-  requireInput(errors, dispatchInputs, "test_filter");
+  requireInput(errors, dispatchInputs, "scenarios");
+  if (Object.hasOwn(dispatchInputs, "test_filter")) {
+    errors.push("workflow_dispatch must not expose legacy test_filter input");
+  }
 
   const permissions = asRecord(workflow.permissions);
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  const generateMatrix = asRecord(jobs["generate-matrix"]);
+  if (Object.keys(generateMatrix).length === 0) errors.push("workflow missing generate-matrix job");
+  if (generateMatrix["runs-on"] !== "ubuntu-latest") {
+    errors.push("generate-matrix job must run on ubuntu-latest");
+  }
+  const generateSteps = asSteps(generateMatrix.steps);
+  requireNoDispatchInputInterpolation(errors, generateSteps);
+  const generateCheckout = generateSteps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
+  requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
+  if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
+    errors.push("generate-matrix checkout step must set persist-credentials=false");
+  }
+  const generateSetupNode = namedStep(generateSteps, "Set up Node");
+  if (!generateSetupNode) errors.push("generate-matrix job missing step: Set up Node");
+  requireFullShaAction(errors, generateSetupNode, "generate-matrix setup-node");
+  const generate = requireStep(errors, generateSteps, "Generate Vitest scenario matrix");
+  const generateEnv = asRecord(generate?.env);
+  if (generateEnv.SCENARIOS !== "${{ inputs.scenarios }}") {
+    errors.push("matrix generation step must pass scenarios through SCENARIOS env");
+  }
+  requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
+  requireRunContains(errors, generate, "--emit-live-matrix");
+  requireRunContains(errors, generate, "--scenarios");
+  requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
+
   const liveScenarios = asRecord(jobs["live-scenarios"]);
   if (Object.keys(liveScenarios).length === 0) errors.push("workflow missing live-scenarios job");
-  if (liveScenarios["runs-on"] !== "ubuntu-latest") {
-    errors.push("live-scenarios job must run on ubuntu-latest");
+  if (liveScenarios["runs-on"] !== "${{ matrix.runner }}") {
+    errors.push("live-scenarios job must run on the matrix runner");
+  }
+  if (liveScenarios.needs !== "generate-matrix") {
+    errors.push("live-scenarios job must depend on generate-matrix");
+  }
+  const strategy = asRecord(liveScenarios.strategy);
+  if (strategy["fail-fast"] !== false) {
+    errors.push("live-scenarios strategy.fail-fast must be false");
+  }
+  const matrix = asRecord(strategy.matrix);
+  if (matrix.include !== "${{ fromJSON(needs.generate-matrix.outputs.matrix) }}") {
+    errors.push("live-scenarios matrix.include must come from generate-matrix output");
   }
 
   const jobEnv = asRecord(liveScenarios.env);
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
     errors.push("live-scenarios job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes(".e2e/vitest")) {
-    errors.push("live-scenarios job must write artifacts under .e2e/vitest");
+  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest")) {
+    errors.push("live-scenarios job must write artifacts under e2e-artifacts/vitest");
+  }
+  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
+    errors.push("live-scenarios artifacts must be scoped by matrix.id");
+  }
+  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
+    errors.push("live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
 
   const steps = asSteps(liveScenarios.steps);
@@ -256,30 +303,34 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 
   const runVitest = requireStep(errors, steps, "Run Vitest live E2E scenarios");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.TEST_FILTER !== "${{ inputs.test_filter }}") {
-    errors.push("Vitest step must pass test_filter through TEST_FILTER env");
+  if (runVitestEnv.SCENARIO_ID !== "${{ matrix.id }}") {
+    errors.push("Vitest step must pass matrix.id through SCENARIO_ID env");
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
-  requireRunContains(errors, runVitest, '"${TEST_FILTER}"');
+  requireRunContains(errors, runVitest, "test/e2e-scenario/live/registry-scenarios.test.ts");
+  requireRunContains(errors, runVitest, '"^${SCENARIO_ID}$"');
 
   const summary = requireStep(errors, steps, "Summarize artifacts");
   const summaryEnv = asRecord(summary?.env);
-  if (summaryEnv.FILTER_LABEL !== "${{ inputs.test_filter || 'all' }}") {
-    errors.push("summary step must pass display filter through FILTER_LABEL env");
+  if (summaryEnv.SCENARIO_ID !== "${{ matrix.id }}") {
+    errors.push("summary step must pass matrix.id through SCENARIO_ID env");
   }
-  requireRunContains(errors, summary, "${FILTER_LABEL}");
+  if (summaryEnv.SCENARIO_LABEL !== "${{ matrix.label }}") {
+    errors.push("summary step must pass matrix.label through SCENARIO_LABEL env");
+  }
+  requireRunContains(errors, summary, "${SCENARIO_ID}");
 
   const upload = requireStep(errors, steps, "Upload Vitest E2E artifacts");
   requireFullShaAction(errors, upload, "upload-artifact");
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-vitest-scenarios") {
-    errors.push("artifact upload name must be e2e-vitest-scenarios");
+  if (uploadWith.name !== "e2e-vitest-scenarios-${{ matrix.id }}") {
+    errors.push("artifact upload name must include matrix.id");
   }
-  if (uploadWith.path !== ".e2e/vitest/") {
-    errors.push("artifact upload path must be .e2e/vitest/");
+  if (uploadWith.path !== "e2e-artifacts/vitest/${{ matrix.id }}/") {
+    errors.push("artifact upload path must be non-hidden and scoped by matrix.id");
   }
-  if (uploadWith["include-hidden-files"] !== true) {
-    errors.push("artifact upload must set include-hidden-files: true");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("artifact upload must set include-hidden-files: false");
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
     errors.push("artifact upload must ignore missing fixture artifacts");

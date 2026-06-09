@@ -579,6 +579,31 @@ exit 0
     expect(r.stdout).toContain("DEBIAN_FRONTEND=noninteractive");
   });
 
+  it("gateway helper should fail clearly when URL is unreachable", () => {
+    // Source the supported gateway helper and aim it at a port very
+    // unlikely to be bound on the runner. The helper should exit
+    // non-zero, name the gateway, and surface the URL/port so on-call
+    // engineers can grep for it in failure logs.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-gw-"));
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${ASSERT}/gateway-alive.sh"
+        e2e_context_init
+        e2e_context_set E2E_SCENARIO test
+        e2e_gateway_assert_healthy "http://127.0.0.1:65531"
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/gateway/i);
+      expect(r.stderr).toMatch(/65531/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("sandbox helper should fail for missing sandbox name", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sb-"));
     try {

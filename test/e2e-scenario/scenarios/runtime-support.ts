@@ -14,6 +14,17 @@ export interface LiveScenarioSupport {
   pendingRuntimeSuites: string[];
 }
 
+/**
+ * Canonical name under which a scenario is registered with Vitest in the
+ * live registry-scenarios test file. The workflow filters by exact ID via
+ * `-t "^${SCENARIO_ID}$"`, so both supported and unsupported scenarios MUST
+ * be registered under this exact name. Skip reasons are surfaced via the
+ * job log instead of the test name suffix.
+ */
+export function liveScenarioTestName(scenario: ScenarioDefinition): string {
+  return scenario.id;
+}
+
 export function liveScenarioSupport(scenario: ScenarioDefinition): LiveScenarioSupport {
   const reasons: string[] = [];
   const environment = scenario.environment;
