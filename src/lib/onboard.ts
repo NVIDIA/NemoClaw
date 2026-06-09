@@ -3422,12 +3422,16 @@ async function createSandbox(
     }
   }
   const buildId = String(Date.now());
-  const sandboxInferenceBaseUrlOverride =
-    dockerGpuLocalInference.dockerGpuPatchHostNetworkInferenceBaseUrl(
-      effectiveSandboxGpuConfig,
-      provider,
-      { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
-    );
+  // OpenClaw never uses a direct container-loopback inference URL: the agent's
+  // isolated sandbox netns can't reach the host loopback even under --network
+  // host. For local providers this drops the host-network GPU opt-in so
+  // inference uses the reachable inference.local route (re-checking the bridge
+  // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
+  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(provider, effectiveSandboxGpuConfig, {
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    log: console.log,
+  });
+  const sandboxInferenceBaseUrlOverride = null;
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -4137,7 +4141,7 @@ async function setupNim(
         }
 
         console.log("");
-        console.log("  Inference options:");
+        console.log("  Select your inference provider:");
         options.forEach((o, i) => {
           console.log(`    ${i + 1}) ${o.label}`);
         });
@@ -6234,11 +6238,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         /* lspci not available — skip hint */
       }
     }
-    dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-      note,
-    });
-
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
     const gatewayResult = await handleGatewayState({
       resume,

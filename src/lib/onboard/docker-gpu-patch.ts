@@ -80,6 +80,14 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /**
+   * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
+   * (`/dev/nvmap`, `/dev/nvhost-*`). Used by the Jetson recreate to grant the
+   * sandbox user matching `--group-add` membership so CUDA can open them
+   * (#4231). Injectable so the Jetson permission path is testable without
+   * Tegra hardware.
+   */
+  detectTegraDeviceGroupGids?: () => string[];
   /** Injectable directory lister for unit testing CDI spec discovery. */
   readDir?: (dirPath: string) => string[] | null;
   /** Injectable file reader for unit testing CDI spec content checks. */
@@ -137,6 +145,14 @@ export type DockerGpuCloneRunOptions = {
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
+  /**
+   * Extra supplementary group IDs to add to the recreated container via
+   * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
+   * device nodes (`/dev/nvmap`, `/dev/nvhost-*`); granting the sandbox user
+   * membership lets CUDA's nvmap init open them instead of failing with
+   * `NvRmMemInitNvmap ... Permission denied` (#4231).
+   */
+  extraGroupGids?: readonly string[] | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -261,6 +277,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     | "homedir"
     | "now"
     | "detectSandboxFallbackDns"
+    | "detectTegraDeviceGroupGids"
   >
 > &
   DockerGpuPatchDeps {
@@ -278,8 +295,65 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     homedir: os.homedir,
     now: () => new Date(),
     detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
+    detectTegraDeviceGroupGids: () => detectTegraDeviceGroupGids(),
     ...deps,
   };
+}
+
+// Jetson/Tegra device nodes that CUDA opens during driver initialization.
+// `/dev/nvmap` is the memory manager whose `NvRmMemInitNvmap` failure the
+// reporter hit (#4231); the `nvhost-*`/`nvgpu` nodes are the compute/control
+// channels. On L4T these are owned by a non-root group (typically `video`,
+// mode `crw-rw----`).
+const TEGRA_GPU_DEVICE_NODES = [
+  "/dev/nvmap",
+  "/dev/nvhost-ctrl",
+  "/dev/nvhost-ctrl-gpu",
+  "/dev/nvhost-gpu",
+  "/dev/nvhost-as-gpu",
+  "/dev/nvhost-prof-gpu",
+  "/dev/nvhost-dbg-gpu",
+  "/dev/nvhost-tsg-gpu",
+  "/dev/nvgpu/igpu0/ctrl",
+  "/dev/nvgpu/igpu0/as",
+  "/dev/nvgpu/igpu0/prof",
+] as const;
+
+/**
+ * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes.
+ *
+ * The NVIDIA Container Runtime bind-mounts these nodes into the sandbox
+ * preserving the host's numeric owner/group, but the OpenShell sandbox runs
+ * the agent as an unprivileged user that is not a member of that group — so
+ * CUDA's nvmap init fails with `Permission denied` and `cuInit(0)` returns 999
+ * even though the devices are present (#4231). Returning the owning GID(s)
+ * lets the recreate grant the sandbox user matching `--group-add` membership.
+ *
+ * Numeric GIDs (not group names) are returned on purpose: the sandbox image's
+ * group database need not define a `video`/`render` group at the host's GID,
+ * and `docker run --group-add <gid>` adds the supplementary group by ID
+ * regardless of whether a matching name exists inside the container.
+ */
+export function detectTegraDeviceGroupGids(
+  deps: { statDeviceGid?: (path: string) => number | null } = {},
+): string[] {
+  const statGid =
+    deps.statDeviceGid ??
+    ((p: string): number | null => {
+      try {
+        return fs.statSync(p).gid;
+      } catch {
+        return null;
+      }
+    });
+  const gids = new Set<string>();
+  for (const node of TEGRA_GPU_DEVICE_NODES) {
+    const gid = statGid(node);
+    // Skip missing nodes and root-owned (gid 0) nodes: `--group-add 0` would
+    // not help an unprivileged user, and root already has access regardless.
+    if (gid !== null && gid > 0) gids.add(String(gid));
+  }
+  return [...gids].sort((a, b) => Number(a) - Number(b));
 }
 
 function resultText(result: DockerRunResult | null | undefined): string {
@@ -602,7 +676,20 @@ export function buildDockerGpuCloneRunArgs(
   // survive even when the caller explicitly opts into --network=host via
   // NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host (#3562, #3568).
   for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
-  for (const group of stringArray(host.GroupAdd)) args.push("--group-add", group);
+  const groupAdds = new Set(stringArray(host.GroupAdd));
+  for (const group of groupAdds) args.push("--group-add", group);
+  // Jetson/Tegra: grant the sandbox user membership in the host group(s) that
+  // own /dev/nvmap and the nvhost device nodes so CUDA's nvmap init can open
+  // them. Without this the unprivileged agent user hits EACCES on /dev/nvmap
+  // and cuInit(0) returns 999 even though the GPU devices are mounted (#4231).
+  // Dedupe against any GroupAdd the baseline container already carried.
+  for (const gid of options.extraGroupGids ?? []) {
+    const normalized = String(gid).trim();
+    if (normalized && !groupAdds.has(normalized)) {
+      groupAdds.add(normalized);
+      args.push("--group-add", normalized);
+    }
+  }
   if (networkMode !== "host") {
     const dnsServers = stringArray(host.Dns);
     for (const dns of dnsServers) args.push("--dns", dns);
@@ -943,6 +1030,26 @@ export function recreateOpenShellDockerSandboxWithGpu(
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
+    // On Jetson the Tegra GPU device nodes (`/dev/nvmap`, `/dev/nvhost-*`) are
+    // owned by a non-root group, but the sandbox user is not a member — so
+    // CUDA fails with `NvRmMemInitNvmap ... Permission denied` and `cuInit(0)`
+    // returns 999 even though the devices are mounted (#4231). Grant the
+    // sandbox user the owning group(s) so CUDA can initialize.
+    if (options.backend === "jetson") {
+      const tegraGroupGids = d.detectTegraDeviceGroupGids();
+      if (tegraGroupGids.length > 0) {
+        cloneOptions.extraGroupGids = tegraGroupGids;
+        console.log(
+          `  ✓ Granting sandbox user access to Jetson Tegra GPU device nodes via --group-add ${tegraGroupGids.join(
+            ", ",
+          )} (so CUDA can open /dev/nvmap)`,
+        );
+      } else {
+        console.warn(
+          "  ⚠ Could not resolve the group owning Jetson Tegra GPU device nodes (/dev/nvmap); CUDA may fail with NvRmMemInitNvmap permission denied. Confirm /dev/nvmap exists and is group-readable on the host.",
+        );
+      }
+    }
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
     const runResult = d.dockerRunDetached(cloneArgs, {
       ignoreError: true,
@@ -1026,6 +1133,13 @@ export function applyDockerGpuPatchOrExit(
     sandboxName: string;
     gpuDevice?: string | null;
     timeoutSecs: number;
+    // Forwarded to `recreateOpenShellDockerSandboxWithGpu` so the Jetson
+    // backend selects the NVIDIA runtime mode AND grants the Tegra device-node
+    // group(s) to the sandbox user (#4231). Without threading this through, the
+    // `ensureApplied` fallback path would recreate the container without
+    // /dev/nvmap group access.
+    backend?: DockerGpuPatchBackend;
+    openshellSandboxCommand?: readonly string[] | null;
   },
   deps: Pick<DockerGpuPatchDeps, "runOpenshell" | "runCaptureOpenshell" | "sleep">,
 ): DockerGpuPatchResult {
