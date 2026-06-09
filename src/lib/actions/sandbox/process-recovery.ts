@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -22,10 +21,7 @@ import { sleepSeconds } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
-import {
-  classifyForwardHealthWithReachability,
-  isLocalForwardReachable,
-} from "./forward-health";
+import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
 import {
   ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
   getHermesDashboardRecoveryConfig,
@@ -61,12 +57,7 @@ export type SandboxForwardHealth = boolean | "occupied" | null;
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 function isValidPort(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 1 &&
-    value <= 65535
-  );
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
 
 export function resolveSandboxDashboardPort(
@@ -256,8 +247,7 @@ export async function probeSandboxInferenceGatewayHealth(
   detail: string;
 } | null> {
   const endpoint = "https://inference.local/v1/models";
-  const command =
-    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
+  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
   const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
   const result = await exec(sandboxName, command);
   if (!result || result.status !== 0) return null;
@@ -376,10 +366,7 @@ function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
   return isSandboxPortForwardHealthy(sandboxName, resolveSandboxDashboardPort(sandboxName));
 }
 
-function isSandboxPortForwardHealthy(
-  sandboxName: string,
-  port: number,
-): SandboxForwardHealth {
+function isSandboxPortForwardHealthy(sandboxName: string, port: number): SandboxForwardHealth {
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
@@ -400,9 +387,12 @@ function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boo
     ignoreError: true,
     stdio: "ignore",
   });
-  const startResult = runOpenshell(["forward", "start", "--background", String(port), sandboxName], {
-    ignoreError: true,
-  });
+  const startResult = runOpenshell(
+    ["forward", "start", "--background", String(port), sandboxName],
+    {
+      ignoreError: true,
+    },
+  );
   if (startResult.status !== 0) return false;
   return isSandboxPortForwardHealthy(sandboxName, port) === true;
 }
@@ -482,8 +472,7 @@ export function checkAndRecoverSandboxProcesses(
       checked: true,
       wasRunning: true,
       recovered: false,
-      forwardRecovered:
-        dashboardForwardRecovered === true || dashboardProcessRecovered === true,
+      forwardRecovered: dashboardForwardRecovered === true || dashboardProcessRecovered === true,
     };
   }
 

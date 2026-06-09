@@ -27,10 +27,7 @@ function describeContainerRuntime(runtime: ContainerRuntime): string {
   }
 }
 
-type WindowsHostOllamaStartLabel = (opts: {
-  reachable: boolean;
-  loopbackOnly: boolean;
-}) => string;
+type WindowsHostOllamaStartLabel = (opts: { reachable: boolean; loopbackOnly: boolean }) => string;
 
 type WindowsHostOllamaReject = (
   providerKey: string,
@@ -66,7 +63,8 @@ export function getWindowsHostOllamaDockerRequirement(
       installLabel: "Install Ollama on Windows host (recommended)",
       startLabel(opts) {
         if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
-        if (opts.loopbackOnly) return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
+        if (opts.loopbackOnly)
+          return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
         return "Start Ollama on Windows host (suggested)";
       },
     };
@@ -79,7 +77,8 @@ export function getWindowsHostOllamaDockerRequirement(
       installLabel: "Install Ollama on Windows host (recommended)",
       startLabel(opts) {
         if (opts.reachable) return "Use Ollama on Windows host - running (suggested)";
-        if (opts.loopbackOnly) return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
+        if (opts.loopbackOnly)
+          return "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
         return "Start Ollama on Windows host (suggested)";
       },
     };
@@ -151,9 +150,7 @@ export function repairLocalInferenceSystemdOverrideOrExit(
   if (provider !== "ollama-local") return;
   const state = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
   if (state === "failed") {
-    console.error(
-      "  Ollama systemd restart did not recover after applying the loopback override.",
-    );
+    console.error("  Ollama systemd restart did not recover after applying the loopback override.");
     process.exit(1);
   }
 }

@@ -48,13 +48,7 @@ describe("onboard oclif command", () => {
 
   it("forwards sandbox GPU flags to legacy onboard parsing", async () => {
     await OnboardCliCommand.run(
-      [
-        "--non-interactive",
-        "--yes",
-        "--sandbox-gpu",
-        "--sandbox-gpu-device",
-        "nvidia.com/gpu=0",
-      ],
+      ["--non-interactive", "--yes", "--sandbox-gpu", "--sandbox-gpu-device", "nvidia.com/gpu=0"],
       rootDir,
     );
 

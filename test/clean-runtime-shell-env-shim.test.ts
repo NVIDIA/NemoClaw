@@ -15,7 +15,7 @@ const CLEAN_SCRIPT = path.join(
   "lib",
   "clean_runtime_shell_env_shim.py",
 );
-const SHIM_TEXT = '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh';
+const SHIM_TEXT = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
 const CURRENT_UID = process.getuid?.() ?? 0;
 
 function runScript(args: { rcPath: string; shim: string; uid: number }): {
@@ -23,11 +23,9 @@ function runScript(args: { rcPath: string; shim: string; uid: number }): {
   stderr: string;
   stdout: string;
 } {
-  const result = spawnSync(
-    "python3",
-    [CLEAN_SCRIPT, args.rcPath, args.shim, String(args.uid)],
-    { encoding: "utf-8" },
-  );
+  const result = spawnSync("python3", [CLEAN_SCRIPT, args.rcPath, args.shim, String(args.uid)], {
+    encoding: "utf-8",
+  });
   return {
     status: result.status,
     stderr: result.stderr ?? "",

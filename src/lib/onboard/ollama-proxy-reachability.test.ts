@@ -28,9 +28,7 @@ const { parseNetworkIpamConfig } = __test;
 
 describe("parseNetworkIpamConfig", () => {
   it("parses a well-formed IPAM config with IPv4 gateway", () => {
-    const raw = JSON.stringify([
-      { Subnet: "172.20.0.0/16", Gateway: "172.20.0.1" },
-    ]);
+    const raw = JSON.stringify([{ Subnet: "172.20.0.0/16", Gateway: "172.20.0.1" }]);
     expect(parseNetworkIpamConfig(raw)).toEqual({
       subnet: "172.20.0.0/16",
       gatewayIp: "172.20.0.1",
@@ -77,9 +75,10 @@ describe("parseNetworkIpamConfig", () => {
 
 // ── probeOllamaProxySandboxReachability ──────────────────────────────────────
 
-function makeNetwork(
-  partial: { subnet?: string; gatewayIp?: string } = {},
-): { subnet?: string; gatewayIp?: string } {
+function makeNetwork(partial: { subnet?: string; gatewayIp?: string } = {}): {
+  subnet?: string;
+  gatewayIp?: string;
+} {
   return { subnet: "172.20.0.0/16", gatewayIp: "172.20.0.1", ...partial };
 }
 

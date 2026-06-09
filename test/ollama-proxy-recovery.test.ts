@@ -245,7 +245,9 @@ console.log(JSON.stringify({ proxySpawns }));
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-404-"));
     const scriptPath = path.join(tmpDir, "proxy-health-404-check.js");
-    const proxyPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"));
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    );
 
     const script = String.raw`
 const fs = require("node:fs");

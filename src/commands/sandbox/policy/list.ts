@@ -16,8 +16,7 @@ export default class SandboxPolicyListCommand extends NemoClawCommand {
   static args = {
     sandboxName: sandboxNameArg,
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SandboxPolicyListCommand);

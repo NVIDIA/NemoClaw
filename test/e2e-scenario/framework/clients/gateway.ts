@@ -13,7 +13,10 @@ export class GatewayClient {
   }
 
   status(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
-    return this.host.nemoclaw(["gateway", "status"], { artifactName: "gateway-status", ...options });
+    return this.host.nemoclaw(["gateway", "status"], {
+      artifactName: "gateway-status",
+      ...options,
+    });
   }
 
   async expectHealthy(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {

@@ -6,10 +6,7 @@
 // onboard.setupInference (#767). Bedrock Runtime is delegated to
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
-import type {
-  RemoteProviderDeps,
-  SetupInferenceResult,
-} from "./types";
+import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
 
 /**
  * Returns `{ done: true, result }` when the flow handled the request
@@ -70,9 +67,7 @@ export async function setupRemoteProviderInference(
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
     const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
     const env =
-      resolvedCredentialEnv && credentialValue
-        ? { [resolvedCredentialEnv]: credentialValue }
-        : {};
+      resolvedCredentialEnv && credentialValue ? { [resolvedCredentialEnv]: credentialValue } : {};
     const providerResult = upsertProvider(
       provider,
       config.providerType,

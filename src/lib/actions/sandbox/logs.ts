@@ -16,10 +16,7 @@ import {
   normalizeSandboxLogsOptions,
 } from "../../domain/sandbox/logs";
 import { ROOT } from "../../runner";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
 type RunOpenshellOptions = Parameters<typeof runOpenshell>[1];
 type RunOpenshellFn = (args: string[], options?: RunOpenshellOptions) => LogProbeResult;
@@ -161,7 +158,11 @@ function streamSandboxFollowLogs(
       markSourceDone(source, 1, error.message);
     });
     source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-      markSourceDone(source, code ?? exitCodeFromSignal(signal), signal ? `signal ${signal}` : null);
+      markSourceDone(
+        source,
+        code ?? exitCodeFromSignal(signal),
+        signal ? `signal ${signal}` : null,
+      );
     });
   };
 

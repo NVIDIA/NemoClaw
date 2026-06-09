@@ -24,10 +24,7 @@ import {
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
-import {
-  ensureOllamaAuthProxy,
-  probeOllamaAuthProxyHealth,
-} from "../../inference/ollama/proxy";
+import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
@@ -46,16 +43,10 @@ import {
 import { runSetupDnsProxy } from "../dns";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
-import {
-  applyOpenShellVmDnsMonkeypatch,
-  shouldApplyVmDnsMonkeypatch,
-} from "./vm-dns-monkeypatch";
+import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
@@ -97,10 +88,7 @@ export type SandboxInferenceRouteRepairResult = {
 
 export type SandboxInferenceRouteRepairDeps = {
   isRepairDisabled?: () => boolean;
-  probe: (
-    sandboxName: string,
-    options?: InferenceRouteProbeOptions,
-  ) => SandboxInferenceRouteProbe;
+  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
   shouldApplyVmDnsMonkeypatch: (sb: SandboxEntry | null) => boolean;
   applyVmDnsMonkeypatch: (
     sandboxName: string,
@@ -124,15 +112,8 @@ export type ManagedInferenceRouteResetDeps = {
     options: { quiet?: boolean },
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
-  probe: (
-    sandboxName: string,
-    options?: InferenceRouteProbeOptions,
-  ) => SandboxInferenceRouteProbe;
-  printUnrecoverableInferenceRoute: (
-    sandboxName: string,
-    sb: SandboxEntry,
-    detail: string,
-  ) => void;
+  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
+  printUnrecoverableInferenceRoute: (sandboxName: string, sb: SandboxEntry, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -176,7 +157,9 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error("  --dangerously-skip-permissions was removed; use shields commands instead.");
+        console.error(
+          "  --dangerously-skip-permissions was removed; use shields commands instead.",
+        );
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -248,10 +231,7 @@ function isBlockingGatewayLifecycle(
   return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
 }
 
-function failConnectReadinessGatewayUnavailable(
-  sandboxName: string,
-  detailOutput = "",
-): never {
+function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutput = ""): never {
   console.error("");
   console.error(
     `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
@@ -313,7 +293,7 @@ function probeSandboxInferenceRoute(
         [
           "OUT=/tmp/nemoclaw-inference-route-probe.out",
           "HTTP_CODE=$(curl -sk -o \"$OUT\" -w '%{http_code}' --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-          "case \"$HTTP_CODE\" in 000|5*) printf 'BROKEN %s ' \"$HTTP_CODE\"; head -c 160 \"$OUT\" 2>/dev/null || true ;; *) printf 'OK %s' \"$HTTP_CODE\" ;; esac",
+          'case "$HTTP_CODE" in 000|5*) printf \'BROKEN %s \' "$HTTP_CODE"; head -c 160 "$OUT" 2>/dev/null || true ;; *) printf \'OK %s\' "$HTTP_CODE" ;; esac',
         ].join("; "),
       ],
       { ignoreError: true, timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS },
@@ -328,11 +308,13 @@ function probeSandboxInferenceRoute(
     sleepSync(delayMs);
   }
 
-  return lastProbe ?? {
-    healthy: false,
-    broken: false,
-    detail: "inference route probe did not run",
-  };
+  return (
+    lastProbe ?? {
+      healthy: false,
+      broken: false,
+      detail: "inference route probe did not run",
+    }
+  );
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
@@ -348,15 +330,7 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {
-  const args = [
-    "inference",
-    "set",
-    "--provider",
-    provider,
-    "--model",
-    model,
-    "--no-verify",
-  ];
+  const args = ["inference", "set", "--provider", provider, "--model", model, "--no-verify"];
   if (["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)) {
     args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
   }
@@ -403,10 +377,12 @@ export function repairSandboxInferenceRouteWithDeps(
         );
       }
       const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
-      const patchedProbe = patch.ok ? deps.probe(sandboxName, {
-        attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
-        delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
-      }) : null;
+      const patchedProbe = patch.ok
+        ? deps.probe(sandboxName, {
+            attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
+            delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
+          })
+        : null;
       if (patchedProbe?.healthy) {
         if (!quiet) {
           log("  inference.local route repaired.");
@@ -419,9 +395,7 @@ export function repairSandboxInferenceRouteWithDeps(
       }
       if (!quiet) {
         if (!patch.ok && patch.reason) {
-          error(
-            `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
-          );
+          error(`  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`);
         } else if (patchedProbe?.broken) {
           error(
             "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
@@ -432,7 +406,9 @@ export function repairSandboxInferenceRouteWithDeps(
 
     if (!quiet) {
       log("");
-      log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
+      log(
+        `  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`,
+      );
     }
     const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
     if (!quiet) {

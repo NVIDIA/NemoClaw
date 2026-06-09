@@ -5,7 +5,8 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RebuildSandbox = typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox =
+  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
@@ -49,7 +50,9 @@ describe("rebuild shields relock guard", () => {
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
-      vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({ recovered: false }),
+      vi
+        .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+        .mockResolvedValue({ recovered: false }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
         result: { status: 0, output: "alpha Ready" },
       }),
@@ -95,12 +98,7 @@ describe("rebuild shields relock guard", () => {
       "unexpected backup exception",
     );
 
-    expect(relockSpy).toHaveBeenCalledWith(
-      "alpha",
-      rebuildWindow,
-      true,
-      expect.any(String),
-    );
+    expect(relockSpy).toHaveBeenCalledWith("alpha", rebuildWindow, true, expect.any(String));
     expect(rebuildWindow.relocked).toBe(true);
   });
 });

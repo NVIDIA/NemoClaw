@@ -6,10 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const INVENTORY_PATH = path.resolve(
-  import.meta.dirname,
-  "../migration/legacy-inventory.json",
-);
+const INVENTORY_PATH = path.resolve(import.meta.dirname, "../migration/legacy-inventory.json");
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LEGACY_E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 const EXPECTED_STATUS_VALUES = ["not-migrated", "bridge-probe", "covered", "retired"] as const;
@@ -116,7 +113,9 @@ describe("E2E migration inventory deletion gates", () => {
       if (entry.deletionReady) {
         expect(["covered", "retired"]).toContain(entry.status);
         expect(entry.deletionApprovalIssue).toBe("#4357");
-        expect(entry.status === "retired" ? entry.retiredReason : entry.targetVitestScenarios.length).toBeTruthy();
+        expect(
+          entry.status === "retired" ? entry.retiredReason : entry.targetVitestScenarios.length,
+        ).toBeTruthy();
       }
     }
   });

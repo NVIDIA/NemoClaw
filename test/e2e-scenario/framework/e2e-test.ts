@@ -12,7 +12,11 @@ import {
   StateClient,
 } from "./clients/index.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
-import { EnvironmentPhaseFixture, OnboardingPhaseFixture, StateValidationPhaseFixture } from "./phases/index.ts";
+import {
+  EnvironmentPhaseFixture,
+  OnboardingPhaseFixture,
+  StateValidationPhaseFixture,
+} from "./phases/index.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
 

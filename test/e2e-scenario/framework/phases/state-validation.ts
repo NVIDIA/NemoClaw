@@ -24,7 +24,10 @@ export interface StateValidationResult {
   probes: StateValidationProbeResult[];
 }
 
-function requireInstance(probe: StateProbeId, instance: NemoClawInstance | undefined): NemoClawInstance {
+function requireInstance(
+  probe: StateProbeId,
+  instance: NemoClawInstance | undefined,
+): NemoClawInstance {
   if (!instance) {
     throw new Error(`state-validation probe '${probe}' requires a NemoClaw instance.`);
   }
@@ -65,7 +68,8 @@ function errorMessage(error: unknown): string {
 }
 
 function isMissingOpenShellError(error: unknown): boolean {
-  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  const code =
+    typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
   return code === "ENOENT" || /\bENOENT\b/.test(errorMessage(error));
 }
 
@@ -85,7 +89,10 @@ export class StateValidationPhaseFixture {
     return { state, probes };
   }
 
-  private async runProbe(probe: StateProbeId, instance: NemoClawInstance | undefined): Promise<StateValidationProbeResult> {
+  private async runProbe(
+    probe: StateProbeId,
+    instance: NemoClawInstance | undefined,
+  ): Promise<StateValidationProbeResult> {
     switch (probe) {
       case "cli-installed":
         return await this.expectCliInstalled();
@@ -109,7 +116,11 @@ export class StateValidationPhaseFixture {
     return { id: "cli-installed", status: "passed", results: [result] };
   }
 
-  private curlHttpStatus(url: string, artifactName: string, maxTimeSeconds: string): Promise<ShellProbeResult> {
+  private curlHttpStatus(
+    url: string,
+    artifactName: string,
+    maxTimeSeconds: string,
+  ): Promise<ShellProbeResult> {
     return this.host.command(
       "curl",
       ["-fsS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", maxTimeSeconds, url],
@@ -121,15 +132,25 @@ export class StateValidationPhaseFixture {
     );
   }
 
-  private async expectGatewayHealthy(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
+  private async expectGatewayHealthy(
+    instance: NemoClawInstance,
+  ): Promise<StateValidationProbeResult> {
     const results: ShellProbeResult[] = [];
-    const health = await this.curlHttpStatus(gatewayHealthEndpoint(instance.gatewayUrl), "gateway-health", "5");
+    const health = await this.curlHttpStatus(
+      gatewayHealthEndpoint(instance.gatewayUrl),
+      "gateway-health",
+      "5",
+    );
     results.push(health);
     if (resultHasHttpCode(health, ["200"])) {
       return { id: "gateway-healthy", status: "passed", results };
     }
 
-    const base = await this.curlHttpStatus(gatewayBaseEndpoint(instance.gatewayUrl), "gateway-base", "5");
+    const base = await this.curlHttpStatus(
+      gatewayBaseEndpoint(instance.gatewayUrl),
+      "gateway-base",
+      "5",
+    );
     results.push(base);
     if (resultHasHttpCode(base, ["200", "204"])) {
       return { id: "gateway-healthy", status: "passed", results };
@@ -168,29 +189,39 @@ export class StateValidationPhaseFixture {
     );
   }
 
-  private async expectGatewayAbsent(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
+  private async expectGatewayAbsent(
+    instance: NemoClawInstance,
+  ): Promise<StateValidationProbeResult> {
     const result = await this.gateway.status({
       artifactName: "gateway-absent-status",
       env: statusProbeEnv(),
     });
     if (result.exitCode === 0) {
-      throw new Error("state-validation expected gateway to be absent, but 'nemoclaw gateway status' succeeded.");
+      throw new Error(
+        "state-validation expected gateway to be absent, but 'nemoclaw gateway status' succeeded.",
+      );
     }
     const healthUrl = gatewayHealthEndpoint(instance.gatewayUrl);
     const health = await this.curlHttpStatus(healthUrl, "gateway-absent-health", "3");
     if (health.exitCode === 0) {
-      throw new Error(`state-validation expected gateway to be absent, but ${healthUrl} responded healthy.`);
+      throw new Error(
+        `state-validation expected gateway to be absent, but ${healthUrl} responded healthy.`,
+      );
     }
     return { id: "gateway-absent", status: "passed", results: [result, health] };
   }
 
-  private async expectSandboxRunning(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
+  private async expectSandboxRunning(
+    instance: NemoClawInstance,
+  ): Promise<StateValidationProbeResult> {
     const result = await this.host.nemoclaw(["list"], {
       artifactName: "sandbox-running-nemoclaw-list",
       env: statusProbeEnv(),
     });
     if (result.exitCode !== 0) {
-      throw new Error("state-validation expected sandbox to be running, but 'nemoclaw list' failed.");
+      throw new Error(
+        "state-validation expected sandbox to be running, but 'nemoclaw list' failed.",
+      );
     }
     if (!outputContainsSandbox(result, instance.sandboxName)) {
       throw new Error(
@@ -200,7 +231,9 @@ export class StateValidationPhaseFixture {
     return { id: "sandbox-running", status: "passed", results: [result] };
   }
 
-  private async expectSandboxAbsent(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
+  private async expectSandboxAbsent(
+    instance: NemoClawInstance,
+  ): Promise<StateValidationProbeResult> {
     const results: ShellProbeResult[] = [];
     const nemoclawList = await this.host.nemoclaw(["list"], {
       artifactName: "sandbox-absent-nemoclaw-list",
@@ -208,7 +241,9 @@ export class StateValidationPhaseFixture {
     });
     results.push(nemoclawList);
     if (nemoclawList.exitCode === 0 && outputContainsSandbox(nemoclawList, instance.sandboxName)) {
-      throw new Error(`state-validation expected sandbox '${instance.sandboxName}' to be absent, but nemoclaw listed it.`);
+      throw new Error(
+        `state-validation expected sandbox '${instance.sandboxName}' to be absent, but nemoclaw listed it.`,
+      );
     }
 
     let openshellList: ShellProbeResult | undefined;
@@ -219,7 +254,9 @@ export class StateValidationPhaseFixture {
       });
     } catch (error) {
       if (!isMissingOpenShellError(error)) {
-        throw new Error(`state-validation could not verify OpenShell sandbox absence: ${errorMessage(error)}`);
+        throw new Error(
+          `state-validation could not verify OpenShell sandbox absence: ${errorMessage(error)}`,
+        );
       }
       // Bridge tolerance for negative preflight states: `nemoclaw list` is the
       // user-facing registry authority, while OpenShell may be absent before any
@@ -228,8 +265,13 @@ export class StateValidationPhaseFixture {
     }
     if (openshellList) {
       results.push(openshellList);
-      if (openshellList.exitCode === 0 && outputContainsSandbox(openshellList, instance.sandboxName)) {
-        throw new Error(`state-validation expected sandbox '${instance.sandboxName}' to be absent, but OpenShell listed it.`);
+      if (
+        openshellList.exitCode === 0 &&
+        outputContainsSandbox(openshellList, instance.sandboxName)
+      ) {
+        throw new Error(
+          `state-validation expected sandbox '${instance.sandboxName}' to be absent, but OpenShell listed it.`,
+        );
       }
     }
 

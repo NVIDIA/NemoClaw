@@ -16,7 +16,11 @@ import {
   StateClient,
   trustedProviderEndpoint,
 } from "../framework/clients/index.ts";
-import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../framework/shell-probe.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../framework/shell-probe.ts";
 
 interface RunnerCall {
   command: string;
@@ -31,7 +35,10 @@ class FakeRunner implements CommandRunner {
   exitCode: number | null = 0;
   signal: NodeJS.Signals | null = null;
 
-  async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
+  async run(
+    command: TrustedShellCommand,
+    options?: ShellProbeRunOptions,
+  ): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
     return {
       command: [command.command, ...command.args],
@@ -198,7 +205,9 @@ describe("E2E fixture clients", () => {
     runner.stdout = JSON.stringify({ ok: true });
     const provider = new ProviderClient(runner);
 
-    await expect(provider.getJson(trustedProviderEndpoint("http://127.0.0.1:8080/health"))).resolves.toEqual({ ok: true });
+    await expect(
+      provider.getJson(trustedProviderEndpoint("http://127.0.0.1:8080/health")),
+    ).resolves.toEqual({ ok: true });
     expect(runner.calls[0]).toEqual({
       command: "curl",
       args: ["-fsS", "http://127.0.0.1:8080/health"],
@@ -226,23 +235,35 @@ describe("E2E fixture clients", () => {
   it("provider endpoint rejects unsafe schemes, hosts, and userinfo", () => {
     expect(() => trustedProviderEndpoint("file:///etc/passwd")).toThrow(/protocol/);
     expect(() => trustedProviderEndpoint("http://example.com/health")).toThrow(/loopback/);
-    expect(() => trustedProviderEndpoint("https://api.example.test/models")).toThrow(/allowedHosts/);
-    expect(() => trustedProviderEndpoint("http://169.254.169.254/latest/meta-data")).toThrow(/blocked/);
-    expect(() => trustedProviderEndpoint("https://token@example.com/models")).toThrow(/credentials/);
-    expect(() =>
-      trustedProviderEndpoint("https://api.example.test/models", { allowedHosts: ["api.other.test"] }),
-    ).toThrow(/not allowed/);
-    expect(() => trustedProviderEndpoint("https://10.0.0.1/models", { allowedHosts: ["10.0.0.1"] })).toThrow(
-      /private or link-local/,
+    expect(() => trustedProviderEndpoint("https://api.example.test/models")).toThrow(
+      /allowedHosts/,
     );
+    expect(() => trustedProviderEndpoint("http://169.254.169.254/latest/meta-data")).toThrow(
+      /blocked/,
+    );
+    expect(() => trustedProviderEndpoint("https://token@example.com/models")).toThrow(
+      /credentials/,
+    );
+    expect(() =>
+      trustedProviderEndpoint("https://api.example.test/models", {
+        allowedHosts: ["api.other.test"],
+      }),
+    ).toThrow(/not allowed/);
+    expect(() =>
+      trustedProviderEndpoint("https://10.0.0.1/models", { allowedHosts: ["10.0.0.1"] }),
+    ).toThrow(/private or link-local/);
     expect(() =>
       trustedProviderEndpoint("https://[fd00::1]/models", { allowedHosts: ["fd00::1"] }),
     ).toThrow(/private or link-local/);
   });
 
   it("provider endpoint allows loopback HTTP, including IPv6 loopback", () => {
-    expect(trustedProviderEndpoint("http://127.0.0.1:8080/health").url).toBe("http://127.0.0.1:8080/health");
-    expect(trustedProviderEndpoint("http://[::1]:8080/health").url).toBe("http://[::1]:8080/health");
+    expect(trustedProviderEndpoint("http://127.0.0.1:8080/health").url).toBe(
+      "http://127.0.0.1:8080/health",
+    );
+    expect(trustedProviderEndpoint("http://[::1]:8080/health").url).toBe(
+      "http://[::1]:8080/health",
+    );
   });
 
   it("provider client sanitizes labels and redacts credential-bearing query values", async () => {
@@ -279,11 +300,16 @@ describe("E2E fixture clients", () => {
     const runner = new FakeRunner();
     runner.exitCode = 22;
     const provider = new ProviderClient(runner);
-    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models?api_key=query-token-value", {
-      allowedHosts: ["api.example.test"],
-    });
+    const endpoint = trustedProviderEndpoint(
+      "https://api.example.test/v1/models?api_key=query-token-value",
+      {
+        allowedHosts: ["api.example.test"],
+      },
+    );
 
-    await expect(provider.getJson(endpoint)).rejects.toThrow("curl https://api.example.test/v1/models failed: exit=22");
+    await expect(provider.getJson(endpoint)).rejects.toThrow(
+      "curl https://api.example.test/v1/models failed: exit=22",
+    );
     await expect(provider.getJson(endpoint)).rejects.not.toThrow(/query-token-value|api_key/);
   });
 

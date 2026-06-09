@@ -13,7 +13,12 @@ import type { ShellProbeResult } from "../shell-probe.ts";
 import { redactString } from "../../scenarios/orchestrators/redaction.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
-const ONBOARD_ARGS = ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"];
+const ONBOARD_ARGS = [
+  "onboard",
+  "--non-interactive",
+  "--yes",
+  "--yes-i-accept-third-party-software",
+];
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
@@ -108,7 +113,10 @@ function resultText(result: ShellProbeResult): string {
 }
 
 function redactExplicitValues(text: string, values: string[]): string {
-  return values.reduce((redacted, value) => (value ? redacted.split(value).join("[REDACTED]") : redacted), text);
+  return values.reduce(
+    (redacted, value) => (value ? redacted.split(value).join("[REDACTED]") : redacted),
+    text,
+  );
 }
 
 function legacyNegativePreflightLogPath(): string | undefined {
@@ -133,7 +141,10 @@ export class OnboardingPhaseFixture {
     private readonly cleanup?: OnboardingCleanup,
   ) {}
 
-  async from(environment: EnvironmentReady, options: OnboardingOptions = {}): Promise<NemoClawInstance> {
+  async from(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
     switch (environment.onboarding) {
       case "cloud-openclaw":
         return await this.cloudOpenClaw(environment, options);
@@ -144,7 +155,10 @@ export class OnboardingPhaseFixture {
     }
   }
 
-  async cloudOpenClaw(environment: EnvironmentReady, options: OnboardingOptions = {}): Promise<NemoClawInstance> {
+  async cloudOpenClaw(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
     if (!environment.docker.available) {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
@@ -169,9 +183,14 @@ export class OnboardingPhaseFixture {
     };
   }
 
-  async cloudOpenClawNoDocker(environment: EnvironmentReady, options: OnboardingOptions = {}): Promise<NemoClawInstance> {
+  async cloudOpenClawNoDocker(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
     if (environment.docker.expectation !== "missing") {
-      throw new Error("cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.");
+      throw new Error(
+        "cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.",
+      );
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");
@@ -231,10 +250,16 @@ export class OnboardingPhaseFixture {
   }
 
   private redact(text: string, extraValues: string[] = []): string {
-    return this.secrets.redact?.(text, extraValues) ?? redactString(redactExplicitValues(text, extraValues));
+    return (
+      this.secrets.redact?.(text, extraValues) ??
+      redactString(redactExplicitValues(text, extraValues))
+    );
   }
 
-  private async writeNegativePreflightEvidence(result: ShellProbeResult, redactionValues: string[]): Promise<void> {
+  private async writeNegativePreflightEvidence(
+    result: ShellProbeResult,
+    redactionValues: string[],
+  ): Promise<void> {
     const logPath = legacyNegativePreflightLogPath();
     if (!logPath) return;
     await mkdir(dirname(logPath), { recursive: true });

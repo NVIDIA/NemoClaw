@@ -94,9 +94,9 @@ describe("resetSandboxSession", () => {
   it("surfaces a gateway failure payload and exits non-zero", async () => {
     gatewayMock.mockReturnValue(errorResult("E_NOT_FOUND", "no such session"));
 
-    await expect(
-      resetSandboxSession("sb-1", { key: "agent:main:main" }),
-    ).rejects.toThrow(/process\.exit:1/);
+    await expect(resetSandboxSession("sb-1", { key: "agent:main:main" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
 
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
       /Gateway refused sessions\.reset.*\[E_NOT_FOUND\] no such session/,
@@ -109,9 +109,9 @@ describe("resetSandboxSession", () => {
       rawOutput: '{"ok":true,"entry":null}',
     });
 
-    await expect(
-      resetSandboxSession("sb-1", { key: "agent:main:main" }),
-    ).rejects.toThrow(/process\.exit:1/);
+    await expect(resetSandboxSession("sb-1", { key: "agent:main:main" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
 
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
       /unexpected sessions\.reset payload/,

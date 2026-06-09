@@ -15,7 +15,9 @@ import {
 // Build an `openshell forward list`-shaped output for the given live entries.
 // Mirrors the column layout (SANDBOX BIND PORT PID STATUS) that
 // `getOccupiedPorts` parses, so the helper recognises the forward as live.
-function forwardListWith(entries: Array<{ sandbox: string; port: number; status?: string }>): string {
+function forwardListWith(
+  entries: Array<{ sandbox: string; port: number; status?: string }>,
+): string {
   const header = "SANDBOX   BIND        PORT   PID    STATUS";
   const rows = entries.map(
     (e) => `${e.sandbox}  127.0.0.1   ${e.port}   1234   ${e.status ?? "running"}`,
@@ -371,9 +373,9 @@ describe("runDetachedForwardStartWithPortReleaseRetries", () => {
 
 describe("looksLikeForwardPortConflict", () => {
   it("matches the common port-in-use signals", () => {
-    expect(looksLikeForwardPortConflict("listen tcp 0.0.0.0:18789: bind: address already in use")).toBe(
-      true,
-    );
+    expect(
+      looksLikeForwardPortConflict("listen tcp 0.0.0.0:18789: bind: address already in use"),
+    ).toBe(true);
     expect(looksLikeForwardPortConflict("EADDRINUSE")).toBe(true);
     expect(looksLikeForwardPortConflict("port 18789 in use")).toBe(true);
   });

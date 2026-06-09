@@ -49,7 +49,10 @@ function extractRefreshBlock(): string {
 // step-down prefix. Returns the temp dir so the caller can inspect the
 // stub log and the refresh status sentinel.
 function runRefreshBlock(
-  opts: { gatewayReadyAfter: number; rootMode?: boolean } = { gatewayReadyAfter: 1, rootMode: true },
+  opts: { gatewayReadyAfter: number; rootMode?: boolean } = {
+    gatewayReadyAfter: 1,
+    rootMode: true,
+  },
 ): {
   result: ReturnType<typeof spawnSync>;
   refreshLog: string;
@@ -180,7 +183,10 @@ describe("plugin refresh log preparation", () => {
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `PLUGIN_REFRESH_LOG=${JSON.stringify(refreshLog)}`,
-          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          extractShellFunction(
+            fs.readFileSync(START_SCRIPT, "utf-8"),
+            "prepare_plugin_refresh_log",
+          ),
           "prepare_plugin_refresh_log",
         ].join("\n"),
         { mode: 0o755 },
@@ -208,7 +214,10 @@ describe("plugin refresh log preparation", () => {
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `PLUGIN_REFRESH_LOG=${JSON.stringify(refreshLog)}`,
-          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          extractShellFunction(
+            fs.readFileSync(START_SCRIPT, "utf-8"),
+            "prepare_plugin_refresh_log",
+          ),
           "prepare_plugin_refresh_log",
         ].join("\n"),
         { mode: 0o755 },
@@ -239,7 +248,10 @@ describe("plugin refresh log preparation", () => {
           `RACE_TARGET=${JSON.stringify(sensitiveTarget)}`,
           'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
           'chown() { ln -sfn "$RACE_TARGET" "$PLUGIN_REFRESH_LOG"; return 0; }',
-          extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "prepare_plugin_refresh_log"),
+          extractShellFunction(
+            fs.readFileSync(START_SCRIPT, "utf-8"),
+            "prepare_plugin_refresh_log",
+          ),
           "prepare_plugin_refresh_log",
         ].join("\n"),
         { mode: 0o755 },

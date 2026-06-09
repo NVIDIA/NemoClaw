@@ -10,7 +10,15 @@
  * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
-import { isRiskyFile, isTestFile, run, ghJson, parseStringArg, REQUIRED_CHECK_NAMES, type StatusCheck } from "./shared.ts";
+import {
+  isRiskyFile,
+  isTestFile,
+  run,
+  ghJson,
+  parseStringArg,
+  REQUIRED_CHECK_NAMES,
+  type StatusCheck,
+} from "./shared.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,7 +42,11 @@ interface GateOutput {
   title: string;
   allPass: boolean;
   gates: {
-    ci: GateResult & { failingChecks?: string[]; pendingChecks?: string[]; missingChecks?: string[] };
+    ci: GateResult & {
+      failingChecks?: string[];
+      pendingChecks?: string[];
+      missingChecks?: string[];
+    };
     conflicts: GateResult & { mergeStateStatus?: string };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
@@ -97,7 +109,12 @@ function checkCi(
   }
 
   if (failing.length > 0) {
-    return { pass: false, details: `${failing.length} failing check(s)`, failingChecks: failing, pendingChecks: pending };
+    return {
+      pass: false,
+      details: `${failing.length} failing check(s)`,
+      failingChecks: failing,
+      pendingChecks: pending,
+    };
   }
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
@@ -170,11 +187,16 @@ function checkCodeRabbit(
 
   const [owner, repoName] = repo.split("/");
   const out = run("gh", [
-    "api", "graphql",
-    "-F", `owner=${owner}`,
-    "-F", `repo=${repoName}`,
-    "-F", `number=${number}`,
-    "-f", `query=${query}`,
+    "api",
+    "graphql",
+    "-F",
+    `owner=${owner}`,
+    "-F",
+    `repo=${repoName}`,
+    "-F",
+    `number=${number}`,
+    "-f",
+    `query=${query}`,
   ]);
 
   // Fail-closed: if we cannot reach the API, do not assume clean
@@ -209,8 +231,8 @@ function checkCodeRabbit(
     if (thread.isResolved) continue;
 
     const comments = thread.comments.nodes;
-    const coderabbitComments = comments.filter(
-      (c) => CODERABBIT_LOGINS.has(c.author?.login?.toLowerCase()),
+    const coderabbitComments = comments.filter((c) =>
+      CODERABBIT_LOGINS.has(c.author?.login?.toLowerCase()),
     );
 
     for (const comment of coderabbitComments) {
@@ -282,9 +304,13 @@ function main(): void {
   const repo = parseStringArg(args, "--repo", "NVIDIA/NemoClaw");
 
   const prData = ghJson([
-    "pr", "view", String(prNumber),
-    "--repo", repo,
-    "--json", "number,title,url,files,statusCheckRollup,mergeStateStatus",
+    "pr",
+    "view",
+    String(prNumber),
+    "--repo",
+    repo,
+    "--json",
+    "number,title,url,files,statusCheckRollup,mergeStateStatus",
   ]) as {
     number: number;
     title: string;

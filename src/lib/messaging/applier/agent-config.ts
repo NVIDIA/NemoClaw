@@ -24,10 +24,7 @@ import type {
 } from "./types";
 import { enabledPlanChannels, filterEnabledPlanEntries } from "./plan-filter";
 
-const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>([
-  "apply",
-  "post-agent-install",
-]);
+const AGENT_CONFIG_HOOK_PHASES = new Set<ChannelHookPhase>(["apply", "post-agent-install"]);
 
 export function listHookRequests(
   plan: SandboxMessagingPlan,
@@ -77,11 +74,7 @@ export async function applyAgentConfigAtOpenShell(
     const existing = readSandboxFile(plan.sandboxName, resolvedTarget, options.runOpenshell);
     const contents =
       kind === "json-fragment"
-        ? applyJsonFragments(
-            existing,
-            render.filter(isJsonRender),
-            resolvedTarget,
-          )
+        ? applyJsonFragments(existing, render.filter(isJsonRender), resolvedTarget)
         : applyEnvLines(existing, render.filter(isEnvLinesRender));
     writeSandboxFile(plan.sandboxName, resolvedTarget, contents, options.runOpenshell);
     appliedTargets.push(resolvedTarget);
@@ -97,9 +90,7 @@ export async function applyAgentConfigAtOpenShell(
   return {
     appliedTargets: uniqueStrings(appliedTargets),
     appliedHooks,
-    unresolvedTemplateRefs: uniqueStrings(
-      enabledRender.flatMap((render) => render.templateRefs),
-    ),
+    unresolvedTemplateRefs: uniqueStrings(enabledRender.flatMap((render) => render.templateRefs)),
   };
 }
 
@@ -174,9 +165,7 @@ async function runApplyHook(
     const result = await runner(request);
     applied.appliedHooks.push(`${request.channelId}:${request.hookId}`);
     if (result?.outputs) {
-      applied.appliedTargets.push(
-        ...applyHookBuildFileOutputs(plan, result.outputs, runOpenshell),
-      );
+      applied.appliedTargets.push(...applyHookBuildFileOutputs(plan, result.outputs, runOpenshell));
     }
   } catch (error) {
     if (request.onFailure === "skip-channel") return;
@@ -536,13 +525,10 @@ function readSandboxFile(
   target: string,
   runOpenshell: MessagingOpenShellRunner,
 ): string | undefined {
-  const result = runOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "cat", target],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "cat", target], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const status = result.status ?? 0;
   return status === 0 ? String(result.stdout ?? "") : undefined;
 }
@@ -577,9 +563,7 @@ function writeSandboxFile(
   );
   const status = result.status ?? 0;
   if (status !== 0) {
-    throw new Error(
-      `Failed to apply messaging agent config '${target}': ${compactOutput(result)}`,
-    );
+    throw new Error(`Failed to apply messaging agent config '${target}': ${compactOutput(result)}`);
   }
 }
 

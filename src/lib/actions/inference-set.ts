@@ -47,7 +47,6 @@ export interface InferenceSetResult {
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
 
-
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -443,7 +442,13 @@ export async function runInferenceSet(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
-  const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, patched.route, deps);
+  const sessionUpdated = updateMatchingOnboardSession(
+    sandboxName,
+    provider,
+    model,
+    patched.route,
+    deps,
+  );
 
   deps.appendAuditEntry({
     action: "inference_set",
