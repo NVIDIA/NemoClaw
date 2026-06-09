@@ -96,7 +96,7 @@ COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/valid
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 
 # Build args for config that varies per deployment.
-ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions

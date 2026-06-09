@@ -32,7 +32,7 @@ Pass `--sandbox <name>` when you do not want to use the default registered sandb
 ### NVIDIA Endpoints
 
 ```bash
-nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 ### OpenAI
@@ -229,7 +229,7 @@ Expected output:
 
 ```text
 Provider: nvidia-prod
-Model:    nvidia/nemotron-3-super-120b-a12b
+Model:    nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 Pass `--json` for machine-readable output.
@@ -243,7 +243,7 @@ Expected output:
 ```json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-ultra-550b-a55b"
 }
 ```
 
