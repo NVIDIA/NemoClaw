@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const NEMOTRON_FIX_SOURCE = path.join(
@@ -354,6 +354,16 @@ send(JSON.stringify({
   model: 'nvidia/nemotron-3-super-120b-a12b',
   messages: [{ role: 'user', content: 'hi' }],
 }));
+// case 4: Ultra 550B with system message at non-zero index — expect NO injection
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [
+    { role: 'user', content: 'prior turn' },
+    { role: 'assistant', content: 'ok' },
+    { role: 'system', content: 'mid-conversation system message' },
+    { role: 'user', content: 'hi again' },
+  ],
+}));
 console.log(JSON.stringify(records));
 `;
 
@@ -363,7 +373,7 @@ console.log(JSON.stringify(records));
     });
     expect(result.status, result.stderr).toBe(0);
     const records = JSON.parse(result.stdout.trim());
-    expect(records).toHaveLength(4);
+    expect(records).toHaveLength(5);
 
     // case 0: system message injected at position 0
     const ultraBare = JSON.parse(records[0].writes.join(""));
@@ -390,5 +400,11 @@ console.log(JSON.stringify(records));
     const superModel = JSON.parse(records[3].writes.join(""));
     expect(superModel.messages).toHaveLength(1);
     expect(superModel.messages[0].role).toBe("user");
+
+    // case 4: system message at non-zero index — caller intent preserved
+    const ultraMidSystem = JSON.parse(records[4].writes.join(""));
+    expect(ultraMidSystem.messages).toHaveLength(4);
+    expect(ultraMidSystem.messages[0].role).toBe("user");
+    expect(ultraMidSystem.messages[2].role).toBe("system");
   });
 });

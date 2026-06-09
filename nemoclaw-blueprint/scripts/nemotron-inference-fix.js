@@ -129,8 +129,13 @@
     }
     if (!rule) return null;
     if (!Array.isArray(body.messages) || body.messages.length === 0) return null;
-    var first = body.messages[0];
-    if (first && typeof first === 'object' && first.role === 'system') return null;
+    // Scan ALL messages, not just messages[0]: the OpenAI chat-completions
+    // contract permits a system message anywhere in the array, and the
+    // "caller prompt wins" contract should hold for any of those positions.
+    var hasSystemMessage = body.messages.some(function (msg) {
+      return msg && typeof msg === 'object' && msg.role === 'system';
+    });
+    if (hasSystemMessage) return null;
     if (Array.isArray(body.tools) && body.tools.length > 0) return null;
     return rule.systemPrompt;
   }
