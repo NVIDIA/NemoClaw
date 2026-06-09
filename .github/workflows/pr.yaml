@@ -172,7 +172,16 @@ jobs:
       - name: Install installer integration dependencies
         if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
         shell: bash
-        run: npm install --ignore-scripts
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install --ignore-scripts
+
+      - name: Build installer integration artifacts
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: |
+          npm run build:cli
+          cd nemoclaw && npm run build
 
       - name: Run installer integration tests (bootstrap)
         if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}

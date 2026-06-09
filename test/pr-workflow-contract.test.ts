@@ -307,7 +307,19 @@ describe("pull request and main workflow contracts", () => {
     expect(bootstrapInstall.if).toBe(
       "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
     );
-    expect(bootstrapInstall.run).toBe("npm install --ignore-scripts");
+    expect(bootstrapInstall.run).toContain("npm install --ignore-scripts");
+    expect(bootstrapInstall.run).toContain(
+      "cd nemoclaw && npm install --ignore-scripts",
+    );
+    const bootstrapBuild = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Build installer integration artifacts",
+    );
+    expect(bootstrapBuild.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
+    );
+    expect(bootstrapBuild.run).toContain("npm run build:cli");
+    expect(bootstrapBuild.run).toContain("cd nemoclaw && npm run build");
     const bootstrapRun = requiredWorkflowStep(
       prWorkflow.jobs["installer-integration"],
       "Run installer integration tests (bootstrap)",
@@ -460,6 +472,9 @@ describe("pull request and main workflow contracts", () => {
     );
 
     expect(installerRuns).toContain("npm install --ignore-scripts");
+    expect(installerRuns).toContain("cd nemoclaw && npm install --ignore-scripts");
+    expect(installerRuns).toContain("npm run build:cli");
+    expect(installerRuns).toContain("cd nemoclaw && npm run build");
     expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
   });
 
@@ -699,7 +714,10 @@ describe("pull request and main workflow contracts", () => {
     const installerBootstrapInstall = stepRuns(
       prWorkflow.jobs["installer-integration"],
     ).find((run) => run.includes("npm install"));
-    expect(installerBootstrapInstall).toBe("npm install --ignore-scripts");
+    expect(installerBootstrapInstall).toContain("npm install --ignore-scripts");
+    expect(installerBootstrapInstall).toContain(
+      "cd nemoclaw && npm install --ignore-scripts",
+    );
   });
 
   it("does not persist checkout credentials in PR or main jobs", () => {
