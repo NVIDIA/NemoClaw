@@ -278,7 +278,8 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
   if (!isExecutableFile(routerCommand)) {
     throw new Error("Model Router install did not produce the model-router command.");
   }
-  const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
+  const version =
+    JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
   const effectiveFingerprint = sourceFingerprint ?? `install:${version}`;
   writeModelRouterInstalledFingerprint(effectiveFingerprint, venvDir);
   return routerCommand;

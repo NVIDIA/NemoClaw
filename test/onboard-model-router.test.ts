@@ -878,89 +878,94 @@ const { setupInference } = require(${onboardPath});
     },
   );
 
-  it("writes fallback fingerprint file when git source fingerprint is unavailable", testTimeoutOptions(30_000), () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-fallback-fp-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const venvDir = path.join(tmpDir, "model-router-venv");
-    const fakeRouterSource = path.join(tmpDir, "model-router-source.js");
-    const setupLog = path.join(tmpDir, "router-setup.log");
-    const scriptPath = path.join(tmpDir, "setup-router-fallback-fp-check.js");
-    const routerPort = 48000 + (process.pid % 10000);
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-
-    try {
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
-      fs.writeFileSync(
-        path.join(fakeBin, "python3"),
-        [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
-          'if [ "$1" = "-c" ]; then',
-          '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
-          "  exit 0",
-          "fi",
-          'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
-          '  venv_dir="$3"',
-          '  mkdir -p "$venv_dir/bin"',
-          '  cat > "$venv_dir/bin/python" <<\'PY\'',
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
-          'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
-          '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
-          `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
-          '  chmod +x "$venv_bin/model-router"',
-          "  exit 0",
-          "fi",
-          "exit 97",
-          "PY",
-          '  chmod +x "$venv_dir/bin/python"',
-          "  exit 0",
-          "fi",
-          "exit 96",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      fs.writeFileSync(
-        fakeRouterSource,
-        [
-          `#!${process.execPath}`,
-          'const fs = require("fs");',
-          'const http = require("http");',
-          'const path = require("path");',
-          "const args = process.argv.slice(2);",
-          'if (args[0] === "proxy-config") {',
-          '  const output = args[args.indexOf("--output") + 1];',
-          "  fs.mkdirSync(path.dirname(output), { recursive: true });",
-          '  fs.writeFileSync(output, "model_list: []\\n");',
-          "  process.exit(0);",
-          "}",
-          'if (args[0] === "proxy") {',
-          '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
-          "  const server = http.createServer((req, res) => {",
-          '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
-          "    res.statusCode = 404;",
-          "    res.end();",
-          "  });",
-          '  server.listen(port, "127.0.0.1");',
-          "  setTimeout(() => process.exit(0), 10000);",
-          "} else {",
-          "  process.exit(1);",
-          "}",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
+  it(
+    "writes fallback fingerprint file when git source fingerprint is unavailable",
+    testTimeoutOptions(30_000),
+    () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-fallback-fp-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const venvDir = path.join(tmpDir, "model-router-venv");
+      const fakeRouterSource = path.join(tmpDir, "model-router-source.js");
+      const setupLog = path.join(tmpDir, "router-setup.log");
+      const scriptPath = path.join(tmpDir, "setup-router-fallback-fp-check.js");
+      const routerPort = 48000 + (process.pid % 10000);
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
       );
 
-      const script = String.raw`
+      try {
+        fs.mkdirSync(fakeBin, { recursive: true });
+        fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+          mode: 0o755,
+        });
+        fs.writeFileSync(
+          path.join(fakeBin, "python3"),
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+            'if [ "$1" = "-c" ]; then',
+            '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+            "  exit 0",
+            "fi",
+            'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
+            '  venv_dir="$3"',
+            '  mkdir -p "$venv_dir/bin"',
+            "  cat > \"$venv_dir/bin/python\" <<'PY'",
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+            'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
+            '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
+            `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
+            '  chmod +x "$venv_bin/model-router"',
+            "  exit 0",
+            "fi",
+            "exit 97",
+            "PY",
+            '  chmod +x "$venv_dir/bin/python"',
+            "  exit 0",
+            "fi",
+            "exit 96",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(
+          fakeRouterSource,
+          [
+            `#!${process.execPath}`,
+            'const fs = require("fs");',
+            'const http = require("http");',
+            'const path = require("path");',
+            "const args = process.argv.slice(2);",
+            'if (args[0] === "proxy-config") {',
+            '  const output = args[args.indexOf("--output") + 1];',
+            "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+            '  fs.writeFileSync(output, "model_list: []\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (args[0] === "proxy") {',
+            '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+            "  const server = http.createServer((req, res) => {",
+            '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+            "    res.statusCode = 404;",
+            "    res.end();",
+            "  });",
+            '  server.listen(port, "127.0.0.1");',
+            "  setTimeout(() => process.exit(0), 10000);",
+            "} else {",
+            "  process.exit(1);",
+            "}",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const script = String.raw`
 const fs = require("fs");
 const path = require("path");
 const runner = require(${runnerPath});
@@ -1058,29 +1063,44 @@ const { setupInference } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+        fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          HOME: tmpDir,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-          ROUTER_SETUP_LOG: setupLog,
-          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
-        },
-      });
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            HOME: tmpDir,
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+            ROUTER_SETUP_LOG: setupLog,
+            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+          },
+        });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payload = parseStdoutJson<{ fpExists: boolean; fpContent: string | null; isCurrent: boolean }>(result.stdout);
-      assert.ok(payload.fpExists, "fingerprint file must exist after install even without git");
-      assert.ok(payload.fpContent, "fingerprint content must not be empty");
-      assert.match(payload.fpContent!, /^install:.+$/, "fallback fingerprint must use install:<token> format");
-      assert.doesNotMatch(payload.fpContent!, /^install:\d{13,}$/, "fallback fingerprint must not use a timestamp");
-      assert.ok(payload.isCurrent, "isManagedModelRouterCurrent must return true when install: fingerprint exists and source is unavailable");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
+        assert.equal(result.status, 0, result.stderr);
+        const payload = parseStdoutJson<{
+          fpExists: boolean;
+          fpContent: string | null;
+          isCurrent: boolean;
+        }>(result.stdout);
+        assert.ok(payload.fpExists, "fingerprint file must exist after install even without git");
+        assert.ok(payload.fpContent, "fingerprint content must not be empty");
+        assert.match(
+          payload.fpContent!,
+          /^install:.+$/,
+          "fallback fingerprint must use install:<token> format",
+        );
+        assert.doesNotMatch(
+          payload.fpContent!,
+          /^install:\d{13,}$/,
+          "fallback fingerprint must not use a timestamp",
+        );
+        assert.ok(
+          payload.isCurrent,
+          "isManagedModelRouterCurrent must return true when install: fingerprint exists and source is unavailable",
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
