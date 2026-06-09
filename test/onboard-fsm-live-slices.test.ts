@@ -56,6 +56,10 @@ function baseContext(context, overrides = {}) {
 flowSlices.runInitialOnboardFlowSequence = async ({ context, runtime }) => {
   called.push("initial");
   if (${JSON.stringify(slice)} === "initial") throw sentinel;
+  const initialSession = await runtime.session();
+  if (initialSession.machine?.state === "init") {
+    await runtime.applyResult(advanceTo("preflight"));
+  }
   await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
   await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
   const session = await runtime.session();
