@@ -30,7 +30,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** Derive the equivalent of session.messagingChannels from a plan. */
-export function getChannelsFromPlan(plan: SandboxMessagingPlan | null | undefined): string[] | null {
+export function getChannelsFromPlan(
+  plan: SandboxMessagingPlan | null | undefined,
+): string[] | null {
   if (!plan || plan.channels.length === 0) return null;
   return plan.channels.map((c) => c.channelId);
 }

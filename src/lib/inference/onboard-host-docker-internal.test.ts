@@ -9,7 +9,10 @@ import path from "node:path";
 const {
   isHijackedDockerInternalUrl,
 } = require("../../../dist/lib/inference/onboard-host-docker-internal");
-const { isSandboxInternalUrl, probeOpenAiLikeEndpoint } = require("../../../dist/lib/inference/onboard-probes");
+const {
+  isSandboxInternalUrl,
+  probeOpenAiLikeEndpoint,
+} = require("../../../dist/lib/inference/onboard-probes");
 
 describe("host.docker.internal onboarding inference policy", () => {
   it("does not treat host.docker.internal as a usable sandbox URL", () => {

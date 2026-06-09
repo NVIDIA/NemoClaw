@@ -29,13 +29,10 @@ describe("getLiveGatewayInference", () => {
   });
 
   it("falls back to legacy inference get when grouped lookup is unavailable", () => {
-    const capture = vi
-      .fn()
-      .mockReturnValueOnce({ status: 1, output: "" })
-      .mockReturnValueOnce({
-        status: 0,
-        output: "Gateway inference:\n  Provider: openai-api\n  Model: gpt-5.4\n",
-      });
+    const capture = vi.fn().mockReturnValueOnce({ status: 1, output: "" }).mockReturnValueOnce({
+      status: 0,
+      output: "Gateway inference:\n  Provider: openai-api\n  Model: gpt-5.4\n",
+    });
 
     expect(getLiveGatewayInference(capture).inference).toEqual({
       provider: "openai-api",

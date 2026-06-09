@@ -24,9 +24,7 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       { status: 0, stdout: "" },
     ];
     let execIdx = 0;
-    const runOpenshell = vi.fn(
-      () => execOutputs[Math.min(execIdx++, execOutputs.length - 1)],
-    );
+    const runOpenshell = vi.fn(() => execOutputs[Math.min(execIdx++, execOutputs.length - 1)]);
     const listOutputs = [
       "alpha   Error         1s ago",
       "alpha   Error         3s ago",

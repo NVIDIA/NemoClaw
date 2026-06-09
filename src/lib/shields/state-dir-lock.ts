@@ -124,10 +124,7 @@ interface PreflightResult {
 // `applyStateDirLockMode`. Exposed separately so callers can hoist this
 // before chmod/chown on configPath + sensitiveFiles, keeping the "no
 // mutations until preflight clears" invariant.
-export function preflightStateDirLock(
-  privileged: PrivilegedExec,
-  configDir: string,
-): string[] {
+export function preflightStateDirLock(privileged: PrivilegedExec, configDir: string): string[] {
   const allStateDirs = [...HIGH_RISK_STATE_DIRS, ...CONFIDENTIALITY_STATE_DIRS];
   const preflight = preflightSymlinkedRoots(privileged, configDir, allStateDirs);
   if (preflight.error !== null) {
@@ -476,10 +473,7 @@ function runStateDirLockScript(
 // script (parsed from `restore-failed\t<op>\t<path>` markers) plus a
 // stat-based verification pass that confirms every restored target ends
 // up as `sandbox:sandbox 2770`. Empty list means the carve-out is good.
-function restoreWritableRuntimeSubpaths(
-  privileged: PrivilegedExec,
-  configDir: string,
-): string[] {
+function restoreWritableRuntimeSubpaths(privileged: PrivilegedExec, configDir: string): string[] {
   let stdout = "";
   try {
     stdout = privileged.capture([
@@ -550,7 +544,9 @@ exit 0
     } else if (parts[0] === "restore-verify-mode" && parts[1]) {
       issues.push(`runtime-writable subpath mode=${parts[2]} (expected 2770): ${parts[1]}`);
     } else if (parts[0] === "restore-verify-owner" && parts[1]) {
-      issues.push(`runtime-writable subpath owner=${parts[2]} (expected sandbox:sandbox): ${parts[1]}`);
+      issues.push(
+        `runtime-writable subpath owner=${parts[2]} (expected sandbox:sandbox): ${parts[1]}`,
+      );
     }
   }
   return issues;

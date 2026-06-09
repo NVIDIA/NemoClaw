@@ -8,11 +8,7 @@ import {
   ONBOARD_MACHINE_STATE_DEFINITIONS,
   type OnboardMachineStateWithStepDefinition,
 } from "./definition";
-import type {
-  OnboardMachineContext,
-  OnboardMachineEventType,
-  OnboardMachineState,
-} from "./types";
+import type { OnboardMachineContext, OnboardMachineEventType, OnboardMachineState } from "./types";
 
 type OnboardSessionStepDefinition = OnboardMachineStateWithStepDefinition;
 
@@ -47,9 +43,7 @@ export type OnboardMachineEventListener = (event: OnboardMachineEvent) => void;
 
 const listeners = new Set<OnboardMachineEventListener>();
 
-export function addOnboardMachineEventListener(
-  listener: OnboardMachineEventListener,
-): () => void {
+export function addOnboardMachineEventListener(listener: OnboardMachineEventListener): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

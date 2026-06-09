@@ -3,12 +3,18 @@
 
 import { shellQuote } from "../core/shell-quote";
 
-export type WebSearchVerifyAgent = {
-  name?: string | null;
-} | null | undefined;
+export type WebSearchVerifyAgent =
+  | {
+      name?: string | null;
+    }
+  | null
+  | undefined;
 
 export type WebSearchVerifyDeps = {
-  runCaptureOpenshell: (args: string[], options: { ignoreError: true; timeout: number }) => string | null;
+  runCaptureOpenshell: (
+    args: string[],
+    options: { ignoreError: true; timeout: number },
+  ) => string | null;
   cliName: () => string;
   log?: (message?: string) => void;
   warn?: (message?: string) => void;
@@ -106,7 +112,9 @@ export function verifyWebSearchInsideSandbox(
         const parsed = JSON.parse(configCheck);
         const search = parsed?.tools?.web?.search;
         if (!search?.enabled) {
-          warn("  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.");
+          warn(
+            "  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.",
+          );
           return;
         }
         if (search.provider !== "brave") {

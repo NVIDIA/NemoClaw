@@ -139,11 +139,11 @@ type CredentialBackScenario = {
   stubNim?: boolean;
 };
 
-function writeAlwaysOkCurl(fakeBin: string) {
+function writeAlwaysOkCurl(fakeBin: string, body = '{"id":"resp_123"}') {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${body}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -347,16 +347,16 @@ const agent = ${JSON.stringify(scenario.agent || null)}
   }
   assert.equal(payload.outcome, "completed");
   assert.equal(payload.result.provider, "nvidia-prod");
-  assert.ok(payload.lines.some((line: string) => line.includes("Returning to provider selection.")));
+  assert.ok(
+    payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+  );
   assert.ok(
     payload.prompts.some(
       (entry: { message: string; secret: boolean }) =>
         scenario.promptPattern.test(entry.message) && entry.secret,
     ),
   );
-  assert.ok(
-    payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
-  );
+  assert.ok(payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"));
   assert.equal(payload.credentialValue, null);
 }
 
@@ -367,28 +367,14 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "selection-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
@@ -464,9 +450,7 @@ const { setupNim } = require(${onboardPath});
     // #3951: step 3 banner must be provider-agnostic — selecting a non-NIM
     // provider (here, NVIDIA Endpoints) must not be labeled "(NIM)".
     assert.ok(
-      payload.lines.some((line: string) =>
-        /\[3\/8\] Configuring inference provider\b/.test(line),
-      ),
+      payload.lines.some((line: string) => /\[3\/8\] Configuring inference provider\b/.test(line)),
       "expected provider-agnostic [3/8] banner",
     );
     assert.ok(
@@ -481,27 +465,13 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "no-recommended-label-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -561,7 +531,9 @@ const { setupNim } = require(${onboardPath});
     const scriptPath = path.join(tmpDir, "build-deepseek-selection-check.js");
     const curlArgsLog = path.join(tmpDir, "deepseek-curl-args.log");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -666,7 +638,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-model-selection-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -762,7 +736,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-model-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -861,7 +837,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "gemini-selection-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -956,7 +934,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-validation-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1100,7 +1080,9 @@ const { setupNim } = require(${onboardPath});
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-context-"));
     const scriptPath = path.join(tmpDir, "ollama-context-check.js");
-    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     const script = String.raw`
@@ -1186,33 +1168,15 @@ console.log(JSON.stringify(result));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-loopback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -1322,7 +1286,9 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("applies the systemd loopback override for an existing running Ollama install", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
+  it("applies the systemd loopback override for an existing running Ollama install", {
+    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -1431,11 +1397,11 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("preserves existing Ollama systemd override settings while repairing loopback", { timeout: 10_000 }, () => {
+  it("preserves existing Ollama systemd override settings while repairing loopback", {
+    timeout: 10_000,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-merge-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-merge-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-systemd-merge-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
@@ -1539,7 +1505,9 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.ok(payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'));
-    assert.ok(payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'));
+    assert.ok(
+      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+    );
     assert.ok(payload.installedBody.includes("[Install]"));
     assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
     assert.ok(
@@ -1580,7 +1548,9 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", { timeout: 10_000 }, () => {
+  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", {
+    timeout: 10_000,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-spark-"));
     const scriptPath = path.join(tmpDir, "ollama-systemd-spark-check.js");
@@ -1661,7 +1631,9 @@ console.log(JSON.stringify({ result, installedBody, shellCommands }));
     );
   });
 
-  it("allows prompt-capable sudo in non-interactive Ollama systemd setup", { timeout: 10_000 }, () => {
+  it("allows prompt-capable sudo in non-interactive Ollama systemd setup", {
+    timeout: 10_000,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-mode-"));
     const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-mode-check.js");
@@ -1767,7 +1739,9 @@ ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
     assert.match(result.stderr, /Unsupported NEMOCLAW_NON_INTERACTIVE_SUDO_MODE value: foo/);
   });
 
-  it("repairs already-loopback systemd Ollama without starting a duplicate daemon", { timeout: 10_000 }, () => {
+  it("repairs already-loopback systemd Ollama without starting a duplicate daemon", {
+    timeout: 10_000,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-loopback-"),
@@ -1885,7 +1859,9 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", { timeout: 15_000 }, () => {
+  it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", {
+    timeout: 15_000,
+  }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-existing-systemd-restart-fail-"),
@@ -2022,27 +1998,13 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-back-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -2121,28 +2083,14 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-bootstrap-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2233,28 +2181,14 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2353,28 +2287,14 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-decline-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2470,28 +2390,14 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-yes-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2586,7 +2492,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "openai-model-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2678,7 +2586,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-model-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2766,7 +2676,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-validation-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2862,7 +2774,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-compatible-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2949,7 +2863,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3064,7 +2980,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-responses-fallback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3160,7 +3078,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-responses-force-completions-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3261,7 +3181,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-responses-override-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3370,27 +3292,13 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-endpoint-blank-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3463,7 +3371,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-anthropic-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3573,27 +3483,13 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "model-back-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3662,27 +3558,13 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "credential-back-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const clearCredentialEnv = [
@@ -3870,7 +3752,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "transport-back-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3968,7 +3852,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "selection-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4074,7 +3960,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-noninteractive-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4178,18 +4066,18 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-missingkey-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     // Fake openshell: report the inference provider as absent so the
     // gateway-credential-reuse fallback does NOT swallow the missing-key
     // error path under test.
-    fs.writeFileSync(
-      path.join(fakeBin, "openshell"),
-      `#!${process.execPath}\nprocess.exit(1);\n`,
-      { mode: 0o755 },
-    );
+    fs.writeFileSync(path.join(fakeBin, "openshell"), `#!${process.execPath}\nprocess.exit(1);\n`, {
+      mode: 0o755,
+    });
 
     const script = String.raw`
 const fs = require("fs");
@@ -4282,9 +4170,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
         ),
       ),
     );
-    const setWithIndex = payload.lines.findIndex(
-      (line: string) => line.trim() === "Set with:",
-    );
+    const setWithIndex = payload.lines.findIndex((line: string) => line.trim() === "Set with:");
     assert.ok(setWithIndex >= 0, "expected a standalone 'Set with:' line");
     assert.equal(
       payload.lines[setWithIndex + 1].trim(),
@@ -4304,7 +4190,9 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "build-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4421,7 +4309,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "nvidia-paste-guard-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4497,7 +4387,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "openai-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4573,7 +4465,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "anthropic-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4649,7 +4543,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "gemini-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4727,7 +4623,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-openai-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4819,7 +4717,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "custom-anthropic-auth-retry-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4909,7 +4809,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-override-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -5011,7 +4913,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "nim-override-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
 
@@ -5123,7 +5027,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "install-ollama-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
@@ -5132,27 +5038,7 @@ const { setupNim } = require(${onboardPath});
     // Fake curl binary that returns a successful response — needed because
     // runCurlProbe and validateOllamaModel spawn real curl via child_process.
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     // Simulate: no Ollama installed, no Ollama running, no vLLM on native
     // Linux, so cloud + install-ollama should appear.
@@ -5374,7 +5260,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-systemd-fail-"));
     const scriptPath = path.join(tmpDir, "systemd-fail-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
@@ -5453,7 +5341,10 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(result.status, 1);
     assert.match(result.stdout, /Applying an Ollama systemd override/);
-    assert.match(result.stdout, /use sudo to write the drop-in, reload systemd, and restart the service/);
+    assert.match(
+      result.stdout,
+      /use sudo to write the drop-in, reload systemd, and restart the service/,
+    );
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
     assert.doesNotMatch(result.stderr, /manual-start/);
@@ -5467,34 +5358,16 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "noninteractive-install-ollama-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -5647,7 +5520,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "userlocal-install-ollama-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
@@ -5656,27 +5531,7 @@ const { setupNim } = require(${onboardPath});
     // Fake curl + zstd binaries on PATH. The install module uses curl to
     // probe the release tarball (HEAD) and zstd to decompress; both must
     // exist on PATH for the user-local path to choose the .tar.zst asset.
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(path.join(fakeBin, "zstd"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
 
     const script = String.raw`
@@ -5799,15 +5654,13 @@ const { setupNim } = require(${onboardPath});
       "User-local install must NOT run the official curl|sh installer",
     );
     assert.ok(
-      payload.runCommands.some((cmd: string) =>
-        cmd.includes("ollama-linux-") && cmd.includes(".tar.zst"),
+      payload.runCommands.some(
+        (cmd: string) => cmd.includes("ollama-linux-") && cmd.includes(".tar.zst"),
       ),
       "User-local install should download the release tarball directly",
     );
     assert.ok(
-      payload.runCommands.some(
-        (cmd: string) => cmd.includes("zstd -d") && cmd.includes("/.local"),
-      ),
+      payload.runCommands.some((cmd: string) => cmd.includes("zstd -d") && cmd.includes("/.local")),
       "User-local install should extract under ${HOME}/.local without sudo",
     );
     assert.ok(
@@ -5828,9 +5681,7 @@ const { setupNim } = require(${onboardPath});
 
   it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-upgrade-old-ollama-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-upgrade-old-ollama-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "upgrade-old-ollama-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
@@ -5843,27 +5694,7 @@ const { setupNim } = require(${onboardPath});
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     // Fake passwordless sudo so the upgrade gate doesn't short-circuit
     // before the official installer runs in this non-interactive scenario.
     fs.writeFileSync(path.join(fakeBin, "sudo"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
@@ -6010,7 +5841,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "windows-ollama-install-restart-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
@@ -6023,27 +5856,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6159,7 +5972,10 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.installCalls.length, 1);
     assert.equal(payload.awaitCalls.length, 1);
     assert.deepEqual(payload.restartCalls, [
-      { installedPath: "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe" },
+      {
+        installedPath:
+          "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
+      },
     ]);
     assert.ok(
       payload.lines.some((line: string) =>
@@ -6479,7 +6295,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "windows-ollama-install-to-start-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const topologyPath = JSON.stringify(
@@ -6491,27 +6309,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6638,7 +6436,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "windows-ollama-process-fallback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const topologyPath = JSON.stringify(
@@ -6650,27 +6450,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6786,7 +6566,9 @@ const { setupNim } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "windows-ollama-static-path-fallback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const topologyPath = JSON.stringify(
@@ -6798,27 +6580,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6926,7 +6688,9 @@ const { setupNim } = require(${onboardPath});
     );
     const scriptPath = path.join(tmpDir, "windows-ollama-no-wsl-fallback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const topologyPath = JSON.stringify(
@@ -7007,7 +6771,9 @@ const { setupNim } = require(${onboardPath});
     );
     const scriptPath = path.join(tmpDir, "windows-ollama-no-linux-fallback-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
     const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));

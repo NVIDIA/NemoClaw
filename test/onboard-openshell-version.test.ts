@@ -97,7 +97,10 @@ describe("OpenShell version helpers", () => {
 
     const noFieldDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
     fs.mkdirSync(path.join(noFieldDir, "nemoclaw-blueprint"), { recursive: true });
-    fs.writeFileSync(path.join(noFieldDir, "nemoclaw-blueprint", "blueprint.yaml"), 'version: "0.1.0"\n');
+    fs.writeFileSync(
+      path.join(noFieldDir, "nemoclaw-blueprint", "blueprint.yaml"),
+      'version: "0.1.0"\n',
+    );
     try {
       expect(getBlueprintMinOpenshellVersion(noFieldDir)).toBe(null);
     } finally {
@@ -172,7 +175,9 @@ describe("OpenShell version helpers", () => {
   });
 
   it("rejects OpenShell blueprint version constraints with suffixes", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-openshell-version-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-blueprint-bad-openshell-version-"),
+    );
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
     fs.mkdirSync(blueprintDir, { recursive: true });
     fs.writeFileSync(
@@ -198,7 +203,10 @@ describe("OpenShell version helpers", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
     fs.mkdirSync(path.join(tmpDir, "nemoclaw-blueprint"), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, "nemoclaw-blueprint", "blueprint.yaml"), 'version: "0.1.0"\n');
+    fs.writeFileSync(
+      path.join(tmpDir, "nemoclaw-blueprint", "blueprint.yaml"),
+      'version: "0.1.0"\n',
+    );
     try {
       expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
     } finally {

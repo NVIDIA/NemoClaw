@@ -181,7 +181,11 @@ export function parseOnboardArgs(
   const sandboxGpuDeviceIdx = parsedArgs.indexOf("--sandbox-gpu-device");
   if (sandboxGpuDeviceIdx !== -1) {
     const deviceValue = parsedArgs[sandboxGpuDeviceIdx + 1];
-    if (typeof deviceValue !== "string" || deviceValue.length === 0 || deviceValue.startsWith("--")) {
+    if (
+      typeof deviceValue !== "string" ||
+      deviceValue.length === 0 ||
+      deviceValue.startsWith("--")
+    ) {
       error("  --sandbox-gpu-device requires a device selector");
       printOnboardUsage(error, noticeAcceptFlag);
       exit(1);

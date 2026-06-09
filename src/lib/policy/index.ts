@@ -152,9 +152,7 @@ function loadAgentPresetContent(
     const agent = loadAgent(sandbox.agent);
     if (!agent?.policyAdditionsPath || !fs.existsSync(agent.policyAdditionsPath)) return null;
 
-    const agentPolicies = parseNetworkPolicies(
-      fs.readFileSync(agent.policyAdditionsPath, "utf-8"),
-    );
+    const agentPolicies = parseNetworkPolicies(fs.readFileSync(agent.policyAdditionsPath, "utf-8"));
     if (!agentPolicies) return null;
 
     const keys = selectAgentPolicyKeys(agentPolicies, presetName, builtinPresetContent);
@@ -218,7 +216,7 @@ function getPresetValidationWarning(presetName: string): string | null {
     return [
       "Jira preset validation uses per-binary policy signals.",
       "Node HTTPS is allowed for Atlassian API traffic:",
-      'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
+      "node -e \"require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))\"",
       "curl is intentionally not in the preset binary allowlist. Avoid plain",
       "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
       "redirect body, which looks the same as a blocked request. Use a",

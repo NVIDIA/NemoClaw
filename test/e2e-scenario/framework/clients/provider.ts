@@ -107,7 +107,9 @@ export function trustedProviderEndpoint(
   try {
     url = new URL(rawUrl);
   } catch (error) {
-    throw new Error(`provider endpoint URL is invalid: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `provider endpoint URL is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`provider endpoint protocol must be http or https: ${url.protocol}`);
@@ -123,7 +125,9 @@ export function trustedProviderEndpoint(
     throw new Error(`provider endpoint host is blocked: ${host}`);
   }
   if (isPrivateOrLinkLocalIp(host) && !isLoopbackHost(host)) {
-    throw new Error(`provider endpoint IP literal must not target private or link-local ranges: ${host}`);
+    throw new Error(
+      `provider endpoint IP literal must not target private or link-local ranges: ${host}`,
+    );
   }
   if (url.protocol === "http:" && !isLoopbackHost(host)) {
     throw new Error(`provider endpoint http URLs must target loopback hosts: ${host}`);
@@ -152,7 +156,10 @@ export class ProviderClient {
     this.runner = runner;
   }
 
-  private curl(endpoint: TrustedProviderEndpoint, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  private curl(
+    endpoint: TrustedProviderEndpoint,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     return this.runner.run(
       trustedShellCommand({
         command: "curl",
@@ -167,7 +174,10 @@ export class ProviderClient {
     );
   }
 
-  async getJson<T = unknown>(endpoint: TrustedProviderEndpoint, options: ShellProbeRunOptions = {}): Promise<T> {
+  async getJson<T = unknown>(
+    endpoint: TrustedProviderEndpoint,
+    options: ShellProbeRunOptions = {},
+  ): Promise<T> {
     const result = await this.curl(endpoint, options);
     assertExitZero(result, `curl ${endpoint.logLabel}`);
     try {

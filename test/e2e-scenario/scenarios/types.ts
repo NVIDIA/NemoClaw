@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export type PhaseName =
-  | "environment"
-  | "onboarding"
-  | "state-validation"
-  | "lifecycle"
-  | "runtime";
+export type PhaseName = "environment" | "onboarding" | "state-validation" | "lifecycle" | "runtime";
 
 // Synthetic phase appended by the scenario runner when a scenario
 // declares plan.expectedFailure. Distinct from PhaseName so a scenario

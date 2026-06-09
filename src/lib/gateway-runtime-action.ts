@@ -4,7 +4,10 @@
 const { startGatewayForRecovery } = require("./onboard") as {
   startGatewayForRecovery: () => Promise<void>;
 };
-import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "./adapters/openshell/timeouts";
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 
@@ -103,8 +106,9 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: true, before, after, attempted: true, via: "select" };
   }
 
-  const shouldStartGateway = [before.state, after.state].some((state) =>
-    recoverableStates.has(state) &&
+  const shouldStartGateway = [before.state, after.state].some(
+    (state) =>
+      recoverableStates.has(state) &&
       ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state),
   );
 

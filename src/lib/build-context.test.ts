@@ -60,10 +60,7 @@ describe("printSandboxCreateRecoveryHints", () => {
 
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
     printSandboxCreateRecoveryHints(
-      [
-        "[progress] Uploaded to gateway",
-        "failed to read image export stream",
-      ].join("\n"),
+      ["[progress] Uploaded to gateway", "failed to read image export stream"].join("\n"),
     );
 
     expect(stderr()).toContain("reuse existing gateway state");
@@ -210,7 +207,9 @@ describe("reconstructImageRefCreateCommand", () => {
   it("handles a trailing --from with no following value without crashing", () => {
     // Defensive: a malformed args array must not throw or duplicate the ref.
     const cmd = reconstructImageRefCreateCommand(["--name", "asst", "--from"], "registry/ref:1");
-    expect(cmd).toBe("openshell sandbox create --name asst --from -- env <YOUR_RUNTIME_ENV> nemoclaw-start");
+    expect(cmd).toBe(
+      "openshell sandbox create --name asst --from -- env <YOUR_RUNTIME_ENV> nemoclaw-start",
+    );
   });
 });
 

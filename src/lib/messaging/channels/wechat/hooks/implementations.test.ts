@@ -168,9 +168,7 @@ describe("WeChat hook implementations", () => {
         }),
       },
     ]);
-    const hook = wechatManifest.hooks.find(
-      (entry) => entry.id === "wechat-seed-openclaw-account",
-    );
+    const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-seed-openclaw-account");
 
     if (!hook) throw new Error("missing WeChat seed hook");
 
