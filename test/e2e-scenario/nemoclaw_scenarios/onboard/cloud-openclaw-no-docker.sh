@@ -29,19 +29,28 @@
 # Pattern mirrors test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh,
 # which sets up a different failure condition (port 8080 occupied) but
 # follows the same capture-output / check-exit / grep-log shape.
+#
+# Migration note: the typed OnboardingPhaseFixture owns the future no-Docker
+# path. This shell worker remains the live dispatcher target until that phase
+# is fully wired into scenario execution. Keep its Docker-daemon-missing
+# signature and redacted negative-preflight evidence contract aligned with the
+# typed fixture, then remove both PATH-shadow shims once the framework can
+# inject a Docker client boundary directly.
 
-e2e_no_docker_redact_preflight_log() {
-  local log="$1"
-  [[ -f "${log}" ]] || return 0
+e2e_no_docker_publish_redacted_preflight_log() {
+  local raw_log="$1" redacted_log="$2"
+  [[ -f "${raw_log}" ]] || return 0
+  rm -f "${redacted_log}"
 
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "${log}" <<'PY'
+    python3 - "${raw_log}" "${redacted_log}" <<'PY'
 import os
 import re
 import sys
 
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8", errors="replace") as handle:
+source = sys.argv[1]
+target = sys.argv[2]
+with open(source, "r", encoding="utf-8", errors="replace") as handle:
     text = handle.read()
 
 for name, value in os.environ.items():
@@ -55,7 +64,7 @@ text = re.sub(
     flags=re.I,
 )
 
-with open(path, "w", encoding="utf-8") as handle:
+with open(target, "w", encoding="utf-8") as handle:
     handle.write(text)
 PY
     return
@@ -63,8 +72,8 @@ PY
 
   local redacted
   redacted="$(mktemp -t e2e-negative-preflight-redacted-XXXXXX)"
-  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' "${log}" >"${redacted}"
-  mv "${redacted}" "${log}"
+  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' "${raw_log}" >"${redacted}"
+  mv "${redacted}" "${redacted_log}"
 }
 
 e2e_onboard_cloud_openclaw_no_docker() {
@@ -74,9 +83,11 @@ e2e_onboard_cloud_openclaw_no_docker() {
   e2e_context_path >/dev/null
   mkdir -p "${E2E_CONTEXT_DIR}"
 
-  local log shim_dir rc=0
+  local log raw_log shim_dir rc=0
   log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   shim_dir="$(mktemp -d -t e2e-no-docker-XXXXXX)"
+  raw_log="${shim_dir}/negative-preflight.raw.log"
+  rm -f "${log}"
 
   cat >"${shim_dir}/docker" <<'SHIM'
 #!/usr/bin/env bash
@@ -94,10 +105,10 @@ SHIM
 
   PATH="${shim_dir}:${PATH}" \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
-    >"${log}" 2>&1 || rc=$?
+    >"${raw_log}" 2>&1 || rc=$?
 
+  e2e_no_docker_publish_redacted_preflight_log "${raw_log}" "${log}"
   rm -rf "${shim_dir}"
-  e2e_no_docker_redact_preflight_log "${log}"
 
   echo "negative-preflight: nemoclaw onboard exited ${rc}"
   if [[ -f "${log}" ]]; then

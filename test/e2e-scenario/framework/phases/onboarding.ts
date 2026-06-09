@@ -86,9 +86,11 @@ function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.
 }
 
 function noDockerShim(): string {
-  // Simulate the Docker-missing preflight state while the host still has a
-  // real Docker binary. Remove this once the scenario can inject a Docker
-  // client boundary directly instead of shadowing command lookup.
+  // Migration source of truth for the typed fixture path: simulate the invalid
+  // state where the Docker client exists but the daemon is unreachable. The
+  // legacy shell worker keeps a matching shim until live no-Docker onboarding
+  // dispatch moves fully into Vitest; remove both shims once the scenario can
+  // inject a Docker client boundary directly instead of shadowing command lookup.
   return `#!/usr/bin/env bash
 printf 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n' >&2
 exit 1
