@@ -297,6 +297,9 @@ describe("CLI sandbox status text output", () => {
     }
   });
 
+  // #4495: a paused Docker-driver container can surface upstream as
+  // `Phase: Error` even though the sandbox is intact. NemoClaw must keep the
+  // raw OpenShell phase but add an actionable paused-container recovery hint.
   it("status surfaces a paused Docker-driver container hint without rewriting Phase: Error", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-status-paused-"),

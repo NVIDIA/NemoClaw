@@ -99,10 +99,6 @@ describe("CLI sandbox status JSON output", () => {
     expect(parsed).toHaveProperty("gatewayState");
   });
 
-  // #4495: a paused Docker-driver container can surface upstream as
-  // `Phase: Error` even though the sandbox is intact. NemoClaw must keep the
-  // raw OpenShell phase but add an actionable paused-container recovery hint.
-
   it("sandbox status --json defaults openshell driver/version to 'unknown' strings", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-unknown-"),
