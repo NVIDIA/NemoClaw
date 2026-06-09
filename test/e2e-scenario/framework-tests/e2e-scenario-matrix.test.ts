@@ -102,7 +102,7 @@ describe("typed scenario matrix", () => {
     expect(() => resolveRunnerForScenario(broken)).toThrow(/no default for platform/);
   });
 
-  it("--emit-matrix prints a single-line JSON array compatible with $GITHUB_OUTPUT", () => {
+  it("--emit-matrix prints a single-line JSON array compatible with GitHub Actions output", () => {
     const result = runEmitMatrix();
     expect(result.status, result.stderr).toBe(0);
     const lines = result.stdout.trim().split("\n");

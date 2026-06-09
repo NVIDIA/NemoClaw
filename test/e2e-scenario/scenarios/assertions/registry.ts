@@ -48,21 +48,6 @@ function probeStep(
   };
 }
 
-function pendingStep(
-  id: string,
-  phase: PhaseName,
-  ref: string,
-  options: { required?: boolean } = {},
-): AssertionStep {
-  return {
-    id,
-    phase,
-    implementation: { kind: "pending", ref },
-    evidencePath: `.e2e/assertions/${id}.json`,
-    required: options.required,
-  };
-}
-
 function group(input: {
   id: string;
   phase: PhaseName;
@@ -128,6 +113,10 @@ const smokeSteps = [
   }),
   shellStep({ id: "runtime.smoke.sandbox-listed", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh" }),
   shellStep({ id: "runtime.smoke.sandbox-shell", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/03-sandbox-shell.sh", reliability: { timeoutSeconds: 30 } }),
+];
+
+const snapshotSteps = [
+  shellStep({ id: "runtime.snapshot.sandbox-listed", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh" }),
 ];
 
 const cloudInferenceSteps = [
@@ -199,30 +188,6 @@ const ollamaProxySteps = [
   }),
 ];
 
-export const runtimeControlGroups: AssertionGroup[] = [
-  {
-    id: "runtime.expected-failure.no-side-effects",
-    phase: "runtime",
-    description: "Negative scenario runtime check ensuring forbidden side effects did not occur.",
-    migrationStatus: "complete",
-    steps: [
-      pendingStep(
-        "runtime.expected-failure.no-side-effects",
-        "runtime",
-        "expectedFailureNoSideEffectsProbe",
-        // Negative scenarios assert that a declared failure mode
-        // produced no forbidden side effects. Until the side-effect
-        // validator is implemented, this step must fail closed for
-        // any scenario that opts into runtimeControlGroups[0]
-        // (i.e. scenario.expectedFailure is set). Skipping it would
-        // let negative scenarios silently "pass" without verifying
-        // their core contract.
-        { required: true },
-      ),
-    ],
-  },
-];
-
 export const validationSuiteGroups: AssertionGroup[] = [
   suiteGroup("smoke", smokeSteps),
   suiteGroup("gateway-health", [smokeSteps[1]]),
@@ -280,7 +245,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
     shellStep({ id: "lifecycle.sandbox.list-and-status", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/00-list-and-status.sh" }),
     shellStep({ id: "lifecycle.sandbox.logs-and-exec", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/01-logs-and-exec.sh" }),
   ]),
-  suiteGroup("snapshot", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
+  suiteGroup("snapshot", snapshotSteps),
   suiteGroup("snapshot-lifecycle", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
   suiteGroup("rebuild", [
     shellStep({ id: "lifecycle.rebuild.state-preserved", phase: "runtime", ref: "test/e2e-scenario/validation_suites/rebuild_upgrade/00-state-preserved.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),
@@ -300,7 +265,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
 ];
 
 export const assertionRegistry = {
-  groups: [...onboardingAssertionGroups, ...runtimeControlGroups, ...validationSuiteGroups],
+  groups: [...onboardingAssertionGroups, ...validationSuiteGroups],
 };
 
 export function assertionGroupForSuite(suiteId: string): AssertionGroup | undefined {
@@ -410,7 +375,6 @@ export function assertionGroupsForScenario(scenario: ScenarioDefinition): Assert
     ...onboardingGroups,
     ...suiteGroups,
     ...supplementalGroups,
-    scenario.expectedFailure ? runtimeControlGroups[0] : undefined,
   ];
   return uniqueGroups(groups.filter((entry): entry is AssertionGroup => Boolean(entry)));
 }

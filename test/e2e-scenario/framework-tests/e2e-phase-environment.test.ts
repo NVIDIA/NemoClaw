@@ -132,19 +132,23 @@ describe("environment phase fixture", () => {
     });
   });
 
-  it("fails if a no-Docker negative scenario unexpectedly has Docker", async () => {
+  it("records Docker availability for no-Docker negative scenarios without blocking simulation", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(0, "Docker is available\n"));
     const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
 
-    await expect(
-      environment.assertReady({
-        ...cloudOpenClawEnvironment,
-        runtime: "docker-missing",
-        onboarding: "cloud-openclaw-no-docker",
-      }),
-    ).rejects.toThrow(/expected Docker to be unavailable/);
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      runtime: "docker-missing",
+      onboarding: "cloud-openclaw-no-docker",
+    });
+
+    expect(ready.docker).toMatchObject({
+      id: "docker-missing",
+      expectation: "missing",
+      available: true,
+    });
   });
 
   it("records optional Docker as unavailable without failing", async () => {

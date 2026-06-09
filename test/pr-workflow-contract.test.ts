@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import {
   readYaml,
@@ -24,6 +25,7 @@ const sharedActionPaths = {
   cliCoverageShard: "./.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.github/actions/ci-cli-coverage-merge",
   pluginCoverage: "./.github/actions/ci-plugin-coverage",
+  installerIntegration: "./.github/actions/ci-installer-integration",
 } as const;
 
 const trustedPrActionPaths = {
@@ -32,6 +34,7 @@ const trustedPrActionPaths = {
   cliCoverageShard: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard",
   cliCoverageMerge: "./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge",
   pluginCoverage: "./.trusted-ci-actions/.github/actions/ci-plugin-coverage",
+  installerIntegration: "./.trusted-ci-actions/.github/actions/ci-installer-integration",
 } as const;
 
 const trustedCheckoutAction =
@@ -43,6 +46,7 @@ const trustedActionDirs = [
   ".github/actions/ci-cli-coverage-shard",
   ".github/actions/ci-cli-coverage-merge",
   ".github/actions/ci-plugin-coverage",
+  ".github/actions/ci-installer-integration",
 ] as const;
 
 const cliShardMatrix = [1, 2, 3, 4, 5] as const;
@@ -145,6 +149,9 @@ describe("pull request and main workflow contracts", () => {
     pluginCoverage: readYaml<CompositeAction>(
       ".github/actions/ci-plugin-coverage/action.yaml",
     ),
+    installerIntegration: readYaml<CompositeAction>(
+      ".github/actions/ci-installer-integration/action.yaml",
+    ),
   };
 
   it("routes only code-changing PRs through the code-check path", () => {
@@ -240,6 +247,112 @@ describe("pull request and main workflow contracts", () => {
       ).toBeLessThan(requiredWorkflowStepIndex(prWorkflow.jobs[jobName], stepName));
     }
 
+    expect(stepUses(prWorkflow.jobs["installer-integration"])).toContain(
+      trustedPrActionPaths.installerIntegration,
+    );
+    expect(stepUses(prWorkflow.jobs["installer-integration"])).not.toContain(
+      sharedActionPaths.installerIntegration,
+    );
+    expect(stepUses(mainWorkflow.jobs["installer-integration"])).toContain(
+      sharedActionPaths.installerIntegration,
+    );
+    expect(stepUses(mainWorkflow.jobs["installer-integration"])).not.toContain(
+      trustedPrActionPaths.installerIntegration,
+    );
+    const installerTrustedCheckout = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Checkout trusted CI actions",
+    );
+    expect(installerTrustedCheckout.uses).toBe(trustedCheckoutAction);
+    expect(installerTrustedCheckout.with?.ref).toBe(
+      "${{ github.event.pull_request.base.sha }}",
+    );
+    expect(installerTrustedCheckout.with?.path).toBe(".trusted-ci-actions");
+    expect(installerTrustedCheckout.with?.["persist-credentials"]).toBe(false);
+    expect(installerTrustedCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
+    expect(String(installerTrustedCheckout.with?.["sparse-checkout"])).toContain(
+      ".github/actions/ci-installer-integration",
+    );
+    const installerActionProbe = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Detect trusted installer integration action",
+    );
+    expect(installerActionProbe.id).toBe("trusted-installer-integration");
+    expect(installerActionProbe.run).toContain(
+      ".trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml",
+    );
+    expect(installerActionProbe.run).toContain("available=true");
+    expect(installerActionProbe.run).toContain("available=false");
+    const installerActionStep = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Run installer integration tests",
+    );
+    expect(installerActionStep.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available == 'true' }}",
+    );
+    const bootstrapSetup = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Setup Node.js for installer integration",
+    );
+    expect(bootstrapSetup.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
+    );
+    expect(bootstrapSetup.uses).toContain("actions/setup-node@");
+    expect(bootstrapSetup.with?.["node-version"]).toBe("22");
+    expect(bootstrapSetup.with?.cache).toBe("npm");
+    const bootstrapInstall = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Install installer integration dependencies",
+    );
+    expect(bootstrapInstall.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
+    );
+    expect(bootstrapInstall.run).toContain("npm install --ignore-scripts");
+    expect(bootstrapInstall.run).toContain(
+      "cd nemoclaw && npm install --ignore-scripts",
+    );
+    const bootstrapBuild = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Build installer integration artifacts",
+    );
+    expect(bootstrapBuild.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
+    );
+    expect(bootstrapBuild.run).toContain("npm run build:cli");
+    expect(bootstrapBuild.run).toContain("cd nemoclaw && npm run build");
+    const bootstrapRun = requiredWorkflowStep(
+      prWorkflow.jobs["installer-integration"],
+      "Run installer integration tests (bootstrap)",
+    );
+    expect(bootstrapRun.if).toBe(
+      "${{ steps.trusted-installer-integration.outputs.available != 'true' }}",
+    );
+    expect(bootstrapRun.run).toBe(
+      "CI=true npx vitest run --project installer-integration",
+    );
+    expect(
+      requiredWorkflowStepIndex(
+        prWorkflow.jobs["installer-integration"],
+        "Checkout trusted CI actions",
+      ),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        prWorkflow.jobs["installer-integration"],
+        "Run installer integration tests",
+      ),
+    );
+    expect(
+      requiredWorkflowStepIndex(
+        prWorkflow.jobs["installer-integration"],
+        "Detect trusted installer integration action",
+      ),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        prWorkflow.jobs["installer-integration"],
+        "Run installer integration tests (bootstrap)",
+      ),
+    );
+
     expect(stepUses(mainWorkflow.jobs.checks)).not.toContain(
       "./.github/actions/basic-checks",
     );
@@ -282,6 +395,7 @@ describe("pull request and main workflow contracts", () => {
     const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
     const cliMergeRuns = stepRuns(sharedActions.cliCoverageMerge).join("\n");
     const pluginRuns = stepRuns(sharedActions.pluginCoverage).join("\n");
+    const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
     expect(staticRuns).toContain("npm run validate:configs");
@@ -356,6 +470,41 @@ describe("pull request and main workflow contracts", () => {
     expect(pluginRuns).toContain(
       'scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"',
     );
+
+    expect(installerRuns).toContain("npm install --ignore-scripts");
+    expect(installerRuns).toContain("cd nemoclaw && npm install --ignore-scripts");
+    expect(installerRuns).toContain("npm run build:cli");
+    expect(installerRuns).toContain("cd nemoclaw && npm run build");
+    expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
+  });
+
+  it("keeps PR coverage for non-opt-in Vitest projects after removing the self-hosted full run", () => {
+    const vitestConfig = readFileSync("vitest.config.ts", "utf8");
+    const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
+    const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
+    const prInstallerRuns = stepRuns(prWorkflow.jobs["installer-integration"]).join("\n");
+
+    expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
+    expect(prInstallerRuns).toContain(
+      "CI=true npx vitest run --project installer-integration",
+    );
+    expect(stepUses(prWorkflow.jobs["installer-integration"])).toContain(
+      trustedPrActionPaths.installerIntegration,
+    );
+    expect(stepUses(mainWorkflow.jobs["installer-integration"])).toContain(
+      sharedActionPaths.installerIntegration,
+    );
+    expect(vitestConfig).toContain('name: "installer-integration"');
+
+    // The e2e scenario framework remains part of the sharded CLI project:
+    // its tests live under test/e2e-scenario, while the CLI project only
+    // excludes the legacy test/e2e tree and installer-integration tests.
+    expect(cliShardRuns).toContain("npx vitest run --project cli");
+    expect(vitestConfig).toContain('name: "e2e-scenario-framework"');
+    expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"]');
+    expect(vitestConfig).toContain('"test/e2e/**"');
+    expect(vitestConfig).toContain('"test/install-preflight.test.ts"');
+    expect(vitestConfig).toContain('"test/install-openshell-version-check.test.ts"');
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
@@ -501,6 +650,7 @@ describe("pull request and main workflow contracts", () => {
       "docs-only-checks",
       "static-checks",
       "build-typecheck",
+      "installer-integration",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -511,6 +661,7 @@ describe("pull request and main workflow contracts", () => {
       "changes",
       "static-checks",
       "build-typecheck",
+      "installer-integration",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -523,6 +674,7 @@ describe("pull request and main workflow contracts", () => {
     expect(mainChecks.needs).toEqual([
       "static-checks",
       "build-typecheck",
+      "installer-integration",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -531,6 +683,7 @@ describe("pull request and main workflow contracts", () => {
     for (const jobName of [
       "static-checks",
       "build-typecheck",
+      "installer-integration",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -558,6 +711,13 @@ describe("pull request and main workflow contracts", () => {
       run.includes("npm install"),
     );
     expect(docsOnlyInstall).toBe("npm install --ignore-scripts");
+    const installerBootstrapInstall = stepRuns(
+      prWorkflow.jobs["installer-integration"],
+    ).find((run) => run.includes("npm install"));
+    expect(installerBootstrapInstall).toContain("npm install --ignore-scripts");
+    expect(installerBootstrapInstall).toContain(
+      "cd nemoclaw && npm install --ignore-scripts",
+    );
   });
 
   it("does not persist checkout credentials in PR or main jobs", () => {
