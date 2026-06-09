@@ -4,6 +4,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { superviseChild } from "../../framework/shell/supervisor.ts";
+import { validateShellToken } from "../../framework/shell/trusted-command.ts";
 import type { ProbeContext, ProbeFn, ProbeOutcome } from "./types.ts";
 
 /**
@@ -22,6 +24,10 @@ import type { ProbeContext, ProbeFn, ProbeOutcome } from "./types.ts";
  * Both checks exit 0 on success. The probe captures both exit codes
  * and surfaces a single combined outcome, with a structured evidence
  * JSON for diagnosis.
+ *
+ * Lifecycle (detached process group, timeout, SIGTERM -> SIGKILL
+ * escalation) and NUL-byte argv validation are delegated to the shared
+ * framework modules under `framework/shell/`.
  */
 
 const CHECK_DOCS_REL = "test/e2e/e2e-cloud-experimental/check-docs.sh";
@@ -32,6 +38,7 @@ interface DocsCheckResult {
   phase: "cli-parity" | "links-local";
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  timedOut: boolean;
   elapsedMs: number;
   stderrTail: string;
   stdoutTail: string;
@@ -41,58 +48,53 @@ interface DocsEvidence {
   results: DocsCheckResult[];
 }
 
-function runCheck(
+async function runCheck(
   scriptPath: string,
   args: readonly string[],
   cwd: string,
   timeoutMs: number,
   phase: DocsCheckResult["phase"],
 ): Promise<DocsCheckResult> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    let stdoutTail = "";
-    let stderrTail = "";
-    const child = spawn("bash", [scriptPath, ...args], {
-      env: { ...process.env, CHECK_DOC_LINKS_REMOTE: "0" },
-      cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const onTimeout = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* already gone */
-      }
-    }, timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutTail = (stdoutTail + chunk.toString("utf8")).slice(-1024);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-1024);
-    });
-    child.on("error", (err) => {
-      clearTimeout(onTimeout);
-      resolve({
-        phase,
-        exitCode: 127,
-        signal: null,
-        elapsedMs: Date.now() - startedAt,
-        stderrTail: `spawn error: ${err.message}`,
-        stdoutTail,
-      });
-    });
-    child.on("close", (code, sig) => {
-      clearTimeout(onTimeout);
-      resolve({
-        phase,
-        exitCode: code,
-        signal: sig,
-        elapsedMs: Date.now() - startedAt,
-        stderrTail,
-        stdoutTail,
-      });
-    });
+  const safeScript = validateShellToken(scriptPath, "docsValidation scriptPath");
+  const safeArgs = args.map((arg, idx) => validateShellToken(arg, `docsValidation args[${idx}]`));
+  const startedAt = Date.now();
+  let stdoutTail = "";
+  let stderrTail = "";
+  const child = spawn("bash", [safeScript, ...safeArgs], {
+    env: { ...process.env, CHECK_DOC_LINKS_REMOTE: "0" },
+    cwd,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const supervised = await superviseChild(child, {
+    timeoutMs,
+    onStdout: (chunk) => {
+      stdoutTail = (stdoutTail + chunk).slice(-1024);
+    },
+    onStderr: (chunk) => {
+      stderrTail = (stderrTail + chunk).slice(-1024);
+    },
+  });
+  if (supervised.spawnError) {
+    return {
+      phase,
+      exitCode: 127,
+      signal: null,
+      timedOut: false,
+      elapsedMs: Date.now() - startedAt,
+      stderrTail: `spawn error: ${supervised.spawnError.message}`,
+      stdoutTail,
+    };
+  }
+  return {
+    phase,
+    exitCode: supervised.exitCode,
+    signal: supervised.signal,
+    timedOut: supervised.timedOut,
+    elapsedMs: Date.now() - startedAt,
+    stderrTail,
+    stdoutTail,
+  };
 }
 
 function writeEvidence(evidencePath: string, payload: DocsEvidence): void {
@@ -130,11 +132,11 @@ export const docsValidationProbe: ProbeFn = async (ctx: ProbeContext): Promise<P
 
   writeEvidence(ctx.evidencePath, { results: [cliResult, linksResult] });
 
-  // Surface SIGTERM (timeout) as runner-infra so the orchestrator may
-  // retry on a transient slowness. Hard exit-code failures do not
-  // retry — a docs/CLI drift is deterministic.
-  if (cliResult.signal === "SIGTERM" || linksResult.signal === "SIGTERM") {
-    const which = cliResult.signal === "SIGTERM" ? "cli-parity" : "links-local";
+  // Surface timeout as runner-infra so the orchestrator may retry on a
+  // transient slowness. Hard exit-code failures do not retry — a
+  // docs/CLI drift is deterministic.
+  if (cliResult.timedOut || linksResult.timedOut) {
+    const which = cliResult.timedOut ? "cli-parity" : "links-local";
     return {
       status: "failed",
       classifier: "runner-infra",

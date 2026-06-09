@@ -4,6 +4,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { superviseChild } from "../../framework/shell/supervisor.ts";
+import { validateShellToken } from "../../framework/shell/trusted-command.ts";
 import type { ProbeContext } from "./types.ts";
 
 /**
@@ -12,7 +14,7 @@ import type { ProbeContext } from "./types.ts";
  *   1. Entering the sandbox via the canonical bash wrapper
  *      (`validation_suites/sandbox-exec.sh`) instead of re-implementing
  *      the ssh-config / openshell-exec logic in TS. This keeps the
- *      transport choice in ONE place \u2014 if the wrapper changes
+ *      transport choice in ONE place — if the wrapper changes
  *      (e.g. switches from openshell-exec to ssh-config preferred),
  *      every probe inherits the new behavior.
  *
@@ -22,8 +24,13 @@ import type { ProbeContext } from "./types.ts";
  *
  * Probe code MUST treat the returned `stdout`/`stderr` as already-bounded
  * (we slice the tail). The full output is never returned or logged from
- * here \u2014 evidence files keep the structured fields a probe explicitly
+ * here — evidence files keep the structured fields a probe explicitly
  * decides to persist.
+ *
+ * Lifecycle (detached process group, timeout, SIGTERM -> SIGKILL
+ * escalation) and NUL-byte argv validation are delegated to the shared
+ * framework modules under `framework/shell/` so probe spawns reap the
+ * same way orchestrator and fixture spawns do.
  */
 
 const VALIDATION_SUITES_REL = "test/e2e-scenario/validation_suites";
@@ -38,7 +45,8 @@ export interface CmdResult {
 }
 
 interface RunOptions {
-  /** Hard cap; on expiry the helper SIGTERMs the child and resolves. */
+  /** Hard cap; on expiry the supervisor SIGTERMs (then SIGKILLs) the
+   *  child process group and resolves. */
   timeoutMs: number;
   /** stdin payload for `runSandboxCmdStdin`. UTF-8 only. */
   stdin?: string;
@@ -50,18 +58,6 @@ interface RunOptions {
 
 function tail(buf: string, max = TAIL_BYTES): string {
   return buf.length <= max ? buf : buf.slice(-max);
-}
-
-/**
- * Reject NUL bytes in any string that flows into a child process. Mirrors
- * the defense-in-depth used by src/lib/runner.ts (normalizeSpawnFile /
- * normalizeSpawnArgs) so probe-side spawns enforce the same boundary.
- */
-function rejectNulByte(value: string, label: string): string {
-  if (value.includes("\u0000")) {
-    throw new Error(`${label} must not contain NUL bytes`);
-  }
-  return value;
 }
 
 /**
@@ -78,77 +74,71 @@ function rejectNulByte(value: string, label: string): string {
  *   2. `bashArgs` carry all variable data and reach the script via
  *      bash positional parameters ($1, $2, ...). Bash treats positional
  *      argv as data, not code, so the values bypass parser expansion.
- *   3. Every string in `bashArgs` is NUL-byte-rejected here — NUL is
- *      the only byte process-spawn cannot survive cleanly.
+ *   3. Every string in `bashArgs` is NUL-byte-rejected at the shared
+ *      framework boundary (framework/shell/trusted-command.ts) — NUL
+ *      is the only byte process-spawn cannot survive cleanly.
  *   4. The bash binary path is hard-coded; `shell: false` is implicit
  *      because spawn() does not enable a shell when given an explicit
  *      argv array.
+ *   5. Lifecycle (detached process group, timeout, SIGTERM -> SIGKILL
+ *      escalation) is delegated to framework/shell/supervisor.ts so
+ *      probe spawns reap the same way orchestrator and fixture spawns
+ *      do.
  *
  * The lgtm suppression below is justified by this contract; it mirrors
  * the established pattern in src/lib/runner.ts where the same rule is
  * suppressed for argv arrays passed through `bash -c`.
  */
-function spawnBash(
+async function spawnBash(
   script: string,
   opts: RunOptions,
   bashArgs: readonly string[] = [],
 ): Promise<CmdResult> {
   const safeArgs = bashArgs.map((arg, idx) =>
-    rejectNulByte(String(arg), `spawnBash: bashArgs[${idx + 1}]`),
+    validateShellToken(String(arg), `spawnBash bashArgs[${idx + 1}]`),
   );
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    let stdout = "";
-    let stderr = "";
-    // bash -c reserves the first positional after the script for $0;
-    // a fixed sentinel keeps the script's own $1..$N aligned with the
-    // caller-supplied bashArgs. Spawn safety contract is documented on
-    // spawnBash above (literal script body, NUL-validated positional
-    // argv, hard-coded bash binary). The lgtm marker MUST be the line
-    // immediately preceding the spawn() call so CodeQL/LGTM picks it up.
-    // lgtm[js/shell-command-injection-from-environment]
-    const child = spawn("bash", ["-c", script, "e2e-probe-spawn", ...safeArgs], {
-      env: opts.env ?? process.env,
-      cwd: opts.cwd,
-      stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    });
-    const onTimeout = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* already gone */
-      }
-    }, opts.timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = tail(stdout + chunk.toString("utf8"));
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = tail(stderr + chunk.toString("utf8"));
-    });
-    if (opts.stdin !== undefined && child.stdin) {
-      child.stdin.end(opts.stdin);
-    }
-    child.on("error", (err) => {
-      clearTimeout(onTimeout);
-      resolve({
-        exitCode: 127,
-        signal: null,
-        stdout,
-        stderr: tail(stderr + `spawn error: ${err.message}`),
-        elapsedMs: Date.now() - startedAt,
-      });
-    });
-    child.on("close", (code, sig) => {
-      clearTimeout(onTimeout);
-      resolve({
-        exitCode: code,
-        signal: sig,
-        stdout,
-        stderr,
-        elapsedMs: Date.now() - startedAt,
-      });
-    });
+  const startedAt = Date.now();
+  let stdout = "";
+  let stderr = "";
+  // bash -c reserves the first positional after the script for $0;
+  // a fixed sentinel keeps the script's own $1..$N aligned with the
+  // caller-supplied bashArgs. Spawn safety contract is documented on
+  // spawnBash above (literal script body, NUL-validated positional
+  // argv, hard-coded bash binary). The lgtm marker MUST be the line
+  // immediately preceding the spawn() call so CodeQL/LGTM picks it up.
+  // lgtm[js/shell-command-injection-from-environment]
+  const child = spawn("bash", ["-c", script, "e2e-probe-spawn", ...safeArgs], {
+    env: opts.env ?? process.env,
+    cwd: opts.cwd,
+    detached: true,
+    stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
   });
+  const supervised = await superviseChild(child, {
+    timeoutMs: opts.timeoutMs,
+    stdin: opts.stdin,
+    onStdout: (chunk) => {
+      stdout = tail(stdout + chunk);
+    },
+    onStderr: (chunk) => {
+      stderr = tail(stderr + chunk);
+    },
+  });
+  if (supervised.spawnError) {
+    return {
+      exitCode: 127,
+      signal: null,
+      stdout,
+      stderr: tail(stderr + `spawn error: ${supervised.spawnError.message}`),
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
+  return {
+    exitCode: supervised.exitCode,
+    signal: supervised.signal,
+    stdout,
+    stderr,
+    elapsedMs: Date.now() - startedAt,
+  };
 }
 
 /**
@@ -221,55 +211,47 @@ E2E_SANDBOX_EXEC_TIMEOUT_SECONDS=${perCall} "$2" "$3" -- "\${@:4}"
  * commands that operate against the host, not inside the sandbox
  * (e.g. `nemoclaw <sb> shields status`, `openshell policy get`).
  */
-export function runHostCmd(
+export async function runHostCmd(
   bin: string,
   args: readonly string[],
   opts: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CmdResult> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    let stdout = "";
-    let stderr = "";
-    const child = spawn(bin, [...args], {
-      env: opts.env ?? process.env,
-      cwd: opts.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const timeoutMs = opts.timeoutMs ?? 30_000;
-    const onTimeout = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* already gone */
-      }
-    }, timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = tail(stdout + chunk.toString("utf8"));
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = tail(stderr + chunk.toString("utf8"));
-    });
-    child.on("error", (err) => {
-      clearTimeout(onTimeout);
-      resolve({
-        exitCode: 127,
-        signal: null,
-        stdout,
-        stderr: tail(stderr + `spawn error: ${err.message}`),
-        elapsedMs: Date.now() - startedAt,
-      });
-    });
-    child.on("close", (code, sig) => {
-      clearTimeout(onTimeout);
-      resolve({
-        exitCode: code,
-        signal: sig,
-        stdout,
-        stderr,
-        elapsedMs: Date.now() - startedAt,
-      });
-    });
+  const safeBin = validateShellToken(bin, "runHostCmd bin");
+  const safeArgs = args.map((arg, idx) => validateShellToken(arg, `runHostCmd args[${idx}]`));
+  const startedAt = Date.now();
+  let stdout = "";
+  let stderr = "";
+  const child = spawn(safeBin, [...safeArgs], {
+    env: opts.env ?? process.env,
+    cwd: opts.cwd,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  const supervised = await superviseChild(child, {
+    timeoutMs: opts.timeoutMs ?? 30_000,
+    onStdout: (chunk) => {
+      stdout = tail(stdout + chunk);
+    },
+    onStderr: (chunk) => {
+      stderr = tail(stderr + chunk);
+    },
+  });
+  if (supervised.spawnError) {
+    return {
+      exitCode: 127,
+      signal: null,
+      stdout,
+      stderr: tail(stderr + `spawn error: ${supervised.spawnError.message}`),
+      elapsedMs: Date.now() - startedAt,
+    };
+  }
+  return {
+    exitCode: supervised.exitCode,
+    signal: supervised.signal,
+    stdout,
+    stderr,
+    elapsedMs: Date.now() - startedAt,
+  };
 }
 
 function resolveProbeEvidencePath(ctx: ProbeContext): string {

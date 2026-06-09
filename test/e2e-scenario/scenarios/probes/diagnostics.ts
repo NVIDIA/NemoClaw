@@ -5,6 +5,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { superviseChild } from "../../framework/shell/supervisor.ts";
+import { validateShellToken } from "../../framework/shell/trusted-command.ts";
 import type { ProbeContext, ProbeFn, ProbeOutcome } from "./types.ts";
 
 /**
@@ -22,6 +24,10 @@ import type { ProbeContext, ProbeFn, ProbeOutcome } from "./types.ts";
  * (a future `diagnosticsBundleSecretsProbe`) so this one stays
  * narrowly focused on bundle production.
  *
+ * Lifecycle (detached process group, timeout, SIGTERM -> SIGKILL
+ * escalation) and NUL-byte argv validation are delegated to the shared
+ * framework modules under `framework/shell/`.
+ *
  * Evidence: a JSON document at ProbeContext.evidencePath summarizing
  * exit code, archive size, and elapsed seconds.
  */
@@ -30,6 +36,7 @@ const DIAGNOSTICS_TIMEOUT_MS = 30_000;
 interface DiagnosticsEvidence {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  timedOut: boolean;
   elapsedMs: number;
   archivePath: string;
   archiveSize: number | null;
@@ -52,49 +59,40 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-diag-probe-"));
   const archivePath = path.join(tmp, "quick-debug.tar.gz");
+  const safeArgs = [
+    validateShellToken("debug", "diagnosticsProbe argv[0]"),
+    validateShellToken("--quick", "diagnosticsProbe argv[1]"),
+    validateShellToken("--output", "diagnosticsProbe argv[2]"),
+    validateShellToken(archivePath, "diagnosticsProbe archivePath"),
+  ];
   const startedAt = Date.now();
-
-  let exitCode: number | null = null;
-  let signal: NodeJS.Signals | null = null;
   let stderrTail = "";
 
-  const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolve) => {
-      const child = spawn(
-        "nemoclaw",
-        ["debug", "--quick", "--output", archivePath],
-        // Use the parent env directly: probes run inside the framework
-        // process and don't need the redacted secret env that shell
-        // steps build at the spawn boundary. PATH/HOME/E2E_* are
-        // already in process.env.
-        { env: process.env, cwd: ctx.repoRoot, stdio: ["ignore", "ignore", "pipe"] },
-      );
-      const onTimeout = setTimeout(() => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          /* already gone */
-        }
-      }, DIAGNOSTICS_TIMEOUT_MS);
-      child.stderr?.on("data", (chunk: Buffer) => {
-        stderrTail = (stderrTail + chunk.toString("utf8")).slice(-1024);
-      });
-      child.on("error", (err) => {
-        clearTimeout(onTimeout);
-        // ENOENT or similar — nemoclaw is not on PATH. Surface as a
-        // distinct classifier so the operator can see it's an
-        // environment problem, not a real diagnostics failure.
-        stderrTail = (stderrTail + `spawn error: ${err.message}`).slice(-1024);
-        resolve({ code: 127, signal: null });
-      });
-      child.on("close", (code, sig) => {
-        clearTimeout(onTimeout);
-        resolve({ code, signal: sig });
-      });
+  const child = spawn("nemoclaw", safeArgs, {
+    // Use the parent env directly: probes run inside the framework
+    // process and don't need the redacted secret env that shell
+    // steps build at the spawn boundary. PATH/HOME/E2E_* are
+    // already in process.env.
+    env: process.env,
+    cwd: ctx.repoRoot,
+    detached: true,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const supervised = await superviseChild(child, {
+    timeoutMs: DIAGNOSTICS_TIMEOUT_MS,
+    onStderr: (chunk) => {
+      stderrTail = (stderrTail + chunk).slice(-1024);
     },
-  );
-  exitCode = result.code;
-  signal = result.signal;
+  });
+  let exitCode = supervised.exitCode;
+  const signal = supervised.signal;
+  if (supervised.spawnError) {
+    // ENOENT or similar — nemoclaw is not on PATH. Surface as a
+    // distinct exit code so the operator can see it's an environment
+    // problem, not a real diagnostics failure.
+    stderrTail = (stderrTail + `spawn error: ${supervised.spawnError.message}`).slice(-1024);
+    exitCode = 127;
+  }
   const elapsedMs = Date.now() - startedAt;
 
   let archiveSize: number | null = null;
@@ -108,6 +106,7 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
   const evidence: DiagnosticsEvidence = {
     exitCode,
     signal,
+    timedOut: supervised.timedOut,
     elapsedMs,
     archivePath,
     archiveSize,
@@ -123,7 +122,7 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
     /* tmp cleanup is non-fatal */
   }
 
-  if (signal === "SIGTERM") {
+  if (supervised.timedOut) {
     return {
       status: "failed",
       classifier: "runner-infra",
