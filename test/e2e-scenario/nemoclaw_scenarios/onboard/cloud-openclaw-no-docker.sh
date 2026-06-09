@@ -13,7 +13,8 @@
 #      see when Docker is installed but the daemon is not running.
 #
 #   2. Running `nemoclaw onboard --non-interactive` with stdout+stderr
-#      captured to `${E2E_CONTEXT_DIR}/negative-preflight.log`. The
+#      streamed through a redactor into
+#      `${E2E_CONTEXT_DIR}/negative-preflight.log`. The
 #      `onboarding.preflight.expected-failed` assertion greps that file.
 #
 #   3. Asserting that nemoclaw exits non-zero (preflight DID fail). If
@@ -37,42 +38,39 @@
 # typed fixture, then remove both PATH-shadow shims once the framework can
 # inject a Docker client boundary directly.
 
-e2e_no_docker_publish_redacted_preflight_log() {
-  local raw_log="$1" redacted_log="$2"
-  [[ -f "${raw_log}" ]] || return 0
+e2e_no_docker_write_redacted_preflight_log() {
+  local redacted_log="$1"
   rm -f "${redacted_log}"
 
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "${raw_log}" "${redacted_log}" <<'PY'
+    python3 -c '
 import os
 import re
 import sys
 
-source = sys.argv[1]
-target = sys.argv[2]
-with open(source, "r", encoding="utf-8", errors="replace") as handle:
-    text = handle.read()
-
-for name, value in os.environ.items():
-    if value and re.search(r"(api[_-]?key|token|secret|password|credential)", name, re.I):
-        text = text.replace(value, "[REDACTED]")
-
-text = re.sub(
+target = sys.argv[1]
+secret_env_name = re.compile(r"(api[_-]?key|token|secret|password|credential)", re.I)
+secret_pattern = re.compile(
     r"(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_/-]{12,}|(api[_-]?key|token|secret|password)[=:][^\s]+)",
-    "[REDACTED]",
-    text,
-    flags=re.I,
+    re.I,
 )
 
 with open(target, "w", encoding="utf-8") as handle:
-    handle.write(text)
-PY
+    for line in sys.stdin:
+        for name, value in os.environ.items():
+            if value and secret_env_name.search(name):
+                line = line.replace(value, "[REDACTED]")
+
+        line = secret_pattern.sub("[REDACTED]", line)
+        handle.write(line)
+        handle.flush()
+' "${redacted_log}"
     return
   fi
 
   local redacted
   redacted="$(mktemp -t e2e-negative-preflight-redacted-XXXXXX)"
-  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' "${raw_log}" >"${redacted}"
+  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' >"${redacted}"
   mv "${redacted}" "${redacted_log}"
 }
 
@@ -83,10 +81,16 @@ e2e_onboard_cloud_openclaw_no_docker() {
   e2e_context_path >/dev/null
   mkdir -p "${E2E_CONTEXT_DIR}"
 
-  local log raw_log shim_dir rc=0
+  local log shim_dir rc=0 redactor_rc=0 shim_dir_quoted
   log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   shim_dir="$(mktemp -d -t e2e-no-docker-XXXXXX)"
-  raw_log="${shim_dir}/negative-preflight.raw.log"
+  printf -v shim_dir_quoted "%q" "${shim_dir}"
+  # shellcheck disable=SC2064
+  trap "rm -rf -- ${shim_dir_quoted}" RETURN EXIT
+  # shellcheck disable=SC2064
+  trap "rm -rf -- ${shim_dir_quoted}; exit 130" INT
+  # shellcheck disable=SC2064
+  trap "rm -rf -- ${shim_dir_quoted}; exit 143" TERM
   rm -f "${log}"
 
   cat >"${shim_dir}/docker" <<'SHIM'
@@ -103,12 +107,26 @@ SHIM
   echo "negative-preflight: log_file=${log}"
   echo "negative-preflight: invoking nemoclaw onboard --non-interactive (expected to fail at preflight)"
 
+  local errexit_was_set=0
+  if [[ $- == *e* ]]; then
+    errexit_was_set=1
+    set +e
+  fi
   PATH="${shim_dir}:${PATH}" \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
-    >"${raw_log}" 2>&1 || rc=$?
-
-  e2e_no_docker_publish_redacted_preflight_log "${raw_log}" "${log}"
+    2>&1 | e2e_no_docker_write_redacted_preflight_log "${log}"
+  local -a pipeline_status=("${PIPESTATUS[@]}")
+  if [[ "${errexit_was_set}" -eq 1 ]]; then
+    set -e
+  fi
+  rc="${pipeline_status[0]}"
+  redactor_rc="${pipeline_status[1]}"
   rm -rf "${shim_dir}"
+
+  if [[ "${redactor_rc}" -ne 0 ]]; then
+    echo "negative-preflight: ERROR: failed to write redacted preflight log (${log})" >&2
+    return "${redactor_rc}"
+  fi
 
   echo "negative-preflight: nemoclaw onboard exited ${rc}"
   if [[ -f "${log}" ]]; then

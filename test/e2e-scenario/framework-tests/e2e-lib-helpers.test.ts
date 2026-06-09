@@ -94,6 +94,7 @@ exit 2
           E2E_PHASE: "onboarding",
           NVIDIA_API_KEY: "secret-token",
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
         },
       );
       expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
@@ -103,6 +104,8 @@ exit 2
       expect(logBody).toContain("Docker is required before onboarding");
       expect(logBody).toContain("[REDACTED]");
       expect(logBody).not.toContain("secret-token");
+      const tempEntries = fs.readdirSync(tmp, { recursive: true }).map(String).join("\n");
+      expect(tempEntries).not.toContain("negative-preflight.raw.log");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
