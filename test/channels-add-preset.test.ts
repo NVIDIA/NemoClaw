@@ -43,6 +43,16 @@ function runScript(
   return result;
 }
 
+function parseResultPayload<T extends Record<string, any> = Record<string, any>>(
+  result: SpawnSyncReturns<string>,
+): T {
+  const marker = result.stdout.lastIndexOf("__RESULT__");
+  assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+  const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim()) as T;
+  assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+  return payload;
+}
+
 // Build a preamble that:
 //   - stubs every module touched by addSandboxChannel so no real openshell,
 //     gateway, or filesystem credential write happens
@@ -279,10 +289,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.buildPlanCalls, [
       {
@@ -315,10 +322,7 @@ const ctx = module.exports;
 `;
       const result = runScript(script);
       assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-      const marker = result.stdout.lastIndexOf("__RESULT__");
-      assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-      assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+      const payload = parseResultPayload(result);
 
       // Contract 1: applyPreset is called exactly once with the channel's name.
       assert.deepEqual(
@@ -373,10 +377,7 @@ const ctx = module.exports;
       WHATSAPP_SESSION_SECRET: "must-not-be-used",
     });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
     assert.deepEqual(payload.registryUpdates[0], {
@@ -460,10 +461,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
@@ -514,10 +512,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
@@ -580,9 +575,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -638,9 +631,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -683,9 +674,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.appliedCalls, []);
     assert.deepEqual(payload.providerCalls, []);
@@ -733,9 +722,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -785,9 +772,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -843,10 +828,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
@@ -922,9 +904,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
@@ -992,9 +972,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
@@ -1067,9 +1045,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
@@ -1111,10 +1087,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.equal(payload.slackProbeCalls.length, 2, "expected bot and app Slack probes");
     assert.ok(
@@ -1177,10 +1150,7 @@ global.__slackBotProbe = {
 `;
     const result = runScript(script, { NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.slackProbeCalls, []);
     assert.deepEqual(
@@ -1242,10 +1212,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.credentialSaveCalls, []);
@@ -1302,10 +1269,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.credentialSaveCalls, []);
@@ -1358,9 +1322,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Exactly one update — the helper short-circuits when the desired
     // membership already holds, so duplicate writes would be a bug.
@@ -1406,9 +1368,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // applyPreset still runs against the registry — the preset is the
     // channel's egress contract and lives in registry, not session.
@@ -1441,9 +1401,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Registry mutation still happens; only the session-sync side-effect
     // is skipped (there is no intent record to keep aligned).
@@ -1473,9 +1431,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Even though session.updateSession threw, the channel add flow
     // still completed: preset applied to registry, rebuild prompted.
@@ -1507,9 +1463,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.equal(
@@ -1544,9 +1498,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.deepEqual(
@@ -1578,9 +1530,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.deepEqual(payload.sessionUpdates, []);
@@ -1609,9 +1559,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.ok(payload.callOrder.includes("promptAndRebuild"));
@@ -1728,10 +1676,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.rebuildCount, 1);
     assert.ok(
       payload.logs.some((line: string) => line.includes("'telegram' bridge startup detected")),
@@ -1752,9 +1697,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       payload.logs.some((line: string) =>
         line.includes("was not marked enabled in baked openclaw.json"),
@@ -1776,9 +1719,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       payload.logs.some((line: string) => line.includes("did not log a startup breadcrumb")),
       `expected missing-breadcrumb warning; got:\n${payload.logs.join("\n")}`,
@@ -1803,9 +1744,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       !payload.logs.some((line: string) => line.includes("bridge startup detected")),
       `must not claim startup detected; got:\n${payload.logs.join("\n")}`,
@@ -1833,9 +1772,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       payload.logs.some((line: string) => line.includes("logged credential/startup warnings")),
       `expected credential warning summary; got:\n${payload.logs.join("\n")}`,
@@ -1859,9 +1796,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
     assert.ok(
       !payload.logs.some((line: string) =>
@@ -1892,9 +1827,7 @@ global.__testLog = "";
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not probe sandbox exec for QR-only WhatsApp");
     assert.ok(
       !payload.logs.some((line: string) =>

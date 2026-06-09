@@ -139,11 +139,11 @@ type CredentialBackScenario = {
   stubNim?: boolean;
 };
 
-function writeAlwaysOkCurl(fakeBin: string) {
+function writeAlwaysOkCurl(fakeBin: string, body = '{"id":"resp_123"}') {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
+body='${body}'
 status="200"
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -374,23 +374,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
@@ -487,23 +471,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -1208,27 +1176,7 @@ console.log(JSON.stringify(result));
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -2056,23 +2004,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -2158,23 +2090,7 @@ const { setupNim } = require(${onboardPath});
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2272,23 +2188,7 @@ const { setupNim } = require(${onboardPath});
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2394,23 +2294,7 @@ const { setupNim } = require(${onboardPath});
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -2513,23 +2397,7 @@ const { setupNim } = require(${onboardPath});
     const pullLog = path.join(tmpDir, "pulls.log");
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "ollama"),
       `#!/usr/bin/env bash
@@ -3430,23 +3298,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3637,23 +3489,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3728,23 +3564,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"resp_123"}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
+    writeAlwaysOkCurl(fakeBin);
 
     const script = String.raw`
 const clearCredentialEnv = [
@@ -5218,27 +5038,7 @@ const { setupNim } = require(${onboardPath});
     // Fake curl binary that returns a successful response — needed because
     // runCurlProbe and validateOllamaModel spawn real curl via child_process.
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     // Simulate: no Ollama installed, no Ollama running, no vLLM on native
     // Linux, so cloud + install-ollama should appear.
@@ -5567,27 +5367,7 @@ const { setupNim } = require(${onboardPath});
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -5751,27 +5531,7 @@ const { setupNim } = require(${onboardPath});
     // Fake curl + zstd binaries on PATH. The install module uses curl to
     // probe the release tarball (HEAD) and zstd to decompress; both must
     // exist on PATH for the user-local path to choose the .tar.zst asset.
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     fs.writeFileSync(path.join(fakeBin, "zstd"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
 
     const script = String.raw`
@@ -5934,27 +5694,7 @@ const { setupNim } = require(${onboardPath});
     const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
     // Fake passwordless sudo so the upgrade gate doesn't short-circuit
     // before the official installer runs in this non-interactive scenario.
     fs.writeFileSync(path.join(fakeBin, "sudo"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
@@ -6116,27 +5856,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6589,27 +6309,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6750,27 +6450,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -6900,27 +6580,7 @@ const { setupNim } = require(${onboardPath});
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
-  printf '%s' "$body" > "$outfile"
-  printf '%s' "$status"
-else
-  printf '%s' "$body"
-fi
-`,
-      { mode: 0o755 },
-    );
+    writeOllamaToolCallingCurl(fakeBin);
 
     const script = String.raw`
 const credentials = require(${credentialsPath});

@@ -12,26 +12,10 @@ const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 /**
- * Build an isolated "system bin" directory used by every test in this file
- * via TEST_SYSTEM_PATH. The directory mirrors /usr/bin and /bin via symlinks
- * — EXCEPT for `node`, `npm`, and `npx`, which are deliberately excluded.
- *
- * Why: the runtime preflight tests need a PATH where the host's real `node`
- * and `npm` are NOT visible, so the "node missing" / "npm missing" error
- * branches are actually exercised. The previous `"/usr/bin:/bin"` literal
- * leaks /usr/bin/node on any Linux distribution that installs Node via
- * `apt install nodejs` (i.e. most of them), causing those tests to assert
- * the wrong code path on developer machines while passing on the upstream
- * CI runners (where Node is installed under /opt/hostedtoolcache/, not
- * /usr/bin/).
- *
- * Tests that need a fake `node` or `npm` continue to write a stub into
- * `fakeBin` and prepend it to PATH (`${fakeBin}:${TEST_SYSTEM_PATH}`); the
- * fake still wins because it comes first.
- *
- * The directory lives under `os.tmpdir()` and is intentionally not cleaned
- * up — it's tiny (a few hundred symlinks), the OS reaps it on reboot, and
- * cleanup would require an `afterAll` hook in every describe block.
+ * Build an isolated TEST_SYSTEM_PATH that mirrors /usr/bin and /bin while
+ * excluding node/npm/npx, so runtime preflight tests exercise missing-tool
+ * branches consistently across developer hosts and CI. Tests that need those
+ * tools prepend stubs from fakeBin; the tiny temp dir is left for OS cleanup.
  */
 function buildIsolatedSystemPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-sysbin-"));
@@ -64,10 +48,6 @@ function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-// ---------------------------------------------------------------------------
-// Helpers shared across suites
-// ---------------------------------------------------------------------------
-
 /** Fake node that reports v22.16.0. */
 function writeNodeStub(fakeBin: string) {
   writeExecutable(
@@ -84,10 +64,7 @@ exit 99`,
   );
 }
 
-/**
- * Minimal npm stub. Handles --version, config-get-prefix, and a custom
- * install handler injected as a shell snippet via NPM_INSTALL_HANDLER.
- */
+/** Minimal npm stub with an injectable install/link/run handler. */
 function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
   writeExecutable(
     path.join(fakeBin, "npm"),

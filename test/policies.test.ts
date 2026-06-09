@@ -61,6 +61,13 @@ function parseRepoYaml(relativePath: string): Record<string, any> {
   >;
 }
 
+function parseResultPayload(stdout: string): any {
+  const marker = "__RESULT__";
+  const markerIndex = stdout.indexOf(marker);
+  expect(markerIndex).toBeGreaterThanOrEqual(0);
+  return JSON.parse(stdout.slice(markerIndex + marker.length));
+}
+
 function runSelectFromList(input: string, { applied = [] }: AppliedOptions = {}) {
   const script = String.raw`
 const { selectFromList } = require(${POLICIES_PATH});
@@ -558,10 +565,7 @@ exit 1
         });
 
         expect(result.status).toBe(0);
-        const marker = "__RESULT__";
-        const markerIndex = result.stdout.indexOf(marker);
-        expect(markerIndex).toBeGreaterThanOrEqual(0);
-        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const payload = parseResultPayload(result.stdout);
         expect(payload.result).toBe(true);
         expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(
           1,
@@ -632,10 +636,7 @@ exit 1
         });
 
         expect(result.status).toBe(0);
-        const marker = "__RESULT__";
-        const markerIndex = result.stdout.indexOf(marker);
-        expect(markerIndex).toBeGreaterThanOrEqual(0);
-        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const payload = parseResultPayload(result.stdout);
         const parsed = YAML.parse(payload.policy);
         const discordPolicy = parsed.network_policies.discord;
         const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
@@ -715,10 +716,7 @@ exit 1
         });
 
         expect(result.status).toBe(0);
-        const marker = "__RESULT__";
-        const markerIndex = result.stdout.indexOf(marker);
-        expect(markerIndex).toBeGreaterThanOrEqual(0);
-        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const payload = parseResultPayload(result.stdout);
         const parsed = YAML.parse(payload.policy);
         expect(parsed.network_policies.wechat).toBeUndefined();
         const wechatPolicy = parsed.network_policies.wechat_bridge;

@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import through the compiled dist/ output (via the bin/lib shim) so
-// coverage is attributed to dist/lib/onboard/preflight.js, which is what the
-// ratchet measures.
+// Import through compiled dist output so coverage lands on the file measured
+// by the ratchet: dist/lib/onboard/preflight.js.
 import {
   assessHost,
   checkPortAvailable,
