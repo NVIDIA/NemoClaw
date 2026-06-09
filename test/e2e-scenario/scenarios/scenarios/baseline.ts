@@ -149,6 +149,38 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {
+    // Failing-test-first regression guard for #4423. After onboarding,
+    // the lifecycle phase reproduces the host-side conditions of a
+    // DGX Spark / Linux Docker-driver reboot: stop the OpenShell
+    // gateway runtime + `docker stop` the labeled sandbox container.
+    // The state-validation phase then runs `nemoclaw <name> status`
+    // and asserts the post-recovery invariants declared by the
+    // `post-reboot-recovery-ready` expected-state.
+    //
+    // On unfixed `main`, the destructive `missing` branch in
+    // `src/lib/actions/sandbox/status.ts` (and the parallel branch
+    // reached through `ensureLiveSandboxOrExit` in
+    // `src/lib/actions/sandbox/gateway-state.ts`) wipes the local
+    // registry entry once the gateway returns to `healthy_named`,
+    // so the `local-registry-entry-present` probe fails and this
+    // scenario goes RED.
+    //
+    // The fix lands in PR-A (parts 2 & 3 of ericksoa's plan): add a
+    // Docker-driver sandbox recovery helper, then tighten
+    // stale-removal in active paths to require Docker-corroborated
+    // absence before destroying the registry. PR-A flips this guard
+    // 🔴 → 🟢.
+    id: "ubuntu-repo-docker-post-reboot-recovery",
+    manifestName: "openclaw-nvidia-post-reboot-recovery",
+    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
+    expectedStateId: "post-reboot-recovery-ready",
+    suiteIds: ["smoke"],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+    description:
+      "Failing-test-first guard for #4423: post-reboot recovery must preserve " +
+      "the local registry entry and restart the labeled Docker container.",
+  },
+  {
     id: "ubuntu-repo-openai-compatible-openclaw",
     manifestName: "openclaw-openai-compatible",
     environment: ubuntuRepoDocker("openai-compatible-openclaw"),

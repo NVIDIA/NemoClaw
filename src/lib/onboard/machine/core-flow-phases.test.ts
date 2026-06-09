@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
-import { createCoreOnboardFlowPhases } from "./core-flow-phases";
+import { createCoreOnboardFlowPhases, runCoreOnboardFlowSlice } from "./core-flow-phases";
+import { advanceTo } from "./result";
+import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
 type Gpu = { platform: string };
@@ -203,5 +205,36 @@ describe("core onboard flow phases", () => {
       selectedMessagingChannels: ["slack", "discord"],
       webSearchSupported: true,
     });
+  });
+
+  it("records each phase result on the resume compatibility path", async () => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<
+      OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>
+    >[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+      },
+    ];
+
+    await runCoreOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: {
+        session: async () => createSession(),
+        applyResult: async () => createSession(),
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (result) => {
+        if (result.type === "transition") recorded.push(result.next);
+      },
+    });
+
+    expect(recorded).toEqual(["sandbox", "openclaw"]);
   });
 });

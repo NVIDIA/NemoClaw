@@ -118,6 +118,7 @@ function createPhases(branchState: "agent_setup" | "openclaw", order: string[] =
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
       checkAndRecoverSandboxProcesses: vi.fn(),
+      autoPairScopeApproval: vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({
         accessUrl: "http://127.0.0.1:45123",
