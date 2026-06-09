@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
@@ -83,7 +84,7 @@ export class EnvironmentPhaseFixture {
     try {
       const result = await this.host.command("docker", ["info"], {
         artifactName: `runtime-docker-info-${artifactLabel(runtime)}`,
-        inheritEnv: true,
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       });
       return {
