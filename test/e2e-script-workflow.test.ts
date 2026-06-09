@@ -56,8 +56,9 @@ describe("E2E reusable workflow contract", () => {
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
       const expectsLiveMessaging = name === "messaging-providers-e2e";
-      const expectedSecrets =
-        expectsLiveMessaging ? { ...defaultSecrets, ...messagingLiveSecrets } : defaultSecrets;
+      const expectedSecrets = expectsLiveMessaging
+        ? { ...defaultSecrets, ...messagingLiveSecrets }
+        : defaultSecrets;
       expect(job.secrets, name).toEqual(expectedSecrets);
       expect(job.with?.messaging_live_secrets ?? false, name).toBe(
         expectsLiveMessaging
@@ -69,9 +70,7 @@ describe("E2E reusable workflow contract", () => {
 
   it("requires trusted target refs and an explicit opt-in before exposing live messaging secrets", () => {
     const callInputs =
-      runnerWorkflow.on?.workflow_call?.inputs ??
-      runnerWorkflow.true?.workflow_call?.inputs ??
-      {};
+      runnerWorkflow.on?.workflow_call?.inputs ?? runnerWorkflow.true?.workflow_call?.inputs ?? {};
     const runStep = runnerWorkflow.jobs.run.steps.find((step) => step.name === "Run E2E script");
     const messagingJob = nightlyWorkflow.jobs["messaging-providers-e2e"];
 
@@ -212,11 +211,9 @@ describe("E2E reusable workflow contract", () => {
     );
 
     expect(publicInstallerJob.with?.checked_out_ref_env).toBe("NEMOCLAW_PUBLIC_INSTALL_REF");
-    expect(exportStep?.env?.E2E_CHECKED_OUT_REF_ENV).toBe(
-      "${{ inputs.checked_out_ref_env }}",
-    );
+    expect(exportStep?.env?.E2E_CHECKED_OUT_REF_ENV).toBe("${{ inputs.checked_out_ref_env }}");
     expect(exportStep?.run).toContain('[[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]');
-    expect(exportStep?.run).toContain('git -C repo rev-parse HEAD');
+    expect(exportStep?.run).toContain("git -C repo rev-parse HEAD");
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
@@ -230,13 +227,16 @@ describe("E2E reusable workflow contract", () => {
   });
 
   it("gates WhatsApp sandbox-owned preload acceptance on non-root entrypoint evidence", () => {
-    const script = readFileSync(new URL("./e2e/test-messaging-providers.sh", import.meta.url), "utf8");
+    const script = readFileSync(
+      new URL("./e2e/test-messaging-providers.sh", import.meta.url),
+      "utf8",
+    );
 
     expect(script).toContain(
       "entrypoint_start_log_stat=$(sandbox_exec \"stat -c '%U:%a' /tmp/nemoclaw-start.log",
     );
     expect(script).toContain(
-      "[ \"$whatsapp_qr_preload_stat\" = \"sandbox:444\" ] && [ \"$entrypoint_start_log_stat\" = \"sandbox:600\" ]",
+      '[ "$whatsapp_qr_preload_stat" = "sandbox:444" ] && [ "$entrypoint_start_log_stat" = "sandbox:600" ]',
     );
     expect(script).toContain("entrypoint start log: ${entrypoint_start_log_stat}");
   });

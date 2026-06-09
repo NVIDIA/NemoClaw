@@ -48,7 +48,10 @@ function createHarness(
     session = cloneSession(mutator(cloneSession(session)) ?? session);
     return cloneSession(session);
   };
-  const maybeLegacyTransition = (state: Session["machine"]["state"], options?: StepMutationOptions) => {
+  const maybeLegacyTransition = (
+    state: Session["machine"]["state"],
+    options?: StepMutationOptions,
+  ) => {
     if (options?.updateMachine === false) return;
     session.machine = {
       version: 1,
@@ -73,7 +76,11 @@ function createHarness(
         if (stepName === "gateway") maybeLegacyTransition("gateway", options);
         return current;
       }),
-    markStepComplete: (stepName: string, updates: SessionUpdates = {}, options?: StepMutationOptions) =>
+    markStepComplete: (
+      stepName: string,
+      updates: SessionUpdates = {},
+      options?: StepMutationOptions,
+    ) =>
       updateSession((current) => {
         current.steps[stepName].status = "complete";
         Object.assign(current, filterSafeUpdates(updates));
@@ -184,7 +191,9 @@ describe("record-only onboard runner", () => {
 
   it("forces record-only step mutations even if caller options ask to update the machine", async () => {
     const harness = createHarness({
-      stepMutationOptions: { updateMachine: true } as RecordOnlyOnboardRuntimeBoundaryOptions["stepMutationOptions"],
+      stepMutationOptions: {
+        updateMachine: true,
+      } as RecordOnlyOnboardRuntimeBoundaryOptions["stepMutationOptions"],
     });
     const recorders = harness.boundary.recorders();
 

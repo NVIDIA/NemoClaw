@@ -254,9 +254,7 @@ describe("planHostRemediation — CDI", () => {
     expect(action).toBeTruthy();
     expect(action?.kind).toBe("sudo");
     expect(action?.blocking).toBe(true);
-    expect(action?.commands.some((command) => command.includes("--output='/etc/cdi"))).toBe(
-      true,
-    );
+    expect(action?.commands.some((command) => command.includes("--output='/etc/cdi"))).toBe(true);
     expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(true);
   });
 
@@ -265,8 +263,7 @@ describe("planHostRemediation — CDI", () => {
       baseAssessment({
         cdiNvidiaGpuSpecStale: true,
         cdiNvidiaGpuSpecNeedsRepair: true,
-        cdiNvidiaGpuSpecMismatch:
-          "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+        cdiNvidiaGpuSpecMismatch: "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
       }),
     );
     const action = actions.find((entry: { id: string }) => entry.id === "refresh_nvidia_cdi_spec");
@@ -281,9 +278,7 @@ describe("planHostRemediation — CDI", () => {
       action?.commands.some((command) => command.includes("sudo rm -f '/etc/cdi/nvidia.yaml'")),
     ).toBe(true);
     expect(action?.commands.some((command) => command.includes("--output=/etc/cdi"))).toBe(false);
-    expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(
-      false,
-    );
+    expect(action?.commands.some((command) => command.includes("nvidia-ctk cdi list"))).toBe(false);
   });
 
   it("emits manual stale-spec guidance without systemctl on non-systemd hosts", () => {
@@ -292,8 +287,7 @@ describe("planHostRemediation — CDI", () => {
         systemctlAvailable: false,
         cdiNvidiaGpuSpecStale: true,
         cdiNvidiaGpuSpecNeedsRepair: true,
-        cdiNvidiaGpuSpecMismatch:
-          "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
+        cdiNvidiaGpuSpecMismatch: "/etc/cdi/nvidia.yaml /dev/nvidia-uvm=498:0, live=499:0",
       }),
     );
     const action = actions.find((entry: { id: string }) => entry.id === "refresh_nvidia_cdi_spec");
@@ -335,11 +329,15 @@ describe("planHostRemediation — CDI", () => {
     const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
 
     expect(action).toBeTruthy();
-    expect(action?.commands.some((command) => command === "sudo apt-get install -y nvidia-container-toolkit")).toBe(
-      true,
-    );
-    expect(action?.commands.some((command) => command.startsWith("sudo nvidia-ctk cdi generate --output="))).toBe(
-      true,
-    );
+    expect(
+      action?.commands.some(
+        (command) => command === "sudo apt-get install -y nvidia-container-toolkit",
+      ),
+    ).toBe(true);
+    expect(
+      action?.commands.some((command) =>
+        command.startsWith("sudo nvidia-ctk cdi generate --output="),
+      ),
+    ).toBe(true);
   });
 });

@@ -22,9 +22,7 @@ export type RunFn = (
 
 export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
 
-export function ensureLocalAdapterStateDir(
-  stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR,
-): void {
+export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   }

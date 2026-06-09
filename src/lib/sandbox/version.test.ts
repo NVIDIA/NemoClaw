@@ -17,8 +17,12 @@ vi.mock("../adapters/openshell/client.js", () => ({
     return match ? match[1] : null;
   },
   versionGte: (left = "0.0.0", right = "0.0.0") => {
-    const lhs = String(left).split(".").map((p) => parseInt(p, 10) || 0);
-    const rhs = String(right).split(".").map((p) => parseInt(p, 10) || 0);
+    const lhs = String(left)
+      .split(".")
+      .map((p) => parseInt(p, 10) || 0);
+    const rhs = String(right)
+      .split(".")
+      .map((p) => parseInt(p, 10) || 0);
     const length = Math.max(lhs.length, rhs.length);
     for (let i = 0; i < length; i++) {
       const a = lhs[i] || 0;

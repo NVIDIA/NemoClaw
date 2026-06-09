@@ -114,5 +114,4 @@ describe("common token-paste hook implementation", () => {
       },
     });
   });
-
 });

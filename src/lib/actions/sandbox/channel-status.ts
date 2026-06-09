@@ -15,10 +15,7 @@ import { loadAgent, type AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 import * as policies from "../../policy";
-import {
-  KNOWN_CHANNELS,
-  knownChannelNames,
-} from "../../sandbox/channels";
+import { KNOWN_CHANNELS, knownChannelNames } from "../../sandbox/channels";
 import {
   evaluateWhatsappDiagnostics,
   parseWhatsappHeartbeat,
@@ -49,7 +46,11 @@ function quotePath(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-type ExecRunner = (sandboxName: string, command: string, timeoutMs?: number) => {
+type ExecRunner = (
+  sandboxName: string,
+  command: string,
+  timeoutMs?: number,
+) => {
   status: number;
   stdout: string;
   stderr: string;
@@ -152,10 +153,7 @@ function resolveStateDirs(agent: AgentDefinition): string[] {
     // Fallback: probe both shapes even when the manifest does not declare
     // the dir — best-effort but safe because non-existent paths just yield
     // "missing" probe output.
-    candidates.push(
-      `${configDir}/whatsapp`,
-      `${configDir}/platforms/whatsapp/session`,
-    );
+    candidates.push(`${configDir}/whatsapp`, `${configDir}/platforms/whatsapp/session`);
   }
   return Array.from(new Set(candidates));
 }
@@ -333,7 +331,15 @@ function buildWhatsappProbeInput(
   const script = buildProbeScript(stateDirs);
   const probedAt = deps.now().toISOString();
   const exec = deps.execSandbox(sandboxName, script, WHATSAPP_PROBE_TIMEOUT_MS);
-  const parsed = exec ? parseProbeOutput(exec.stdout) : { reachable: false, stateDirPopulated: null, heartbeatRaw: null, logLines: [], bridgeProcessAlive: null };
+  const parsed = exec
+    ? parseProbeOutput(exec.stdout)
+    : {
+        reachable: false,
+        stateDirPopulated: null,
+        heartbeatRaw: null,
+        logLines: [],
+        bridgeProcessAlive: null,
+      };
 
   let heartbeat: WhatsappHeartbeat | null = null;
   let heartbeatParseError: string | null = null;
@@ -375,7 +381,11 @@ function buildWhatsappProbeInput(
   };
 }
 
-function renderReport(report: ChannelStatusReport, asJson: boolean, deps: Required<StatusDeps>): void {
+function renderReport(
+  report: ChannelStatusReport,
+  asJson: boolean,
+  deps: Required<StatusDeps>,
+): void {
   if (asJson) {
     deps.out(JSON.stringify(report, null, 2));
     return;
@@ -513,9 +523,7 @@ export async function showSandboxChannelStatus(
 
   let channelName = channelArg;
   if (!channelName) {
-    const enabled = (entry.messagingChannels ?? []).filter(
-      (name: string) => name === "whatsapp",
-    );
+    const enabled = (entry.messagingChannels ?? []).filter((name: string) => name === "whatsapp");
     if (enabled.length > 0) {
       channelName = "whatsapp";
     } else if ((entry.messagingChannels ?? []).length > 0) {

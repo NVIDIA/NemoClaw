@@ -19,9 +19,7 @@ function emptyResult(): RunResult {
   return { status: 0, stdout: "", stderr: "" };
 }
 
-function makeRun(
-  responses: Map<string, RunResult | ((args: string[]) => RunResult)>,
-): {
+function makeRun(responses: Map<string, RunResult | ((args: string[]) => RunResult)>): {
   run: StaleGatewayDeps["run"];
   calls: RunArgs[];
 } {
@@ -72,14 +70,24 @@ describe("stopStaleDashboardListeners", () => {
       ...baseDeps({ commandExists: () => false }),
       run,
     });
-    expect(result).toEqual({ stopped: [], skippedForeignPids: [], skippedNonMatchingPids: [], skippedProtectedPorts: [] });
+    expect(result).toEqual({
+      stopped: [],
+      skippedForeignPids: [],
+      skippedNonMatchingPids: [],
+      skippedProtectedPorts: [],
+    });
     expect(run).not.toHaveBeenCalled();
   });
 
   it("returns no work when lsof reports no listeners across the range", () => {
     const { run } = makeRun(new Map());
     const result = stopStaleDashboardListeners(baseDeps({ run }));
-    expect(result).toEqual({ stopped: [], skippedForeignPids: [], skippedNonMatchingPids: [], skippedProtectedPorts: [] });
+    expect(result).toEqual({
+      stopped: [],
+      skippedForeignPids: [],
+      skippedNonMatchingPids: [],
+      skippedProtectedPorts: [],
+    });
   });
 
   it("kills a user-owned openclaw-gateway process holding the dashboard port", () => {
@@ -87,17 +95,17 @@ describe("stopStaleDashboardListeners", () => {
     let pidGone = false;
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["lsof -ti :18789 -sTCP:LISTEN", { status: 0, stdout: "2522044\n", stderr: "" }],
-      [
-        "ps -p 2522044 -o user=",
-        { status: 0, stdout: "tester\n", stderr: "" },
-      ],
+      ["ps -p 2522044 -o user=", { status: 0, stdout: "tester\n", stderr: "" }],
       [
         "ps -p 2522044 -o args=",
         { status: 0, stdout: "openclaw-gateway --port 18789\n", stderr: "" },
       ],
       [
         "ps -p 2522044 -o pid=",
-        () => (pidGone ? { status: 1, stdout: "", stderr: "" } : { status: 0, stdout: "2522044\n", stderr: "" }),
+        () =>
+          pidGone
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "2522044\n", stderr: "" },
       ],
     ]);
     const { run } = makeRun(responses);
@@ -112,7 +120,9 @@ describe("stopStaleDashboardListeners", () => {
     });
     expect(result.stopped).toEqual([2522044]);
     expect(kill).toHaveBeenCalledWith(2522044, "SIGTERM");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Stopped stale dashboard gateway listener 2522044"));
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Stopped stale dashboard gateway listener 2522044"),
+    );
   });
 
   it("escalates to SIGKILL when SIGTERM does not free the process", () => {
@@ -121,13 +131,13 @@ describe("stopStaleDashboardListeners", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["lsof -ti :18789 -sTCP:LISTEN", { status: 0, stdout: "999\n", stderr: "" }],
       ["ps -p 999 -o user=", { status: 0, stdout: "tester\n", stderr: "" }],
-      [
-        "ps -p 999 -o args=",
-        { status: 0, stdout: "openclaw-gateway\n", stderr: "" },
-      ],
+      ["ps -p 999 -o args=", { status: 0, stdout: "openclaw-gateway\n", stderr: "" }],
       [
         "ps -p 999 -o pid=",
-        () => (pidGone ? { status: 1, stdout: "", stderr: "" } : { status: 0, stdout: "999\n", stderr: "" }),
+        () =>
+          pidGone
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "999\n", stderr: "" },
       ],
     ]);
     const { run } = makeRun(responses);
@@ -153,7 +163,12 @@ describe("stopStaleDashboardListeners", () => {
     const result = stopStaleDashboardListeners({
       ...baseDeps({ run, kill, env: { USER: "tester" } }),
     });
-    expect(result).toEqual({ stopped: [], skippedForeignPids: [42], skippedNonMatchingPids: [], skippedProtectedPorts: [] });
+    expect(result).toEqual({
+      stopped: [],
+      skippedForeignPids: [42],
+      skippedNonMatchingPids: [],
+      skippedProtectedPorts: [],
+    });
     expect(kill).not.toHaveBeenCalled();
   });
 
@@ -201,7 +216,12 @@ describe("stopStaleDashboardListeners", () => {
     const result = stopStaleDashboardListeners({
       ...baseDeps({ run, kill }),
     });
-    expect(result).toEqual({ stopped: [], skippedForeignPids: [], skippedNonMatchingPids: [777], skippedProtectedPorts: [] });
+    expect(result).toEqual({
+      stopped: [],
+      skippedForeignPids: [],
+      skippedNonMatchingPids: [777],
+      skippedProtectedPorts: [],
+    });
     expect(kill).not.toHaveBeenCalled();
   });
 
@@ -214,7 +234,10 @@ describe("stopStaleDashboardListeners", () => {
       ["ps -p 501 -o args=", { status: 0, stdout: "openclaw-gateway\n", stderr: "" }],
       [
         "ps -p 501 -o pid=",
-        () => (pidGone ? { status: 1, stdout: "", stderr: "" } : { status: 0, stdout: "501\n", stderr: "" }),
+        () =>
+          pidGone
+            ? { status: 1, stdout: "", stderr: "" }
+            : { status: 0, stdout: "501\n", stderr: "" },
       ],
     ]);
     const { run, calls } = makeRun(responses);

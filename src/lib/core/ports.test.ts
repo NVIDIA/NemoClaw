@@ -116,9 +116,7 @@ describe("parseGatewayPort", () => {
     ["11436", "Bedrock Runtime adapter"],
   ])("rejects overlap with default port %s", (port, label) => {
     process.env[ENV_KEY] = port;
-    expect(() => parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toThrow(
-      label,
-    );
+    expect(() => parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toThrow(label);
   });
 
   it("rejects overlap with a configured Bedrock Runtime adapter port", () => {

@@ -8,7 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import { parseDuration } from "./domain/duration";
 import { parseGatewayTokenArgs, runGatewayTokenCommand } from "./gateway-token-command";
-import { resolveDefaultSandboxName, runStartCommand, runStopCommand } from "./tunnel/service-command";
+import {
+  resolveDefaultSandboxName,
+  runStartCommand,
+  runStopCommand,
+} from "./tunnel/service-command";
 import { getVersion } from "./core/version";
 
 // Narrow coverage guard for small helper modules that are otherwise only
@@ -43,7 +47,11 @@ describe("small CLI helper coverage", () => {
       runGatewayTokenCommand(
         "alpha",
         {},
-        { fetchToken: () => null, log: () => undefined, error: (message) => warnings.push(message) },
+        {
+          fetchToken: () => null,
+          log: () => undefined,
+          error: (message) => warnings.push(message),
+        },
       ),
     ).toThrow(/Could not retrieve/);
   });

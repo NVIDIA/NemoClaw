@@ -52,11 +52,18 @@ export interface UninstallPlan {
 function cliActions(shim?: ShimClassification): UninstallPlanAction[] {
   const actions: UninstallPlanAction[] = [{ kind: "uninstall-npm-package", name: "nemoclaw" }];
   if (!shim) return actions;
-  actions.push(shim.remove ? { kind: "delete-shim", reason: shim.reason } : { kind: "preserve-shim", reason: shim.reason });
+  actions.push(
+    shim.remove
+      ? { kind: "delete-shim", reason: shim.reason }
+      : { kind: "preserve-shim", reason: shim.reason },
+  );
   return actions;
 }
 
-export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlanOptions): UninstallPlan {
+export function buildUninstallPlan(
+  paths: UninstallPaths,
+  options: UninstallPlanOptions,
+): UninstallPlan {
   const gatewayName = options.gatewayName || DEFAULT_GATEWAY_NAME;
   return {
     gatewayName,
@@ -74,7 +81,10 @@ export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlan
       {
         name: "OpenShell resources",
         actions: [
-          ...NEMOCLAW_PROVIDERS.map((name) => ({ kind: "delete-openshell-provider" as const, name })),
+          ...NEMOCLAW_PROVIDERS.map((name) => ({
+            kind: "delete-openshell-provider" as const,
+            name,
+          })),
           { kind: "destroy-openshell-gateway", name: gatewayName },
         ],
       },
@@ -87,7 +97,10 @@ export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlan
         actions: [
           { kind: "delete-related-docker-containers" },
           { kind: "delete-related-docker-images" },
-          ...gatewayVolumeCandidates(gatewayName).map((name) => ({ kind: "delete-docker-volume" as const, name })),
+          ...gatewayVolumeCandidates(gatewayName).map((name) => ({
+            kind: "delete-docker-volume" as const,
+            name,
+          })),
         ],
       },
       {
@@ -100,10 +113,21 @@ export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlan
         name: "State and binaries",
         actions: [
           { kind: "delete-managed-swap" },
-          ...paths.runtimeTempGlobs.map((pattern) => ({ kind: "delete-runtime-glob" as const, pattern })),
+          ...paths.runtimeTempGlobs.map((pattern) => ({
+            kind: "delete-runtime-glob" as const,
+            pattern,
+          })),
           ...(options.keepOpenShell
-            ? [{ kind: "preserve-openshell-install-paths" as const, paths: paths.openshellInstallPaths }]
-            : paths.openshellInstallPaths.map((path) => ({ kind: "delete-openshell-install-path" as const, path }))),
+            ? [
+                {
+                  kind: "preserve-openshell-install-paths" as const,
+                  paths: paths.openshellInstallPaths,
+                },
+              ]
+            : paths.openshellInstallPaths.map((path) => ({
+                kind: "delete-openshell-install-path" as const,
+                path,
+              }))),
           ...uninstallStatePaths(paths).map((path) => ({ kind: "delete-path" as const, path })),
         ],
       },

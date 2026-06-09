@@ -3,6 +3,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { ProbeContext } from "./types.ts";
 
@@ -80,13 +81,8 @@ function rejectNulByte(value: string, label: string): string {
  *      argv as data, not code, so the values bypass parser expansion.
  *   3. Every string in `bashArgs` is NUL-byte-rejected here — NUL is
  *      the only byte process-spawn cannot survive cleanly.
- *   4. The bash binary path is hard-coded; `shell: false` is implicit
- *      because spawn() does not enable a shell when given an explicit
- *      argv array.
- *
- * The lgtm suppression below is justified by this contract; it mirrors
- * the established pattern in src/lib/runner.ts where the same rule is
- * suppressed for argv arrays passed through `bash -c`.
+ *   4. The bash binary path is hard-coded and the script is invoked as a
+ *      temporary file, so no script body is parsed by the local argv layer.
  */
 function spawnBash(
   script: string,
@@ -100,14 +96,11 @@ function spawnBash(
     const startedAt = Date.now();
     let stdout = "";
     let stderr = "";
-    // bash -c reserves the first positional after the script for $0;
-    // a fixed sentinel keeps the script's own $1..$N aligned with the
-    // caller-supplied bashArgs. Spawn safety contract is documented on
-    // spawnBash above (literal script body, NUL-validated positional
-    // argv, hard-coded bash binary). The lgtm marker MUST be the line
-    // immediately preceding the spawn() call so CodeQL/LGTM picks it up.
-    // lgtm[js/shell-command-injection-from-environment]
-    const child = spawn("bash", ["-c", script, "e2e-probe-spawn", ...safeArgs], {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-probe-"));
+    const scriptPath = path.join(tmpDir, "probe.sh");
+    fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+    const cleanup = () => fs.rmSync(tmpDir, { recursive: true, force: true });
+    const child = spawn("bash", ["--noprofile", "--norc", scriptPath, ...safeArgs], {
       env: opts.env ?? process.env,
       cwd: opts.cwd,
       stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -130,6 +123,7 @@ function spawnBash(
     }
     child.on("error", (err) => {
       clearTimeout(onTimeout);
+      cleanup();
       resolve({
         exitCode: 127,
         signal: null,
@@ -140,6 +134,7 @@ function spawnBash(
     });
     child.on("close", (code, sig) => {
       clearTimeout(onTimeout);
+      cleanup();
       resolve({
         exitCode: code,
         signal: sig,
@@ -173,7 +168,8 @@ export async function runSandboxCmd(
       exitCode: 1,
       signal: null,
       stdout: "",
-      stderr: "runSandboxCmd: ProbeContext.sandboxName is null (E2E_SANDBOX_NAME unset in context.env)",
+      stderr:
+        "runSandboxCmd: ProbeContext.sandboxName is null (E2E_SANDBOX_NAME unset in context.env)",
       elapsedMs: 0,
     };
   }

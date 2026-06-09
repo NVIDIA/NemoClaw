@@ -23,7 +23,13 @@ describe("CLI layer import boundaries", () => {
   });
 
   it("collects TypeScript import-equals references", () => {
-    const fixture = path.join(REPO_ROOT, "src", "lib", "domain", `__boundary-import-equals-${process.pid}.ts`);
+    const fixture = path.join(
+      REPO_ROOT,
+      "src",
+      "lib",
+      "domain",
+      `__boundary-import-equals-${process.pid}.ts`,
+    );
     try {
       fs.writeFileSync(
         fixture,
@@ -35,7 +41,9 @@ describe("CLI layer import boundaries", () => {
       });
 
       expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain("domain must not import src/lib/adapters/openshell/client.ts");
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "domain must not import src/lib/adapters/openshell/client.ts",
+      );
     } finally {
       fs.rmSync(fixture, { force: true });
     }
@@ -51,7 +59,10 @@ describe("CLI layer import boundaries", () => {
       `__boundary-fs-${process.pid}.ts`,
     );
     try {
-      fs.writeFileSync(fixture, 'import { readFileSync } from "node:fs";\nexport const value = readFileSync;\n');
+      fs.writeFileSync(
+        fixture,
+        'import { readFileSync } from "node:fs";\nexport const value = readFileSync;\n',
+      );
       const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
@@ -76,7 +87,10 @@ describe("CLI layer import boundaries", () => {
       `__boundary-bare-fs-${process.pid}.ts`,
     );
     try {
-      fs.writeFileSync(fixture, 'import { readFile } from "fs/promises";\nexport const value = readFile;\n');
+      fs.writeFileSync(
+        fixture,
+        'import { readFile } from "fs/promises";\nexport const value = readFile;\n',
+      );
       const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
         cwd: REPO_ROOT,
         encoding: "utf-8",
@@ -92,7 +106,12 @@ describe("CLI layer import boundaries", () => {
   });
 
   it("counts only classes that extend Command as oclif command classes", () => {
-    const fixture = path.join(REPO_ROOT, "src", "commands", `__boundary-implements-${process.pid}.ts`);
+    const fixture = path.join(
+      REPO_ROOT,
+      "src",
+      "commands",
+      `__boundary-implements-${process.pid}.ts`,
+    );
     try {
       fs.writeFileSync(
         fixture,

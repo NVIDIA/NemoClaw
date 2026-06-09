@@ -471,11 +471,9 @@ describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    fs.writeFileSync(
-      legacyFile,
-      JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }),
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(legacyFile, JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }), {
+      mode: 0o600,
+    });
 
     const credentials = await importCredentialsModule(home);
     expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
@@ -644,9 +642,10 @@ describe("prompt machinery (unchanged)", () => {
       ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
     `;
 
-    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+    const result = spawnSync("bash", ["--noprofile", "--norc"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
+      input: script,
       timeout: 5000,
     });
 
@@ -681,12 +680,12 @@ prompt('secret: ', { secret: true })
     await expect(
       credentials.readCredentialPrompt("secret: ", async () => "  back \r\n"),
     ).resolves.toEqual({ kind: "back" });
-    await expect(
-      credentials.readCredentialPrompt("secret: ", async () => "QUIT"),
-    ).resolves.toEqual({ kind: "exit" });
-    await expect(
-      credentials.readCredentialPrompt("secret: ", async () => "?"),
-    ).resolves.toEqual({ kind: "help" });
+    await expect(credentials.readCredentialPrompt("secret: ", async () => "QUIT")).resolves.toEqual(
+      { kind: "exit" },
+    );
+    await expect(credentials.readCredentialPrompt("secret: ", async () => "?")).resolves.toEqual({
+      kind: "help",
+    });
     await expect(
       credentials.readCredentialPrompt("secret: ", async () => " help "),
     ).resolves.toEqual({ kind: "help" });
@@ -784,9 +783,10 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 `;
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync("bash", ["--noprofile", "--norc", "-c", bash], {
+      result = spawnSync("bash", ["--noprofile", "--norc"], {
         encoding: "utf-8",
         env: { ...process.env, NVIDIA_API_KEY: "" },
+        input: bash,
         timeout: 5000,
       });
     } finally {

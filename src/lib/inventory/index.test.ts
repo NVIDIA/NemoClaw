@@ -414,9 +414,7 @@ describe("inventory commands", () => {
 
     expect(backfillAndFindOverlaps).toHaveBeenCalled();
     expect(
-      lines.some((l) =>
-        l.includes("'alice' and 'bob' share the same telegram credential"),
-      ),
+      lines.some((l) => l.includes("'alice' and 'bob' share the same telegram credential")),
     ).toBe(true);
   });
 
@@ -756,9 +754,7 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          { name: "alpha", model: "stored-model", provider: "stored-provider" },
-        ],
+        sandboxes: [{ name: "alpha", model: "stored-model", provider: "stored-provider" }],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),

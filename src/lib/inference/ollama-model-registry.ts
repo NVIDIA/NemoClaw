@@ -145,8 +145,7 @@ export function anyRegistryModelFits(gpu: GpuInfo | null): boolean {
   if (memory == null) return true;
   const computeConstrained = gpu.computeConstrained === true;
   return OLLAMA_MODEL_REGISTRY.some(
-    (entry) =>
-      entry.requiredMemoryMB <= memory && !(computeConstrained && entry.computeIntensive),
+    (entry) => entry.requiredMemoryMB <= memory && !(computeConstrained && entry.computeIntensive),
   );
 }
 
@@ -164,9 +163,6 @@ export function largestFittableOllamaModelTag(gpu: GpuInfo | null): string {
  * Registry-derived download-size fallback table. Used by `model-size.ts`
  * when the live `https://registry.ollama.ai` manifest probe fails.
  */
-export const OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES: Readonly<Record<string, number>> =
-  Object.freeze(
-    Object.fromEntries(
-      OLLAMA_MODEL_REGISTRY.map((entry) => [entry.tag, entry.downloadSizeBytes]),
-    ),
-  );
+export const OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES: Readonly<Record<string, number>> = Object.freeze(
+  Object.fromEntries(OLLAMA_MODEL_REGISTRY.map((entry) => [entry.tag, entry.downloadSizeBytes])),
+);

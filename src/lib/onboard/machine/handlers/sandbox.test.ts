@@ -31,7 +31,18 @@ type MessagingChannelConfig = Record<string, string>;
 type SandboxGpuConfig = { sandboxGpuEnabled: boolean; mode: string };
 type ResourceProfile = { cpu: string; memory: string };
 
-function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile>["deps"]> = {}) {
+function createDeps(
+  overrides: Partial<
+    SandboxStateOptions<
+      Gpu,
+      Agent,
+      WebSearchConfig,
+      MessagingChannelConfig,
+      SandboxGpuConfig,
+      ResourceProfile
+    >["deps"]
+  > = {},
+) {
   let session = createSession();
   const calls = {
     note: vi.fn(),
@@ -78,8 +89,10 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       hasSandboxGpuDrift: () => false,
       hasWechatConfigDrift: () => false,
       getSandboxHermesToolGateways: () => [],
-      normalizeHermesToolGatewaySelections: (value: unknown) => (Array.isArray(value) ? (value as string[]) : []),
-      stringSetsEqual: (left: string[], right: string[]) => left.length === right.length && left.every((value) => right.includes(value)),
+      normalizeHermesToolGatewaySelections: (value: unknown) =>
+        Array.isArray(value) ? (value as string[]) : [],
+      stringSetsEqual: (left: string[], right: string[]) =>
+        left.length === right.length && left.every((value) => right.includes(value)),
       removeSandboxFromRegistry: calls.removeSandbox,
       repairRecordedSandbox: calls.repairSandbox,
       ensureValidatedBraveSearchCredential: calls.validateBrave,
@@ -114,9 +127,23 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
 }
 
 function baseOptions(
-  deps: SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile>["deps"],
+  deps: SandboxStateOptions<
+    Gpu,
+    Agent,
+    WebSearchConfig,
+    MessagingChannelConfig,
+    SandboxGpuConfig,
+    ResourceProfile
+  >["deps"],
   session: Session | null = createSession(),
-): SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
+): SandboxStateOptions<
+  Gpu,
+  Agent,
+  WebSearchConfig,
+  MessagingChannelConfig,
+  SandboxGpuConfig,
+  ResourceProfile
+> {
   return {
     resume: false,
     fresh: false,
@@ -150,7 +177,10 @@ describe("handleSandboxState", () => {
 
     const result = await handleSandboxState(baseOptions(deps));
 
-    expect(calls.startStep).toHaveBeenCalledWith("sandbox", { provider: "provider", model: "model" });
+    expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+      provider: "provider",
+      model: "model",
+    });
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, ["telegram"], "my-assistant");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.createSandbox).toHaveBeenCalledWith(
@@ -168,10 +198,20 @@ describe("handleSandboxState", () => {
       null,
       [],
     );
-    expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", expect.objectContaining({ model: "model", provider: "provider" }));
+    expect(calls.updateSandbox).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ model: "model", provider: "provider" }),
+    );
     // Default-marking is deferred to finalization (#4614) — the sandbox step must not set it.
-    expect(calls.complete).toHaveBeenCalledWith("sandbox", expect.objectContaining({ sandboxName: "my-assistant" }));
-    expect(result).toMatchObject({ sandboxName: "my-assistant", selectedMessagingChannels: ["telegram"], webSearchSupported: true });
+    expect(calls.complete).toHaveBeenCalledWith(
+      "sandbox",
+      expect.objectContaining({ sandboxName: "my-assistant" }),
+    );
+    expect(result).toMatchObject({
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+      webSearchSupported: true,
+    });
     expect(result.stateResult).toEqual({
       type: "transition",
       next: "openclaw",
@@ -186,7 +226,11 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
 
-    const result = await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
@@ -211,7 +255,9 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
     });
 
-    expect(calls.note).toHaveBeenCalledWith("  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.");
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] TELEGRAM_REQUIRE_MENTION changed; recreating sandbox.",
+    );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();
   });
@@ -263,12 +309,17 @@ describe("handleSandboxState", () => {
   });
 
   it("recreates when a saved web search sandbox is no longer supported", async () => {
-    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       agentSupportsWebSearch: () => false,
       getSandboxReuseState: () => "ready",
-      updateSession: vi.fn((mutator: (value: Session) => Session | void) => mutator(session) ?? session),
+      updateSession: vi.fn(
+        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
+      ),
     });
 
     await handleSandboxState({
@@ -281,13 +332,18 @@ describe("handleSandboxState", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  Web search is not yet supported by this sandbox image. Clearing stale config.",
     );
-    expect(calls.note).toHaveBeenCalledWith("  [resume] Web Search configuration changed; recreating sandbox.");
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Web Search configuration changed; recreating sandbox.",
+    );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
   it("drops saved web search config when credential revalidation returns to provider selection", async () => {
-    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
     session.steps.sandbox.status = "complete";
     const backToSelection = Object.freeze({ kind: "NEMOCLAW_BACK_TO_SELECTION" });
     const { deps, calls } = createDeps({
@@ -334,7 +390,9 @@ describe("handleSandboxState", () => {
       expect.any(Object),
       "my-assistant",
     );
-    expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [non-interactive] Reusing messaging channel configuration: discord",
+    );
     expect(result.selectedMessagingChannels).toEqual(["discord"]);
   });
 
@@ -361,7 +419,11 @@ describe("handleSandboxState", () => {
       getRegistrySandboxMessagingPlan: () => registryPlan,
     });
 
-    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
 
     expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
   });
@@ -379,7 +441,11 @@ describe("handleSandboxState", () => {
       getRegistrySandboxMessagingPlan: () => registryPlan,
     });
 
-    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
 
     expect(writePlanToEnv).not.toHaveBeenCalled();
     expect(getSession().messagingPlan).toEqual(rebuiltPlan);
@@ -396,7 +462,11 @@ describe("handleSandboxState", () => {
       getRegistrySandboxMessagingPlan: () => null,
     });
 
-    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
 
     expect(writePlanToEnv).not.toHaveBeenCalled();
   });
