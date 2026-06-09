@@ -68,6 +68,23 @@
     { pattern: /^moonshotai\/kimi-k2\.6$/i, kwargs: { thinking: false } },
   ];
 
+  // #4851: Ultra 550B silently drops intermediate steps from `content` when
+  // asked to perform multi-step tasks without execution tools — reasoning
+  // plans all steps but content emits only the final command (or empty).
+  // chat_template_kwargs.force_nonempty_content doesn't help. When the
+  // caller hasn't supplied a system message AND has no tools, inject a
+  // one-paragraph nudge so the model emits the full code/commands the
+  // user would run manually. Skip when a system message is already
+  // present (caller's prompt wins) or when tools are present (the model
+  // should use them).
+  var TOOL_LESS_SYSTEM_PROMPT_RULES = [
+    {
+      pattern: /^nvidia\/nemotron-3-ultra-550b/i,
+      systemPrompt:
+        'You do not have tools to write files or execute commands. When the user asks you to perform such actions, include the complete code or command they would need to run manually. Do not skip steps.',
+    },
+  ];
+
   function chatTemplateKwargsForModel(model) {
     var kwargs = null;
     CHAT_TEMPLATE_KWARG_RULES.forEach(function (rule) {
@@ -101,12 +118,37 @@
     return true;
   }
 
+  function toolLessSystemPromptForModel(body) {
+    if (!body || typeof body.model !== 'string') return null;
+    var rule = null;
+    for (var i = 0; i < TOOL_LESS_SYSTEM_PROMPT_RULES.length; i++) {
+      if (TOOL_LESS_SYSTEM_PROMPT_RULES[i].pattern.test(body.model)) {
+        rule = TOOL_LESS_SYSTEM_PROMPT_RULES[i];
+        break;
+      }
+    }
+    if (!rule) return null;
+    if (!Array.isArray(body.messages) || body.messages.length === 0) return null;
+    var first = body.messages[0];
+    if (first && typeof first === 'object' && first.role === 'system') return null;
+    if (Array.isArray(body.tools) && body.tools.length > 0) return null;
+    return rule.systemPrompt;
+  }
+
+  function applyToolLessSystemPrompt(body) {
+    var systemPrompt = toolLessSystemPromptForModel(body);
+    if (!systemPrompt) return false;
+    body.messages.unshift({ role: 'system', content: systemPrompt });
+    return true;
+  }
+
   function patchJsonBody(raw) {
     try {
       var body = JSON.parse(raw.toString('utf-8'));
-      if (!applyChatTemplateKwargs(body)) {
-        return null;
-      }
+      var changed = false;
+      if (applyChatTemplateKwargs(body)) changed = true;
+      if (applyToolLessSystemPrompt(body)) changed = true;
+      if (!changed) return null;
       return Buffer.from(JSON.stringify(body), 'utf-8');
     } catch (_e) {
       return null;

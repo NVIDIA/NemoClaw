@@ -301,4 +301,94 @@ main().catch((err) => {
     const otherBody = JSON.parse(records[2].body);
     expect(otherBody.chat_template_kwargs).toBeUndefined();
   });
+
+  it("preload injects a tool-less system prompt for Ultra 550B without overriding caller intent (#4851)", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const records = [];
+http.request = function (options) {
+  const record = { options, writes: [], headers: {}, removed: [] };
+  records.push(record);
+  return {
+    write(chunk) {
+      record.writes.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+      return true;
+    },
+    end(cb) {
+      if (typeof cb === 'function') cb();
+      return true;
+    },
+    getHeader(name) { return record.headers[name]; },
+    setHeader(name, value) { record.headers[name] = value; },
+    removeHeader(name) { record.removed.push(name); delete record.headers[name]; },
+  };
+};
+${preload}
+function send(body) {
+  const req = http.request({ method: 'POST', path: '/v1/chat/completions' });
+  req.write(body);
+  req.end();
+}
+// case 0: Ultra 550B, no system, no tools — expect injected system message
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'Create a file and run it.' }],
+}));
+// case 1: Ultra 550B, existing system message — expect NO injection
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [
+    { role: 'system', content: 'You are pirate-themed.' },
+    { role: 'user', content: 'hi' },
+  ],
+}));
+// case 2: Ultra 550B, with tools — expect NO injection (model should use tools)
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [{ type: 'function', function: { name: 'exec', parameters: {} } }],
+}));
+// case 3: non-matching Nemotron, no system, no tools — expect NO injection
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-super-120b-a12b',
+  messages: [{ role: 'user', content: 'hi' }],
+}));
+console.log(JSON.stringify(records));
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+    expect(records).toHaveLength(4);
+
+    // case 0: system message injected at position 0
+    const ultraBare = JSON.parse(records[0].writes.join(""));
+    expect(ultraBare.messages[0].role).toBe("system");
+    expect(ultraBare.messages[0].content).toMatch(/do not have tools/i);
+    expect(ultraBare.messages[1]).toEqual({
+      role: "user",
+      content: "Create a file and run it.",
+    });
+    // kwargs still applied (Nemotron rule)
+    expect(ultraBare.chat_template_kwargs).toEqual({ force_nonempty_content: true });
+
+    // case 1: caller's system message preserved, no injection prepended
+    const ultraWithSystem = JSON.parse(records[1].writes.join(""));
+    expect(ultraWithSystem.messages).toHaveLength(2);
+    expect(ultraWithSystem.messages[0].content).toBe("You are pirate-themed.");
+
+    // case 2: tools present, no injection
+    const ultraWithTools = JSON.parse(records[2].writes.join(""));
+    expect(ultraWithTools.messages).toHaveLength(1);
+    expect(ultraWithTools.messages[0].role).toBe("user");
+
+    // case 3: non-matching Nemotron model, no injection
+    const superModel = JSON.parse(records[3].writes.join(""));
+    expect(superModel.messages).toHaveLength(1);
+    expect(superModel.messages[0].role).toBe("user");
+  });
 });
