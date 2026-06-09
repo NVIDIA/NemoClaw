@@ -35,7 +35,10 @@ for (const scenario of listScenarios()) {
       secrets.required(secret);
     }
 
-    expect(fs.existsSync(CLI_DIST_ENTRYPOINT), "run `npm run build:cli` before live repo CLI scenarios").toBe(true);
+    expect(
+      fs.existsSync(CLI_DIST_ENTRYPOINT),
+      "run `npm run build:cli` before live repo CLI scenarios",
+    ).toBe(true);
     if (!scenario.environment) {
       throw new Error(`scenario '${scenario.id}' is missing environment`);
     }

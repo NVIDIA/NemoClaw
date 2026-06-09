@@ -40,7 +40,9 @@ describe("live Vitest registry discovery support", () => {
   });
 
   it("keeps no-Docker negatives skipped until runtime prep is matrix-owned", () => {
-    const scenario = listScenarios().find((entry) => entry.id === "ubuntu-no-docker-preflight-negative");
+    const scenario = listScenarios().find(
+      (entry) => entry.id === "ubuntu-no-docker-preflight-negative",
+    );
 
     expect(scenario).toBeTruthy();
     expect(liveScenarioSupport(scenario!)).toMatchObject({

@@ -32,7 +32,8 @@ function scriptedFetch(routes: ScriptedRoute[]): { fetch: FetchLike; calls: stri
     if (!route) {
       return { ok: false, status: 599, text: async () => `unmatched ${url}` };
     }
-    const body = route.queue.length > 0 ? route.queue.shift()! : route.bodies[route.bodies.length - 1];
+    const body =
+      route.queue.length > 0 ? route.queue.shift()! : route.bodies[route.bodies.length - 1];
     return {
       ok: true,
       status: 200,

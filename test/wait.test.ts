@@ -4,12 +4,7 @@
 import assert from "node:assert";
 import { createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, it } from "vitest";
-import {
-  buildLoopbackProbeEnv,
-  sleepMs,
-  sleepSeconds,
-  waitForPort,
-} from "../src/lib/core/wait.js";
+import { buildLoopbackProbeEnv, sleepMs, sleepSeconds, waitForPort } from "../src/lib/core/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {

@@ -17,10 +17,7 @@
  */
 
 /** True iff `sandboxName` is the current default — capture this before recreate tears it down. */
-export function wasSandboxDefault(
-  currentDefault: string | null,
-  sandboxName: string,
-): boolean {
+export function wasSandboxDefault(currentDefault: string | null, sandboxName: string): boolean {
   return currentDefault === sandboxName;
 }
 

@@ -67,9 +67,11 @@ process.stdout.write(JSON.stringify(calls));
   return JSON.parse(probe.stdout) as string[][];
 }
 
-function runLockAgentConfigProbeExpectingThrow(
-  symlinkedPath: string,
-): { stdout: string; stderr: string; status: number | null } {
+function runLockAgentConfigProbeExpectingThrow(symlinkedPath: string): {
+  stdout: string;
+  stderr: string;
+  status: number | null;
+} {
   return spawnSync(
     process.execPath,
     [
@@ -159,9 +161,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
 
     const stateDirLockShell = findStateDirLockShell(commands);
     expect(stateDirLockShell).toBeDefined();
-    expect(stateDirLockShell).toEqual(
-      expect.arrayContaining(["root:sandbox", "go-w", "755"]),
-    );
+    expect(stateDirLockShell).toEqual(expect.arrayContaining(["root:sandbox", "go-w", "755"]));
     expect(stateDirLockShell).toEqual(
       expect.arrayContaining(["agents", "extensions", "skills", "hooks"]),
     );
@@ -173,7 +173,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(stateDirLockShell).toBeDefined();
     const script = stateDirLockShell?.[2] ?? "";
     expect(script).toContain('if [ -L "$path" ]; then');
-    expect(script).toContain('symlinked-root');
+    expect(script).toContain("symlinked-root");
     expect(script).toContain('[ -d "$path" ] || continue');
   });
 
@@ -184,13 +184,13 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
         command[0] === "sh" &&
         command[1] === "-c" &&
         typeof command[2] === "string" &&
-        command[2].includes('workspace-*') &&
+        command[2].includes("workspace-*") &&
         command[2].includes('chown -R "$owner"'),
     );
     expect(workspaceMutationShell).toBeDefined();
     const script = workspaceMutationShell?.[2] ?? "";
     expect(script).toContain('if [ -L "$dir" ]; then');
-    expect(script).toContain('symlinked-root');
+    expect(script).toContain("symlinked-root");
   });
 
   it("runs a symlink-preflight script before any mutation", () => {
@@ -200,7 +200,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
         command[0] === "sh" &&
         command[1] === "-c" &&
         typeof command[2] === "string" &&
-        command[2].includes('workspace-*') &&
+        command[2].includes("workspace-*") &&
         !command[2].includes("chown") &&
         !command[2].includes("chmod"),
     );
@@ -214,9 +214,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
   // would report success while the dir still points at a writable host
   // path.
   it("throws when shields-up encounters a symlinked state-dir root", () => {
-    const result = runLockAgentConfigProbeExpectingThrow(
-      "/sandbox/.openclaw/extensions",
-    );
+    const result = runLockAgentConfigProbeExpectingThrow("/sandbox/.openclaw/extensions");
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Config not locked");
     expect(result.stderr).toContain("state dir root is a symlink");
@@ -314,16 +312,8 @@ try {
 
   it("keeps the top-level config dir owned by root:root (lock contract unchanged)", () => {
     const commands = runLockAgentConfigProbe();
-    expect(commands).toContainEqual([
-      "chown",
-      "root:root",
-      "/sandbox/.openclaw",
-    ]);
-    expect(commands).toContainEqual([
-      "chown",
-      "root:root",
-      "/sandbox/.openclaw/openclaw.json",
-    ]);
+    expect(commands).toContainEqual(["chown", "root:root", "/sandbox/.openclaw"]);
+    expect(commands).toContainEqual(["chown", "root:root", "/sandbox/.openclaw/openclaw.json"]);
   });
 
   it("restores agents/*/sessions to sandbox:sandbox 2770 after the main lock loop", () => {
@@ -354,9 +344,7 @@ try {
 
     const restoreShell = runLockAgentConfigProbe().find(
       (command) =>
-        command[0] === "sh" &&
-        command[1] === "-c" &&
-        command.includes("agents/*/sessions"),
+        command[0] === "sh" && command[1] === "-c" && command.includes("agents/*/sessions"),
     );
     if (!restoreShell) {
       throw new Error("restore-writable-runtime-subpaths shell command not found");
@@ -367,11 +355,10 @@ try {
     // configDir is passed exactly once when re-running the script body.
     const patterns = restoreShell.slice(5);
 
-    const result = spawnSync(
-      "sh",
-      ["-c", `${script}\n`, "sh", configDir, ...patterns],
-      { encoding: "utf-8", timeout: 5000 },
-    );
+    const result = spawnSync("sh", ["-c", `${script}\n`, "sh", configDir, ...patterns], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(true);
     expect(fs.statSync(path.join(agentDir, "sessions")).isDirectory()).toBe(true);
@@ -383,9 +370,7 @@ try {
   // for a symlink to a host path, the consolidated state-dir lock script
   // must skip the symlink without recursing into the target.
   it("does not chown/chmod through a symlinked high-risk state dir", () => {
-    const fixture = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-shields-statedir-symlink-"),
-    );
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-statedir-symlink-"));
     const configDir = path.join(fixture, ".openclaw");
     const hostTarget = path.join(fixture, "host-target");
     fs.mkdirSync(configDir, { recursive: true });
@@ -406,11 +391,10 @@ try {
     const args = stateDirLockShell.slice(4);
     args[0] = configDir;
 
-    const result = spawnSync(
-      "sh",
-      ["-c", `${script}\n`, "sh", ...args],
-      { encoding: "utf-8", timeout: 5000 },
-    );
+    const result = spawnSync("sh", ["-c", `${script}\n`, "sh", ...args], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
     expect(result.status).toBe(0);
     expect(fs.lstatSync(path.join(configDir, "extensions")).isSymbolicLink()).toBe(true);
     expect(fs.statSync(innocentFile).mode & 0o7777).toBe(hostFilePerms);
@@ -434,9 +418,7 @@ try {
 
     const restoreShell = runLockAgentConfigProbe().find(
       (command) =>
-        command[0] === "sh" &&
-        command[1] === "-c" &&
-        command.includes("agents/*/sessions"),
+        command[0] === "sh" && command[1] === "-c" && command.includes("agents/*/sessions"),
     );
     if (!restoreShell) {
       throw new Error("restore-writable-runtime-subpaths shell command not found");
@@ -444,11 +426,10 @@ try {
     const script = restoreShell[2];
     const patterns = restoreShell.slice(5);
 
-    const result = spawnSync(
-      "sh",
-      ["-c", `${script}\n`, "sh", configDir, ...patterns],
-      { encoding: "utf-8", timeout: 5000 },
-    );
+    const result = spawnSync("sh", ["-c", `${script}\n`, "sh", configDir, ...patterns], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(hostTarget, "sessions"))).toBe(false);
     expect(fs.existsSync(path.join(agentsRoot, "main", "sessions"))).toBe(false);

@@ -46,7 +46,9 @@ export function gatewayVolumeCandidates(gatewayName = DEFAULT_GATEWAY_NAME): str
 }
 
 function openshellInstallPathsForBinDirs(binDirs: string[]): string[] {
-  return binDirs.flatMap((binDir) => OPENSHELL_MANAGED_BINARIES.map((binary) => path.join(binDir, binary)));
+  return binDirs.flatMap((binDir) =>
+    OPENSHELL_MANAGED_BINARIES.map((binary) => path.join(binDir, binary)),
+  );
 }
 
 export function defaultUninstallPaths(options: UninstallPathOptions): UninstallPaths {
@@ -62,7 +64,10 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),
-    runtimeTempGlobs: [path.join(tmpDir, "nemoclaw-create-*.log"), path.join(tmpDir, "nemoclaw-tg-ssh-*.conf")],
+    runtimeTempGlobs: [
+      path.join(tmpDir, "nemoclaw-create-*.log"),
+      path.join(tmpDir, "nemoclaw-tg-ssh-*.conf"),
+    ],
     shellProfilePaths: [
       path.join(options.home, ".bashrc"),
       path.join(options.home, ".zshrc"),
@@ -75,6 +80,16 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
   };
 }
 
-export function uninstallStatePaths(paths: Pick<UninstallPaths, "nemoclawConfigDir" | "nemoclawStateDir" | "openshellConfigDir" | "gatewayLocalStateDir">): string[] {
-  return [paths.nemoclawStateDir, paths.gatewayLocalStateDir, paths.openshellConfigDir, paths.nemoclawConfigDir];
+export function uninstallStatePaths(
+  paths: Pick<
+    UninstallPaths,
+    "nemoclawConfigDir" | "nemoclawStateDir" | "openshellConfigDir" | "gatewayLocalStateDir"
+  >,
+): string[] {
+  return [
+    paths.nemoclawStateDir,
+    paths.gatewayLocalStateDir,
+    paths.openshellConfigDir,
+    paths.nemoclawConfigDir,
+  ];
 }

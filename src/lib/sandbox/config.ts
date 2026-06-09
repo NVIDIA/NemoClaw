@@ -421,11 +421,9 @@ function writeSandboxConfig(
     fs.writeFileSync(tmpFile, composeSandboxConfigBody(config, target), { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
-    privilegedSandboxExec(
-      sandboxName,
-      ["sh", "-c", `cat > ${shellQuote(target.configPath)}`],
-      { input: content },
-    );
+    privilegedSandboxExec(sandboxName, ["sh", "-c", `cat > ${shellQuote(target.configPath)}`], {
+      input: content,
+    });
 
     try {
       privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]);
@@ -569,7 +567,11 @@ async function validateUrlValueWithDnsResult(
   const family = first.family ?? isIP(first.address);
   pinned.hostname = family === 6 ? `[${first.address}]` : first.address;
 
-  return { protocol: parsed.protocol as "http:" | "https:", originalUrl, pinnedUrl: pinned.toString() };
+  return {
+    protocol: parsed.protocol as "http:" | "https:",
+    originalUrl,
+    pinnedUrl: pinned.toString(),
+  };
 }
 
 async function validateUrlValueWithDns(
@@ -829,9 +831,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    const suffix = err instanceof ConfigUrlValidationError
-      ? ` for ${redactUrlForLogs(err.urlValue)}`
-      : "";
+    const suffix =
+      err instanceof ConfigUrlValidationError ? ` for ${redactUrlForLogs(err.urlValue)}` : "";
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 

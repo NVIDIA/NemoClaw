@@ -15,11 +15,17 @@ const {
   cliName,
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
-const { createSelectOnboardAgent }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
-const { createInferenceSelectionValidationHelpers }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const {
+  createSelectOnboardAgent,
+}: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
+const {
+  createInferenceSelectionValidationHelpers,
+}: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
-const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
+const {
+  abortNonInteractive,
+}: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -45,9 +51,18 @@ const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./o
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
-const { findReadableNvidiaCdiSpecFiles, parseDockerCdiSpecDirs }: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
-const { buildSandboxGpuCreateArgs, getSandboxReadyTimeoutSecs }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
-const { appendResourceFlagsForProfile, selectResourceProfileForSandbox }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
+const {
+  findReadableNvidiaCdiSpecFiles,
+  parseDockerCdiSpecDirs,
+}: typeof import("./onboard/docker-cdi") = require("./onboard/docker-cdi");
+const {
+  buildSandboxGpuCreateArgs,
+  getSandboxReadyTimeoutSecs,
+}: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
+const {
+  appendResourceFlagsForProfile,
+  selectResourceProfileForSandbox,
+}: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
   isValidProxyHost,
   isValidProxyPort,
@@ -73,30 +88,43 @@ const {
 const {
   resolveProviderKeyFallback,
 }: typeof import("./onboard/provider-key-fallback") = require("./onboard/provider-key-fallback");
-const { isLinuxDockerDriverGatewayEnabled }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
+const {
+  isLinuxDockerDriverGatewayEnabled,
+}: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
-const { syncPresetSelection }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
-const { maybeForceE2eStepFailure }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
+const {
+  syncPresetSelection,
+}: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
+const {
+  maybeForceE2eStepFailure,
+}: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
 const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
 const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
+const { gatherWechatConfig, hasWechatConfigDrift, toSessionWechatConfig } =
+  require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
-  gatherWechatConfig,
-  hasWechatConfigDrift,
-  toSessionWechatConfig,
-} = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
-const { setupMessagingChannels: setupMessagingChannelsImpl, readMessagingPlanFromEnv, writePlanToEnv, getRegistrySandboxMessagingPlan, MessagingHostStateApplier } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+  setupMessagingChannels: setupMessagingChannelsImpl,
+  readMessagingPlanFromEnv,
+  writePlanToEnv,
+  getRegistrySandboxMessagingPlan,
+  MessagingHostStateApplier,
+} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
-const { repairResumeMachineSnapshot }: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
+const {
+  repairResumeMachineSnapshot,
+}: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
 const {
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
-const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
+const {
+  buildVllmMenuEntries,
+}: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
 const {
   detectWindowsHostOllama,
 }: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
@@ -106,7 +134,9 @@ const {
 const {
   installOllamaOnMacOS,
 }: typeof import("./onboard/install-ollama-macos") = require("./onboard/install-ollama-macos");
-const { OllamaProbeFailureTracker }: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
+const {
+  OllamaProbeFailureTracker,
+}: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -120,7 +150,8 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
-const { runSandboxProviderPreDeleteCleanup } = require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
+const { runSandboxProviderPreDeleteCleanup } =
+  require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -138,10 +169,7 @@ const {
 const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
 const { getGatewayClusterContainerName, getGatewayClusterImageDrift } = gatewayDrift;
 const sandboxBaseImage: typeof import("./sandbox-base-image") = require("./sandbox-base-image");
-const {
-  OPENCLAW_SANDBOX_BASE_IMAGE: SANDBOX_BASE_IMAGE,
-  SANDBOX_BASE_TAG,
-} = sandboxBaseImage;
+const { OPENCLAW_SANDBOX_BASE_IMAGE: SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } = sandboxBaseImage;
 const {
   getStableGatewayImageRef,
   pullAndResolveBaseImageDigest,
@@ -149,7 +177,9 @@ const {
 const errnoUtils: typeof import("./core/errno") = require("./core/errno");
 const { isErrnoException } = errnoUtils;
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
-const { logMissingNvidiaApiKeyHelp }: typeof import("./onboard/missing-credential-hints") = require("./onboard/missing-credential-hints");
+const {
+  logMissingNvidiaApiKeyHelp,
+}: typeof import("./onboard/missing-credential-hints") = require("./onboard/missing-credential-hints");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -160,7 +190,10 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const { collectBuildContextStats, stageOptimizedSandboxBuildContext } = require("./sandbox/build-context");
+const {
+  collectBuildContextStats,
+  stageOptimizedSandboxBuildContext,
+} = require("./sandbox/build-context");
 const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
@@ -203,11 +236,7 @@ const {
 } = require("./inference/ollama/windows");
 const { detectVllmProfile, installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
-const {
-  DEFAULT_CLOUD_MODEL,
-  getProviderSelectionConfig,
-  parseGatewayInference,
-} = inferenceConfig;
+const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
@@ -296,7 +325,9 @@ const {
   resolveProviderCredential,
   saveCredential,
 } = credentials;
-const { hashCredential }: typeof import("./security/credential-hash") = require("./security/credential-hash");
+const {
+  hashCredential,
+}: typeof import("./security/credential-hash") = require("./security/credential-hash");
 const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
@@ -318,7 +349,9 @@ const {
   getResumeConfigConflicts,
   getResumeSandboxConflict,
 } = resumeConfig;
-const { pruneKnownHostsEntries }: typeof import("./onboard/known-hosts") = require("./onboard/known-hosts");
+const {
+  pruneKnownHostsEntries,
+}: typeof import("./onboard/known-hosts") = require("./onboard/known-hosts");
 const {
   exitOnboardFromPrompt,
   getNavigationChoice,
@@ -328,15 +361,21 @@ const {
   ...onboardPromptHelpers
 }: typeof import("./onboard/prompt-helpers") = require("./onboard/prompt-helpers");
 const providerRecovery: typeof import("./onboard/provider-recovery") = require("./onboard/provider-recovery");
-const { createOpenclawSetup }: typeof import("./onboard/openclaw-setup") = require("./onboard/openclaw-setup");
-const { createWebSearchFlowHelpers }: typeof import("./onboard/web-search-flow") = require("./onboard/web-search-flow");
+const {
+  createOpenclawSetup,
+}: typeof import("./onboard/openclaw-setup") = require("./onboard/openclaw-setup");
+const {
+  createWebSearchFlowHelpers,
+}: typeof import("./onboard/web-search-flow") = require("./onboard/web-search-flow");
 const {
   createValidationRecoveryPromptHelpers,
 }: typeof import("./onboard/validation-recovery-prompt") = require("./onboard/validation-recovery-prompt");
 const {
   createLocalInferenceRouteApplier,
 }: typeof import("./onboard/local-inference-route") = require("./onboard/local-inference-route");
-const { createOpenshellCliHelpers }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
+const {
+  createOpenshellCliHelpers,
+}: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
   exitOnSandboxGpuConfigErrors,
@@ -357,12 +396,11 @@ const {
 } = openshellVersion;
 const credentialNavigation: typeof import("./onboard/credential-navigation") =
   require("./onboard/credential-navigation");
+const { BACK_TO_SELECTION, createCredentialPromptHelpers, isBackToSelection } =
+  credentialNavigation;
 const {
-  BACK_TO_SELECTION,
-  createCredentialPromptHelpers,
-  isBackToSelection,
-} = credentialNavigation;
-const { toSessionUpdates }: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
+  toSessionUpdates,
+}: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
 const messagingConfig: typeof import("./onboard/messaging-config") = require("./onboard/messaging-config");
 const {
@@ -406,29 +444,53 @@ const {
   reconcileModelRouter,
 } = modelRouter;
 const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
-const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
-const { installSandboxCancelRollback, makeOnboardCancelExit, wasSandboxDefault, restoreDefaultAfterRecreate }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
-const { handleAgentSetupState }: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
-const { handleFinalizationState }: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
-const { handleGatewayState }: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
-const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
-const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
-const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
-const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
-const { advanceTo }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
-const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
+const {
+  OnboardRuntimeBoundary,
+}: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
+const {
+  installSandboxCancelRollback,
+  makeOnboardCancelExit,
+  wasSandboxDefault,
+  restoreDefaultAfterRecreate,
+}: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
+const {
+  handleAgentSetupState,
+}: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
+const {
+  handleFinalizationState,
+}: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
+const {
+  handleGatewayState,
+}: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
+const {
+  handlePoliciesState,
+}: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
+const {
+  handlePreflightState,
+}: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
+const {
+  handleProviderInferenceState,
+}: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
+const {
+  handleSandboxState,
+}: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
+const {
+  advanceTo,
+}: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
+const {
+  getOnboardProgressStep,
+}: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
-const {
-  findAvailableDashboardPort,
-  preflightDashboardPortRangeAvailability,
-} = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
+const { findAvailableDashboardPort, preflightDashboardPortRangeAvailability } =
+  require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
-const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { destroyGatewayForReuse } =
+  require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { applyPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
@@ -437,9 +499,8 @@ const { applyHealthyPortReuse } =
   require("./onboard/gateway-stale-port-reuse") as typeof import("./onboard/gateway-stale-port-reuse");
 const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
-const {
-  gatewayCliSupportsLifecycleCommands,
-} = require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
+const { gatewayCliSupportsLifecycleCommands } =
+  require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
 const { reconcilePreflightGatewayReuseState } =
   require("./onboard/preflight-gateway-reuse") as typeof import("./onboard/preflight-gateway-reuse");
 const {
@@ -447,7 +508,8 @@ const {
   isDockerDriverGatewayHttpReady,
   isGatewayHttpReady,
   waitForGatewayHttpReady,
-} = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
+} =
+  require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
 const { isGatewayTcpReady } =
   require("./onboard/gateway-tcp-readiness") as typeof import("./onboard/gateway-tcp-readiness");
 const { trackChildExit } =
@@ -465,13 +527,8 @@ const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./on
 const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
-const {
-  assessHost,
-  checkPortAvailable,
-  ensureSwap,
-  getMemoryInfo,
-  planHostRemediation,
-} = preflightUtils;
+const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo, planHostRemediation } =
+  preflightUtils;
 const {
   assertDockerBridgeAndContainerDnsHealthy,
 }: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
@@ -512,11 +569,8 @@ import {
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
-import {
-  filterEnabledChannelsByAgent,
-  resolveQrSelectedChannels,
-} from "./onboard/messaging-state";
-import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
+import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./onboard/messaging-state";
+import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
@@ -618,7 +672,12 @@ async function promptYesNoOrDefault(
   envVar: string | null,
   defaultIsYes: boolean,
 ): Promise<boolean> {
-  return onboardPromptHelpers.promptYesNoOrDefault(promptHelperDeps, question, envVar, defaultIsYes);
+  return onboardPromptHelpers.promptYesNoOrDefault(
+    promptHelperDeps,
+    question,
+    envVar,
+    defaultIsYes,
+  );
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -662,7 +721,9 @@ const { getSandboxReuseState, repairRecordedSandbox } = sandboxReuse.createSandb
 
 const { streamSandboxCreate } = sandboxCreateStream;
 
-const { executeSandboxCommandForVerification }: typeof import("./onboard/sandbox-verification-exec") =
+const {
+  executeSandboxCommandForVerification,
+}: typeof import("./onboard/sandbox-verification-exec") =
   require("./onboard/sandbox-verification-exec");
 
 // URL/string utilities — delegated to src/lib/core/url-utils.ts
@@ -676,10 +737,7 @@ const {
 const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
   require("./onboard/credential-env");
 
-const {
-  summarizeCurlFailure,
-  summarizeProbeFailure,
-} = httpProbe;
+const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createSelectOnboardAgent({
   resolveAgent: agentOnboard.resolveAgent,
@@ -847,7 +905,12 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = { name: string; envKey: string; token: string | null; providerType?: string };
+type MessagingTokenDef = {
+  name: string;
+  envKey: string;
+  token: string | null;
+  providerType?: string;
+};
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -864,11 +927,7 @@ function upsertMessagingProviders(
   options: { replaceExisting?: boolean } = {},
 ) {
   braveProviderProfile.ensureBraveProviderProfile(tokenDefs, { root: ROOT, runOpenshell, redact });
-  const upserted = onboardProviders.upsertMessagingProviders(
-    tokenDefs,
-    runOpenshell,
-    options,
-  );
+  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
   // upsertMessagingProviders process.exits on failure, so reaching this
   // point means every entry in tokenDefs that had a token was registered.
   // Mark migrated only when the registered token equals the staged legacy
@@ -893,8 +952,8 @@ function upsertMessagingProviders(
   if (mutated) persistMigratedLegacyKeys();
   return upserted;
 }
-const providerExistsInGateway = (name: string) => onboardProviders.providerExistsInGateway(name, runOpenshell);
-
+const providerExistsInGateway = (name: string) =>
+  onboardProviders.providerExistsInGateway(name, runOpenshell);
 
 function verifyInferenceRoute(_provider: string, _model: string): void {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
@@ -918,23 +977,21 @@ const {
   isOpenclawReady,
 } = sandboxLifecycle.createSandboxLifecycleHelpers({
   runCaptureOpenshell,
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => fetchGatewayAuthTokenFromSandbox(sandboxName),
+  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
+    fetchGatewayAuthTokenFromSandbox(sandboxName),
   agentProductName,
   prompt,
   isAffirmativeAnswer,
 });
 
-const {
-  ensureValidatedBraveSearchCredential,
-  configureWebSearch,
-  verifyWebSearchInsideSandbox,
-} = createWebSearchFlowHelpers({
-  prompt,
-  note,
-  isNonInteractive,
-  cliName,
-  runCaptureOpenshell,
-});
+const { ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } =
+  createWebSearchFlowHelpers({
+    prompt,
+    note,
+    isNonInteractive,
+    cliName,
+    runCaptureOpenshell,
+  });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 
@@ -1146,7 +1203,15 @@ async function refreshDockerDriverGatewayReuseState(
   const baseDesiredEnv = getDockerDriverGatewayEnv(
     runCaptureOpenshell(["--version"], { ignoreError: true }),
   );
-  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv: baseDesiredEnv, stateDir: getDockerDriverGatewayStateDir(), sandboxBin: resolveOpenShellSandboxBinary(), compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT) }) : null;
+  const runtimeIdentity = gatewayBin
+    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
+        gatewayBin,
+        gatewayEnv: baseDesiredEnv,
+        stateDir: getDockerDriverGatewayStateDir(),
+        sandboxBin: resolveOpenShellSandboxBinary(),
+        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+      })
+    : null;
   const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
   const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
@@ -1266,7 +1331,9 @@ function handleFinalGatewayStartFailure({
   printError(`    # For OpenShell releases that still expose lifecycle commands:`);
   printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
   if (process.platform === "linux") {
-    printError("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
+    printError(
+      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+    );
   }
   printError(
     `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
@@ -1331,14 +1398,12 @@ function getGatewayLocalEndpoint(): string {
   return dockerDriverGatewayEnv.getGatewayHttpsEndpoint();
 }
 
-const {
-  gatewayClusterHealthcheckPassed,
-  repairGatewayBootstrapSecrets,
-} = createGatewayBootstrapRepairHelpers({
-  buildGatewayClusterExecArgv,
-  run,
-  runCapture,
-});
+const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
+  createGatewayBootstrapRepairHelpers({
+    buildGatewayClusterExecArgv,
+    run,
+    runCapture,
+  });
 
 function getDockerDriverGatewayStateDir(): string {
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
@@ -1397,7 +1462,8 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
   if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
     return "ghcr.io/nvidia/openshell/supervisor:dev";
   }
-  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
+  const supportedVersion =
+    installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
   return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
 }
 
@@ -1530,10 +1596,7 @@ function getDockerDriverGatewayRuntimeDrift(
   gatewayBin?: string | null,
   platform: NodeJS.Platform = process.platform,
 ): DockerDriverGatewayRuntimeDrift | null {
-  if (
-    platform === "darwin" &&
-    desiredEnv.OPENSHELL_DRIVERS === "docker"
-  ) {
+  if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
     const markerDrift =
       dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
         getDockerDriverGatewayStateDir(),
@@ -1594,9 +1657,11 @@ function isDockerDriverGatewayProcess(
 function isDockerDriverGatewayProcessAlive(): boolean {
   const pid = getDockerDriverGatewayPid();
   if (pid === null || !isPidAlive(pid)) return false;
-  if (!isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
-    requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
-  })) {
+  if (
+    !isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary(), {
+      requireDockerDriverEnv: shouldRequireDockerDriverEnv(),
+    })
+  ) {
     clearDockerDriverGatewayRuntimeFiles();
     return false;
   }
@@ -1611,7 +1676,10 @@ function clearDockerDriverGatewayRuntimeFiles(): void {
 }
 
 function rememberDockerDriverGatewayPid(pid: number): void {
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayPidFile(getDockerDriverGatewayPidFile(), pid);
+  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayPidFile(
+    getDockerDriverGatewayPidFile(),
+    pid,
+  );
 }
 
 function getDockerDriverGatewayPortListenerPid(
@@ -1626,10 +1694,7 @@ function getDockerDriverGatewayPortListenerPid(
 ): number | null {
   if (portCheck.ok) return null;
   if (
-    !isLinuxDockerDriverGatewayEnabled(
-      opts.platform ?? process.platform,
-      opts.arch ?? process.arch,
-    )
+    !isLinuxDockerDriverGatewayEnabled(opts.platform ?? process.platform, opts.arch ?? process.arch)
   )
     return null;
   const pid = Number(portCheck.pid);
@@ -1700,11 +1765,11 @@ function registerDockerDriverGatewayEndpoint(): boolean {
   return ok;
 }
 
-
-
 function attachGatewayMetadataIfNeeded({
   forceRefresh = false,
-}: { forceRefresh?: boolean } = {}): boolean {
+}: {
+  forceRefresh?: boolean;
+} = {}): boolean {
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
     ignoreError: true,
   });
@@ -1784,12 +1849,14 @@ function assertCdiNvidiaGpuSpecPresent(
   hostGpuPlatform: string | null | undefined = null,
 ): void {
   if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough) return;
-  console.error("  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.");
+  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough)
+    return;
+  console.error(
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+  );
   printRemediationActions(planHostRemediation(host));
   process.exit(1);
 }
-
 
 type PreflightOptions = Pick<
   OnboardOptions,
@@ -1867,9 +1934,7 @@ async function preflight(
       `  ⚠ Container runtime under-provisioned: ${detectedStr} detected ` +
         `(recommended: ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
     );
-    console.warn(
-      "    The sandbox build will be slow and may stall on default Colima settings.",
-    );
+    console.warn("    The sandbox build will be slow and may stall on default Colima settings.");
     if (host.runtime === "colima") {
       console.warn(
         `    Suggested: colima stop && colima start --cpu ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} --memory ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB}`,
@@ -1879,11 +1944,15 @@ async function preflight(
     }
     console.warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
     if (isNonInteractive()) {
-      console.warn("    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.");
+      console.warn(
+        "    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.",
+      );
     } else {
       const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, false);
       if (!proceed) {
-        console.error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
+        console.error(
+          "  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.",
+        );
         process.exit(1);
       }
     }
@@ -2008,9 +2077,26 @@ async function preflight(
       port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
     let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
-      const reuse = await applyHealthyPortReuse({ port, gatewayPort: GATEWAY_PORT, dashboardPort: DASHBOARD_PORT, label, runtimeDisplayName: cliDisplayName(), gatewayName: GATEWAY_NAME, gatewayReuseState, portCheckOptions, supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell), destroyGateway, runOpenshell, checkPortAvailable, verifyGatewayContainerRunning });
+      const reuse = await applyHealthyPortReuse({
+        port,
+        gatewayPort: GATEWAY_PORT,
+        dashboardPort: DASHBOARD_PORT,
+        label,
+        runtimeDisplayName: cliDisplayName(),
+        gatewayName: GATEWAY_NAME,
+        gatewayReuseState,
+        portCheckOptions,
+        supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        destroyGateway,
+        runOpenshell,
+        checkPortAvailable,
+        verifyGatewayContainerRunning,
+      });
       if (reuse === "continue") continue;
-      if (reuse) { ({ gatewayReuseState, portCheck } = reuse); if (portCheck.ok) continue; }
+      if (reuse) {
+        ({ gatewayReuseState, portCheck } = reuse);
+        if (portCheck.ok) continue;
+      }
       if (port === GATEWAY_PORT) {
         const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
         if (dockerGatewayPid !== null) {
@@ -2027,8 +2113,15 @@ async function preflight(
       // tunnels the user may have set up on the same port. (#1950)
       if (port === DASHBOARD_PORT && portCheck.process === "ssh" && portCheck.pid) {
         const outcome = await tryCleanupOrphanedDashboardForward({
-          port, pid: portCheck.pid, label, portCheckOptions,
-          captureProcessArgs, runCaptureOpenshell, run, sleepSeconds, checkPortAvailable,
+          port,
+          pid: portCheck.pid,
+          label,
+          portCheckOptions,
+          captureProcessArgs,
+          runCaptureOpenshell,
+          run,
+          sleepSeconds,
+          checkPortAvailable,
         });
         if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
         else if (outcome.kind !== "not-openshell") continue;
@@ -2140,7 +2233,8 @@ async function preflight(
     }
   }
 
-  if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); return gpu; // #3953 — fail-fast before next step
+  if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
+  return gpu; // #3953 — fail-fast before next step
 }
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
@@ -2148,12 +2242,21 @@ async function preflight(
 /** Start the OpenShell gateway with retry logic and post-start health polling. */
 async function startGatewayWithOptions(
   _gpu: ReturnType<typeof nim.detectGpu>,
-  { exitOnFailure = true, gpuPassthrough = false }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
+  {
+    exitOnFailure = true,
+    gpuPassthrough = false,
+  }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
-    return startDockerDriverGateway({ exitOnFailure, skipSandboxBridgeReachability: gpuPassthrough && process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" && dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host" });
+    return startDockerDriverGateway({
+      exitOnFailure,
+      skipSandboxBridgeReachability:
+        gpuPassthrough &&
+        process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" &&
+        dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host",
+    });
   }
 
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
@@ -2227,9 +2330,7 @@ async function startGatewayWithOptions(
           );
           if (failure.kind === "docker_unreachable") {
             dockerUnreachable = true;
-            throw new pRetry.AbortError(
-              "Docker daemon is not reachable (gateway cannot start).",
-            );
+            throw new pRetry.AbortError("Docker daemon is not reachable (gateway cannot start).");
           }
         }
         console.log("  Waiting for gateway health...");
@@ -2325,28 +2426,59 @@ async function startGatewayWithOptions(
       return check.includes("Running") && check.includes("true") && !check.includes("false");
     }, 10);
     if (!corednsReady) {
-      console.warn("  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.");
+      console.warn(
+        "  CoreDNS did not report ready within timeout; continuing may cause DNS flakiness.",
+      );
     }
   }
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
+async function startDockerDriverGateway({
+  exitOnFailure = true,
+  skipSandboxBridgeReachability = false,
+}: {
+  exitOnFailure?: boolean;
+  skipSandboxBridgeReachability?: boolean;
+} = {}): Promise<void> {
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
   });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
   const stateDir = getDockerDriverGatewayStateDir();
-  const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv, stateDir, sandboxBin: resolveOpenShellSandboxBinary(), compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT) }) : null;
+  const runtimeIdentity = gatewayBin
+    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
+        gatewayBin,
+        gatewayEnv,
+        stateDir,
+        sandboxBin: resolveOpenShellSandboxBinary(),
+        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+      })
+    : null;
   const gatewayLaunch = runtimeIdentity?.launch ?? null;
-  const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
+  const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(
+    runtimeIdentity,
+    gatewayBin,
+  );
   const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
-  if (await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayEnv, gatewayName: GATEWAY_NAME, registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) return;
+  if (
+    await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
+      clearDockerDriverGatewayRuntimeFiles,
+      exitOnFailure,
+      gatewayEnv,
+      gatewayName: GATEWAY_NAME,
+      registerDockerDriverGatewayEndpoint,
+      runCaptureOpenshell,
+      skipSandboxBridgeReachability,
+      verifySandboxBridgeGatewayReachableOrExit,
+    })
+  )
+    return;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
@@ -2359,11 +2491,18 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
   ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(pidFileGatewayPid, driftGatewayEnv, driftGatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(
+      pidFileGatewayPid,
+      driftGatewayEnv,
+      driftGatewayBin,
+    );
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Reusing existing Docker-driver gateway");
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+        skip: skipSandboxBridgeReachability,
+      });
+      console.log("  ✓ Reusing existing Docker-driver gateway");
       return;
     } else {
       console.log(
@@ -2377,7 +2516,11 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     gatewayBin: identityGatewayBin,
   });
   if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(portListenerPid, driftGatewayEnv, driftGatewayBin);
+    const drift = getDockerDriverGatewayRuntimeDrift(
+      portListenerPid,
+      driftGatewayEnv,
+      driftGatewayBin,
+    );
     if (drift) {
       rememberDockerDriverGatewayPid(portListenerPid);
       restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
@@ -2396,7 +2539,10 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
+        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+          skip: skipSandboxBridgeReachability,
+        });
+        console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
         return;
       }
     }
@@ -2446,7 +2592,17 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     throw new Error("OpenShell gateway process did not return a pid");
   }
   rememberDockerDriverGatewayPid(childPid);
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(getDockerDriverGatewayStateDir(), { pid: childPid, desiredEnv: driftGatewayEnv, endpoint: getDockerDriverGatewayEndpoint(), gatewayBin: driftGatewayBin, openshellVersion: getInstalledOpenshellVersion(openshellVersionOutput), dockerHost: process.env.DOCKER_HOST || null });
+  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(
+    getDockerDriverGatewayStateDir(),
+    {
+      pid: childPid,
+      desiredEnv: driftGatewayEnv,
+      endpoint: getDockerDriverGatewayEndpoint(),
+      gatewayBin: driftGatewayBin,
+      openshellVersion: getInstalledOpenshellVersion(openshellVersionOutput),
+      dockerHost: process.env.DOCKER_HOST || null,
+    },
+  );
 
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
@@ -2466,8 +2622,16 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     // #4430: the status/gateway-info/TCP probes above take real wall-clock time; re-confirm
     // childExit/isPidAlive *after* them so a gateway that drifts on schema and aborts during
     // migration after accepting briefly can never print the misleading healthy line below.
-    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayTcpReady()) && !childExit.exited && isPidAlive(childPid)) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, { skip: skipSandboxBridgeReachability }); console.log("  ✓ Docker-driver gateway is healthy");
+    if (
+      isGatewayHealthy(status, namedInfo, currentInfo) &&
+      (await isGatewayTcpReady()) &&
+      !childExit.exited &&
+      isPidAlive(childPid)
+    ) {
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+        skip: skipSandboxBridgeReachability,
+      });
+      console.log("  ✓ Docker-driver gateway is healthy");
       return;
     }
     if (i < pollCount - 1) sleepSeconds(pollInterval);
@@ -2605,11 +2769,7 @@ async function recoverGatewayRuntime() {
 
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
   let status = runCaptureOpenshell(["status"], { ignoreError: true });
-  if (
-    status.includes("Connected") &&
-    isSelectedGateway(status) &&
-    (await isGatewayHttpReady())
-  ) {
+  if (status.includes("Connected") && isSelectedGateway(status) && (await isGatewayHttpReady())) {
     process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     return true;
   }
@@ -2651,11 +2811,7 @@ async function recoverGatewayRuntime() {
       attachGatewayMetadataIfNeeded();
     }
     status = runCaptureOpenshell(["status"], { ignoreError: true });
-    if (
-      status.includes("Connected") &&
-      isSelectedGateway(status) &&
-      (await isGatewayHttpReady())
-    ) {
+    if (status.includes("Connected") && isSelectedGateway(status) && (await isGatewayHttpReady())) {
       process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
       const runtime = getContainerRuntime();
       if (shouldPatchCoredns(runtime)) {
@@ -2679,7 +2835,6 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
   });
-
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
@@ -2775,10 +2930,14 @@ async function createSandbox(
   // for the current sandbox creation.
   const envPlan = readMessagingPlanFromEnv();
   const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  const hasPlanCredentials = currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
+  const hasPlanCredentials =
+    currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (hasPlanCredentials) {
-    const { backfillMessagingChannels, findChannelConflictsFromPlan, createMessagingConflictProbe } =
-      require("./messaging/applier") as typeof import("./messaging/applier");
+    const {
+      backfillMessagingChannels,
+      findChannelConflictsFromPlan,
+      createMessagingConflictProbe,
+    } = require("./messaging/applier") as typeof import("./messaging/applier");
     const probe = createMessagingConflictProbe({
       checkGatewayLiveness: () =>
         runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
@@ -2824,9 +2983,8 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels: string[] = require("./onboard/channel-state").resolveDisabledChannels(
-    sandboxName,
-  );
+  const disabledChannels: string[] =
+    require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
   const disabledChannelNames = new Set(disabledChannels);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
@@ -2865,7 +3023,10 @@ async function createSandbox(
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
 
   const braveWebSearchEnabled = braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig);
-  const braveApiKey = braveWebSearchEnabled ? getCredential(webSearch.BRAVE_API_KEY_ENV) || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]) : null;
+  const braveApiKey = braveWebSearchEnabled
+    ? getCredential(webSearch.BRAVE_API_KEY_ENV) ||
+      normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV])
+    : null;
   // Fail before any recreate/delete path runs: otherwise a missing key would
   // destroy the existing sandbox first and only then surface the abort (#3626).
   if (braveWebSearchEnabled && !braveApiKey) {
@@ -2875,16 +3036,25 @@ async function createSandbox(
     );
     process.exit(1);
   }
-  if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
-  const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
+  if (braveWebSearchEnabled)
+    messagingTokenDefs.push({
+      name: `${sandboxName}-brave-search`,
+      envKey: webSearch.BRAVE_API_KEY_ENV,
+      token: braveApiKey,
+      providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
+    });
+  const extraPlaceholderKeys: string[] =
+    require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(
+      sandboxName,
+      messagingTokenDefs,
+    );
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
   const reusableMessagingProviders: string[] = [];
   const reusableMessagingChannels: string[] = [];
   if (enabledChannels != null) {
     for (const { name, envKey, token } of messagingTokenDefs) {
       if (token) continue;
-      const channel =
-        envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
+      const channel = envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
       if (!channel || !enabledChannels.includes(channel)) continue;
       if (!providerExistsInGateway(name)) continue;
       reusableMessagingProviders.push(name);
@@ -2910,7 +3080,9 @@ async function createSandbox(
     const latestBackup = sandboxState.getLatestBackup(sandboxName);
     if (latestBackup?.backupPath) {
       pendingStateRestoreBackupPath = latestBackup.backupPath;
-      note(`  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`);
+      note(
+        `  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`,
+      );
     } else {
       note(
         `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
@@ -3005,7 +3177,9 @@ async function createSandbox(
       if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
         const entry = registry.getSandbox(sandboxName);
         if (entry && !entry.gpuEnabled) {
-          console.error(`  Sandbox '${sandboxName}' exists but was created without GPU passthrough.`);
+          console.error(
+            `  Sandbox '${sandboxName}' exists but was created without GPU passthrough.`,
+          );
           console.error(
             "  Pass --recreate-sandbox to recreate with GPU, or destroy and re-onboard:",
           );
@@ -3052,7 +3226,9 @@ async function createSandbox(
               effectiveSandboxGpuConfig,
             );
             registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState),
+              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
+                reusedHermesDashboardState,
+              ),
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
             });
@@ -3099,7 +3275,9 @@ async function createSandbox(
               effectiveSandboxGpuConfig,
             );
             registry.updateSandbox(sandboxName, {
-              ...onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState2),
+              ...onboardHermesDashboard.getHermesDashboardRegistryFields(
+                reusedHermesDashboardState2,
+              ),
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
             });
@@ -3162,7 +3340,9 @@ async function createSandbox(
       note("  Backing up workspace state before recreating sandbox...");
       const result = backupSandboxBeforeRecreate({ sandboxName });
       if (!result.ok) {
-        console.error("  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.");
+        console.error(
+          "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
+        );
         process.exit(1);
       }
       pendingStateRestore = result.backup;
@@ -3212,7 +3392,10 @@ async function createSandbox(
     console.log(`  Using custom Dockerfile: ${fromResolved}`);
     console.log(`  Docker build context: ${buildContextDir}`);
     const shouldIncludeCustomContextPath = createCustomBuildContextFilter(buildContextDir);
-    const buildContextStats = collectBuildContextStats(buildContextDir, shouldIncludeCustomContextPath);
+    const buildContextStats = collectBuildContextStats(
+      buildContextDir,
+      shouldIncludeCustomContextPath,
+    );
     if (buildContextStats.totalBytes > CUSTOM_BUILD_CONTEXT_WARN_BYTES) {
       const sizeMb = (buildContextStats.totalBytes / 1_000_000).toFixed(1);
       console.warn(
@@ -3342,8 +3525,17 @@ async function createSandbox(
     }),
   ];
 
-  appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true });
+  appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), {
+    isNonInteractive,
+    note,
+    prompt,
+    promptOrDefault,
+  });
+  runSandboxProviderPreDeleteCleanup(sandboxName, {
+    runOpenshell,
+    redact,
+    tolerateMissingSandbox: true,
+  });
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
@@ -3395,9 +3587,12 @@ async function createSandbox(
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved = agent && !fromDockerfile ? null : pullAndResolveBaseImageDigest({
-    requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
-  });
+  const resolved =
+    agent && !fromDockerfile
+      ? null
+      : pullAndResolveBaseImageDigest({
+          requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
+        });
   if (resolved?.digest) {
     console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else if (resolved) {
@@ -3427,10 +3622,14 @@ async function createSandbox(
   // host. For local providers this drops the host-network GPU opt-in so
   // inference uses the reachable inference.local route (re-checking the bridge
   // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
-  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(provider, effectiveSandboxGpuConfig, {
-    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    log: console.log,
-  });
+  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+    provider,
+    effectiveSandboxGpuConfig,
+    {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      log: console.log,
+    },
+  );
   const sandboxInferenceBaseUrlOverride = null;
   patchStagedDockerfile(
     stagedDockerfile,
@@ -3477,7 +3676,11 @@ async function createSandbox(
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
   require("./onboard/openclaw-runtime-env").appendOpenClawRuntimeEnvArgs(envArgs, agent);
-  onboardHermesDashboard.appendHermesDashboardEnvArgs(envArgs, hermesDashboardState, formatEnvAssignment);
+  onboardHermesDashboard.appendHermesDashboardEnvArgs(
+    envArgs,
+    hermesDashboardState,
+    formatEnvAssignment,
+  );
   require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
@@ -3497,7 +3700,11 @@ async function createSandbox(
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
-  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(envArgs, extraPlaceholderKeys, formatEnvAssignment);
+  require("./onboard/extra-placeholder-keys").appendExtraPlaceholderKeysEnvArg(
+    envArgs,
+    extraPlaceholderKeys,
+    formatEnvAssignment,
+  );
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const sandboxEnv = buildSubprocessEnv();
   // Remove host-infrastructure credentials that the generic allowlist
@@ -3736,7 +3943,10 @@ async function createSandbox(
     });
   }
 
-  require("./onboard/vm-dns-monkeypatch").applyOnboardVmDnsMonkeypatch(sandboxName, sandboxRuntimeFields);
+  require("./onboard/vm-dns-monkeypatch").applyOnboardVmDnsMonkeypatch(
+    sandboxName,
+    sandboxRuntimeFields,
+  );
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -4043,7 +4253,11 @@ async function setupNim(
         if (!providerKey) {
           const recordedProvider = readRecordedProvider(sandboxName);
           const hasNimContainer = !!readRecordedNimContainer(sandboxName);
-          const recoveredKey = providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, recordedProvider, { hasNimContainer });
+          const recoveredKey = providerRecovery.providerNameToOptionKey(
+            REMOTE_PROVIDER_CONFIG,
+            recordedProvider,
+            { hasNimContainer },
+          );
           if (recoveredKey) {
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
@@ -4071,8 +4285,7 @@ async function setupNim(
               );
               if (recoveredKey === "ollama") {
                 const winHostKey = options.find(
-                  (o) =>
-                    o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
+                  (o) => o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
                 )?.key;
                 if (winHostKey) {
                   console.error(
@@ -4100,8 +4313,7 @@ async function setupNim(
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
           if (
-            (providerKey === "start-windows-ollama" ||
-              providerKey === "install-windows-ollama") &&
+            (providerKey === "start-windows-ollama" || providerKey === "install-windows-ollama") &&
             rejectWindowsHostOllama(providerKey, isWindowsHostOllama)
           ) {
             process.exit(1);
@@ -4260,7 +4472,9 @@ async function setupNim(
             credentialEnv = remoteConfig.credentialEnv;
           }
           const recordedHermesToolGateways = sandboxName
-            ? normalizeHermesToolGatewaySelections(registry.getSandbox(sandboxName)?.hermesToolGateways)
+            ? normalizeHermesToolGatewaySelections(
+                registry.getSandbox(sandboxName)?.hermesToolGateways,
+              )
             : null;
           hermesToolGateways = await setupHermesToolGateways(
             provider,
@@ -4270,9 +4484,7 @@ async function setupNim(
           );
 
           const defaultModel =
-            requestedModel ||
-            (recoveredFromSandbox && recoveredModel) ||
-            remoteConfig.defaultModel;
+            requestedModel || (recoveredFromSandbox && recoveredModel) || remoteConfig.defaultModel;
           if (isNonInteractive()) {
             model = defaultModel;
           } else {
@@ -4285,17 +4497,11 @@ async function setupNim(
                 `  Warning: failed to load Nous model recommendations; falling back to the current/default model (${detail}).`,
               );
             }
-            model = await promptRemoteModel(
-              remoteConfig.label,
-              selected.key,
-              defaultModel,
-              null,
-              {
-                otherShowsFullList: true,
-                remoteModelOptions: { [selected.key]: hermesProviderModels },
-                topLevelModelLimit: 10,
-              },
-            );
+            model = await promptRemoteModel(remoteConfig.label, selected.key, defaultModel, null, {
+              otherShowsFullList: true,
+              remoteModelOptions: { [selected.key]: hermesProviderModels },
+              topLevelModelLimit: 10,
+            });
           }
           if (isBackToSelection(model)) {
             console.log("  Returning to provider selection.");
@@ -4358,8 +4564,10 @@ async function setupNim(
           // Check raw process.env — the override must apply before resolving from credentials.json.
           const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
           if (_providerKeyHint && credentialEnv) {
-            // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-            const existingCredentialKey = normalizeCredentialValue(process.env[credentialEnv] ?? "");
+            const existingCredentialKey = normalizeCredentialValue(
+              // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
+              process.env[credentialEnv] ?? "",
+            );
             if (!existingCredentialKey) {
               process.env[credentialEnv] = _providerKeyHint;
             }
@@ -4398,7 +4606,10 @@ async function setupNim(
             break;
           }
           if (isNonInteractive()) {
-            if (!resolveProviderCredential(selectedCredentialEnv) && !providerExistsInGateway(provider)) {
+            if (
+              !resolveProviderCredential(selectedCredentialEnv) &&
+              !providerExistsInGateway(provider)
+            ) {
               console.error(
                 `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
               );
@@ -4410,7 +4621,8 @@ async function setupNim(
               remoteConfig.label + " API key",
               remoteConfig.helpUrl,
             );
-            if (credentialPrompt.returningToProviderSelection(credentialResult)) continue selectionLoop;
+            if (credentialPrompt.returningToProviderSelection(credentialResult))
+              continue selectionLoop;
           }
           let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
           if (selected.key === "openai" || selected.key === "gemini") {
@@ -4760,7 +4972,8 @@ async function setupNim(
         });
         if (ollamaStartup.kind === "continue") continue selectionLoop;
         if (ollamaStartup.kind === "fallback") {
-          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } = ollamaStartup.result);
+          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
+            ollamaStartup.result);
           break;
         }
         if (shouldFrontOllamaWithProxy()) {
@@ -4882,9 +5095,10 @@ async function setupNim(
       } else if (selected.key === "install-ollama") {
         if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
         const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
-        const installResult = process.platform === "darwin"
-          ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
-          : installOllamaOnLinux({ isNonInteractive, isUpgrade });
+        const installResult =
+          process.platform === "darwin"
+            ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
+            : installOllamaOnLinux({ isNonInteractive, isUpgrade });
         if (!installResult.ok) {
           if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
           continue selectionLoop;
@@ -5065,7 +5279,10 @@ async function setupNim(
   }
 
   const selectedModel = isBackToSelection(model) ? null : model;
-  await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, { isNonInteractive, prompt });
+  await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, {
+    isNonInteractive,
+    prompt,
+  });
   return {
     model: selectedModel,
     provider,
@@ -5242,7 +5459,6 @@ async function setupMessagingChannels(
   });
 }
 
-
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
 function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void {
@@ -5309,7 +5525,11 @@ async function selectPolicyTier(): Promise<string> {
     const answer = await prompt(
       `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
     );
-    const chosen = selectFromNumberedMenuOrExit(answer, allTiers.indexOf(defaultTier) + 1, allTiers);
+    const chosen = selectFromNumberedMenuOrExit(
+      answer,
+      allTiers.indexOf(defaultTier) + 1,
+      allTiers,
+    );
     console.log(`  Tier: ${chosen.label}`);
     return chosen.name;
   }
@@ -5739,7 +5959,12 @@ async function presetsCheckboxSelector(
 const computeSetupPresetSuggestions = (
   tierName: string,
   options: SetupPresetSuggestionOptions = {},
-): string[] => computeSetupPresetSuggestionsImpl({ policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS }, tierName, options);
+): string[] =>
+  computeSetupPresetSuggestionsImpl(
+    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
+    tierName,
+    options,
+  );
 
 async function setupPoliciesWithSelection(
   sandboxName: string,
@@ -5756,7 +5981,8 @@ async function setupPoliciesWithSelection(
       waitForSandboxReady,
       syncPresetSelection,
       selectPolicyTier,
-      setPolicyTier: (sandbox, tierName) => registry.updateSandbox(sandbox, { policyTier: tierName }),
+      setPolicyTier: (sandbox, tierName) =>
+        registry.updateSandbox(sandbox, { policyTier: tierName }),
       selectTierPresetsAndAccess,
       parsePolicyPresetEnv,
       env: process.env,
@@ -5800,7 +6026,11 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   stepMutationOptions: { updateMachine: false },
 });
 
-const sandboxCancelRollback = installSandboxCancelRollback({ runOpenshell, registry, clearOnboardSession: onboardSession.clearSession }); // #4614
+const sandboxCancelRollback = installSandboxCancelRollback({
+  runOpenshell,
+  registry,
+  clearOnboardSession: onboardSession.clearSession,
+}); // #4614
 
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
@@ -5808,8 +6038,10 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-const recordStateResult = onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
-const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
+const recordStateResult =
+  onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
+const recordPostVerifyStarted =
+  onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
 function skippedStepMessage(
   stepName: string,
@@ -5835,7 +6067,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
+  _preflightDashboardPort =
+    opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -5985,7 +6218,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   };
   process.once("exit", releaseOnboardLock);
 
-  let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = { collector: null, span: null };
+  let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = {
+    collector: null,
+    span: null,
+  };
   let traceCompleted = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
@@ -6019,7 +6255,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
-          try { await onboardRuntimeBoundary.recordResumeConflict(conflict); } catch { /* diagnostic-only */ }
+          try {
+            await onboardRuntimeBoundary.recordResumeConflict(conflict);
+          } catch {
+            /* diagnostic-only */
+          }
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
@@ -6048,7 +6288,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             );
           }
         }
-        console.error(`  Run: ${cliName()} onboard              # start a fresh onboarding session`);
+        console.error(
+          `  Run: ${cliName()} onboard              # start a fresh onboarding session`,
+        );
         console.error("  Or rerun with the original settings to continue that session.");
         process.exit(1);
       }
@@ -6231,8 +6473,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       try {
         const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
         if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
-          const smi = spawnSync("nvidia-smi", ["--query-gpu=name", "--format=csv,noheader,nounits"], { encoding: "utf-8", timeout: 5000 });
-          note(smi.status === 0 && smi.stdout?.trim() ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker" : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
+          const smi = spawnSync(
+            "nvidia-smi",
+            ["--query-gpu=name", "--format=csv,noheader,nounits"],
+            { encoding: "utf-8", timeout: 5000 },
+          );
+          note(
+            smi.status === 0 && smi.stdout?.trim()
+              ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+              : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.",
+          );
         }
       } catch {
         /* lspci not available — skip hint */
@@ -6251,7 +6501,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       recreateSandbox: isRecreateSandbox(),
       deps: {
         refreshDockerDriverGatewayReuseState,
-        gatewayCliSupportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        gatewayCliSupportsLifecycleCommands: () =>
+          gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
         recoverGatewayRuntime,
@@ -6264,7 +6515,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         reconcileGatewayGpuReuseForGpuIntent,
         isLinuxDockerDriverGatewayEnabled,
         retireLegacyGatewayForDockerDriverUpgrade,
-        destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+        destroyGatewayRuntimeForGpuReuse: () =>
+          destroyGateway(
+            () => undefined,
+            () => false,
+          ),
         skippedStepMessage,
         recordStateSkipped,
         note,
@@ -6325,7 +6580,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         setupInference,
         startRecordedStep,
         recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
         ensureResumeProviderReady,
         recordStateSkipped,
@@ -6341,8 +6597,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         isRoutedInferenceProvider,
         reconcileModelRouter,
         reupsertRoutedProvider: (p, url, ce) => {
-          const r = routedInference.upsertRoutedProvider(p, url, ce, { upsertProvider, hydrateCredentialEnv });
-          return { ok: r.ok, endpointUrl: r.endpointUrl, message: r.result.message, status: r.result.status };
+          const r = routedInference.upsertRoutedProvider(p, url, ce, {
+            upsertProvider,
+            hydrateCredentialEnv,
+          });
+          return {
+            ok: r.ok,
+            endpointUrl: r.endpointUrl,
+            message: r.result.message,
+            status: r.result.status,
+          };
         },
         registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
         promptValidatedSandboxName,
@@ -6359,7 +6623,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(providerInferenceResult.stateResults);
+    await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(
+      providerInferenceResult.stateResults,
+    );
     sandboxName = providerInferenceResult.sandboxName;
     const {
       model,
@@ -6422,14 +6688,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         writePlanToEnv,
         getRegistrySandboxMessagingPlan,
         promptValidatedSandboxName,
-        selectResourceProfileForSandbox: () => selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
+        selectResourceProfileForSandbox: () =>
+          selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
         stopStaleDashboardListenersForSandbox,
         listRegistrySandboxes: registry.listSandboxes,
         createSandbox,
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
         getSandboxAgentRegistryFields,
         recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
         recordStateSkipped,
         recordRepairEvent,
@@ -6476,7 +6744,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         setupOpenclaw,
         syncNemoClawConfigInSandbox,
         recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
     await recordStateResult(agentSetupResult.stateResult);
@@ -6512,7 +6781,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         setupPoliciesWithSelection,
         updateSession: onboardSession.updateSession,
         recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
     });
@@ -6535,7 +6805,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
         checkAndRecoverSandboxProcesses: (name, options) => {
@@ -6554,14 +6825,25 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
               executeSandboxCommandForVerification(sandbox, script),
             probeHostPort: (port: number, probePath: string) => {
               const result = runCapture(
-                ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3", `http://127.0.0.1:${port}${probePath}`],
+                [
+                  "curl",
+                  "-so",
+                  "/dev/null",
+                  "-w",
+                  "%{http_code}",
+                  "--max-time",
+                  "3",
+                  `http://127.0.0.1:${port}${probePath}`,
+                ],
                 { ignoreError: true },
               );
               return parseInt(result.trim(), 10) || 0;
             },
-            captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
+            captureForwardList: () =>
+              runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => selectedMessagingChannels || [],
-            providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+            providerExistsInGateway: (providerName: string) =>
+              providerExistsInGateway(providerName),
           });
         },
         formatVerificationDiagnostics: (result) => {
@@ -6673,7 +6955,10 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
-  providerNameToOptionKey: (name: string | null | undefined, opts: { hasNimContainer?: boolean } = {}) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
+  providerNameToOptionKey: (
+    name: string | null | undefined,
+    opts: { hasNimContainer?: boolean } = {},
+  ) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,

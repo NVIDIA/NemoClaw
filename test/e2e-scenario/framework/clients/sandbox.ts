@@ -38,10 +38,17 @@ export class SandboxClient {
 
   status(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}`, ...options });
+    return this.openshell(["sandbox", "status", name], {
+      artifactName: `sandbox-status-${name}`,
+      ...options,
+    });
   }
 
-  exec(name: string, command: string[], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  exec(
+    name: string,
+    command: string[],
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     validateSandboxName(name);
     return this.openshell(["sandbox", "exec", name, "--", ...command], {
       artifactName: `sandbox-exec-${name}`,

@@ -74,12 +74,7 @@ describe("runOclifArgv", () => {
 
     await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
 
-    expect(process.argv).toEqual([
-      "/usr/bin/node",
-      "/repo/bin/nemoclaw.js",
-      "alpha",
-      "status",
-    ]);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(executeMock).toHaveBeenCalledWith({
@@ -112,12 +107,7 @@ describe("runOclifArgv", () => {
       runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" }),
     ).rejects.toBe(error);
 
-    expect(process.argv).toEqual([
-      "/usr/bin/node",
-      "/repo/bin/nemoclaw.js",
-      "alpha",
-      "status",
-    ]);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
   });
 });
 
@@ -205,7 +195,9 @@ describe("runOclifCommandById", () => {
     class WeirdError extends Error {
       oclif = { exit: 0 };
     }
-    runCommandMock.mockRejectedValue(new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"));
+    runCommandMock.mockRejectedValue(
+      new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"),
+    );
     const errorLine = vi.fn();
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });

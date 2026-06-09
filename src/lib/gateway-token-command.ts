@@ -52,8 +52,7 @@ function gatewayTokenFail(lines: string | readonly string[], exitCode = 1): neve
   throw new GatewayTokenCommandError(lines, exitCode);
 }
 
-const SECURITY_WARNING =
-  "Treat this token like a password -- do not log, share, or commit it.";
+const SECURITY_WARNING = "Treat this token like a password -- do not log, share, or commit it.";
 
 /**
  * Run the gateway-token command. Throws {@link GatewayTokenCommandError} on

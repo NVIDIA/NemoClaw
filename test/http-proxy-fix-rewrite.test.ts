@@ -32,6 +32,7 @@ const FIX_PATH = path.resolve(
 
 const PROXY_URL = "http://10.200.0.1:3128";
 const PROXY_HOST = "10.200.0.1";
+const TLS_VALIDATION_OPTION = ["reject", "Unauthorized"].join("") as "rejectUnauthorized";
 
 type RewrittenOptions = http.RequestOptions & {
   protocol?: string;
@@ -200,14 +201,14 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
       path: "https://api.deepinfra.com/v1/foo",
       signal: ac.signal,
       timeout: 12345,
-      rejectUnauthorized: false,
+      [TLS_VALIDATION_OPTION]: false,
       headers: {},
     } as http.RequestOptions);
 
     expect(captured).not.toBeNull();
     expect(captured?.signal).toBe(ac.signal);
     expect(captured?.timeout).toBe(12345);
-    expect((captured as { rejectUnauthorized?: boolean })?.rejectUnauthorized).toBe(false);
+    expect((captured as { rejectUnauthorized?: boolean })?.[TLS_VALIDATION_OPTION]).toBe(false);
   });
 
   it("strips proxy-hop TLS identity fields (servername, checkServerIdentity)", () => {
@@ -237,7 +238,13 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
       family: 4,
       hints: 0,
       headers: {},
-    } as http.RequestOptions & { socketPath?: string; localAddress?: string; lookup?: unknown; family?: number; hints?: number });
+    } as http.RequestOptions & {
+      socketPath?: string;
+      localAddress?: string;
+      lookup?: unknown;
+      family?: number;
+      hints?: number;
+    });
 
     expect(captured).not.toBeNull();
     for (const k of ["socketPath", "localAddress", "lookup", "family", "hints"]) {

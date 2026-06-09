@@ -9,7 +9,11 @@ const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 
 function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
-    executeSandboxCommand: (_name: string, _script: string) => ({ status: 0, stdout: "200", stderr: "" }),
+    executeSandboxCommand: (_name: string, _script: string) => ({
+      status: 0,
+      stdout: "200",
+      stderr: "",
+    }),
     probeHostPort: (_port: number, _path: string) => 200,
     captureForwardList: () => "my-sandbox  127.0.0.1  18789  12345  running",
     getMessagingChannels: (_name: string) => [] as string[],
@@ -44,7 +48,9 @@ describe("verifyDeployment agent dashboard probes", () => {
     const result = await verifyDeployment("my-sandbox", agentChain, deps, NO_RETRY);
 
     expect(result.healthy).toBe(true);
-    expect(sandboxScripts.some((script) => script.includes("http://127.0.0.1:8642/health"))).toBe(true);
+    expect(sandboxScripts.some((script) => script.includes("http://127.0.0.1:8642/health"))).toBe(
+      true,
+    );
     expect(hostProbes).toContainEqual({ port: 18789, path: "/api/status" });
   });
 });

@@ -76,144 +76,152 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
-  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", testTimeoutOptions(30_000), () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "docker.log");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "tears down the gateway runtime when --cleanup-gateway is passed (#2166)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/bin/sh",
-        `log_file=${JSON.stringify(openshellLog)}`,
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  printf "NAME STATUS\\n" >> "$log_file"',
-        "  exit 0",
-        "fi",
-        'printf \'%s\\n\' "$*" >> "$log_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "docker"),
-      [
-        "#!/bin/sh",
-        `log_file=${JSON.stringify(bashLog)}`,
-        'printf \'%s\\n\' "$*" >> "$log_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-    fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+        30_000,
+      );
 
-    const r = runWithEnv(
-      "alpha destroy -y --cleanup-gateway",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-      },
-      30_000,
-    );
+      expect(r.code, r.out).toBe(0);
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      expect(openshellOutput).toContain("sandbox delete alpha");
+      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).toContain(
+        process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+      );
+      expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
+    },
+  );
 
-    expect(r.code, r.out).toBe(0);
-    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-    expect(openshellOutput).toContain("sandbox delete alpha");
-    expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain(
-      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
-    );
-    expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
-  });
-
-  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", testTimeoutOptions(30_000), () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
-    const localBin = path.join(home, "bin");
-    const registryDir = path.join(home, ".nemoclaw");
-    const openshellLog = path.join(home, "openshell.log");
-    const bashLog = path.join(home, "docker.log");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          alpha: {
-            name: "alpha",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
+  it(
+    "honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
           },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_CLEANUP_GATEWAY: "1",
         },
-        defaultSandbox: "alpha",
-      }),
-      { mode: 0o600 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/bin/sh",
-        `log_file=${JSON.stringify(openshellLog)}`,
-        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-        '  printf "NAME STATUS\\n" >> "$log_file"',
-        "  exit 0",
-        "fi",
-        'printf \'%s\\n\' "$*" >> "$log_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(
-      path.join(localBin, "docker"),
-      [
-        "#!/bin/sh",
-        `log_file=${JSON.stringify(bashLog)}`,
-        'printf \'%s\\n\' "$*" >> "$log_file"',
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-    fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+        30_000,
+      );
 
-    const r = runWithEnv(
-      "alpha destroy -y",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_CLEANUP_GATEWAY: "1",
-      },
-      30_000,
-    );
-
-    expect(r.code, r.out).toBe(0);
-    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
-    expect(openshellOutput).toContain("forward stop 18789");
-    expect(openshellOutput).toContain(
-      process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
-    );
-  });
+      expect(r.code, r.out).toBe(0);
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      expect(openshellOutput).toContain("forward stop 18789");
+      expect(openshellOutput).toContain(
+        process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
+      );
+    },
+  );
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-shared-"));

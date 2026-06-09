@@ -40,9 +40,7 @@ export function resolveMessagingManifestSeed(
   hasChannelRequiredInputs: (manifest: ChannelManifest) => boolean,
   { includeAllExisting = false }: { readonly includeAllExisting?: boolean } = {},
 ): string[] {
-  const seeded = new Set(
-    manifests.filter(hasChannelRequiredInputs).map((manifest) => manifest.id),
-  );
+  const seeded = new Set(manifests.filter(hasChannelRequiredInputs).map((manifest) => manifest.id));
   if (!Array.isArray(existingChannels)) return Array.from(seeded);
 
   const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));

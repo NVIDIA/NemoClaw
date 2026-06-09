@@ -143,7 +143,11 @@ describe("seedReusedSandboxPolicyPresets (#4621)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ policyPresets: ["dns"] } as never);
     const updateSession = vi.spyOn(onboardSession, "updateSession");
 
-    seedReusedSandboxPolicyPresets("sb", false, vi.fn(() => ["github"]));
+    seedReusedSandboxPolicyPresets(
+      "sb",
+      false,
+      vi.fn(() => ["github"]),
+    );
 
     expect(updateSession).not.toHaveBeenCalled();
   });

@@ -44,7 +44,10 @@ describe("maintenance CLI dispatch", () => {
     expect(upgrade.code).toBe(0);
     expect(upgrade.out).toContain("No sandboxes found in the registry.");
 
-    const gc = runWithEnv("gc --dry-run", { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` });
+    const gc = runWithEnv("gc --dry-run", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
     expect(gc.code).toBe(0);
     expect(gc.out).toContain("No sandbox images found on the host.");
   });

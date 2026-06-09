@@ -272,8 +272,7 @@ interface SandboxMessagingAgentRenderBasePlan {
 }
 
 /** Compiled JSON fragment ready for an applier/render engine. */
-export interface SandboxMessagingJsonRenderPlan
-  extends SandboxMessagingAgentRenderBasePlan {
+export interface SandboxMessagingJsonRenderPlan extends SandboxMessagingAgentRenderBasePlan {
   readonly kind: "json-fragment";
   readonly path: MessagingStatePath;
   readonly value: MessagingSerializableValue;
@@ -281,8 +280,7 @@ export interface SandboxMessagingJsonRenderPlan
 }
 
 /** Compiled env-file lines ready for an applier/render engine. */
-export interface SandboxMessagingEnvLinesRenderPlan
-  extends SandboxMessagingAgentRenderBasePlan {
+export interface SandboxMessagingEnvLinesRenderPlan extends SandboxMessagingAgentRenderBasePlan {
   readonly kind: "env-lines";
   readonly lines: readonly MessagingTemplateString[];
   readonly templateRefs: readonly string[];

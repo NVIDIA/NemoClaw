@@ -64,11 +64,15 @@ export function getSandboxPromptDefault(agent: AgentDefinition | null | undefine
   }
 }
 
-export function getEffectiveSandboxAgent(agent: AgentDefinition | null | undefined): AgentDefinition {
+export function getEffectiveSandboxAgent(
+  agent: AgentDefinition | null | undefined,
+): AgentDefinition {
   return agent || loadAgent("openclaw");
 }
 
-export function getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[] {
+export function getAgentInferenceProviderOptions(
+  agent: AgentDefinition | null | undefined,
+): string[] {
   const effectiveAgent = agent?.name ? loadAgent(agent.name) : getEffectiveSandboxAgent(agent);
   return Array.isArray(effectiveAgent.inferenceProviderOptions)
     ? effectiveAgent.inferenceProviderOptions
@@ -129,7 +133,9 @@ export function createPromptValidatedSandboxName(deps: PromptSandboxNameDeps) {
       try {
         const validatedSandboxName = validateName(sandboxName, "sandbox name");
         if (RESERVED_SANDBOX_NAMES.has(sandboxName)) {
-          console.error(`  Reserved name: '${sandboxName}' is a ${deps.cliDisplayName()} CLI command.`);
+          console.error(
+            `  Reserved name: '${sandboxName}' is a ${deps.cliDisplayName()} CLI command.`,
+          );
           console.error("  Choose a different name to avoid routing conflicts.");
           if (deps.isNonInteractive()) {
             deps.exit(1);

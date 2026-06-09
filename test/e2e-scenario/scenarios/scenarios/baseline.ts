@@ -249,7 +249,15 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-custom-policies",
     environment: ubuntuRepoDocker("cloud-openclaw-custom-policies"),
     expectedStateId: "cloud-openclaw-custom-policies-ready",
-    suiteIds: ["smoke", "inference", "credentials", "onboarding-state", "baseline-onboarding", "model-router", "snapshot-lifecycle"],
+    suiteIds: [
+      "smoke",
+      "inference",
+      "credentials",
+      "onboarding-state",
+      "baseline-onboarding",
+      "model-router",
+      "snapshot-lifecycle",
+    ],
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {

@@ -33,9 +33,7 @@ export interface PreflightGatewayCleanupDeps {
   ) => GatewayReuseState;
 }
 
-export function applyPreflightGatewayCleanup(
-  deps: PreflightGatewayCleanupDeps,
-): GatewayReuseState {
+export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps): GatewayReuseState {
   const action = preflightGatewayCleanupDecision({
     gatewayReuseState: deps.gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,

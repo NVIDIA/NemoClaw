@@ -11,7 +11,11 @@ import {
 } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import { StateValidationPhaseFixture, type NemoClawInstance } from "../framework/phases/index.ts";
-import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../framework/shell-probe.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../framework/shell-probe.ts";
 
 interface RunnerCall {
   command: string;
@@ -78,7 +82,10 @@ class FakeRunner implements CommandRunner {
     this.responses.push(error);
   }
 
-  async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
+  async run(
+    command: TrustedShellCommand,
+    options?: ShellProbeRunOptions,
+  ): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
     const response = this.responses.shift();
     if (response instanceof Error) {
@@ -439,10 +446,14 @@ describe("state-validation phase fixture", () => {
   it("rejects unknown expected-state IDs", async () => {
     const runner = new FakeRunner();
 
-    await expect(fixture(runner).from("missing-state", instance())).rejects.toThrow(/Unknown expected_state/);
+    await expect(fixture(runner).from("missing-state", instance())).rejects.toThrow(
+      /Unknown expected_state/,
+    );
   });
 
   it("exposes the state-validation phase on the Vitest scenario context", () => {
-    expectTypeOf<E2EScenarioFixtures["stateValidation"]>().toEqualTypeOf<StateValidationPhaseFixture>();
+    expectTypeOf<
+      E2EScenarioFixtures["stateValidation"]
+    >().toEqualTypeOf<StateValidationPhaseFixture>();
   });
 });

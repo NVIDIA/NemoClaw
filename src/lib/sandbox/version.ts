@@ -71,11 +71,16 @@ export function probeAgentVersion(sandboxName: string): string | null {
     const result = spawnSync(
       "ssh",
       [
-        "-F", tmpFile,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "LogLevel=ERROR",
+        "-F",
+        tmpFile,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "LogLevel=ERROR",
         `openshell-${sandboxName}`,
         agent.versionCommand,
       ],
@@ -86,7 +91,11 @@ export function probeAgentVersion(sandboxName: string): string | null {
   } catch {
     return null;
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -104,7 +113,12 @@ export function checkAgentVersion(
   const expectedVersion = agent.expectedVersion;
 
   if (!expectedVersion) {
-    return { sandboxVersion: null, expectedVersion: null, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion: null,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const sb = registry.getSandbox(sandboxName);
@@ -121,7 +135,12 @@ export function checkAgentVersion(
   }
 
   if (opts?.skipProbe && !opts.forceProbe) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   // Slow path: SSH exec into sandbox
@@ -132,7 +151,12 @@ export function checkAgentVersion(
   }
 
   if (!probed) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const isStale = !versionGte(probed, expectedVersion);
@@ -147,10 +171,7 @@ export function checkAgentVersion(
 /**
  * Format a user-facing staleness warning for console output.
  */
-export function formatStalenessWarning(
-  sandboxName: string,
-  result: VersionCheckResult,
-): string[] {
+export function formatStalenessWarning(sandboxName: string, result: VersionCheckResult): string[] {
   const agentName = resolveAgentForSandbox(sandboxName).displayName;
   return [
     "",

@@ -177,9 +177,9 @@ describe("host alias option validation", () => {
   });
 
   it("rejects invalid remove options before gateway probing", () => {
-    expect(
-      expectHostAliasError(() => validateSandboxHostAliasRemoveOptions({})).message,
-    ).toContain("hosts-remove");
+    expect(expectHostAliasError(() => validateSandboxHostAliasRemoveOptions({})).message).toContain(
+      "hosts-remove",
+    );
     expect(
       expectHostAliasError(() =>
         validateSandboxHostAliasRemoveOptions({ hostname: "invalid_name!!" }),

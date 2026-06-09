@@ -1,18 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createSlackHookRegistrations,
-  type SlackHookOptions,
-} from "../channels/slack/hooks";
+import { createSlackHookRegistrations, type SlackHookOptions } from "../channels/slack/hooks";
 import {
   createTelegramHookRegistrations,
   type TelegramGetMeReachabilityHookOptions,
 } from "../channels/telegram/hooks";
-import {
-  createWechatHookRegistrations,
-  type WechatHookOptions,
-} from "../channels/wechat/hooks";
+import { createWechatHookRegistrations, type WechatHookOptions } from "../channels/wechat/hooks";
 import { createCommonHookRegistrations, type CommonHookOptions } from "./common";
 import { MessagingHookRegistry } from "./registry";
 import type { MessagingHookRegistration } from "./types";
