@@ -23,7 +23,9 @@ export function initialOnboardFlowPhases<Context extends OnboardFlowContext>(
 export function coreOnboardFlowPhases<Context extends OnboardFlowContext>(
   phases: readonly OnboardSequencePhase<Context>[],
 ): OnboardSequencePhase<Context>[] {
-  return phases.filter((phase) => phase.state === "provider_selection" || phase.state === "sandbox");
+  return phases.filter(
+    (phase) => phase.state === "provider_selection" || phase.state === "sandbox",
+  );
 }
 
 export async function runInitialOnboardFlowSequence<Context extends OnboardFlowContext>(options: {
