@@ -189,8 +189,12 @@ describe("environment phase fixture", () => {
   it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
     const previousSecret = process.env.NVIDIA_API_KEY;
     const previousDockerHost = process.env.DOCKER_HOST;
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
     process.env.NVIDIA_API_KEY = "must-not-leak";
     process.env.DOCKER_HOST = "unix:///tmp/e2e-docker.sock";
+    process.env.HOME = "/tmp/e2e-home";
+    process.env.PATH = "/usr/bin";
     try {
       const runner = new FakeRunner();
       runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
@@ -203,6 +207,8 @@ describe("environment phase fixture", () => {
       const dockerEnv = runner.calls[1]?.options?.env;
       expect(cliEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
       expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
+      expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+      expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
       expect(cliEnv).not.toHaveProperty("NVIDIA_API_KEY");
       expect(dockerEnv).not.toHaveProperty("NVIDIA_API_KEY");
       expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
@@ -217,6 +223,16 @@ describe("environment phase fixture", () => {
         delete process.env.DOCKER_HOST;
       } else {
         process.env.DOCKER_HOST = previousDockerHost;
+      }
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
       }
     }
   });
