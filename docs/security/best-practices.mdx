@@ -256,11 +256,11 @@ Messaging sessions such as WhatsApp pairing can remain mutable by design so they
 
 ### Writable Paths
 
-The agent has read-write access to `/sandbox`, `/tmp`, and `/dev/null`.
+The agent has read-write access to `/sandbox`, `/tmp`, `/dev/null`, and `/dev/pts`.
 
 | Aspect | Detail |
 |---|---|
-| Default | `/sandbox` (agent workspace), `/tmp` (temporary files), `/dev/null`. |
+| Default | `/sandbox` (agent workspace), `/tmp` (temporary files), `/dev/null`, and `/dev/pts` (the devpts pseudo-terminal directory, required so PTY-based tools such as `tmux`, `script`, and interactive shells can allocate a terminal). |
 | What you can change | Add additional writable paths in `filesystem_policy.read_write`. |
 | Risk if relaxed | Each additional writable path expands the agent's ability to persist data and potentially modify system behavior. Adding `/var` lets the agent write to log directories. Adding `/home` gives access to other user directories. |
 | Recommendation | Keep writable paths to `/sandbox` and `/tmp`. If the agent needs a persistent working directory, create a subdirectory under `/sandbox`. |
