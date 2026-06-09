@@ -642,9 +642,10 @@ describe("prompt machinery (unchanged)", () => {
       ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
     `;
 
-    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+    const result = spawnSync("bash", ["--noprofile", "--norc"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
+      input: script,
       timeout: 5000,
     });
 
@@ -782,9 +783,10 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 `;
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync("bash", ["--noprofile", "--norc", "-c", bash], {
+      result = spawnSync("bash", ["--noprofile", "--norc"], {
         encoding: "utf-8",
         env: { ...process.env, NVIDIA_API_KEY: "" },
+        input: bash,
         timeout: 5000,
       });
     } finally {

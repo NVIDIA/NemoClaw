@@ -1061,7 +1061,6 @@ describe("nemoclaw-start configure guard behavior", () => {
 
 describe("nemoclaw-start persistent gateway log hardening", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
   function persistentLogFunction(root: string, gatewayLog: string): string {
     return extractShellFunctionFromSource(src, "start_persistent_gateway_log_mirror")
       .replaceAll("/sandbox/.openclaw/logs", path.join(root, "logs"))
@@ -1095,10 +1094,11 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("PID=");
-      const stat = fs.statSync(persistentLog);
+      const fd = fs.openSync(persistentLog, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const [stat, log] = [fs.fstatSync(fd), fs.readFileSync(fd, "utf-8")];
+      fs.closeSync(fd);
       expect(stat.isFile()).toBe(true);
       expect((stat.mode & 0o777).toString(8)).toBe("644");
-      const log = fs.readFileSync(persistentLog, "utf-8");
       expect(log).toContain("initial gateway line");
       expect(log).toContain("later-line");
 

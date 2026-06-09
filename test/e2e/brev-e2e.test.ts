@@ -240,10 +240,10 @@ function ssh(
   cmd: string,
   { timeout = 120_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
-  const escaped = cmd.replace(/'/g, "'\\''");
   const stdio = stream ? STREAM_STDIO : CAPTURE_STDIO;
-  const result = execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
+  const result = execFileSync(
+    "ssh",
+    ["-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR", requireInstanceName(), cmd],
     { encoding: "utf-8", timeout, stdio },
   );
   return stream ? "" : result.trim();
@@ -595,7 +595,7 @@ function createBrevInstance(elapsed: () => string): void {
   let setupScriptPath: string;
   if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
     setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
+    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
       encoding: "utf-8",
       timeout: 30_000,
     });
@@ -768,8 +768,22 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
 
   // Rsync PR branch code over the launchable's clone
   console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
-  execSync(
-    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${resolvedRemoteDir}/"`,
+  execFileSync(
+    "rsync",
+    [
+      "-az",
+      "--delete",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      ".git",
+      "--exclude",
+      "dist",
+      "--exclude",
+      ".venv",
+      `${REPO_DIR}/`,
+      `${requireInstanceName()}:${resolvedRemoteDir}/`,
+    ],
     { encoding: "utf-8", timeout: 120_000 },
   );
   console.log(`[${elapsed()}] Code synced`);

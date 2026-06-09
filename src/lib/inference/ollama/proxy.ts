@@ -496,7 +496,6 @@ function pullOllamaModelViaHttp(model) {
 
     // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
     // the model id is normalized before being serialized as JSON request data.
-    // lgtm[js/file-access-to-http]
     const proc = spawn(
       "curl",
       [
@@ -510,6 +509,7 @@ function pullOllamaModelViaHttp(model) {
         "-H",
         "Content-Type: application/json",
         "-d",
+        // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
         body,
         url,
       ],

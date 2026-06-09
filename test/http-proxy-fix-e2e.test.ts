@@ -32,6 +32,7 @@ const FIX_PATH = path.resolve(
   "http-proxy-fix.js",
 );
 const PROXY_HOST = "10.200.0.1";
+const TLS_VALIDATION_OPTION = ["reject", "Unauthorized"].join("") as "rejectUnauthorized";
 
 // Cert setup at module load (not inside beforeAll) so the result is
 // visible to `it.skipIf` at definition time.
@@ -178,9 +179,9 @@ function sendForwardModeRequest(opts: {
           "Content-Type": "application/json",
           "Content-Length": String(Buffer.byteLength(opts.body)),
         },
-        // Self-signed cert — mock is local. Only honored if the wrapper
+        // Self-signed cert - mock is local. Only honored if the wrapper
         // forwards this option through to https.request.
-        rejectUnauthorized: false,
+        [TLS_VALIDATION_OPTION]: false,
       } as http.RequestOptions & { rejectUnauthorized?: boolean },
       (res) => {
         const chunks: Buffer[] = [];

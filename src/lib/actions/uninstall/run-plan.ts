@@ -92,13 +92,21 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
   return false;
 }
 
-function defaultReadLine(env: NodeJS.ProcessEnv): string | null {
-  const result = defaultRun("sh", ["-c", "IFS= read -r reply; printf '%s' \"$reply\""], {
-    encoding: "utf-8",
-    env,
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  return result.status === 0 ? result.stdout : null;
+function defaultReadLine(): string | null {
+  const chunks: Buffer[] = [];
+  const byte = Buffer.alloc(1);
+  while (true) {
+    let bytesRead = 0;
+    try {
+      bytesRead = fs.readSync(0, byte, 0, 1, null);
+    } catch {
+      return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
+    }
+    if (bytesRead === 0 || byte[0] === 10) break;
+    chunks.push(Buffer.from(byte));
+  }
+  if (chunks.length === 0) return null;
+  return Buffer.concat(chunks).toString("utf-8").replace(/\r$/, "");
 }
 
 function splitNonEmptyLines(output: string): string[] {
@@ -258,7 +266,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
-    readLine: deps.readLine ?? (() => defaultReadLine(env)),
+    readLine: deps.readLine ?? defaultReadLine,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,

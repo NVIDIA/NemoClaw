@@ -14,13 +14,13 @@ const VALIDATION_LIB = path.join(VALIDATION_SUITES, "lib");
 const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/fixtures");
-const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/install");
 const ONBOARD_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/onboard");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-c", script], {
+  return spawnSync("bash", ["--noprofile", "--norc"], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    input: script,
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });

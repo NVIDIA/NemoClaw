@@ -219,17 +219,15 @@ network_policies:
       gatewayPresets: string[] | null;
     }): string {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repro-2010-"));
-      const gw =
-        opts.gatewayPresets !== null
-          ? `() => ${JSON.stringify(opts.gatewayPresets)}`
-          : "() => null";
       const script = `
 const registry = require(${JSON.stringify(REGISTRY_PATH)});
 const policies = require(${JSON.stringify(POLICIES_PATH)});
-registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: ${JSON.stringify(opts.registryPresets)} } : null);
+const registryPresets = JSON.parse(process.env.TEST_REGISTRY_PRESETS || "[]");
+const gatewayPresets = process.env.TEST_GATEWAY_PRESETS ? JSON.parse(process.env.TEST_GATEWAY_PRESETS) : null;
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: registryPresets } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
-policies.getAppliedPresets = () => ${JSON.stringify(opts.registryPresets)};
-policies.getGatewayPresets = ${gw};
+policies.getAppliedPresets = () => registryPresets;
+policies.getGatewayPresets = () => gatewayPresets;
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-list"];
 require(${JSON.stringify(CLI_PATH)});
 `;
@@ -253,7 +251,14 @@ require(${JSON.stringify(CLI_PATH)});
         const result = spawnSync(process.execPath, [scriptPath], {
           cwd: REPO_ROOT,
           encoding: "utf-8",
-          env: { ...process.env, HOME: tmpDir, PATH: `${binDir}:${process.env.PATH || ""}` },
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${binDir}:${process.env.PATH || ""}`,
+            TEST_GATEWAY_PRESETS:
+              opts.gatewayPresets === null ? "" : JSON.stringify(opts.gatewayPresets),
+            TEST_REGISTRY_PRESETS: JSON.stringify(opts.registryPresets),
+          },
         });
         return (result.stdout || "") + (result.stderr || "");
       } finally {
