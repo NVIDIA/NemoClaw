@@ -18,7 +18,7 @@ const SECCOMP_GUARD_SOURCE = path.join(
 );
 
 function extractStartScriptHeredoc(src: string, marker: string): string {
-  const heredoc = src.match(new RegExp(`<<'${marker}'\n([\s\S]*?)\n${marker}`));
+  const heredoc = src.match(new RegExp(String.raw`<<'${marker}'\n([\s\S]*?)\n${marker}`));
   if (heredoc) return heredoc[1];
   if (marker === "SECCOMP_GUARD_EOF") return fs.readFileSync(SECCOMP_GUARD_SOURCE, "utf-8");
   throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);

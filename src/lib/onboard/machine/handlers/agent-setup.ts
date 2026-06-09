@@ -79,7 +79,7 @@ export async function handleAgentSetupState<Agent>({
     deps.skippedStepMessage("openclaw", sandboxName);
     deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
     await deps.recordStateSkipped("openclaw", { reason: "resume", sandboxName });
-    session = await deps.recordStepComplete(
+    await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );

@@ -403,7 +403,7 @@ export async function handleSandboxState<
     });
     // Default-marking is deferred to finalization so a cancelled onboard never
     // leaves this sandbox registered as default (#4614).
-    session = await deps.recordStepComplete(
+    await deps.recordStepComplete(
       "sandbox",
       deps.toSessionUpdates({
         sandboxName,

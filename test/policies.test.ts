@@ -405,10 +405,10 @@ describe("policies", () => {
     it("extracts hosts from outlook preset", () => {
       const content = requirePresetContent(policies.loadPreset("outlook"));
       const hosts = policies.getPresetEndpoints(content);
-      expect(hosts.includes("graph.microsoft.com")).toBeTruthy();
-      expect(hosts.includes("login.microsoftonline.com")).toBeTruthy();
-      expect(hosts.includes("outlook.office365.com")).toBeTruthy();
-      expect(hosts.includes("outlook.office.com")).toBeTruthy();
+      expect(hosts).toContain("graph.microsoft.com");
+      expect(hosts).toContain("login.microsoftonline.com");
+      expect(hosts).toContain("outlook.office365.com");
+      expect(hosts).toContain("outlook.office.com");
     });
 
     it("extracts hosts from telegram preset", () => {
