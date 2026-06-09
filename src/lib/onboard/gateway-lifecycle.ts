@@ -20,9 +20,12 @@ export function gatewayCliSupportsLifecycleCommands(captureGatewayHelp: CaptureG
     suppressOutput: true,
   });
   const normalized = String(help || "").replace(ANSI_RE, "");
+  // OpenShell >=0.0.44 documents `gateway remove` and may mention "destroy"
+  // only in prose ("does not stop or destroy the gateway service"). Match the
+  // legacy lifecycle verb explicitly so we do not call a removed subcommand.
   gatewayLifecycleCommandsSupported =
     normalized.trim().length > 0 &&
     /\bstart\b/.test(normalized) &&
-    /\bdestroy\b/.test(normalized);
+    /\bgateway destroy\b/i.test(normalized);
   return gatewayLifecycleCommandsSupported;
 }

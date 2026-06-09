@@ -94,6 +94,10 @@ function hasRegisteredOclifParentCommand(action: string): boolean {
   return getRegisteredOclifCommandMetadata(`sandbox:${action}`) !== null;
 }
 
+function isNonStrictRegisteredParent(action: string): boolean {
+  return getRegisteredOclifCommandMetadata(`sandbox:${action}`)?.strict === false;
+}
+
 function isHelpToken(token: string | undefined): boolean {
   return token === "help" || token === "--help" || token === "-h";
 }
@@ -113,6 +117,12 @@ function nativeSandboxParentArgv(
 ): NativeArgvTranslation {
   const subcommand = actionArgs[0];
   if (!subcommand || isHelpToken(subcommand)) {
+    return nativeArgv(`sandbox:${action}`, ["--help"], ["sandbox", action, "--help"]);
+  }
+  if (subcommand.startsWith("-")) {
+    if (isNonStrictRegisteredParent(action)) {
+      return nativeArgv(`sandbox:${action}`, [sandboxName, ...actionArgs]);
+    }
     return nativeArgv(`sandbox:${action}`, ["--help"], ["sandbox", action, "--help"]);
   }
   return nativeArgv(`sandbox:${action}:${subcommand}`, [sandboxName, ...actionArgs.slice(1)], [
@@ -159,6 +169,9 @@ export function translatePublicSandboxArgv(
   }
 
   if (parentSubcommands(action).size > 0 && (actionArgs.length === 0 || !parentSubcommands(action).has(actionArgs[0]))) {
+    if (actionArgs.length === 0 && isNonStrictRegisteredParent(action)) {
+      return nativeArgv(`sandbox:${action}`, [sandboxName]);
+    }
     return nativeSandboxParentArgv(sandboxName, action, actionArgs);
   }
 

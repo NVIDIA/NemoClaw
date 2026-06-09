@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release latest tag
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Semver release tag to promote as latest, for example v0.0.57"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-latest-tag
+  cancel-in-progress: false
+
+jobs:
+  update-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Move latest to the release tag commit
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: scripts/release-latest-tag.sh

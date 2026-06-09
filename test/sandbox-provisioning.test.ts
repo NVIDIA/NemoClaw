@@ -24,9 +24,6 @@ const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
-const HERMES_POLICY = path.join(ROOT, "agents", "hermes", "policy-additions.yaml");
-const HERMES_POLICY_PERMISSIVE = path.join(ROOT, "agents", "hermes", "policy-permissive.yaml");
-const HERMES_START = path.join(ROOT, "agents", "hermes", "start.sh");
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -228,6 +225,89 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   }
 }
 
+describe("sandbox provisioning: runtime npm online state", () => {
+  it("replays the Dockerfile ENV directives so the runtime image inherits NPM_CONFIG_OFFLINE=false", () => {
+    const exports = collectDockerfileEnvExports(DOCKERFILE);
+    const probe = [
+      "#!/usr/bin/env bash",
+      "set -eo pipefail",
+      ...exports,
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+    ].join("\n");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-"));
+    const scriptPath = path.join(tmp, "replay.sh");
+    try {
+      fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe("false");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("exercises the staged plugin install with the offline lock still applied", () => {
+    const stage = stageDockerfileUntil(DOCKERFILE, "openclaw plugins install /opt/nemoclaw");
+    const probe = [
+      "#!/usr/bin/env bash",
+      "set -eo pipefail",
+      ...stage,
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+    ].join("\n");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-staged-"));
+    const scriptPath = path.join(tmp, "staged.sh");
+    try {
+      fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `stderr: ${result.stderr}`).toBe(0);
+      expect(result.stdout.trim()).toBe("true");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+function dockerfileEnvDirectives(text: string): string[] {
+  const lines = text.split("\n");
+  const directives: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? "";
+    if (!/^ENV\s/.test(raw)) continue;
+    let collected = raw.replace(/^ENV\s+/, "");
+    while (collected.endsWith("\\") && i + 1 < lines.length) {
+      collected = `${collected.slice(0, -1)} ${lines[++i] ?? ""}`;
+    }
+    directives.push(collected.trim());
+  }
+  return directives;
+}
+
+function envDirectiveToExports(directive: string): string[] {
+  const exports: string[] = [];
+  const pattern = /([A-Za-z_][A-Za-z0-9_]*)=("([^"]*)"|'([^']*)'|(\S+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(directive)) !== null) {
+    const name = match[1];
+    const value = match[3] ?? match[4] ?? match[5] ?? "";
+    exports.push(`export ${name}=${JSON.stringify(value)}`);
+  }
+  return exports;
+}
+
+function collectDockerfileEnvExports(file: string): string[] {
+  const text = fs.readFileSync(file, "utf-8");
+  return dockerfileEnvDirectives(text).flatMap(envDirectiveToExports);
+}
+
+function stageDockerfileUntil(file: string, runMarker: string): string[] {
+  const text = fs.readFileSync(file, "utf-8");
+  const cutoff = text.indexOf(runMarker);
+  if (cutoff === -1) {
+    throw new Error(`Dockerfile is missing expected RUN marker: ${runMarker}`);
+  }
+  return dockerfileEnvDirectives(text.slice(0, cutoff)).flatMap(envDirectiveToExports);
+}
+
 describe("sandbox provisioning: image health checks (#1430)", () => {
   it.each([
     ["default dashboard URL", {}, "http://127.0.0.1:18789/health"],
@@ -296,23 +376,34 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       curlExit,
       pgrepExit,
       gatewayLog = "gateway log line\n",
+      // The /tmp/nemoclaw-gateway-local marker is dropped by nemoclaw-start
+      // only when this container runs the in-container OpenClaw gateway. Most
+      // probes here exercise that path, so default it to present.
+      gatewayLocalMarker = true,
     }: {
       curlExit: number;
       pgrepExit: number;
       gatewayLog?: string;
+      gatewayLocalMarker?: boolean;
     }) {
       const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-fallback-"));
       const logPath = path.join(tmp, "gateway.log");
+      const markerPath = path.join(tmp, "nemoclaw-gateway-local");
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
         "# Entrypoint runs as root",
       );
-      const command = rawCommand.replaceAll("/tmp/gateway.log", logPath);
+      const command = rawCommand
+        .replaceAll("/tmp/gateway.log", logPath)
+        .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
 
       if (gatewayLog !== "") {
         fs.writeFileSync(logPath, gatewayLog);
+      }
+      if (gatewayLocalMarker) {
+        fs.writeFileSync(markerPath, "");
       }
 
       try {
@@ -371,6 +462,49 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       // a 4xx/5xx means the gateway is reachable and unhappy, not a
       // namespace mismatch — so pgrep should not run.
       expect(probe.calls).not.toContain("pgrep");
+    });
+
+    // #4503: OpenShell docker-driver sandboxes deliver the OpenClaw gateway
+    // outside this container's network namespace (it runs on the host), so
+    // nemoclaw-start never drops the /tmp/nemoclaw-gateway-local marker. The
+    // in-container curl gets connection-refused and the in-container pgrep
+    // finds no gateway process, yet `nemoclaw status`/OpenShell report Ready.
+    // Without the marker the healthcheck must NOT mark the container unhealthy
+    // off a signal it cannot observe.
+    describe("does not falsely fail when the gateway runs outside this container's namespace (#4503)", () => {
+      it("reports healthy on curl exit 7 with no in-container gateway process when the marker is absent", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 7,
+          pgrepExit: 1,
+          gatewayLog: "gateway log line\n",
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(0);
+        // The process-name fallback is meaningless out-of-namespace, so the
+        // healthcheck must short-circuit before consulting pgrep.
+        expect(probe.calls).not.toContain("pgrep");
+      });
+
+      it("reports healthy on curl exit 7 even when no gateway log exists and the marker is absent", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 7,
+          pgrepExit: 1,
+          gatewayLog: "",
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(0);
+        expect(probe.calls).not.toContain("pgrep");
+      });
+
+      it("still reports unhealthy on a wedged listener (curl exit 28) regardless of the marker", () => {
+        const probe = runProductionHealthProbe({
+          curlExit: 28,
+          pgrepExit: 0,
+          gatewayLocalMarker: false,
+        });
+        expect(probe.result.status).toBe(1);
+        expect(probe.calls).not.toContain("pgrep");
+      });
     });
   });
 
@@ -628,6 +762,7 @@ describe("sandbox provisioning: base runtime tools", () => {
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
     const chattrMarker = path.join(tmp, "chattr-installed");
+    const tmuxMarker = path.join(tmp, "tmux-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
     const command = dockerRunCommandBetween(
@@ -641,9 +776,10 @@ describe("sandbox provisioning: base runtime tools", () => {
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
       `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `tmux_marker=${JSON.stringify(tmuxMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"tmux=3.5a-3"* ]]; then touch "$tmux_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "tmux" ]; then [ -f "$tmux_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
@@ -722,7 +858,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
-      path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "openclaw_device_approval_policy.py"),
+      path.join(localLib, "clean_runtime_shell_env_shim.py"),
+      path.join(localLib, "generate-openclaw-config.mts"),
+      path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
@@ -750,13 +889,21 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
 
       expect(result.status, result.stderr).toBe(0);
       const generatorMode = (
-        fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
+        fs.statSync(path.join(localLib, "generate-openclaw-config.mts")).mode & 0o777
+      ).toString(8);
+      const messagingPluginMode = (
+        fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
+      ).toString(8);
+      const approvalPolicyMode = (
+        fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
       ).toString(8);
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
+      expect(messagingPluginMode).toBe("755");
+      expect(approvalPolicyMode).toBe("644");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");
@@ -857,6 +1004,48 @@ describe("Hermes sandbox provisioning", () => {
     expect(result.stdout).toContain("hermes manifest version");
   });
 
+  function runHermesUvExtrasExpansion() {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
+    if (!extras) {
+      throw new Error("Expected HERMES_UV_EXTRAS ARG in Hermes base Dockerfile");
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-uv-extras-"));
+    const command = [
+      "set -euo pipefail",
+      `HERMES_UV_EXTRAS=${JSON.stringify(extras)}`,
+      "set --",
+      'for extra in ${HERMES_UV_EXTRAS}; do set -- "$@" --extra "$extra"; done',
+      'printf "%s\\n" "$@"',
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", command], {
+      encoding: "utf-8",
+      cwd: tmp,
+      timeout: 5000,
+    });
+    return { result, tmp };
+  }
+
+  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+    const { result, tmp } = runHermesUvExtrasExpansion();
+    try {
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim().split(/\n/)).toEqual([
+        "--extra",
+        "anthropic",
+        "--extra",
+        "messaging",
+        "--extra",
+        "web",
+        "--extra",
+        "pty",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");
@@ -868,6 +1057,38 @@ describe("Hermes sandbox provisioning", () => {
       const result = runHermesPathValidation([wrongBin]);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("expected hermes");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
+    const hermesRoot = path.join(tmp, "hermes");
+    const hermesWebDir = path.join(hermesRoot, "web");
+    const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
+    fs.mkdirSync(hermesWebDir, { recursive: true });
+    fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Published base images can lag Dockerfile.base",
+      "# Harden: remove unnecessary build tools",
+    ).replaceAll("/opt/hermes", hermesRoot);
+
+    try {
+      const { result, calls } = runLoggedDockerShell(command, tmp, [
+        'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
+      expect(calls).toContain(`npm run build --prefix ${hermesWebDir}`);
+      expect(fs.existsSync(hermesWebDist)).toBe(true);
+      expect(fs.existsSync(path.join(hermesWebDir, "node_modules"))).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

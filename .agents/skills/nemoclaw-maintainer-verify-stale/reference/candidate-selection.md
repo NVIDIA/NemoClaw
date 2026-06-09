@@ -74,7 +74,7 @@ Apply these rules in order. Drop any issue that fails a rule.
 
 **Idempotency:** drop if **either** of these is true:
 
-- The issue carries a `fixed-on-latest` or `verify-inconclusive` label. (Cleared by the release sweep in `nemoclaw-maintainer-cut-release-tag` so the issue re-opens on each release.) The by-design path uses the existing repo `status: wont-fix` label, which is already covered by the issue-type skip rule above — no separate idempotency clause needed for that path.
+- The issue carries a `fixed-on-latest` or `verify-inconclusive` label. These labels are persistent; rerun verification only when a maintainer explicitly targets the issue or removes the label. The by-design path uses the existing repo `status: wont-fix` label, which is already covered by the issue-type skip rule above — no separate idempotency clause needed for that path.
 - A comment matching `<!-- nemoclaw-verify-stale v\d+ YYYY-MM-DD -->` was posted **within the last 7 days**. The regex matches any marker version (`v1`, `v2`, …) so future skill versions can re-verify older-marked issues by tightening the regex (e.g. require a specific marker version). The marker carries a date so the candidate filter can apply a TTL — useful for the still-reproduces case (Step 9), where no label is applied and we want next week's run to re-verify rather than skip forever.
 
 Implementation — match the marker against each comment's `createdAt`. Use `gh issue view --json comments` (single-issue mode already fetches this; batch mode's `gh issue list` also returns the comment array per issue):

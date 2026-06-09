@@ -55,10 +55,6 @@ spc_assert_credentials_expected() {
     return 1
   fi
   spc_log_provider_metadata "$(spc_context_get E2E_PROVIDER)" "gateway"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] would list gateway credentials without raw values"
-    return 0
-  fi
   local raw_file listed_raw listed list_rc
   raw_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-credentials-list.XXXXXX")"
   chmod 600 "${raw_file}"
@@ -105,10 +101,6 @@ spc_assert_policy_preset_present() {
   spc_assertion_id "post-onboard.security-policy.${preset}-preset-applied"
   spc_require_context E2E_SCENARIO E2E_SANDBOX_NAME
   echo "policy preset expected: ${preset}"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] would verify policy preset ${preset}"
-    return 0
-  fi
   local sandbox_name active
   sandbox_name="$(spc_context_get E2E_SANDBOX_NAME)"
   if ! active="$(nemoclaw "${sandbox_name}" policy-list 2>&1)"; then
@@ -143,10 +135,6 @@ spc_semver_ge() {
 spc_assert_openshell_credential_rewrite_supported() {
   spc_assertion_id "post-onboard.gateway.openshell-version-supports-credential-rewrite"
   spc_require_context E2E_SCENARIO
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] would verify OpenShell gateway capability metadata"
-    return 0
-  fi
   local openshell_bin version_output version minimum_version binary_strings feature
   minimum_version="0.0.39"
   openshell_bin="$(command -v openshell 2>/dev/null || true)"
@@ -221,10 +209,6 @@ spc_assert_shields_permissions_match_state() {
 spc_assert_shields_config_consistent() {
   spc_assertion_id "post-onboard.security-shields.config-consistent"
   spc_require_context E2E_SCENARIO E2E_SANDBOX_NAME E2E_AGENT
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] would verify shields config consistency"
-    return 0
-  fi
   local sandbox_name status observed expected
   sandbox_name="$(spc_context_get E2E_SANDBOX_NAME)"
   if ! status="$(nemoclaw "${sandbox_name}" shields status 2>&1)"; then
@@ -261,10 +245,6 @@ spc_assert_telegram_payload_not_shell_executed() {
   local fixture_payload="${1:-}"
   if [[ -n "${fixture_payload}" ]]; then
     printf 'telegram payload fixture loaded (%s bytes)\n' "${#fixture_payload}"
-  fi
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] would submit payload without shell evaluation"
-    return 0
   fi
   local sandbox_name marker payload send_output marker_state
   sandbox_name="$(spc_context_get E2E_SANDBOX_NAME)"

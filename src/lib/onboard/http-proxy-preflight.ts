@@ -3,7 +3,7 @@
 
 /**
  * Preflight warning when the user's shell has HTTP_PROXY set without a
- * NO_PROXY=localhost,127.0.0.1 bypass. See #2616.
+ * NO_PROXY bypass for loopback and the managed inference hostname.
  *
  * NemoClaw's own subprocess spawn helpers (`buildSubprocessEnv`) inject
  * NO_PROXY for loopback hosts, so NemoClaw-managed processes are safe. But
@@ -19,19 +19,25 @@ export function warnIfHostProxyMissesLoopback(
   const proxyEnv = env.HTTP_PROXY || env.http_proxy;
   if (!proxyEnv) return false;
   const noProxyEnv = env.NO_PROXY || env.no_proxy || "";
-  // Require BOTH entries — HTTP libraries match the literal hostname against
-  // NO_PROXY, so `NO_PROXY=localhost` alone still proxies `127.0.0.1` requests
-  // (and vice versa). Only suppress the warning when both are present.
+  // Require all three entries — HTTP libraries match the literal hostname
+  // against NO_PROXY, so partial coverage still proxies the missing entries.
+  // Suppress the warning only when localhost, 127.0.0.1, and the managed
+  // inference hostname are all present.
   const hasLocalhost = /(^|,)\s*localhost\s*(,|$)/.test(noProxyEnv);
   const hasLoopback = /(^|,)\s*127\.0\.0\.1\s*(,|$)/.test(noProxyEnv);
-  if (hasLocalhost && hasLoopback) return false;
-  warn("  ⚠ HTTP_PROXY/http_proxy is set without NO_PROXY=localhost,127.0.0.1.");
+  const hasInference = /(^|,)\s*inference\.local\s*(,|$)/.test(noProxyEnv);
+  if (hasLocalhost && hasLoopback && hasInference) return false;
+  warn(
+    "  ⚠ HTTP_PROXY/http_proxy is set without NO_PROXY=localhost,127.0.0.1,inference.local.",
+  );
   warn(`    Detected proxy: ${redactProxyCredentials(proxyEnv)}`);
-  warn("    NemoClaw injects NO_PROXY for its own subprocess spawns, but any tool you run");
-  warn("    that respects HTTP_PROXY (curl, Node fetch, Python requests) will still tunnel");
-  warn("    localhost traffic through your host proxy. To bypass loopback (see #2616):");
-  warn("      export NO_PROXY=localhost,127.0.0.1");
-  warn("      export no_proxy=localhost,127.0.0.1");
+  warn("    NemoClaw injects NO_PROXY for its own subprocess spawns (loopback hosts,");
+  warn("    container-host aliases, and the managed inference hostname inference.local),");
+  warn("    but any tool you run that respects HTTP_PROXY (curl, Node fetch, Python");
+  warn("    requests) will still tunnel localhost traffic through your host proxy.");
+  warn("    To bypass loopback and the managed inference hostname:");
+  warn("      export NO_PROXY=localhost,127.0.0.1,inference.local");
+  warn("      export no_proxy=localhost,127.0.0.1,inference.local");
   return true;
 }
 

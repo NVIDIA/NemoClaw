@@ -3,16 +3,35 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 
 export interface CustomPolicyEntry {
   name: string;
   content: string;
   sourcePath?: string;
   appliedAt?: string;
+}
+
+// Outcome of the last live sandbox GPU proof run during onboarding/recovery.
+// `status` separates a configured-but-unverified GPU from one whose CUDA
+// usability was actually proven (`verified`) or actively failed a live proof
+// (`failed`, e.g. Jetson `/dev/nvmap` permission errors). Persisted so
+// `nemoclaw <sandbox> status` can report proof state instead of treating any
+// configured GPU as healthy (#4231).
+export type SandboxGpuProofStatus = "verified" | "unverified" | "failed";
+
+export interface SandboxGpuProofResult {
+  status: SandboxGpuProofStatus;
+  // True only when a CUDA-usability proof (cuInit via libcuda) actually passed.
+  cudaVerified: boolean;
+  // Label of the last proof that determined `status`.
+  label?: string | null;
+  // Redacted, truncated diagnostic captured when the proof failed.
+  detail?: string | null;
+  at: string;
 }
 
 export interface SandboxEntry {
@@ -26,20 +45,42 @@ export interface SandboxEntry {
   sandboxGpuEnabled?: boolean;
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
+  sandboxGpuProof?: SandboxGpuProofResult | null;
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
+  // True once the onboard policy step has fully completed and reconciled the
+  // effective preset selection (set by the post-policy registry write). Absent
+  // on a sandbox whose registration recorded only boot-time presets but whose
+  // policy step never finished — so re-onboard knows whether `policies`
+  // represents a final selection it can carry forward. See #4621.
+  policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
   imageTag?: string | null;
-  providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
+  messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
+  hermesDashboardEnabled?: boolean;
+  hermesDashboardPort?: number | null;
+  hermesDashboardInternalPort?: number | null;
+  hermesDashboardTui?: boolean;
   disabledChannels?: string[];
   dashboardPort?: number | null;
+  // OpenShell gateway registration name and host port bound to this sandbox.
+  // Persisted so later lifecycle commands operate on the sandbox's own gateway
+  // instead of the process-global `nemoclaw` singleton — a second sandbox on a
+  // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
+}
+
+export interface SandboxMessagingState {
+  schemaVersion: 1;
+  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -53,6 +94,87 @@ export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;
 export const LOCK_RETRY_MS = 100;
 export const LOCK_MAX_RETRIES = 120;
+
+/** kill(pid, 0) liveness probe. EPERM means the pid exists but is owned by
+ * another user, which still counts as alive. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isErrnoException(error) && error.code === "EPERM";
+  }
+}
+
+/** Wall-clock start time (ms since epoch) of `pid` from /proc, or null when it
+ * cannot be read (process gone, or a non-Linux host without /proc). Mirrors the
+ * onboard-session lock's recycle check. */
+function readProcessStartMs(pid: number): number | null {
+  try {
+    const statText = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const btimeLine = fs
+      .readFileSync("/proc/stat", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("btime "));
+    const bootSeconds = btimeLine ? Number(btimeLine.trim().split(/\s+/)[1]) : NaN;
+    const closeParen = statText.lastIndexOf(")");
+    if (!Number.isFinite(bootSeconds) || closeParen < 0) return null;
+    const fieldsAfterComm = statText
+      .slice(closeParen + 2)
+      .trim()
+      .split(/\s+/);
+    const startTicks = Number(fieldsAfterComm[19]);
+    if (!Number.isFinite(startTicks)) return null;
+    // /proc/<pid>/stat starttime is in USER_HZ ticks (100 on supported hosts).
+    const clockTicksPerSecond = 100;
+    return (bootSeconds + startTicks / clockTicksPerSecond) * 1000;
+  } catch {
+    return null;
+  }
+}
+
+export type RegistryLockDecision = "break" | "wait";
+
+/**
+ * Decide whether an existing registry lock should be broken (stale) or waited
+ * on. Exported for tests.
+ *
+ * The PID-recycle wedge this guards against: a holder that crashes without
+ * releasing leaves `LOCK_DIR` + the owner pid behind. If that pid is later
+ * reused by an unrelated live process, `kill(pid, 0)` succeeds, so a
+ * liveness-only check treats the lock as held forever and every registry write
+ * wedges (retries exhausted -> "Failed to acquire lock"). When the owner looks
+ * alive we therefore also confirm it started BEFORE it took the lock: a process
+ * whose /proc start time is after the lock's mtime is a recycled pid, so the
+ * lock is stale. When the owner pid or its start time cannot be read (missing
+ * owner file, non-Linux host), fall back to breaking the lock once it is older
+ * than a registry op could legitimately take.
+ */
+export function classifyExistingLock(opts: {
+  ownerPid: number | null;
+  ownerAlive: boolean;
+  processStartMs: number | null;
+  lockMtimeMs: number;
+  nowMs: number;
+  staleMs: number;
+}): RegistryLockDecision {
+  const ageMs = opts.nowMs - opts.lockMtimeMs;
+  if (opts.ownerPid === null) {
+    // Owner file missing or unreadable: decide on age alone.
+    return ageMs > opts.staleMs ? "break" : "wait";
+  }
+  if (!opts.ownerAlive) {
+    return "break";
+  }
+  if (opts.processStartMs !== null && opts.processStartMs > opts.lockMtimeMs + 1000) {
+    // Live pid that started after the lock was taken -> the pid was recycled.
+    return "break";
+  }
+  // Live original holder (or start time unknown): only break once the lock is
+  // clearly older than a registry op could take, which also covers hosts where
+  // recycle cannot be detected directly.
+  return ageMs > opts.staleMs ? "break" : "wait";
+}
 
 /** Acquire an advisory lock using mkdir (atomic on POSIX). */
 export function acquireLock(): void {
@@ -91,40 +213,54 @@ export function acquireLock(): void {
       ) {
         throw error;
       }
-      let ownerChecked = false;
+      let lockStat: fs.Stats;
       try {
-        const ownerPid = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-        if (Number.isFinite(ownerPid) && ownerPid > 0) {
-          ownerChecked = true;
-          let alive: boolean;
-          try {
-            process.kill(ownerPid, 0);
-            alive = true;
-          } catch (killErr) {
-            alive =
-              isErrnoException(killErr)
-                ? killErr.code === "EPERM"
-                : false;
-          }
-          if (!alive) {
-            const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
-            if (recheck === ownerPid) {
-              fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-              continue;
-            }
-          }
-        }
+        lockStat = fs.statSync(LOCK_DIR);
       } catch {
-        /* fall through to mtime staleness */
+        // Lock dir vanished between the failed mkdir and this stat: another
+        // waiter released it, so retry immediately.
+        continue;
       }
-      if (!ownerChecked) {
+      let ownerPid: number | null = null;
+      try {
+        const parsed = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
+        ownerPid = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+      } catch {
+        ownerPid = null;
+      }
+      const ownerAlive = ownerPid !== null ? isProcessAlive(ownerPid) : false;
+      const processStartMs =
+        ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
+      const decision = classifyExistingLock({
+        ownerPid,
+        ownerAlive,
+        processStartMs,
+        lockMtimeMs: lockStat.mtimeMs,
+        nowMs: Date.now(),
+        staleMs: LOCK_STALE_MS,
+      });
+      if (decision === "break") {
+        // Only break the lock if it is provably the same one we classified.
+        // Re-stat LOCK_DIR and require the inode + mtime to be unchanged (a
+        // replacement lock is a fresh mkdir, hence a new inode) and, when the
+        // owner pid was readable, that it still matches. Any stat/read failure
+        // means the identity cannot be proven, so the lock is left alone rather
+        // than risk clobbering an in-flight replacement that exists as LOCK_DIR
+        // before its owner file has been written.
+        let stillSameLock = false;
         try {
-          const stat = fs.statSync(LOCK_DIR);
-          if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-            fs.rmSync(LOCK_DIR, { recursive: true, force: true });
-            continue;
+          const currentStat = fs.statSync(LOCK_DIR);
+          stillSameLock =
+            currentStat.ino === lockStat.ino && currentStat.mtimeMs === lockStat.mtimeMs;
+          if (stillSameLock && ownerPid !== null) {
+            const recheck = Number.parseInt(fs.readFileSync(LOCK_OWNER, "utf-8").trim(), 10);
+            stillSameLock = recheck === ownerPid;
           }
         } catch {
+          stillSameLock = false;
+        }
+        if (stillSameLock) {
+          fs.rmSync(LOCK_DIR, { recursive: true, force: true });
           continue;
         }
       }
@@ -202,34 +338,56 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
+      sandboxGpuProof: entry.sandboxGpuProof ?? null,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      // policyPresetsFinalized is intentionally not set here: registration means
+      // the policy step has not completed for this entry. It is stamped only by
+      // the post-policy registry write (see policy-preset-persistence), so a
+      // snapshot clone (which spreads the source entry but resets `policies`)
+      // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       imageTag: entry.imageTag || null,
-      providerCredentialHashes: entry.providerCredentialHashes || undefined,
       messagingChannels: entry.messagingChannels || [],
       messagingChannelConfig:
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
           ? { ...entry.messagingChannelConfig }
           : undefined,
+      messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]
           : undefined,
+      hermesDashboardEnabled: entry.hermesDashboardEnabled === true ? true : undefined,
+      hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
+      hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
+      hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       disabledChannels:
         Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
           ? [...entry.disabledChannels]
           : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      gatewayName: entry.gatewayName ?? undefined,
+      gatewayPort: entry.gatewayPort ?? undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
     }
     save(data);
   });
+}
+
+function cloneSandboxMessagingState(
+  messaging: SandboxMessagingState | undefined,
+): SandboxMessagingState | undefined {
+  if (!messaging || messaging.schemaVersion !== 1) return undefined;
+  return {
+    schemaVersion: 1,
+    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
+  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {

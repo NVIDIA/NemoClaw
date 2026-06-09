@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { runCapture } from "../../runner";
 import { OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES } from "../ollama-model-registry";
 
@@ -43,12 +44,14 @@ export function probeRegistrySize(model: string, capture: CaptureFn = runCapture
   const body = capture(
     [
       "curl",
-      "-sfL",
-      "--max-time",
-      String(PROBE_TIMEOUT_SECONDS),
-      "-H",
-      MANIFEST_ACCEPT_HEADER,
-      url,
+      ...buildValidatedCurlCommandArgs([
+        "-sfL",
+        "--max-time",
+        String(PROBE_TIMEOUT_SECONDS),
+        "-H",
+        MANIFEST_ACCEPT_HEADER,
+        url,
+      ]),
     ],
     { ignoreError: true },
   );

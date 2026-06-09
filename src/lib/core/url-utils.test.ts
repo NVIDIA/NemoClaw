@@ -37,68 +37,50 @@ describe("stripEndpointSuffix", () => {
 });
 
 describe("normalizeProviderBaseUrl", () => {
-  it("strips OpenAI suffixes", () => {
-    expect(normalizeProviderBaseUrl("https://api.openai.com/v1/chat/completions", "openai")).toBe(
+  it.each([
+    [
+      "OpenAI suffix",
+      "https://api.openai.com/v1/chat/completions",
+      "openai",
       "https://api.openai.com/v1",
-    );
-  });
-
-  it("strips Anthropic suffixes", () => {
-    expect(normalizeProviderBaseUrl("https://api.anthropic.com/v1/messages", "anthropic")).toBe(
+    ],
+    [
+      "Anthropic messages suffix",
+      "https://api.anthropic.com/v1/messages",
+      "anthropic",
       "https://api.anthropic.com",
-    );
-    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
+    ],
+    [
+      "Anthropic v1 suffix",
+      "https://proxy.example.com/v1",
+      "anthropic",
       "https://proxy.example.com",
-    );
-    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1/messages", "anthropic")).toBe(
+    ],
+    [
+      "proxied Anthropic messages suffix",
+      "https://proxy.example.com/v1/messages",
+      "anthropic",
       "https://proxy.example.com",
-    );
-  });
-
-  it("strips trailing slashes", () => {
-    expect(normalizeProviderBaseUrl("https://example.com/v1/", "openai")).toBe(
-      "https://example.com/v1",
-    );
-  });
-
-  it("returns origin for root path", () => {
-    expect(normalizeProviderBaseUrl("https://example.com/", "openai")).toBe(
-      "https://example.com",
-    );
-  });
-
-  it("handles empty input", () => {
-    expect(normalizeProviderBaseUrl("", "openai")).toBe("");
-  });
-
-  it("handles invalid URL gracefully", () => {
-    expect(normalizeProviderBaseUrl("not-a-url", "openai")).toBe("not-a-url");
+    ],
+    ["trailing slashes", "https://example.com/v1/", "openai", "https://example.com/v1"],
+    ["root path", "https://example.com/", "openai", "https://example.com"],
+    ["empty input", "", "openai", ""],
+    ["invalid URL", "not-a-url", "openai", "not-a-url"],
+  ] as const)("normalizes %s", (_label, input, provider, expected) => {
+    expect(normalizeProviderBaseUrl(input, provider)).toBe(expected);
   });
 });
 
 describe("isLoopbackHostname", () => {
-  it("matches localhost", () => {
-    expect(isLoopbackHostname("localhost")).toBe(true);
-  });
-
-  it("matches 127.0.0.1", () => {
-    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
-  });
-
-  it("matches ::1", () => {
-    expect(isLoopbackHostname("::1")).toBe(true);
-  });
-
-  it("matches bracketed IPv6", () => {
-    expect(isLoopbackHostname("[::1]")).toBe(true);
-  });
-
-  it("rejects external hostname", () => {
-    expect(isLoopbackHostname("example.com")).toBe(false);
-  });
-
-  it("handles empty input", () => {
-    expect(isLoopbackHostname("")).toBe(false);
+  it.each([
+    ["localhost", true],
+    ["127.0.0.1", true],
+    ["::1", true],
+    ["[::1]", true],
+    ["example.com", false],
+    ["", false],
+  ] as const)("classifies %s", (input, expected) => {
+    expect(isLoopbackHostname(input)).toBe(expected);
   });
 });
 
@@ -109,19 +91,12 @@ describe("formatEnvAssignment", () => {
 });
 
 describe("parsePolicyPresetEnv", () => {
-  it("parses comma-separated values", () => {
-    expect(parsePolicyPresetEnv("web,local-inference")).toEqual(["web", "local-inference"]);
-  });
-
-  it("trims whitespace", () => {
-    expect(parsePolicyPresetEnv(" web , local ")).toEqual(["web", "local"]);
-  });
-
-  it("filters empty segments", () => {
-    expect(parsePolicyPresetEnv("web,,local")).toEqual(["web", "local"]);
-  });
-
-  it("handles empty string", () => {
-    expect(parsePolicyPresetEnv("")).toEqual([]);
+  it.each([
+    ["comma-separated values", "web,local-inference", ["web", "local-inference"]],
+    ["whitespace", " web , local ", ["web", "local"]],
+    ["empty segments", "web,,local", ["web", "local"]],
+    ["empty string", "", []],
+  ] as const)("parses %s", (_label, input, expected) => {
+    expect(parsePolicyPresetEnv(input)).toEqual(expected);
   });
 });

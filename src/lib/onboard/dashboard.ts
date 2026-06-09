@@ -4,26 +4,28 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
+import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
+import { createSandboxForwardStopper, type DashboardForwardOptions, normalizeDashboardForwardOptions } from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { bestEffortForwardStop } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -67,12 +69,13 @@ export interface OnboardDashboardHelpers {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl?: string,
-    options?: { rollbackSandboxOnFailure?: boolean },
+    options?: DashboardForwardOptions,
   ): number;
   ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number;
+  ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
@@ -218,17 +221,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    options: { rollbackSandboxOnFailure?: boolean } = {},
+    options: DashboardForwardOptions = {},
   ): number {
-    const { rollbackSandboxOnFailure = false } = options;
+    const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
+      normalizeDashboardForwardOptions(options);
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = (port: string | number) =>
-      bestEffortForwardStopForSandbox(
-        deps.runOpenshell,
-        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
-        port,
-        sandboxName,
-      );
+    const stopForwardForSandbox = createSandboxForwardStopper({
+      runOpenshell: deps.runOpenshell,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+      sandboxName,
+    });
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -247,6 +249,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
 
     if (actualPort !== preferredPort) {
+      if (!allowPortReallocation) {
+        throw new Error(`Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`);
+      }
       if (rollbackSandboxOnFailure) {
         const err = new Error(
           `Dashboard port ${preferredPort} became host-bound during sandbox build; ` +
@@ -261,7 +266,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     const occupied = getOccupiedPorts(existingForwards);
     for (const [port, owner] of occupied.entries()) {
-      if (owner === sandboxName && Number(port) !== actualPort) {
+      if (owner === sandboxName && Number(port) !== actualPort && !preservedPorts.has(port)) {
         stopForwardForSandbox(port);
       }
     }
@@ -313,13 +318,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   function ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    const agentDashboardPort = agent.forwardPort ?? CONTROL_UI_PORT;
-    const agentDashboardUrl = `http://127.0.0.1:${agentDashboardPort}`;
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
-    process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
-    return actualAgentDashboardPort;
+    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
+  }
+
+  function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
+    return ensureFixedAgentForward(deps, sandboxName, port, label);
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
@@ -361,7 +366,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+    const token = !agent || agent.dashboard.auth === "url_token" ? fetchGatewayAuthTokenFromSandbox(sandboxName) : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,
@@ -439,6 +444,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
