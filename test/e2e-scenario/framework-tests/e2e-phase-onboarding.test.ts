@@ -313,6 +313,28 @@ describe("onboarding phase fixture", () => {
     }
   });
 
+  it("accepts current Docker-unreachable wording for the no-Docker negative path", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(7, "Docker is not reachable. Please fix Docker and try again."));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
+
+    const instance = await onboard.from(
+      ready({
+        runtime: "docker-missing",
+        onboarding: "cloud-openclaw-no-docker",
+        docker: { id: "docker-missing", expectation: "missing", available: false },
+      }),
+    );
+
+    expect(instance.expectedFailure).toEqual({
+      phase: "preflight",
+      errorClass: "docker-missing",
+    });
+  });
+
   it("requires the docker-missing runtime expectation for the no-Docker negative path", async () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));

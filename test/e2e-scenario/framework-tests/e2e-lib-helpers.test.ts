@@ -175,6 +175,49 @@ exit 2
     }
   });
 
+  it("no_docker_onboarding_worker_should_accept_current_preflight_wording", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-wording-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  echo "Docker is not reachable. Please fix Docker and try again." >&2
+  exit 1
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("Docker is not reachable");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("no_docker_redactor_fallback_should_redact_sensitive_env_values_without_python", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-redactor-"));
     const noPythonBin = path.join(tmp, "bin");

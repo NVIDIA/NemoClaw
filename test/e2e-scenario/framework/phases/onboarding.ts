@@ -23,6 +23,7 @@ const DOCKER_MISSING_PATTERNS = [
   /docker daemon is not running/i,
   /docker[- ]missing/i,
   /Docker is required before onboarding/i,
+  /Docker is not reachable/i,
   /could not talk to the Docker daemon/i,
 ];
 const MISSING_SANDBOX_DELETE_PATTERNS = [

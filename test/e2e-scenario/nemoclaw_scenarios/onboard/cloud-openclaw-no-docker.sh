@@ -89,7 +89,7 @@ e2e_no_docker_has_missing_signature() {
   local log="$1"
   [[ -f "${log}" ]] || return 1
   grep -Eiq \
-    'Cannot connect to the Docker daemon|Is the docker daemon running\??|docker daemon is not running|docker[- ]missing|Docker is required before onboarding|could not talk to the Docker daemon' \
+    'Cannot connect to the Docker daemon|Is the docker daemon running\??|docker daemon is not running|docker[- ]missing|Docker is required before onboarding|Docker is not reachable|could not talk to the Docker daemon' \
     "${log}"
 }
 
