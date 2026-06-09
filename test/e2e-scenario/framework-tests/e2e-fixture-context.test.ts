@@ -142,7 +142,10 @@ describe("E2E fixture primitives", () => {
       const result = await probe.run(
         trustedShellCommand({
           command: process.execPath,
-          args: ["-e", `console.log(${JSON.stringify(secret)}); console.error(${JSON.stringify(secret)});`],
+          args: [
+            "-e",
+            `console.log(${JSON.stringify(secret)}); console.error(${JSON.stringify(secret)});`,
+          ],
           reason: "verify ShellProbe enforces redactionValues regardless of injected redactor",
         }),
         {
@@ -157,10 +160,17 @@ describe("E2E fixture primitives", () => {
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
-      const written = fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.result.json"), "utf8");
+      const written = fs.readFileSync(
+        artifacts.pathFor("shell/options-redaction-enforced.result.json"),
+        "utf8",
+      );
       expect(written).not.toContain(secret);
-      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8")).not.toContain(secret);
-      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stderr.txt"), "utf8")).not.toContain(secret);
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8"),
+      ).not.toContain(secret);
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stderr.txt"), "utf8"),
+      ).not.toContain(secret);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -183,7 +193,10 @@ describe("E2E fixture primitives", () => {
       const result = await probe.run(
         trustedShellCommand({
           command: process.execPath,
-          args: ["-e", `console.log(${JSON.stringify(longer)}); console.error(${JSON.stringify(longer)});`],
+          args: [
+            "-e",
+            `console.log(${JSON.stringify(longer)}); console.error(${JSON.stringify(longer)});`,
+          ],
           reason: "verify ShellProbe longest-first ordering for overlapping redactionValues",
         }),
         {
@@ -198,11 +211,18 @@ describe("E2E fixture primitives", () => {
       expect(result.stdout).not.toContain("-beta-gamma-delta");
       expect(result.stderr).not.toContain(longer);
       expect(result.stderr).not.toContain("-beta-gamma-delta");
-      const written = fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.result.json"), "utf8");
+      const written = fs.readFileSync(
+        artifacts.pathFor("shell/overlap-shorter-first.result.json"),
+        "utf8",
+      );
       expect(written).not.toContain(longer);
       expect(written).not.toContain("-beta-gamma-delta");
-      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stdout.txt"), "utf8")).not.toContain("-beta-gamma-delta");
-      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stderr.txt"), "utf8")).not.toContain("-beta-gamma-delta");
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stdout.txt"), "utf8"),
+      ).not.toContain("-beta-gamma-delta");
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stderr.txt"), "utf8"),
+      ).not.toContain("-beta-gamma-delta");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

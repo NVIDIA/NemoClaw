@@ -85,8 +85,7 @@ const REMOTE_PROVIDER_CONFIG = {
   // names all nine families so QA scripts and operators can discover them
   // without first selecting the entry.
   hermesProvider: {
-    label:
-      "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
+    label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
     providerName: "hermes-provider",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
