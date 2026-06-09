@@ -776,11 +776,6 @@ function applyPresetContent(
     return false;
   }
 
-  const endpoints = getPresetEndpoints(presetContent);
-  if (endpoints.length > 0) {
-    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
-  }
-
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
@@ -795,6 +790,10 @@ function applyPresetContent(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
     return false;
+  }
+  const endpoints = getPresetEndpoints(presetContent);
+  if (endpoints.length > 0) {
+    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
   }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
