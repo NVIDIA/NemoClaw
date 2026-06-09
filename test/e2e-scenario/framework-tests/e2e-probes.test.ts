@@ -34,35 +34,35 @@ describe("probe registry", () => {
     registerBuiltinProbes();
   });
 
-  it("registerProbe_lookupProbe_round_trip", () => {
+  it("round-trips registerProbe through lookupProbe", () => {
     const fn = async (): Promise<ProbeOutcome> => ({ status: "passed" });
     registerProbe("myProbe", fn);
     expect(lookupProbe("myProbe")).toBe(fn);
   });
 
-  it("lookupProbe_returns_undefined_for_unknown_ref", () => {
+  it("lookupProbe returns undefined for an unknown ref", () => {
     expect(lookupProbe("nonexistent")).toBeUndefined();
   });
 
-  it("registerProbe_rejects_duplicate_registration", () => {
+  it("registerProbe rejects duplicate registration", () => {
     const fn = async (): Promise<ProbeOutcome> => ({ status: "passed" });
     registerProbe("dup", fn);
     expect(() => registerProbe("dup", fn)).toThrow(/already registered/);
   });
 
-  it("registerProbe_rejects_empty_name", () => {
+  it("registerProbe rejects empty name", () => {
     const fn = async (): Promise<ProbeOutcome> => ({ status: "passed" });
     expect(() => registerProbe("", fn)).toThrow(/name is required/);
   });
 
-  it("listRegisteredProbes_returns_sorted_names", () => {
+  it("listRegisteredProbes returns names sorted", () => {
     registerProbe("zeta", async () => ({ status: "passed" }));
     registerProbe("alpha", async () => ({ status: "passed" }));
     registerProbe("mu", async () => ({ status: "passed" }));
     expect(listRegisteredProbes()).toEqual(["alpha", "mu", "zeta"]);
   });
 
-  it("registerBuiltinProbes_is_idempotent", () => {
+  it("registerBuiltinProbes is idempotent", () => {
     registerBuiltinProbes();
     const first = listRegisteredProbes();
     expect(first).toContain("diagnosticsProbe");
@@ -72,7 +72,7 @@ describe("probe registry", () => {
     expect(listRegisteredProbes()).toEqual(first);
   });
 
-  it("registerBuiltinProbes_registers_security_probes", () => {
+  it("registerBuiltinProbes registers security probes", () => {
     // shieldsConfig / networkPolicy / injectionBlocked are marked
     // `required: true` in scenarios/assertions/registry.ts. The
     // orchestrator fails closed when a required probe is missing,
@@ -153,7 +153,7 @@ function installFakeOnPath(
 }
 
 describe("diagnosticsProbe", () => {
-  it("passes_when_nemoclaw_debug_quick_writes_a_non_empty_archive", async () => {
+  it("passes when NemoClaw debug quick writes a non-empty archive", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "diag-probe-pass-"));
     const fake = installFakeOnPath(
       path.join(tmp, "bin"),
@@ -187,7 +187,7 @@ exit 0
     }
   });
 
-  it("fails_when_nemoclaw_exits_nonzero", async () => {
+  it("fails when NemoClaw exits nonzero", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "diag-probe-fail-"));
     const fake = installFakeOnPath(
       path.join(tmp, "bin"),
@@ -208,7 +208,7 @@ exit 0
     }
   });
 
-  it("fails_when_archive_is_empty", async () => {
+  it("fails when archive is empty", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "diag-probe-empty-"));
     const fake = installFakeOnPath(
       path.join(tmp, "bin"),
@@ -271,7 +271,7 @@ esac
     };
   }
 
-  it("passes_when_both_cli_and_links_checks_exit_zero", async () => {
+  it("passes when both CLI and links checks exit zero", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "docs-probe-pass-"));
     try {
       const { ctx } = setupFakeCheckDocs(tmp, 0, 0);
@@ -289,7 +289,7 @@ esac
     }
   });
 
-  it("fails_when_cli_parity_check_exits_nonzero", async () => {
+  it("fails when CLI parity check exits nonzero", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "docs-probe-cli-fail-"));
     try {
       const { ctx } = setupFakeCheckDocs(tmp, 3, 0);
@@ -302,7 +302,7 @@ esac
     }
   });
 
-  it("fails_when_links_check_exits_nonzero", async () => {
+  it("fails when links check exits nonzero", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "docs-probe-links-fail-"));
     try {
       const { ctx } = setupFakeCheckDocs(tmp, 0, 5);
@@ -315,7 +315,7 @@ esac
     }
   });
 
-  it("fails_with_actionable_message_when_check_docs_script_missing", async () => {
+  it("fails with actionable message when check docs script missing", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "docs-probe-missing-"));
     try {
       const { docsValidationProbe } = await import("../scenarios/probes/docs-validation.ts");
@@ -365,7 +365,7 @@ function makeProbeCtxFor(
 }
 
 describe("shieldsConfigProbe", () => {
-  it("passes_when_shields_status_matches_expected_and_perms_match_state", async () => {
+  it("passes when shields status matches expected and perms match state", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "shields-probe-pass-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -427,7 +427,7 @@ exit 99
     }
   });
 
-  it("fails_when_observed_state_disagrees_with_expected", async () => {
+  it("fails when observed state disagrees with expected", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "shields-probe-mismatch-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -459,7 +459,7 @@ exit 99
     }
   });
 
-  it("fails_when_perms_dont_match_observed_state", async () => {
+  it("fails when permissions do not match observed state", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "shields-probe-perms-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -537,7 +537,7 @@ exit 99
     );
   }
 
-  it("passes_when_blocked_url_returns_403", async () => {
+  it("passes when blocked URL returns 403", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netpolicy-probe-403-"));
     fakeOpenshellEmittingHttpStatus(path.join(tmp, "bin"), "403", 0);
     const oldPath = process.env.PATH;
@@ -554,7 +554,7 @@ exit 99
     }
   });
 
-  it("passes_when_curl_exits_nonzero_and_no_http_response", async () => {
+  it("passes when curl exits nonzero and no HTTP response", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netpolicy-probe-conn-"));
     // curl exit 7 = couldn't connect; status '000' = no HTTP response.
     fakeOpenshellEmittingHttpStatus(path.join(tmp, "bin"), "000", 7);
@@ -572,7 +572,7 @@ exit 99
     }
   });
 
-  it("fails_when_blocked_url_returns_200", async () => {
+  it("fails when blocked URL returns 200", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netpolicy-probe-200-"));
     fakeOpenshellEmittingHttpStatus(path.join(tmp, "bin"), "200", 0);
     const oldPath = process.env.PATH;
@@ -589,7 +589,7 @@ exit 99
     }
   });
 
-  it("fails_when_blocked_url_returns_401_indicating_policy_bypass", async () => {
+  it("fails when blocked URL returns 401 indicating policy bypass", async () => {
     // 401 means the request reached upstream auth, NOT that gateway
     // dropped it. The probe must classify this as a policy bypass.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netpolicy-probe-401-"));
@@ -665,7 +665,7 @@ exit 99
     };
   }
 
-  it("passes_when_payload_is_preserved_and_marker_absent", async () => {
+  it("passes when the payload is preserved and the marker is absent", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "inj-probe-pass-"));
     const stub = setupInjectionStub(tmp, false);
     try {
@@ -682,7 +682,7 @@ exit 99
     }
   });
 
-  it("fails_when_marker_file_was_created_indicating_command_substitution_executed", async () => {
+  it("fails when marker file creation indicates command substitution executed", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "inj-probe-fail-"));
     const stub = setupInjectionStub(tmp, true);
     try {

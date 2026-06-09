@@ -22,14 +22,14 @@ function runScenarioCli(args: string[]) {
 }
 
 describe("deterministic scenario registry", () => {
-  it("test_should_reject_duplicate_scenario_ids", () => {
+  it("should reject duplicate scenario IDs", () => {
     const first = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml").build();
     const second = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml").build();
 
     expect(() => buildScenarioRegistry([first, second])).toThrow(/duplicate-id/);
   });
 
-  it("test_should_return_actionable_unknown_scenario_error", () => {
+  it("should return actionable unknown scenario error", () => {
     const result = runScenarioCli(["--scenarios", "does-not-exist", "--plan-only"]);
 
     expect(result.status).not.toBe(0);
@@ -38,7 +38,7 @@ describe("deterministic scenario registry", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/ubuntu-repo-cloud-openclaw/);
   });
 
-  it("test_should_compile_multiple_targeted_scenario_plans", () => {
+  it("should compile multiple targeted scenario plans", () => {
     const plans = compileRunPlans(["ubuntu-repo-cloud-openclaw", "ubuntu-repo-cloud-hermes"]);
 
     expect(plans.map((plan) => plan.scenarioId)).toEqual([
@@ -47,7 +47,7 @@ describe("deterministic scenario registry", () => {
     ]);
   });
 
-  it("cli_should_emit_two_plan_sections_for_comma_separated_scenarios", () => {
+  it("CLI should emit two plan sections for comma separated scenarios", () => {
     const result = runScenarioCli([
       "--scenarios",
       "ubuntu-repo-cloud-openclaw,ubuntu-repo-cloud-hermes",
@@ -60,7 +60,7 @@ describe("deterministic scenario registry", () => {
     expect(result.stdout).toContain("Scenario: ubuntu-repo-cloud-hermes");
   });
 
-  it("baseline_plan_should_match_legacy_resolver_semantics", () => {
+  it("baseline plan should match legacy resolver semantics", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
 
     expect(plan.environment).toEqual({
