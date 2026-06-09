@@ -6,9 +6,14 @@
  *
  * Each entry pins the model-specific `vllm serve` flags (reasoning parser,
  * tool-call parser, max model length, load format) so the express path can
- * swap models without leaving the wrong flags behind. Users select a model
- * via `NEMOCLAW_VLLM_MODEL=<envValue>` before invoking the installer; the
- * default (when the env var is unset) is the first entry.
+ * swap models without leaving the wrong flags behind.
+ *
+ * Selection precedence in `installVllm`:
+ *   1. `NEMOCLAW_VLLM_MODEL=<envValue-or-HF-id>` for automation overrides.
+ *   2. Interactive picker over the per-platform subset (via
+ *      `modelsForPlatform`), defaulting to the profile's `defaultModel`.
+ *   3. Non-interactive runs without an override use the profile default
+ *      directly, never the first registry entry.
  *
  * Gated entries (e.g. DeepSeek-R1 Distill Llama 70B) require the operator
  * to have accepted the model's licence on Hugging Face AND export a
@@ -16,9 +21,9 @@
  * before the wizard pulls the model weights so the failure is fast and the
  * user knows exactly which token to provision.
  *
- * The registry is deliberately small and additive — extend it when QA
- * adds a model to the express coverage matrix (related: NemoClaw issue
- * tracking the express vLLM model picker).
+ * The registry is deliberately small and additive — extend it only when a
+ * new checkpoint has its `vllm serve` flags, context length, memory
+ * envelope, and tool-call behaviour validated.
  */
 
 export type VllmPlatform = "spark" | "station" | "linux";

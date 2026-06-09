@@ -67,6 +67,10 @@ export async function promptVllmModel(
     if (navigation === "exit") exitFn();
 
     const trimmed = String(choice || "").trim();
+    if (trimmed !== "" && !/^\d+$/.test(trimmed)) {
+      errorLine(`  Pick a number between 1 and ${String(ordered.length)}.`);
+      continue;
+    }
     const index = trimmed === "" ? 0 : parseInt(trimmed, 10) - 1;
     if (!Number.isFinite(index) || index < 0 || index >= ordered.length) {
       errorLine(`  Pick a number between 1 and ${String(ordered.length)}.`);

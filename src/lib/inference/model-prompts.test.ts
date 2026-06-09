@@ -318,6 +318,20 @@ describe("promptVllmModel", () => {
     );
   });
 
+  it("rejects malformed input like '2abc' instead of silently treating it as 2", async () => {
+    const promptFn = promptSequence(["2abc", " 1x ", ""]);
+    const errorLine = vi.fn();
+    const result = await promptVllmModel(
+      "DGX Spark",
+      sparkModels,
+      sparkDefault,
+      { promptFn, writeLine: vi.fn(), errorLine, env: {} as NodeJS.ProcessEnv },
+    );
+    expect(result).toEqual(sparkDefault);
+    const messages = errorLine.mock.calls.map((args) => String(args[0]));
+    expect(messages.filter((m) => /Pick a number between 1 and \d+/.test(m))).toHaveLength(2);
+  });
+
   it("re-prompts when the user picks a gated model without an HF token", async () => {
     const gatedIndex = sparkModels.findIndex((m) => m.id === gatedModel.id);
     expect(gatedIndex).toBeGreaterThanOrEqual(0);
