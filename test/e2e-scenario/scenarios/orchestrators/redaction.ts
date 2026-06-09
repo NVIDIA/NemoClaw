@@ -35,6 +35,7 @@
 import type { Readable, Writable } from "node:stream";
 
 const REDACTED = "<REDACTED>";
+const EXPLICIT_REDACTED = "[REDACTED]";
 
 // Framework-local mirror of src/lib/security/secret-patterns.ts. The
 // framework deliberately does not import from src/lib/security/ so it
@@ -77,13 +78,28 @@ export const CONTEXT_PATTERNS: RegExp[] = [
  * Replace every secret-shaped token in `text` with `<REDACTED>`. Uses
  * the canonical TOKEN_PREFIX_PATTERNS + CONTEXT_PATTERNS sets.
  *
+ * When `explicitValues` is supplied, each non-empty value is replaced
+ * verbatim with `[REDACTED]` before the regex passes run, so per-test
+ * secret literals (which may not match any canonical shape) are
+ * scrubbed at the same single entry point. The distinct sentinel keeps
+ * explicit-value hits visually separable from regex hits in artifacts.
+ * Values are applied longest first so a value that contains a shorter
+ * one cannot be exposed by ordering.
+ *
  * Best-effort against unknown token shapes. The actual defense is the
  * env allowlist (buildChildEnv); pattern redaction catches what slips
  * through (e.g. error messages that echo a secret value).
  */
-export function redactString(text: string): string {
+export function redactString(text: string, explicitValues?: Iterable<string>): string {
   if (!text) return text;
   let out = text;
+  if (explicitValues) {
+    const values = [...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0))];
+    values.sort((a, b) => b.length - a.length);
+    for (const value of values) {
+      out = out.split(value).join(EXPLICIT_REDACTED);
+    }
+  }
   for (const p of TOKEN_PREFIX_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);

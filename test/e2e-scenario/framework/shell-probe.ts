@@ -4,16 +4,16 @@
 import { spawn } from "node:child_process";
 
 import type { ArtifactSink } from "./artifacts.ts";
-import { redactText } from "./secrets.ts";
 
 /**
  * Bridge-only host shell probe for the Vitest fixture migration.
  *
  * The end state is a shared spawn/evidence helper consumed by both this
- * fixture layer and scenarios/orchestrators; #4988 tracks that consolidation.
- * Until it lands, this probe mirrors the hardened shell boundary: trusted
- * descriptors, NUL-byte rejection, explicit env by default, canonical
- * redaction, and detached process-group termination for timeout/abort cleanup.
+ * fixture layer and scenarios/orchestrators; that consolidation is tracked
+ * separately. Until it lands, this probe mirrors the hardened shell boundary:
+ * trusted descriptors, NUL-byte rejection, explicit env by default, canonical
+ * redaction (routed through the single shared entry point), and detached
+ * process-group termination for timeout/abort cleanup.
  */
 
 export interface ShellProbeRunOptions {
@@ -137,7 +137,7 @@ export class ShellProbe {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     const redactionValues = options.redactionValues ?? [];
-    const redactProbeText = (text: string) => this.redact(redactText(text, redactionValues));
+    const redactProbeText = (text: string) => this.redact(text, redactionValues);
     const redactedCommand = [command, ...args].map(redactProbeText);
     const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
     const writeArtifacts = async (result: Omit<ShellProbeResult, "artifacts">): Promise<ShellProbeResult["artifacts"]> => ({
