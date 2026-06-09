@@ -149,27 +149,32 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {
-    // Failing-test-first regression guard for #4423. After onboarding,
-    // the lifecycle phase reproduces the host-side conditions of a
-    // DGX Spark / Linux Docker-driver reboot: stop the OpenShell
-    // gateway runtime + `docker stop` the labeled sandbox container.
-    // The state-validation phase then runs `nemoclaw <name> status`
-    // and asserts the post-recovery invariants declared by the
-    // `post-reboot-recovery-ready` expected-state.
+    // Failing-test-first regression scaffold for #4423. After
+    // onboarding, the lifecycle phase exercises the host-side
+    // conditions a Linux Docker-driver host can reach from
+    // `ubuntu-latest`:
+    //   1. `docker stop` the labeled sandbox container (gateway is
+    //      left HEALTHY — the OpenShell CLI on `ubuntu-latest` has
+    //      no `gateway start` subcommand and #4578's mitigation
+    //      would otherwise mask the regression target).
+    //   2. Run `nemoclaw <name> status` so any destructive
+    //      registry/container path runs against host-observable
+    //      state.
+    // The state-validation phase then asserts the host-side
+    // invariants declared by the `post-reboot-recovery-ready`
+    // expected-state: cli installed, local registry entry
+    // preserved, labeled Docker container present (running,
+    // stopped, or `*-nemoclaw-gpu-backup-*` sibling).
     //
-    // On unfixed `main`, the destructive `missing` branch in
-    // `src/lib/actions/sandbox/status.ts` (and the parallel branch
-    // reached through `ensureLiveSandboxOrExit` in
-    // `src/lib/actions/sandbox/gateway-state.ts`) wipes the local
-    // registry entry once the gateway returns to `healthy_named`,
-    // so the `local-registry-entry-present` probe fails and this
-    // scenario goes RED.
-    //
-    // The fix lands in PR-A (parts 2 & 3 of ericksoa's plan): add a
-    // Docker-driver sandbox recovery helper, then tighten
-    // stale-removal in active paths to require Docker-corroborated
-    // absence before destroying the registry. PR-A flips this guard
-    // 🔴 → 🟢.
+    // The full DGX Spark post-reboot bug class — healthy_named
+    // gateway returning literal `NotFound` while Docker still has
+    // the labeled container — cannot be reproduced from CI without
+    // a real reboot. This scenario therefore locks in #4578's
+    // mitigation and the host-side preservation invariants any
+    // recovery path must respect; PR-A's Docker-driver recovery
+    // helper (parts 2 & 3 of ericksoa's plan) extends this scaffold,
+    // and a follow-up scenario on a controlled runner can layer in
+    // gateway/sandbox runtime probes once that helper lands.
     id: "ubuntu-repo-docker-post-reboot-recovery",
     manifestName: "openclaw-nvidia-post-reboot-recovery",
     environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),

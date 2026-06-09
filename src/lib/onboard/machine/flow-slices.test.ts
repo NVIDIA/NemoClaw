@@ -12,13 +12,15 @@ import {
   type SessionUpdates,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
-import { advanceTo, branchTo } from "./result";
+import { advanceTo, branchTo, completeOnboardMachine } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import {
   coreOnboardFlowPhases,
+  finalOnboardFlowPhases,
   initialOnboardFlowPhases,
   runCoreOnboardFlowSequence,
+  runFinalOnboardFlowSequence,
   runInitialOnboardFlowSequence,
 } from "./flow-slices";
 
@@ -179,5 +181,90 @@ describe("onboard flow slices", () => {
     });
 
     expect(result.session.machine.state).toBe("openclaw");
+  });
+
+  it("selects final branch-to-complete phases", () => {
+    expect(
+      finalOnboardFlowPhases([
+        phase("provider_selection", "inference"),
+        phase("sandbox", "openclaw"),
+        phase("openclaw", "policies"),
+        phase("agent_setup", "policies"),
+        phase("policies", "finalizing"),
+        phase("finalizing", "post_verify"),
+        {
+          state: "post_verify",
+          run: (ctx) => ({ context: ctx, result: completeOnboardMachine() }),
+        },
+      ]).map((entry) => entry.state),
+    ).toEqual(["openclaw", "agent_setup", "policies", "finalizing", "post_verify"]);
+  });
+
+  it("runs the final slice from openclaw to completion", async () => {
+    const result = await runFinalOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: MACHINE_SNAPSHOT_VERSION,
+            state: "openclaw",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
+      phases: [
+        phase("openclaw", "policies"),
+        phase("policies", "finalizing"),
+        phase("finalizing", "post_verify"),
+        {
+          state: "post_verify",
+          run: (ctx) => ({
+            context: ctx,
+            result: completeOnboardMachine({ sandboxName: "my-assistant" }),
+          }),
+        },
+      ],
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      sandboxName: "my-assistant",
+      machine: { state: "complete" },
+    });
+  });
+
+  it("runs the final slice from agent setup to completion", async () => {
+    const result = await runFinalOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: MACHINE_SNAPSHOT_VERSION,
+            state: "agent_setup",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
+      phases: [
+        phase("agent_setup", "policies"),
+        phase("policies", "finalizing"),
+        phase("finalizing", "post_verify"),
+        {
+          state: "post_verify",
+          run: (ctx) => ({
+            context: ctx,
+            result: completeOnboardMachine({ sandboxName: "my-assistant" }),
+          }),
+        },
+      ],
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      sandboxName: "my-assistant",
+      machine: { state: "complete" },
+    });
   });
 });

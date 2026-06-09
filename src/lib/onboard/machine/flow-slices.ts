@@ -28,6 +28,14 @@ export function coreOnboardFlowPhases<Context extends OnboardFlowContext>(
   );
 }
 
+export function finalOnboardFlowPhases<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+): OnboardSequencePhase<Context>[] {
+  return phases.filter((phase) =>
+    ["openclaw", "agent_setup", "policies", "finalizing", "post_verify"].includes(phase.state),
+  );
+}
+
 export async function runInitialOnboardFlowSequence<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -49,5 +57,16 @@ export async function runCoreOnboardFlowSequence<Context extends OnboardFlowCont
     ...options,
     phases: coreOnboardFlowPhases(options.phases),
     stopStates: ["openclaw", "agent_setup"],
+  });
+}
+
+export async function runFinalOnboardFlowSequence<Context extends OnboardFlowContext>(options: {
+  context: Context;
+  runtime: OnboardMachineRunnerRuntime;
+  phases: readonly OnboardSequencePhase<Context>[];
+}) {
+  return runOnboardSequenceWithRunner({
+    ...options,
+    phases: finalOnboardFlowPhases(options.phases),
   });
 }
