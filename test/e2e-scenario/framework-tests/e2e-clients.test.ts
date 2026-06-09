@@ -61,7 +61,7 @@ describe("E2E fixture clients", () => {
       {
         command: "./bin/nemoclaw.js",
         args: ["--version"],
-        options: { artifactName: "nemoclaw-version" },
+        options: { artifactName: "nemoclaw-version", inheritEnv: true },
       },
     ]);
   });

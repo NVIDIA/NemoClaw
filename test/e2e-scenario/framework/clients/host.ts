@@ -21,6 +21,10 @@ export class HostCliClient {
     this.cwd = options.cwd;
   }
 
+  get commandPath(): string {
+    return this.cliPath;
+  }
+
   command(command: string, args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     const merged: ShellProbeRunOptions = { ...options };
     if (this.cwd && !merged.cwd) {
@@ -44,7 +48,7 @@ export class HostCliClient {
   }
 
   async expectNemoclawAvailable(): Promise<ShellProbeResult> {
-    const result = await this.nemoclaw(["--version"], { artifactName: "nemoclaw-version" });
+    const result = await this.nemoclaw(["--version"], { artifactName: "nemoclaw-version", inheritEnv: true });
     assertExitZero(result, "nemoclaw --version");
     return result;
   }
