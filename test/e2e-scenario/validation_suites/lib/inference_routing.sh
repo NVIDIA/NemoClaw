@@ -31,16 +31,6 @@ _e2e_inference_sandbox_name() {
   e2e_context_get E2E_SANDBOX_NAME
 }
 
-_e2e_inference_plan() {
-  local assertion_id="${1:-}"
-  local detail="${2:-planned inference/provider check}"
-  e2e_env_trace "inference:plan" "${assertion_id} ${detail}"
-  echo "[dry-run] ${assertion_id}: ${detail}"
-  if [[ -f "$(e2e_context_path)" ]]; then
-    e2e_context_dump | sed -E 's/(TOKEN|SECRET|API_KEY|APIKEY|CREDENTIAL|PASSWORD)([^=]*)=.*/\1\2=REDACTED/'
-  fi
-}
-
 _e2e_inference_curl_json() {
   local sandbox="$1"
   local url="$2"
@@ -64,10 +54,6 @@ e2e_inference_routing_assert_chat_completion() {
   local assertion_id="${1:-post-onboard.inference-routing.inference-local-chat-completion}"
   _e2e_inference_assertion "${assertion_id}"
   _e2e_inference_require_sandbox
-  if e2e_env_is_dry_run; then
-    _e2e_inference_plan "${assertion_id}" "POST https://inference.local/v1/chat/completions with bounded curl"
-    return 0
-  fi
   local sandbox payload output
   sandbox="$(_e2e_inference_sandbox_name)"
   payload='{"model":"default","messages":[{"role":"user","content":"Say ok"}],"max_tokens":8}'
@@ -84,10 +70,6 @@ e2e_inference_routing_assert_health() {
   local url="${2:-https://inference.local/v1/models}"
   _e2e_inference_assertion "${assertion_id}"
   _e2e_inference_require_sandbox
-  if e2e_env_is_dry_run; then
-    _e2e_inference_plan "${assertion_id}" "GET ${url} with bounded curl"
-    return 0
-  fi
   local sandbox status
   sandbox="$(_e2e_inference_sandbox_name)"
   status="$(_e2e_inference_status "${sandbox}" "${url}")"
@@ -103,10 +85,6 @@ e2e_inference_routing_assert_auth_proxy() {
   local mode="${2:-valid}"
   _e2e_inference_assertion "${assertion_id}"
   _e2e_inference_require_sandbox
-  if e2e_env_is_dry_run; then
-    _e2e_inference_plan "${assertion_id}" "auth-proxy ${mode} request; sensitive context redacted"
-    return 0
-  fi
   local sandbox status token
   sandbox="$(_e2e_inference_sandbox_name)"
   case "${mode}" in

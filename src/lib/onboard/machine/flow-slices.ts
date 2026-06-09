@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OnboardFlowContext } from "./flow-context";
+import { onboardFlowPhaseResult } from "./flow-context";
+import { advanceTo } from "./result";
 import type { OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import { runOnboardSequenceWithRunner } from "./sequence-runner";
@@ -9,7 +11,13 @@ import { runOnboardSequenceWithRunner } from "./sequence-runner";
 export function initialOnboardFlowPhases<Context extends OnboardFlowContext>(
   phases: readonly OnboardSequencePhase<Context>[],
 ): OnboardSequencePhase<Context>[] {
-  return phases.filter((phase) => phase.state === "preflight" || phase.state === "gateway");
+  return [
+    {
+      state: "init",
+      run: (context) => onboardFlowPhaseResult(context, advanceTo("preflight")),
+    },
+    ...phases.filter((phase) => phase.state === "preflight" || phase.state === "gateway"),
+  ];
 }
 
 export function coreOnboardFlowPhases<Context extends OnboardFlowContext>(

@@ -7,6 +7,34 @@
 
 Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
 
+All participants are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Types of Contributions
+
+We welcome many types of contributions:
+
+| Contribution type | Description |
+|---|---|
+| **Bug reports** | Confirmed bugs with reproduction steps — see [Before You Open an Issue](#before-you-open-an-issue) |
+| **Documentation fixes** | Typos, clarifications, and missing information in `docs/` |
+| **Tests** | New or improved test coverage in `test/` or `nemoclaw/test/` |
+| **Feature proposals** | Design-first proposals opened as issues before any implementation |
+| **Integrations** | Support for new inference backends, providers, or tools |
+| **Examples** | Worked usage examples added under `docs/` |
+
+Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
+
+## Where to Start
+
+New contributors should start with issues labeled [`good first issue`](https://github.com/NVIDIA/NemoClaw/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22). These are scoped tasks with clear acceptance criteria that do not require deep project knowledge.
+
+Before starting larger work:
+
+- Search open issues and pull requests to avoid duplicates.
+- Start a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) before writing code for significant changes.
+- Open an issue after the proposal has enough scope and design detail for maintainer review.
+- For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
@@ -14,6 +42,19 @@ Open an issue when you encounter one of the following situations.
 - A real bug that you confirmed and could not fix.
 - A feature proposal with a design — not a "please build this" request.
 - Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
+
+Use [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) for questions, design exploration, and larger feature proposals before implementation.
+Maintainers may ask you to move broad or still-forming proposals from an issue to a discussion so the design can settle before code review.
+
+## Community Response Expectations
+
+NemoClaw is an alpha project, and maintainer availability varies with release, security, and stability work.
+Issues, discussions, and pull requests are reviewed on a best-effort basis.
+The project does not publish guaranteed response or review timelines.
+
+Maintainers prioritize work using severity, security impact, release readiness, reproducibility, maintainer capacity, and community impact.
+For public roadmap context and current priorities, see [Current Priorities](README.md#current-priorities).
+That section is a planning aid, not a commitment that a specific issue or feature will ship in a specific release.
 
 ## Prerequisites
 
@@ -166,7 +207,20 @@ For user-skill definitions, docs-to-skills validation, release-prep regeneration
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires maintainer review. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+We welcome contributions. Every PR requires maintainer review before merge. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
+PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
+For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.
+
+### DCO Sign-Off
+
+This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off on every commit. Add the following trailer to each commit message:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Use `git commit -s` to add the sign-off automatically. CI will reject commits that are missing it.
 
 > [!WARNING]
 > Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.

@@ -34,6 +34,13 @@ export interface VllmModelDef {
   modelArgs: string[];
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
+  /**
+   * Environment variables exported immediately before `vllm serve` (e.g.
+   * FlashInfer / MoE-backend selection, target SM arch). Joined as
+   * `export K=V && …` so they apply to the serve process inside the
+   * container shell.
+   */
+  serveEnv?: Record<string, string>;
 }
 
 export const VLLM_MODELS: readonly VllmModelDef[] = [
@@ -43,6 +50,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "qwen3.6-27b",
     maxModelLen: 262144,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -62,6 +71,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     envValue: "deepseek-r1-distill-70b",
     maxModelLen: 32768,
     modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
       "--max-num-seqs",
       "4",
       "--reasoning-parser",
@@ -80,8 +91,97 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--load-format", "fastsafetensors"],
+    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
     gated: false,
+  },
+  {
+    id: "deepseek-ai/DeepSeek-V4-Flash",
+    label: "DeepSeek V4 Flash",
+    envValue: "deepseek-v4-flash",
+    maxModelLen: 1048576,
+    modelArgs: [
+      "--kv-cache-dtype",
+      "fp8",
+      "--block-size",
+      "256",
+      "--enable-prefix-caching",
+      "--gpu-memory-utilization",
+      "0.92",
+      "--compilation-config",
+      `'{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+      "--attention_config.use_fp4_indexer_cache",
+      "True",
+      "--tokenizer-mode",
+      "deepseek_v4",
+      "--tool-call-parser",
+      "deepseek_v4",
+      "--enable-auto-tool-choice",
+      "--reasoning-parser",
+      "deepseek_v4",
+      "--no-disable-hybrid-kv-cache-manager",
+      "--disable-uvicorn-access-log",
+      "--max-cudagraph-capture-size",
+      "128",
+      "--speculative-config",
+      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      "--max-num-batched-tokens",
+      "8192",
+      "--max-num-seqs",
+      "16",
+      "--prefix-cache-retention-interval",
+      "auto",
+    ],
+    gated: false,
+  },
+  {
+    id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    label: "Qwen3.6 35B-A3B NVFP4",
+    envValue: "qwen3.6-35b-a3b-nvfp4",
+    maxModelLen: 131072,
+    // Additive flags on top of the shared serving defaults. The shared flags
+    // already cover --tensor-parallel-size/--pipeline-parallel-size/
+    // --data-parallel-size (all 1 — harmless on a single Spark node),
+    // --port 8000, and --trust-remote-code; --max-model-len comes from
+    // maxModelLen above.
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
+      "--dtype",
+      "auto",
+      "--quantization",
+      "modelopt",
+      "--kv-cache-dtype",
+      "fp8",
+      "--attention-backend",
+      "flashinfer",
+      "--moe-backend",
+      "marlin",
+      "--max-num-seqs",
+      "4",
+      "--max-num-batched-tokens",
+      "8192",
+      "--enable-chunked-prefill",
+      "--async-scheduling",
+      "--enable-prefix-caching",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser",
+      "qwen3",
+      "--speculative-config",
+      `'{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
+      "--load-format",
+      "fastsafetensors",
+    ],
+    gated: false,
+    // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
+    // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
+    serveEnv: {
+      VLLM_USE_FLASHINFER_MOE_FP4: "0",
+      VLLM_FP8_MOE_BACKEND: "flashinfer_cutlass",
+      FLASHINFER_DISABLE_VERSION_CHECK: "1",
+      CUTE_DSL_ARCH: "sm_121a",
+    },
   },
 ] as const;
 
@@ -92,8 +192,9 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Spark/Station prefer Qwen3.6-27B, the
- * generic Linux profile prefers Nemotron-Nano-4B for VRAM headroom).
+ * the per-platform profile default (Station prefers Qwen3.6-27B, Spark the
+ * Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
+ * Nemotron-Nano-4B for VRAM headroom).
  *
  * Match is case-insensitive against either the `envValue` slug or the full
  * HF id. Throws when the env var names something not in the registry so the
@@ -133,9 +234,43 @@ export function assertGatedModelAccess(
   );
 }
 
+export type PreflightVllmModelResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Combined preflight for callers that hold a `NEMOCLAW_VLLM_MODEL` reference
+ * but do not themselves invoke the vLLM installer — for example
+ * `nemoclaw <name> connect`, which simply attaches to a running sandbox.
+ *
+ * The variable steers the express-vLLM install path, so on every other code
+ * path the natural behaviour is to ignore it. Silent-ignore hides two real
+ * user mistakes:
+ *
+ *   1. typos in the slug (`deepseek-r1-distill-70b` vs an old marketing
+ *      name), surfaced later as the wrong model being served and a confused
+ *      user; and
+ *   2. requesting a gated model (DeepSeek-R1 Distill Llama 70B) without
+ *      exporting `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, which downstream
+ *      explodes as a 401 from Hugging Face partway through the pull.
+ *
+ * Running the same `selectVllmModelFromEnv` + `assertGatedModelAccess` checks
+ * the installer uses gives the caller a single fail-fast surface and one
+ * canonical message to print before any side effects. Returns
+ * `{ ok: true }` when the variable is unset or resolves cleanly.
+ */
+export function preflightVllmModelEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): PreflightVllmModelResult {
+  try {
+    const model = selectVllmModelFromEnv(env);
+    if (!model) return { ok: true };
+    assertGatedModelAccess(model, env);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
 const SHARED_VLLM_ARGS: readonly string[] = [
-  "--gpu-memory-utilization",
-  "0.7",
   "--tensor-parallel-size",
   "1",
   "--pipeline-parallel-size",
@@ -148,17 +283,24 @@ const SHARED_VLLM_ARGS: readonly string[] = [
 ] as const;
 
 /**
- * Build the `vllm serve` command line for the supplied model, with the
- * shared serving flags merged with the model-specific args from the
- * registry. The command starts with the `pip install` that pulls the
- * `fastsafetensors` extra so existing express scripts keep working.
+ * Build the `vllm serve` command line for the supplied model: the shared
+ * serving flags merged with the model-specific args from the registry.
+ *
+ * The command is prefixed with the `pip install` that pulls the
+ * `fastsafetensors` extra so existing express scripts keep working; a model
+ * may prepend env exports via `serveEnv`.
  */
 export function buildVllmServeCommand(model: VllmModelDef): string {
+  const envPrefix = model.serveEnv
+    ? `${Object.entries(model.serveEnv)
+        .map(([key, value]) => `export ${key}=${value}`)
+        .join(" && ")} && `
+    : "";
   const args = [
     ...SHARED_VLLM_ARGS,
     "--max-model-len",
     String(model.maxModelLen),
     ...model.modelArgs,
   ];
-  return `pip install vllm[fastsafetensors] && vllm serve ${model.id} ${args.join(" ")}`;
+  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${args.join(" ")}`;
 }

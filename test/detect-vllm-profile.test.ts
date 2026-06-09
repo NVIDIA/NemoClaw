@@ -14,7 +14,8 @@ describe("detectVllmProfile", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Spark");
-    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
+    expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
   });
 
   it("returns the Spark profile when legacy gpu.spark is true", () => {
@@ -27,6 +28,9 @@ describe("detectVllmProfile", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
+    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
+    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
+    expect(profile!.defaultModel.envValue).toBe("qwen3.6-27b");
   });
 
   it("returns the generic Linux profile for non-Spark/Station NVIDIA hosts", () => {
@@ -34,6 +38,7 @@ describe("detectVllmProfile", () => {
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("Linux + NVIDIA GPU");
     expect(profile!.defaultModel.id).toContain("Nemotron-3-Nano-4B");
+    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
   });
 
   it("prefers Spark over generic when both flags qualify", () => {
@@ -64,14 +69,11 @@ describe("detectVllmProfile", () => {
     expect(detectVllmProfile({})).toBeNull();
   });
 
-  it("ready/fatal markers are populated and shared between profiles", () => {
-    const spark = detectVllmProfile({ spark: true });
+  it("shares Spark timeout budgets with the generic profile", () => {
+    const spark = detectVllmProfile({ spark: true, type: "nvidia" });
     const generic = detectVllmProfile({ type: "nvidia" });
-    expect(spark!.readyMarker).toBeInstanceOf(RegExp);
-    expect(spark!.fatalMarkers.length).toBeGreaterThan(0);
-    // Generic profile reuses Spark's marker tables.
-    expect(generic!.readyMarker).toBe(spark!.readyMarker);
-    expect(generic!.fatalMarkers).toBe(spark!.fatalMarkers);
+    expect(generic!.pullTimeoutSec).toBe(spark!.pullTimeoutSec);
+    expect(generic!.loadTimeoutSec).toBe(spark!.loadTimeoutSec);
   });
 });
 

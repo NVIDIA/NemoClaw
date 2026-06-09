@@ -25,8 +25,10 @@
 import fs from "node:fs";
 
 import { redact } from "../security/redact";
+import { classifyGatewayStartFailure } from "../validation";
 
 import type { ChildExitState } from "./child-exit-tracker";
+import { printDockerDaemonRecovery } from "./gateway-start-failure";
 
 export type ReportDockerDriverGatewayStartFailureOpts = {
   /**
@@ -70,6 +72,9 @@ export function reportDockerDriverGatewayStartFailure(
   if (tail) {
     console.error("  Gateway log tail:");
     for (const line of tail.split("\n")) console.error(`    ${redact(line)}`);
+  }
+  if (classifyGatewayStartFailure(tail).kind === "docker_unreachable") {
+    printDockerDaemonRecovery(console.error);
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);
