@@ -150,11 +150,15 @@ function liveMatrixEntry(
 }
 
 export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
-  const scenarios =
-    ids.length > 0
-      ? requireScenarios(ids)
-      : listScenarios().filter((scenario) => liveScenarioSupport(scenario).supported);
-  return scenarios.map((scenario) => liveMatrixEntry(scenario, liveScenarioSupport(scenario)));
+  const scenarioSupport = (ids.length > 0 ? requireScenarios(ids) : listScenarios()).map(
+    (scenario) => ({
+      scenario,
+      support: liveScenarioSupport(scenario),
+    }),
+  );
+  const liveEntries =
+    ids.length > 0 ? scenarioSupport : scenarioSupport.filter(({ support }) => support.supported);
+  return liveEntries.map(({ scenario, support }) => liveMatrixEntry(scenario, support));
 }
 
 function emitMatrix() {

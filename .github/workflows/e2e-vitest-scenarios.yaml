@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           args=(--emit-live-matrix)
           if [ -n "${SCENARIOS}" ]; then
-            if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
+            if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
               echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
               exit 1
             fi
@@ -64,7 +64,7 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e/vitest/${{ matrix.id }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/${{ matrix.id }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -119,6 +119,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-vitest-scenarios-${{ matrix.id }}
-          path: .e2e/vitest/${{ matrix.id }}/
-          include-hidden-files: true
+          path: e2e-artifacts/vitest/${{ matrix.id }}/
+          include-hidden-files: false
           if-no-files-found: ignore

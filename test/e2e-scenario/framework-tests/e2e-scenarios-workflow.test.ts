@@ -115,7 +115,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("flags direct dispatch-input interpolation and missing hidden artifact upload", () => {
+  it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     fs.writeFileSync(
@@ -151,7 +151,7 @@ jobs:
         with:
           name: e2e-vitest-scenarios
           path: .e2e/vitest/
-          include-hidden-files: false
+          include-hidden-files: true
           if-no-files-found: ignore
 `,
     );
@@ -168,6 +168,7 @@ jobs:
           "live-scenarios job must depend on generate-matrix",
           "live-scenarios strategy.fail-fast must be false",
           "live-scenarios matrix.include must come from generate-matrix output",
+          "live-scenarios job must write artifacts under e2e-artifacts/vitest",
           "live-scenarios artifacts must be scoped by matrix.id",
           "live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI",
           "checkout action must be pinned to a full commit SHA",
@@ -181,9 +182,9 @@ jobs:
           "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
           "summary step must pass matrix.id through SCENARIO_ID env",
           "summary step must pass matrix.label through SCENARIO_LABEL env",
-          "artifact upload must set include-hidden-files: true",
+          "artifact upload must set include-hidden-files: false",
           "artifact upload name must include matrix.id",
-          "artifact upload path must be scoped by matrix.id",
+          "artifact upload path must be non-hidden and scoped by matrix.id",
           "upload-artifact action must be pinned to a full commit SHA",
         ]),
       );

@@ -250,6 +250,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   requireRunContains(errors, generate, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, generate, "--emit-live-matrix");
   requireRunContains(errors, generate, "--scenarios");
+  requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
+  requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
 
   const liveScenarios = asRecord(jobs["live-scenarios"]);
   if (Object.keys(liveScenarios).length === 0) errors.push("workflow missing live-scenarios job");
@@ -272,8 +274,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
     errors.push("live-scenarios job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes(".e2e/vitest")) {
-    errors.push("live-scenarios job must write artifacts under .e2e/vitest");
+  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest")) {
+    errors.push("live-scenarios job must write artifacts under e2e-artifacts/vitest");
   }
   if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
     errors.push("live-scenarios artifacts must be scoped by matrix.id");
@@ -324,11 +326,11 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (uploadWith.name !== "e2e-vitest-scenarios-${{ matrix.id }}") {
     errors.push("artifact upload name must include matrix.id");
   }
-  if (uploadWith.path !== ".e2e/vitest/${{ matrix.id }}/") {
-    errors.push("artifact upload path must be scoped by matrix.id");
+  if (uploadWith.path !== "e2e-artifacts/vitest/${{ matrix.id }}/") {
+    errors.push("artifact upload path must be non-hidden and scoped by matrix.id");
   }
-  if (uploadWith["include-hidden-files"] !== true) {
-    errors.push("artifact upload must set include-hidden-files: true");
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push("artifact upload must set include-hidden-files: false");
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
     errors.push("artifact upload must ignore missing fixture artifacts");
