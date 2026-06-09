@@ -34,7 +34,9 @@ export function buildOnboardFlowPhaseSequence<Context extends OnboardFlowContext
       return {
         session: result.context.session,
         gpu: result.context.gpu,
-        sandboxGpuConfig: result.context.sandboxGpuConfig as NonNullable<Context["sandboxGpuConfig"]>,
+        sandboxGpuConfig: result.context.sandboxGpuConfig as NonNullable<
+          Context["sandboxGpuConfig"]
+        >,
         gpuPassthrough: result.context.gpuPassthrough,
         result: result.result,
       };

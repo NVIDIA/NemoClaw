@@ -109,8 +109,12 @@ describe("agent/policy/finalization phases", () => {
 
     expect(agentPhase.state).toBe("agent_setup");
     expect(openclawPhase.state).toBe("openclaw");
-    await expect(agentPhase.run(context())).resolves.toMatchObject({ result: { next: "policies" } });
-    await expect(openclawPhase.run(context())).resolves.toMatchObject({ result: { next: "policies" } });
+    await expect(agentPhase.run(context())).resolves.toMatchObject({
+      result: { next: "policies" },
+    });
+    await expect(openclawPhase.run(context())).resolves.toMatchObject({
+      result: { next: "policies" },
+    });
   });
 
   it("maps policies context updates", async () => {
@@ -134,7 +138,9 @@ describe("agent/policy/finalization phases", () => {
 
     expect(finalizing.state).toBe("finalizing");
     expect(postVerify.state).toBe("post_verify");
-    await expect(finalizing.run(context())).resolves.toMatchObject({ result: { next: "post_verify" } });
+    await expect(finalizing.run(context())).resolves.toMatchObject({
+      result: { next: "post_verify" },
+    });
     await expect(postVerify.run(context())).resolves.toMatchObject({
       result: { type: "complete" },
     });

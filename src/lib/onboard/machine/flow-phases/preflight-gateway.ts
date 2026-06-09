@@ -5,9 +5,7 @@ import type { OnboardFlowContext, OnboardFlowPhaseResult } from "../flow-context
 import { mergeOnboardFlowContext, onboardFlowPhaseResult } from "../flow-context";
 import type { OnboardSequencePhase } from "../sequence-runner";
 
-type PreflightPhaseHandler<Context extends OnboardFlowContext> = (
-  context: Context,
-) => Promise<{
+type PreflightPhaseHandler<Context extends OnboardFlowContext> = (context: Context) => Promise<{
   session: Context["session"];
   gpu: Context["gpu"];
   sandboxGpuConfig: NonNullable<Context["sandboxGpuConfig"]>;
@@ -15,9 +13,7 @@ type PreflightPhaseHandler<Context extends OnboardFlowContext> = (
   result: OnboardFlowPhaseResult<Context>["result"];
 }>;
 
-type GatewayPhaseHandler<Context extends OnboardFlowContext> = (
-  context: Context,
-) => Promise<{
+type GatewayPhaseHandler<Context extends OnboardFlowContext> = (context: Context) => Promise<{
   session: Context["session"];
   result: OnboardFlowPhaseResult<Context>["result"];
 }>;
