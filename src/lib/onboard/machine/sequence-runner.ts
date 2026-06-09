@@ -27,6 +27,7 @@ export interface OnboardSequenceRunnerOptions<Context> {
   phases: readonly OnboardSequencePhase<Context>[];
   maxTransitions?: OnboardMachineRunnerOptions<Context>["maxTransitions"];
   sequenceOwnership?: OnboardMachineRunnerOptions<Context>["sequenceOwnership"];
+  stopStates?: OnboardMachineRunnerOptions<Context>["stopStates"];
 }
 
 export class DuplicateOnboardSequencePhaseError extends Error {
@@ -69,6 +70,7 @@ export async function runOnboardSequenceWithRunner<Context>({
   phases,
   maxTransitions,
   sequenceOwnership,
+  stopStates,
 }: OnboardSequenceRunnerOptions<Context>) {
   let pendingContext = initialContext;
   return runOnboardMachine({
@@ -76,6 +78,7 @@ export async function runOnboardSequenceWithRunner<Context>({
     runtime,
     maxTransitions,
     sequenceOwnership,
+    stopStates,
     handlers: buildOnboardSequenceHandlers(phases, (context) => {
       pendingContext = context;
     }),
