@@ -7,18 +7,13 @@ import {
   createSession,
   filterSafeUpdates,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
-import {
-  advanceTo,
-  branchTo,
-  completeOnboardMachine,
-  failOnboardMachine,
-  retryTo,
-} from "./result";
+import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import { InvalidOnboardMachineTransitionError } from "./transitions";
 
@@ -29,6 +24,7 @@ function cloneSession(session: Session): Session {
 function createHarness(initialSession: Session | null = createSession()) {
   let session = initialSession ? cloneSession(initialSession) : null;
   const events: OnboardMachineEvent[] = [];
+  const stepOptionCalls: Array<{ method: string; options: StepMutationOptions | undefined }> = [];
   let tick = 0;
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     const current = session ? cloneSession(session) : createSession();
@@ -44,16 +40,29 @@ function createHarness(initialSession: Session | null = createSession()) {
       return cloneSession(session);
     },
     updateSession,
-    markStepStarted: (stepName) =>
-      updateSession((current) => {
+    markStepStarted: (stepName, options) => {
+      stepOptionCalls.push({ method: "markStepStarted", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "in_progress";
         current.lastStepStarted = stepName;
         current.status = "in_progress";
         return current;
-      }),
-    markStepComplete: (stepName, updates: SessionUpdates = {}) =>
+      });
+    },
+    markStepComplete: (stepName, updates: SessionUpdates = {}, options) => {
+      stepOptionCalls.push({ method: "markStepComplete", options });
+      return updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "complete";
+        current.lastCompletedStep = stepName;
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      });
+    },
+    markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
@@ -69,13 +78,23 @@ function createHarness(initialSession: Session | null = createSession()) {
         step.status = "skipped";
         return current;
       }),
-    markStepFailed: (stepName, message) =>
-      updateSession((current) => {
+    markStepFailed: (stepName, message, options) => {
+      stepOptionCalls.push({ method: "markStepFailed", options });
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "failed";
         current.status = "failed";
         current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
+        return current;
+      });
+    },
+    markStepFailedRecordOnly: (stepName, message) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        step.status = "failed";
+        step.error = message ?? null;
         return current;
       }),
     completeSession: (updates: SessionUpdates = {}) =>
@@ -92,6 +111,7 @@ function createHarness(initialSession: Session | null = createSession()) {
   return {
     runtime: new OnboardRuntime(deps),
     events,
+    stepOptionCalls,
     getSession: () => {
       if (!session) throw new Error("Expected runtime session");
       return cloneSession(session);
@@ -124,12 +144,18 @@ describe("OnboardRuntime", () => {
   });
 
   it("forwards step mutation options to step recording dependencies", async () => {
-    const { runtime, getSession } = createHarness();
+    const { runtime, getSession, stepOptionCalls } = createHarness();
+    const recordOnlyOptions = { updateMachine: false };
 
-    await runtime.markStepStarted("preflight", { updateMachine: false });
-    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
-    await runtime.markStepFailed("gateway", "boom", { updateMachine: false });
+    await runtime.markStepStarted("preflight", recordOnlyOptions);
+    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" }, recordOnlyOptions);
+    await runtime.markStepFailed("gateway", "boom", recordOnlyOptions);
 
+    expect(stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: recordOnlyOptions },
+      { method: "markStepComplete", options: recordOnlyOptions },
+      { method: "markStepFailed", options: recordOnlyOptions },
+    ]);
     expect(getSession()).toMatchObject({
       sandboxName: "my-assistant",
       status: "failed",
@@ -202,7 +228,7 @@ describe("OnboardRuntime", () => {
       "state.exited",
       "state.entered",
     ]);
-    expect(events[0].metadata.fields).toEqual(["sandboxName"]);
+    expect(events[0].metadata).toMatchObject({ fields: ["sandboxName"], source: "handler" });
     expect(events[1]).toMatchObject({ state: "init", metadata: { source: "handler" } });
     expect(events[2]).toMatchObject({ state: "preflight", metadata: { source: "handler" } });
   });
@@ -217,11 +243,35 @@ describe("OnboardRuntime", () => {
     expect(branchHarness.getSession().machine).toMatchObject({ state: "agent_setup" });
 
     const completeHarness = createHarness(sessionInState("post_verify"));
-    await completeHarness.runtime.applyResult(completeOnboardMachine({ sandboxName: "done" }));
+    await completeHarness.runtime.applyResult(
+      completeOnboardMachine({ sandboxName: "done" }, { source: "finalizer" }),
+    );
     expect(completeHarness.getSession()).toMatchObject({
       status: "complete",
       sandboxName: "done",
       machine: { state: "complete" },
+    });
+    expect(completeHarness.events.map((event) => event.type)).toEqual([
+      "context.updated",
+      "state.completed",
+      "state.entered",
+      "onboard.completed",
+    ]);
+    expect(completeHarness.events[0].metadata).toMatchObject({
+      fields: ["sandboxName"],
+      source: "finalizer",
+    });
+    expect(completeHarness.events[1]).toMatchObject({
+      state: "post_verify",
+      metadata: { source: "finalizer" },
+    });
+    expect(completeHarness.events[2]).toMatchObject({
+      state: "complete",
+      metadata: { source: "finalizer" },
+    });
+    expect(completeHarness.events[3]).toMatchObject({
+      state: "complete",
+      metadata: { source: "finalizer" },
     });
 
     const failedHarness = createHarness(sessionInState("gateway"));
@@ -296,16 +346,15 @@ describe("OnboardRuntime", () => {
     const { runtime, events, getSession } = createHarness(sessionInState("provider_selection"));
 
     await runtime.emitResumeConflict({
-      field: "fromDockerfile",
-      recorded: "/workspace/Dockerfile",
-      requested: "/tmp/Dockerfile",
-      metadata: { endpoint: "https://alice:secret@example.com/v1?token=super-secret" },
+      field: "provider",
+      recorded: "nvidia",
+      requested: "https://alice:secret@example.com/v1?token=super-secret",
     });
 
     expect(getSession().machine.state).toBe("provider_selection");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: "resume.conflict", state: "provider_selection" });
-    expect(events[0].metadata.field).toBe("fromDockerfile");
+    expect(events[0].metadata.field).toBe("provider");
     expect(JSON.stringify(events)).not.toContain("super-secret");
     expect(JSON.stringify(events)).not.toContain("alice:secret");
   });

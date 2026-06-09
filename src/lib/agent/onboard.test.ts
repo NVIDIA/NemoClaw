@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   collectHermesStartupDiagnostics,
@@ -17,7 +17,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     displayName: "Agent",
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
-    dashboard: { kind: "ui", label: "UI", path: "/" },
+    dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
@@ -49,14 +49,41 @@ const apiAgent = makeAgent({
   name: "hermes",
   displayName: "Hermes Agent",
   forwardPort: 8642,
-  dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1" },
+  dashboard: {
+    kind: "api",
+    label: "OpenAI-compatible API",
+    path: "/v1",
+    healthPath: "/health",
+    auth: "none",
+  },
+  dashboardUi: {
+    label: "Web dashboard",
+    port: 9119,
+    path: "/",
+    enableEnv: "NEMOCLAW_HERMES_DASHBOARD",
+    portEnv: "NEMOCLAW_HERMES_DASHBOARD_PORT",
+    tuiEnv: "NEMOCLAW_HERMES_DASHBOARD_TUI",
+  },
 });
 
 const uiAgent = makeAgent({
   name: "ficticious-ui",
   displayName: "Ficticious",
   forwardPort: 19000,
-  dashboard: { kind: "ui", label: "UI", path: "/" },
+  dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
+});
+
+const sessionAuthUiAgent = makeAgent({
+  name: "hermes",
+  displayName: "Hermes Agent",
+  forwardPort: 18789,
+  dashboard: {
+    kind: "ui",
+    label: "Dashboard",
+    path: "/",
+    healthPath: "/api/status",
+    auth: "session",
+  },
 });
 
 // Regression fixture for issue #2078 — matches the text a user sees when
@@ -78,6 +105,8 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
 
   afterEach(() => {
     logSpy.mockClear();
+    delete process.env.NEMOCLAW_HERMES_DASHBOARD;
+    delete process.env.NEMOCLAW_HERMES_DASHBOARD_PORT;
   });
 
   afterAll(() => {
@@ -110,6 +139,52 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     expect(output).toContain("http://127.0.0.1:8642/v1");
     // The API endpoint does not require the gateway token — don't confuse
     // the user with the OpenClaw-style "token missing" warning.
+    expect(noteSpy).not.toHaveBeenCalled();
+  });
+
+  it("prints the optional Hermes web dashboard URL when dashboard mode is enabled", () => {
+    process.env.NEMOCLAW_HERMES_DASHBOARD = "1";
+    process.env.NEMOCLAW_HERMES_DASHBOARD_PORT = "9120";
+
+    printDashboardUi("sandbox-x", null, apiAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("http://127.0.0.1:8642/v1");
+    expect(output).toContain("Hermes Agent Web dashboard");
+    expect(output).toContain("Port 9120 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:9120/");
+  });
+
+  it("falls back to the manifest dashboard port for privileged env override ports", () => {
+    process.env.NEMOCLAW_HERMES_DASHBOARD = "1";
+    process.env.NEMOCLAW_HERMES_DASHBOARD_PORT = "1023";
+
+    printDashboardUi("sandbox-x", null, apiAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Port 9119 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:9119/");
+    expect(output).not.toContain("http://127.0.0.1:1023/");
+  });
+
+  it("does not request an OpenClaw gateway token for session-authenticated dashboards", () => {
+    printDashboardUi("sandbox-z", null, sessionAuthUiAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent Dashboard");
+    expect(output).toContain("Port 18789 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:18789/");
+    expect(output).not.toContain("gateway-token");
     expect(noteSpy).not.toHaveBeenCalled();
   });
 

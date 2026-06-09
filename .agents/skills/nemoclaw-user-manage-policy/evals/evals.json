@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-network-policy-customize-network-policy-001",
+    "question": "I'm customizing sandbox network policy. Help me allow the agent to reach a required external service so I can enable the integration while preserving least privilege.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user allow the agent to reach a required external service and gives enough concrete guidance, decision criteria, verification steps, or risk framing to enable the integration while preserving least privilege.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

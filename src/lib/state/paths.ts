@@ -7,9 +7,7 @@ import path from "node:path";
 export const ROOT = path.resolve(__dirname, "..", "..", "..");
 export const SCRIPTS = path.join(ROOT, "scripts");
 
-export function resolveNemoclawHomeDir(
-  homeDir: string = process.env.HOME ?? os.homedir(),
-): string {
+export function resolveNemoclawHomeDir(homeDir: string = process.env.HOME ?? os.homedir()): string {
   return path.join(homeDir, ".nemoclaw");
 }
 

@@ -64,29 +64,33 @@ export const ONBOARD_MACHINE_STATE_DEFINITIONS = [
   { state: "failed", terminal: true },
 ] as const;
 
+export type OnboardMachineStateDefinition = (typeof ONBOARD_MACHINE_STATE_DEFINITIONS)[number];
+
+export type OnboardMachineStateId = OnboardMachineStateDefinition["state"];
+
+export type OnboardTerminalMachineStateId = Extract<
+  OnboardMachineStateDefinition,
+  { terminal: true }
+>["state"];
+
+export type OnboardNonTerminalMachineStateId = Extract<
+  OnboardMachineStateDefinition,
+  { terminal: false }
+>["state"];
+
 export const ONBOARD_MACHINE_STATE_IDS = ONBOARD_MACHINE_STATE_DEFINITIONS.map(
   (definition) => definition.state,
 ) as readonly OnboardMachineStateId[];
 
-export const ONBOARD_MACHINE_TERMINAL_STATE_IDS = ["complete", "failed"] as const;
-
-export type OnboardTerminalMachineStateId = (typeof ONBOARD_MACHINE_TERMINAL_STATE_IDS)[number];
-
-export type OnboardMachineStateId = (typeof ONBOARD_MACHINE_STATE_DEFINITIONS)[number]["state"];
-
-export type OnboardNonTerminalMachineStateId = Exclude<
-  OnboardMachineStateId,
-  OnboardTerminalMachineStateId
->;
+export const ONBOARD_MACHINE_TERMINAL_STATE_IDS = ONBOARD_MACHINE_STATE_DEFINITIONS.filter(
+  (definition): definition is Extract<OnboardMachineStateDefinition, { terminal: true }> =>
+    definition.terminal === true,
+).map((definition) => definition.state) as readonly OnboardTerminalMachineStateId[];
 
 export const ONBOARD_MACHINE_NON_TERMINAL_STATE_IDS = ONBOARD_MACHINE_STATE_DEFINITIONS.filter(
-  (definition): definition is Extract<
-    (typeof ONBOARD_MACHINE_STATE_DEFINITIONS)[number],
-    { terminal: false }
-  > => definition.terminal === false,
+  (definition): definition is Extract<OnboardMachineStateDefinition, { terminal: false }> =>
+    definition.terminal === false,
 ).map((definition) => definition.state) as readonly OnboardNonTerminalMachineStateId[];
-
-export type OnboardMachineStateDefinition = (typeof ONBOARD_MACHINE_STATE_DEFINITIONS)[number];
 
 export type OnboardMachineStateWithStepDefinition = Extract<
   OnboardMachineStateDefinition,

@@ -171,7 +171,8 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
 ): DockerDriverGatewayRuntimeMarkerDrift | null {
   if (!marker) return { reason: "missing Docker-driver runtime marker" };
   const desired = buildDockerDriverGatewayRuntimeMarker(expected);
-  if (marker.pid !== desired.pid) return { reason: `runtime marker pid=${marker.pid} (expected ${desired.pid})` };
+  if (marker.pid !== desired.pid)
+    return { reason: `runtime marker pid=${marker.pid} (expected ${desired.pid})` };
   if (marker.driver !== "docker") return { reason: `runtime marker driver=${marker.driver}` };
   if (marker.platform !== desired.platform) {
     return { reason: `runtime marker platform=${marker.platform} (expected ${desired.platform})` };
@@ -186,9 +187,14 @@ export function getDockerDriverGatewayRuntimeMarkerDrift(
     return { reason: "runtime marker env hash does not match desired Docker-driver env" };
   }
   if (marker.gatewayBin !== desired.gatewayBin) {
-    return { reason: `runtime marker gateway=${marker.gatewayBin || "<unset>"} (expected ${desired.gatewayBin || "<unset>"})` };
+    return {
+      reason: `runtime marker gateway=${marker.gatewayBin || "<unset>"} (expected ${desired.gatewayBin || "<unset>"})`,
+    };
   }
-  if (expected.openshellVersion !== undefined && marker.openshellVersion !== desired.openshellVersion) {
+  if (
+    expected.openshellVersion !== undefined &&
+    marker.openshellVersion !== desired.openshellVersion
+  ) {
     return {
       reason: `runtime marker openshell=${marker.openshellVersion || "<unknown>"} (expected ${desired.openshellVersion || "<unknown>"})`,
     };

@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { createRequire } from "module";
+import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const runner = require("../../dist/lib/runner");
@@ -35,6 +35,11 @@ describe("run with argv array", () => {
     expect(() => runner.run(["echo", "hi"], { shell: true })).toThrow(/shell option is forbidden/);
   });
 
+  it("rejects NUL bytes before spawning", () => {
+    expect(() => runner.run(["echo", "bad\0arg"], { suppressOutput: true })).toThrow(/NUL bytes/);
+    expect(() => runner.run(["\0echo"], { suppressOutput: true })).toThrow(/NUL bytes/);
+  });
+
   it("does not interpret shell metacharacters in arguments", () => {
     // If shell interpretation occurred, $(whoami) would be expanded
     const result = runner.runCapture(["echo", "$(whoami)", "&&", "rm", "-rf", "/"], {
@@ -47,9 +52,7 @@ describe("run with argv array", () => {
   });
 
   it("rejects string commands", () => {
-    expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(
-      /argv array instead/,
-    );
+    expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(/argv array instead/);
   });
 
   it("surfaces ENOENT error for missing executables", () => {

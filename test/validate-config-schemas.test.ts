@@ -239,7 +239,10 @@ describe("router-pool-config.schema.json", () => {
   it("rejects router pool config api_base without HTTPS", () => {
     const root = asRecord(data);
     const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
-    const bad = { ...root, models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }] };
+    const bad = {
+      ...root,
+      models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }],
+    };
     expect(validate(bad)).toBe(false);
   });
 });
@@ -515,10 +518,36 @@ describe("openclaw-plugin.schema.json", () => {
     name: "Fixture Plugin",
     version: "1.2.3",
     description: "Schema fixture",
+    configSchema: { type: "object" },
+    commandAliases: [{ name: "fixture", kind: "runtime-slash" }],
+    activation: { onStartup: true },
   };
 
   it("openclaw.plugin.json passes schema validation", () => {
     expectValid(validate, data, "openclaw.plugin.json");
+  });
+
+  it("accepts runtime slash activation metadata", () => {
+    expectValid(validate, validPluginFixture, "runtime slash activation fixture");
+  });
+
+  it("rejects command alias without kind", () => {
+    const bad = {
+      ...validPluginFixture,
+      commandAliases: [{ name: "fixture" }],
+      activation: { onStartup: true },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects empty activation metadata", () => {
+    const bad = { ...validPluginFixture, activation: {} };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects activation properties NemoClaw does not use", () => {
+    const bad = { ...validPluginFixture, activation: { onStartup: true, onProviders: ["demo"] } };
+    expect(validate(bad)).toBe(false);
   });
 
   it("rejects plugin with missing id", () => {

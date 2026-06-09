@@ -11,11 +11,18 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export type WorkflowJob = {
   uses?: string;
   secrets?: Record<string, string>;
+  steps?: WorkflowStep[];
   with?: Record<string, string>;
+  strategy?: {
+    "fail-fast"?: boolean;
+    matrix?: Record<string, unknown>;
+  };
 };
 
 export type WorkflowStep = {
+  id?: string;
   name?: string;
+  if?: string;
   uses?: string;
   with?: Record<string, unknown>;
   env?: Record<string, string>;
@@ -27,6 +34,16 @@ export type NightlyWorkflow = {
 };
 
 export type RunnerWorkflow = {
+  on?: {
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown }>;
+    };
+  };
+  true?: {
+    workflow_call?: {
+      inputs?: Record<string, { default?: unknown }>;
+    };
+  };
   jobs: {
     run: {
       steps: WorkflowStep[];
@@ -35,6 +52,7 @@ export type RunnerWorkflow = {
 };
 
 export type CompositeAction = {
+  inputs?: Record<string, { default?: unknown }>;
   runs: {
     steps: WorkflowStep[];
   };

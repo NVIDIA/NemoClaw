@@ -69,9 +69,7 @@ export function pruneDisabledMessagingPolicyPresets(
   selectedPresets: string[],
   disabledChannels: string[] | null | undefined,
 ): string[] {
-  const disabledRequiredPresets = new Set(
-    requiredMessagingChannelPolicyPresets(disabledChannels),
-  );
+  const disabledRequiredPresets = new Set(requiredMessagingChannelPolicyPresets(disabledChannels));
   if (disabledRequiredPresets.size === 0) return selectedPresets;
   return selectedPresets.filter(
     (preset) => !disabledRequiredPresets.has(preset.trim().toLowerCase()),

@@ -72,17 +72,11 @@ describe("refreshAccessTokenWithRefreshToken", () => {
 
     expect(token.access_token).toBe("access-2");
     expect(token.refresh_token).toBe("refresh-2");
-    expect(calls[0]?.url).toBe(
-      "https://portal.nousresearch.com/api/oauth/token",
-    );
-    expect(new URLSearchParams(calls[0]?.body).get("grant_type")).toBe(
-      "refresh_token",
-    );
+    expect(calls[0]?.url).toBe("https://portal.nousresearch.com/api/oauth/token");
+    expect(new URLSearchParams(calls[0]?.body).get("grant_type")).toBe("refresh_token");
     expect(new URLSearchParams(calls[0]?.body).get("refresh_token")).toBeNull();
     expect(calls[0]?.refreshHeader).toBe("refresh-1");
-    expect(new URLSearchParams(calls[0]?.body).get("client_id")).toBe(
-      "hermes-cli",
-    );
+    expect(new URLSearchParams(calls[0]?.body).get("client_id")).toBe("hermes-cli");
     expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -136,9 +130,7 @@ describe("mintAgentKeyWithAccessToken", () => {
     });
 
     expect(key.api_key).toBe("agent-key-1");
-    expect(calls[0]?.url).toBe(
-      "https://portal.nousresearch.com/api/oauth/agent-key",
-    );
+    expect(calls[0]?.url).toBe("https://portal.nousresearch.com/api/oauth/agent-key");
     expect(calls[0]?.auth).toBe("Bearer access-1");
     expect(JSON.parse(calls[0]?.body ?? "{}")).toEqual({
       min_ttl_seconds: 120,

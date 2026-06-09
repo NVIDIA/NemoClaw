@@ -1,16 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
-import { getAgentBranding, type AgentBranding } from "../../cli/branding";
+import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { sleepMs } from "../../core/wait";
-import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
+import {
+  defaultUninstallPaths,
+  NEMOCLAW_OLLAMA_MODELS,
+  NEMOCLAW_PROVIDERS,
+  type UninstallPaths,
+} from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
@@ -64,16 +70,43 @@ function defaultRunDocker(args: string[], options: SpawnSyncOptions = {}): RunRe
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  return defaultRun("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], { env }).status === 0;
+  if (!command || command.includes("\0")) return false;
+  const hasPathSeparator =
+    command.includes(path.sep) ||
+    command.includes(path.posix.sep) ||
+    command.includes(path.win32.sep);
+  const candidates = hasPathSeparator
+    ? [command]
+    : String(env.PATH || "")
+        .split(path.delimiter)
+        .filter(Boolean)
+        .map((entry) => path.join(entry, command));
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return true;
+    } catch {
+      // Try the next PATH entry.
+    }
+  }
+  return false;
 }
 
-function defaultReadLine(env: NodeJS.ProcessEnv): string | null {
-  const result = defaultRun("sh", ["-c", "IFS= read -r reply; printf '%s' \"$reply\""], {
-    encoding: "utf-8",
-    env,
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  return result.status === 0 ? result.stdout : null;
+function defaultReadLine(): string | null {
+  const chunks: Buffer[] = [];
+  const byte = Buffer.alloc(1);
+  while (true) {
+    let bytesRead = 0;
+    try {
+      bytesRead = fs.readSync(0, byte, 0, 1, null);
+    } catch {
+      return chunks.length > 0 ? Buffer.concat(chunks).toString("utf-8") : null;
+    }
+    if (bytesRead === 0 || byte[0] === 10) break;
+    chunks.push(Buffer.from(byte));
+  }
+  if (chunks.length === 0) return null;
+  return Buffer.concat(chunks).toString("utf-8").replace(/\r$/, "");
 }
 
 function splitNonEmptyLines(output: string): string[] {
@@ -93,7 +126,10 @@ function globToRegExp(pattern: string): RegExp {
   );
 }
 
-function removeGlob(pattern: string, deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>): void {
+function removeGlob(
+  pattern: string,
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+): void {
   const dir = path.dirname(pattern);
   const matcher = globToRegExp(pattern);
   if (!deps.existsSync(dir)) return;
@@ -105,10 +141,77 @@ function removeGlob(pattern: string, deps: Required<Pick<UninstallRunDeps, "exis
   }
 }
 
-function removePath(target: string, deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>): void {
+function removePath(
+  target: string,
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+): void {
   if (!deps.existsSync(target)) return;
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
+}
+
+// Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
+// default. `rebuild-backups/` holds host-side snapshots from
+// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `backups/`
+// holds host-side workspace backups from `scripts/backup-workspace.sh`;
+// `sandboxes.json` is the host-side sandbox registry. Full wipe still happens
+// when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers
+// `y` to the interactive prompt.
+const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
+  "rebuild-backups",
+  "backups",
+  "sandboxes.json",
+];
+
+function removePathExcept(
+  target: string,
+  preserve: readonly string[],
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">> &
+    Pick<UninstallRuntime, "warn">,
+): boolean {
+  if (!deps.existsSync(target)) return true;
+  if (preserve.length === 0) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return true;
+  }
+  // Only enumerate when `target` is a real directory. A symlink or non-dir
+  // would make readdirSync follow into / fail noisily; treat those as
+  // wholesale removal, matching prior behaviour for unusual shapes.
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (err) {
+    // ENOENT — gone already, nothing to do. Any other error means we cannot
+    // safely decide whether to enumerate or remove; surface it and report
+    // failure so uninstall returns a non-zero exit instead of silently
+    // claiming success while leaving state on disk.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return true;
+    deps.warn(`Failed to inspect ${target}: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+  if (!stat.isDirectory()) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return true;
+  }
+  const preserveSet = new Set(preserve);
+  const children = fs.readdirSync(target);
+  for (const entry of children) {
+    if (preserveSet.has(entry)) continue;
+    deps.rmSync(path.join(target, entry), { force: true, recursive: true });
+  }
+  // Track preserved order against the declared allowlist so the log line is
+  // stable across filesystems with non-deterministic readdir ordering.
+  const childSet = new Set(children);
+  const preserved = preserve.filter((name) => childSet.has(name));
+  if (preserved.length === 0) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return true;
+  }
+  deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
+  return true;
 }
 
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {
@@ -163,7 +266,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
-    readLine: deps.readLine ?? (() => defaultReadLine(env)),
+    readLine: deps.readLine ?? defaultReadLine,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -197,9 +300,14 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
-  runtime.log("  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw");
+  runtime.log("  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)");
+  runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
-  runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
+  runtime.log(
+    options.deleteModels
+      ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}`
+      : "  · Ollama models: kept",
+  );
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
@@ -229,7 +337,13 @@ function runOptional(
 
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const startServices = path.join(paths.repoRoot, "scripts", "start-services.sh");
-  if (runtime.existsSync(startServices)) runOptional(runtime, `Stopped ${runtimeBranding(runtime).display} helper services`, startServices, ["--stop"]);
+  if (runtime.existsSync(startServices))
+    runOptional(
+      runtime,
+      `Stopped ${runtimeBranding(runtime).display} helper services`,
+      startServices,
+      ["--stop"],
+    );
 }
 
 function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: string): void {
@@ -382,7 +496,9 @@ function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
     return;
   }
   const user = runtime.env.SUDO_USER || runtime.env.LOGNAME || os.userInfo().username;
-  const args = user ? ["-u", user, "-f", "openshell (sandbox create|ssh-proxy)"] : ["-f", "openshell (sandbox create|ssh-proxy)"];
+  const args = user
+    ? ["-u", user, "-f", "openshell (sandbox create|ssh-proxy)"]
+    : ["-f", "openshell (sandbox create|ssh-proxy)"];
   const result = runtime.run("pgrep", args, { env: runtime.env });
   const pids = splitNonEmptyLines(result.stdout).map(Number).filter(Number.isFinite);
   if (pids.length === 0) {
@@ -390,7 +506,8 @@ function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
     return;
   }
   for (const pid of pids) {
-    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) runtime.log(`Stopped orphaned openshell process ${pid}`);
+    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL"))
+      runtime.log(`Stopped orphaned openshell process ${pid}`);
     else runtime.warn(`Failed to stop orphaned openshell process ${pid}`);
   }
 }
@@ -400,9 +517,17 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
     return;
   }
-  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", ["sandbox", "delete", "--all"]);
+  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", [
+    "sandbox",
+    "delete",
+    "--all",
+  ]);
   for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", ["provider", "delete", provider]);
+    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", [
+      "provider",
+      "delete",
+      provider,
+    ]);
   }
   const gatewayLabel = options.gatewayName || "nemoclaw";
   runOptional(
@@ -473,7 +598,9 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
   const shim = classifyShimPath(paths.nemoclawShimPath);
   if (shim.remove) removePath(paths.nemoclawShimPath, runtime);
   else if (shim.kind === "preserve-foreign-file") {
-    runtime.warn(`Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`);
+    runtime.warn(
+      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
+    );
   }
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
@@ -492,7 +619,9 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
 }
 
 function removeDockerContainers(runtime: UninstallRuntime): void {
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env: runtime.env });
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
+    env: runtime.env,
+  });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
@@ -501,13 +630,16 @@ function removeDockerContainers(runtime: UninstallRuntime): void {
     return;
   }
   for (const id of [...new Set(ids)]) {
-    if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker container ${id}`);
+    if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Docker container ${id}`);
     else runtime.warn(`Failed to remove Docker container ${id}`);
   }
 }
 
 function removeDockerImages(runtime: UninstallRuntime): void {
-  const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], { env: runtime.env });
+  const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], {
+    env: runtime.env,
+  });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => /openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
@@ -516,14 +648,23 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     return;
   }
   for (const id of [...new Set(ids)]) {
-    if (runtime.runDocker(["rmi", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker image ${id}`);
+    if (runtime.runDocker(["rmi", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Docker image ${id}`);
     else runtime.warn(`Failed to remove Docker image ${id}`);
   }
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
-  if (runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !== 0) return;
-  if (runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker volume ${name}`);
+  if (
+    runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !==
+    0
+  )
+    return;
+  if (
+    runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" })
+      .status === 0
+  )
+    runtime.log(`Removed Docker volume ${name}`);
   else runtime.warn(`Failed to remove Docker volume ${name}`);
 }
 
@@ -537,7 +678,8 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
     return;
   }
   for (const model of NEMOCLAW_OLLAMA_MODELS) {
-    if (runtime.run("ollama", ["rm", model], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Ollama model '${model}'`);
+    if (runtime.run("ollama", ["rm", model], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Ollama model '${model}'`);
     else runtime.warn(`Ollama model '${model}' not found or already removed`);
   }
 }
@@ -548,14 +690,19 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     return;
   }
   if (!runtime.existsSync(paths.managedSwapMarkerPath)) {
-    runtime.warn(`No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`);
+    runtime.warn(
+      `No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`,
+    );
     return;
   }
   if (runtime.env.NEMOCLAW_NON_INTERACTIVE === "1" || !runtime.isTty) {
     runtime.warn("Skipping swap cleanup in non-interactive mode (requires sudo).");
     return;
   }
-  const swapoff = runtime.run("sudo", ["swapoff", "/swapfile"], { env: runtime.env, stdio: "ignore" });
+  const swapoff = runtime.run("sudo", ["swapoff", "/swapfile"], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
   if (swapoff.status !== 0) {
     runtime.warn("Failed to disable /swapfile; skipping swap cleanup.");
     return;
@@ -565,14 +712,70 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
   else runtime.warn("Failed to remove /swapfile.");
 }
 
-function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: UninstallRunOptions, runtime: UninstallRuntime): void {
+function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRuntime): string[] {
+  if (!runtime.existsSync(paths.nemoclawStateDir)) return [];
+  return PRESERVED_USER_DATA_ENTRIES.filter((name) =>
+    runtime.existsSync(path.join(paths.nemoclawStateDir, name)),
+  );
+}
+
+function resolvePreserveSet(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+): readonly string[] {
+  // Explicit acknowledgement env var → full purge, matches today's behaviour.
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    runtime.log(
+      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
+    );
+    return [];
+  }
+  const preservable = detectPreservableEntries(paths, runtime);
+  // Nothing on disk worth preserving → no message, no prompt; treat as default
+  // preserve set so a later snapshot-create still survives if the user re-runs.
+  if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
+  // Non-interactive (no TTY, --yes, or NEMOCLAW_NON_INTERACTIVE=1) → preserve
+  // silently with a one-line notice. Default behaviour is safe; users who want
+  // a destructive uninstall in CI must set the env var.
+  const nonInteractive =
+    !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  if (nonInteractive) {
+    runtime.log(`Preserving ${preservable.join(", ")} under ${paths.nemoclawStateDir}.`);
+    runtime.log("  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to purge user data on uninstall.");
+    return PRESERVED_USER_DATA_ENTRIES;
+  }
+  runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
+  for (const name of preservable) runtime.log(`  · ${name}`);
+  runtime.log("Also remove them? [y/N]");
+  const reply = runtime.readLine();
+  if (reply && /^(y|yes)$/i.test(reply.trim())) {
+    runtime.log("Acknowledged; purging user data.");
+    return [];
+  }
+  runtime.log("Keeping user data.");
+  return PRESERVED_USER_DATA_ENTRIES;
+}
+
+function executePlan(
+  plan: UninstallPlan,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  preserveUnderStateDir: readonly string[],
+): { ok: boolean } {
+  let ok = true;
   const branding = runtimeBranding(runtime);
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
       stopHelperServices(paths, runtime);
       removeGlob(paths.helperServiceGlob, runtime);
-      stopMatchingPids(`openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`, runtime, "local OpenShell forward processes");
+      stopMatchingPids(
+        `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
+        runtime,
+        "local OpenShell forward processes",
+      );
       stopStaleDashboardListeners({
         run: runtime.run,
         kill: runtime.kill,
@@ -582,7 +785,17 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
         commandExists: runtime.commandExists,
       });
       stopOrphanedOpenShell(runtime);
-      stopMatchingPids("openshell-gateway", runtime, "host openshell-gateway processes");
+      stopHostGatewayProcesses(
+        {
+          run: runtime.run,
+          kill: runtime.kill,
+          env: runtime.env,
+          log: runtime.log,
+          warn: runtime.warn,
+          commandExists: runtime.commandExists,
+        },
+        { logNoProcesses: true },
+      );
       stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
@@ -592,7 +805,8 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       if (dockerIsAvailable(runtime)) {
         removeDockerContainers(runtime);
         removeDockerImages(runtime);
-        for (const action of step.actions) if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
+        for (const action of step.actions)
+          if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
     } else if (step.name === "Ollama models") {
       removeOllamaModels(options, runtime);
@@ -600,18 +814,24 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       removeManagedSwap(paths, runtime);
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
       if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
-      else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
-      removePath(paths.nemoclawStateDir, runtime);
+      else
+        for (const target of paths.openshellInstallPaths)
+          removeFileWithOptionalSudo(target, runtime);
+      if (!removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime)) ok = false;
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
     }
   }
+  return { ok };
 }
 
-export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): { paths: UninstallPaths; plan: UninstallPlan } {
+export function buildRunPlan(
+  options: UninstallRunOptions,
+  deps: UninstallRunDeps = {},
+): { paths: UninstallPaths; plan: UninstallPlan } {
   const env = { ...process.env, ...(deps.env ?? {}) };
-  const home = env.HOME || os.tmpdir();
+  const home = env.HOME || os.homedir();
   const paths = defaultUninstallPaths({
     home,
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
@@ -627,12 +847,22 @@ export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDep
   return { paths, plan };
 }
 
-export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {
+export function runUninstallPlan(
+  options: UninstallRunOptions,
+  deps: UninstallRunDeps = {},
+): UninstallRunOutcome {
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
-  executePlan(plan, paths, options, runtime);
-  printBye(runtime);
-  return { exitCode: 0, plan };
+  const preserveUnderStateDir = resolvePreserveSet(paths, options, runtime);
+  const { ok } = executePlan(plan, paths, options, runtime, preserveUnderStateDir);
+  if (ok) {
+    printBye(runtime);
+  } else {
+    runtime.error(
+      "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+    );
+  }
+  return { exitCode: ok ? 0 : 1, plan };
 }

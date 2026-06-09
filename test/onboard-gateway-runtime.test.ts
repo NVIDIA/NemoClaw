@@ -215,8 +215,7 @@ describe("onboard gateway runtime helpers", () => {
       getDockerDriverGatewayRuntimeDriftFromSnapshot({
         processEnv: {
           ...desiredEnv,
-          OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-            "ghcr.io/nvidia/openshell/supervisor:0.0.36",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.36",
         },
         processExe: gatewayBin,
         desiredEnv,
@@ -255,6 +254,34 @@ describe("onboard gateway runtime helpers", () => {
     ).toContain("process environment");
   });
 
+  it("reuses a healthy containerized-compat gateway whose parent is /usr/bin/docker (#4520)", () => {
+    const desiredEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
+
+    // The compat gateway is a `docker run ... /opt/nemoclaw/openshell-gateway`
+    // parent, so /proc/<pid>/exe is /usr/bin/docker. The runtime identity sets
+    // driftGatewayBin=null to skip the executable comparison; with that null
+    // preserved, a healthy compat gateway is NOT judged stale.
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: "/usr/bin/docker",
+        desiredEnv,
+        gatewayBin: null,
+      }),
+    ).toBeNull();
+
+    // Regression guard: if a caller coalesces the null back to the host binary
+    // (the old `?? gatewayBin` bug), the same healthy gateway is falsely stale.
+    expect(
+      getDockerDriverGatewayRuntimeDriftFromSnapshot({
+        processEnv: desiredEnv,
+        processExe: "/usr/bin/docker",
+        desiredEnv,
+        gatewayBin: "/home/user/.local/bin/openshell-gateway",
+      })?.reason,
+    ).toContain("executable=/usr/bin/docker");
+  });
+
   it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
     const opts = {
       platform: "linux" as NodeJS.Platform,
@@ -269,9 +296,9 @@ describe("onboard gateway runtime helpers", () => {
     expect(
       isDockerDriverGatewayPortListener({ ok: false, process: "openshell-", pid: 1234 }, opts),
     ).toBe(true);
-    expect(
-      isDockerDriverGatewayPortListener({ ok: false, process: "node", pid: 1234 }, opts),
-    ).toBe(false);
+    expect(isDockerDriverGatewayPortListener({ ok: false, process: "node", pid: 1234 }, opts)).toBe(
+      false,
+    );
     expect(
       isDockerDriverGatewayPortListener(
         { ok: false, process: "openshell", pid: 1234 },
@@ -328,9 +355,7 @@ describe("onboard gateway runtime helpers", () => {
       const specPath = path.join(cdiDir, "gpu-devices.yaml");
       fs.writeFileSync(
         specPath,
-        ["cdiVersion: 0.6.0", "kind: nvidia.com/gpu", "devices:", "  - name: all", ""].join(
-          "\n",
-        ),
+        ["cdiVersion: 0.6.0", "kind: nvidia.com/gpu", "devices:", "  - name: all", ""].join("\n"),
       );
       expect(findReadableNvidiaCdiSpecFiles([emptyDir, cdiDir])).toEqual([specPath]);
     } finally {

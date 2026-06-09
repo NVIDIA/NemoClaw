@@ -14,13 +14,16 @@ export interface SandboxRegistryMetadataDeps {
 }
 
 export interface SandboxRegistryMetadataHelpers {
-  getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   >;
@@ -39,13 +42,16 @@ export interface SandboxRegistryMetadataHelpers {
 export function createSandboxRegistryMetadataHelpers(
   deps: SandboxRegistryMetadataDeps,
 ): SandboxRegistryMetadataHelpers {
-  function getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  function getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
     | "sandboxGpuEnabled"
     | "sandboxGpuMode"
     | "sandboxGpuDevice"
+    | "sandboxGpuProof"
     | "openshellDriver"
     | "openshellVersion"
   > {
@@ -59,6 +65,9 @@ export function createSandboxRegistryMetadataHelpers(
       sandboxGpuEnabled: config.sandboxGpuEnabled,
       sandboxGpuMode: config.mode,
       sandboxGpuDevice: config.sandboxGpuDevice,
+      // Only persist a proof when this run produced one; omit on reuse/update
+      // paths so a prior proof result is preserved rather than nulled out.
+      ...(config.sandboxGpuProof ? { sandboxGpuProof: config.sandboxGpuProof } : {}),
       openshellDriver: deps.isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
@@ -86,12 +95,13 @@ export function createSandboxRegistryMetadataHelpers(
     sandboxGpuConfig: SandboxGpuConfig | null = null,
   ): void {
     const existingEntry = registry.getSandbox(sandboxName);
-    const agentVersionKnown = existingEntry?.agentVersion !== null;
+    const agentFields = getSandboxAgentRegistryFields(agent, false);
     const selectionUpdates = selectionVerified ? { model, provider } : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
-      ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
+      agent: agentFields.agent,
+      agentVersion: existingEntry?.agentVersion ?? null,
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
     });
     registry.setDefault(sandboxName);

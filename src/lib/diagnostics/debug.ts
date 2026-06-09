@@ -4,11 +4,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
 import { DASHBOARD_PORT } from "../core/ports";
 import { listSandboxes } from "../state/registry";
+import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -154,11 +155,34 @@ export function isDmesgPermissionDeniedOutput(output: string): boolean {
   return /\b(dmesg|kernel buffer|kernel logs?)\b/i.test(output);
 }
 
-function dmesgRestrictedMessage(reason: string): string {
-  return `  (kernel messages skipped: dmesg access is restricted for this user; ${reason})`;
+/**
+ * Build the option-aware re-run command for the dmesg-restricted hint.
+ *
+ * Preserves the user's original invocation flags (`--quick`, `--output`) so the
+ * hint nudges them back into the same scoped diagnostic instead of a broader
+ * privileged collector. See issue #4366.
+ */
+export function buildDmesgRerunCommand(opts: DebugOptions = {}): string {
+  const parts = ["sudo", "nemoclaw", "debug"];
+  if (opts.quick) parts.push("--quick");
+  if (opts.output) {
+    // Single-quote the path and escape embedded single quotes for shell safety.
+    const escaped = opts.output.replace(/'/g, "'\\''");
+    parts.push("--output", `'${escaped}'`);
+  }
+  return parts.join(" ");
 }
 
-function collectDmesg(collectDir: string): void {
+export function dmesgRestrictedMessage(reason: string, opts: DebugOptions = {}): string {
+  const rerun = buildDmesgRerunCommand(opts);
+  return [
+    `  (kernel messages skipped: dmesg access is restricted for this user; ${reason}.`,
+    `   Re-run with \`${rerun}\` to include kernel logs in this report.`,
+    "   Note: privileged diagnostics and kernel logs may contain sensitive data; review before sharing.)",
+  ].join("\n");
+}
+
+function collectDmesg(collectDir: string, opts: DebugOptions = {}): void {
   if (!commandExists("dmesg")) {
     writeCollectedMessage(collectDir, "dmesg", "  (dmesg not found, skipping)");
     return;
@@ -170,6 +194,7 @@ function collectDmesg(collectDir: string): void {
       "dmesg",
       dmesgRestrictedMessage(
         `${DMESG_RESTRICT_PATH}=1 prevents non-root users from reading kernel logs`,
+        opts,
       ),
     );
     return;
@@ -186,7 +211,7 @@ function collectDmesg(collectDir: string): void {
     writeCollectedMessage(
       collectDir,
       "dmesg",
-      dmesgRestrictedMessage("the dmesg command denied access to kernel logs"),
+      dmesgRestrictedMessage("the dmesg command denied access to kernel logs", opts),
     );
     return;
   }
@@ -267,17 +292,9 @@ function collectSystem(collectDir: string, quick: boolean): void {
 function collectProcesses(collectDir: string, quick: boolean): void {
   section("Processes");
   if (isMacOS) {
-    collectShell(
-      collectDir,
-      "ps-cpu",
-      "ps -eo pid,ppid,comm,%mem,%cpu | sort -k5 -rn | head -30",
-    );
+    collectShell(collectDir, "ps-cpu", "ps -eo pid,ppid,comm,%mem,%cpu | sort -k5 -rn | head -30");
   } else {
-    collectShell(
-      collectDir,
-      "ps-cpu",
-      "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30",
-    );
+    collectShell(collectDir, "ps-cpu", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%cpu | head -30");
   }
 
   if (!quick) {
@@ -289,11 +306,7 @@ function collectProcesses(collectDir: string, quick: boolean): void {
       );
       collectShell(collectDir, "top", "top -l 1 | head -50");
     } else {
-      collectShell(
-        collectDir,
-        "ps-mem",
-        "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30",
-      );
+      collectShell(collectDir, "ps-mem", "ps -eo pid,ppid,cmd,%mem,%cpu --sort=-%mem | head -30");
       collectShell(collectDir, "top", "top -b -n 1 | head -50");
     }
   }
@@ -304,13 +317,7 @@ function collectGpu(collectDir: string, quick: boolean): void {
   collect(collectDir, "nvidia-smi", "nvidia-smi", []);
 
   if (!quick) {
-    collect(collectDir, "nvidia-smi-dmon", "nvidia-smi", [
-      "dmon",
-      "-s",
-      "pucvmet",
-      "-c",
-      "10",
-    ]);
+    collect(collectDir, "nvidia-smi-dmon", "nvidia-smi", ["dmon", "-s", "pucvmet", "-c", "10"]);
     collect(collectDir, "nvidia-smi-query", "nvidia-smi", [
       "--query-gpu=name,utilization.gpu,utilization.memory,memory.total,memory.used,temperature.gpu,power.draw",
       "--format=csv",
@@ -348,11 +355,7 @@ function collectDocker(collectDir: string, quick: boolean): void {
   }
 }
 
-function collectOpenshell(
-  collectDir: string,
-  sandboxName: string,
-  quick: boolean,
-): void {
+function collectOpenshell(collectDir: string, sandboxName: string, quick: boolean): void {
   section("OpenShell");
   collect(collectDir, "openshell-status", "openshell", ["status"]);
   collect(collectDir, "openshell-sandbox-list", "openshell", ["sandbox", "list"]);
@@ -364,11 +367,7 @@ function collectOpenshell(
   }
 }
 
-function collectSandboxInternals(
-  collectDir: string,
-  sandboxName: string,
-  quick: boolean,
-): void {
+function collectSandboxInternals(collectDir: string, sandboxName: string, quick: boolean): void {
   if (!commandExists("openshell")) return;
 
   // Check if sandbox exists. OpenShell ssh-config may succeed for unknown
@@ -415,13 +414,7 @@ function collectSandboxInternals(
     collect(collectDir, "sandbox-ps", "ssh", [...sshBase, "ps", "-ef"]);
     collect(collectDir, "sandbox-free", "ssh", [...sshBase, "free", "-m"]);
     if (!quick) {
-      collect(collectDir, "sandbox-top", "ssh", [
-        ...sshBase,
-        "top",
-        "-b",
-        "-n",
-        "1",
-      ]);
+      collect(collectDir, "sandbox-top", "ssh", [...sshBase, "top", "-b", "-n", "1"]);
       collect(collectDir, "sandbox-gateway-log", "ssh", [
         ...sshBase,
         "tail",
@@ -486,7 +479,7 @@ function collectKernel(collectDir: string): void {
   }
 }
 
-function collectKernelMessages(collectDir: string): void {
+function collectKernelMessages(collectDir: string, opts: DebugOptions = {}): void {
   section("Kernel Messages");
   if (isMacOS) {
     collectShell(
@@ -495,7 +488,7 @@ function collectKernelMessages(collectDir: string): void {
       'log show --last 5m --predicate "eventType == logEvent" --style compact 2>/dev/null | tail -100',
     );
   } else {
-    collectDmesg(collectDir);
+    collectDmesg(collectDir, opts);
   }
 }
 
@@ -503,29 +496,8 @@ function collectKernelMessages(collectDir: string): void {
 // Tarball
 // ---------------------------------------------------------------------------
 
-/**
- * Archive the collected diagnostics into a tarball and print the sharing
- * guidance that goes with the generated file.
- */
 export function createTarball(collectDir: string, output: string): boolean {
-  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
-    stdio: "inherit",
-    timeout: 60_000,
-  });
-  if (result.status !== 0 || result.signal) {
-    const reason = result.signal
-      ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? "unknown"}`;
-    error(`Failed to create tarball at ${output} (tar ${reason})`);
-    process.exitCode = 1;
-    return false;
-  }
-  info(`Tarball written to ${output}`);
-  warn(
-    "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing.",
-  );
-  info("Attach this file to your GitHub issue.");
-  return true;
+  return createDiagnosticsTarball(collectDir, output, { info, warn, error });
 }
 
 /**
@@ -558,9 +530,12 @@ export function runDebug(opts: DebugOptions = {}): void {
   // Compiled location: dist/lib/diagnostics/debug.js → repo root is 3 levels up
   const repoDir = join(__dirname, "..", "..", "..");
 
-  // Resolve sandbox name
-  let sandboxName =
-    opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "";
+  // Resolve sandbox name. The CLI wrapper (runDebugCommandWithOptions) is the
+  // sole supported caller; it already trims, validates, and applies the
+  // documented precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
+  // > SANDBOX_NAME) before calling here. Reading env again would let
+  // whitespace-only values bypass validation, so only trim the option.
+  let sandboxName = opts.sandboxName?.trim() ?? "";
   if (!sandboxName) {
     sandboxName = detectSandboxName();
   }
@@ -587,7 +562,7 @@ export function runDebug(opts: DebugOptions = {}): void {
       collectKernel(collectDir);
     }
 
-    collectKernelMessages(collectDir);
+    collectKernelMessages(collectDir, opts);
 
     let tarballOk = true;
     if (output) {

@@ -49,6 +49,11 @@ function createRuntime(initialSession: Session = createSession()) {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (stepName, message) =>
       updateSession((current) => {
@@ -56,6 +61,7 @@ function createRuntime(initialSession: Session = createSession()) {
         current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
         return current;
       }),
+    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -96,12 +102,18 @@ describe("onboard sequence runner", () => {
         if (context.attempt === 0) {
           return {
             context: { attempt: 1, log: [...context.log, "provider:first"] },
-            result: [advanceTo("inference"), retryTo("provider_selection")],
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              retryTo("provider_selection", { metadata: { state: "inference" } }),
+            ],
           };
         }
         return {
           context: { ...context, log: [...context.log, "provider:second"] },
-          result: [advanceTo("inference"), advanceTo("sandbox")],
+          result: [
+            advanceTo("inference", { metadata: { state: "provider_selection" } }),
+            advanceTo("sandbox", { metadata: { state: "inference" } }),
+          ],
         };
       }),
       phase("sandbox", (context) => ({
@@ -152,6 +164,38 @@ describe("onboard sequence runner", () => {
         "post_verify",
       ],
     });
+  });
+
+  it("passes custom sequence ownership through to the runner", async () => {
+    const result = await runOnboardSequenceWithRunner({
+      context: { attempt: 0, log: [] },
+      runtime: createRuntime(
+        createSession({
+          machine: {
+            version: 1,
+            state: "finalizing",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
+      sequenceOwnership: { finalizing: ["post_verify"] },
+      phases: [
+        phase("finalizing", (context) => ({
+          context: { ...context, log: ["finalizing"] },
+          result: [
+            advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+            completeOnboardMachine({}, { state: "post_verify" }),
+          ],
+        })),
+      ],
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      machine: { state: "complete" },
+    });
+    expect(result.context.log).toEqual(["finalizing"]);
   });
 
   it("rejects duplicate phases before running", () => {
