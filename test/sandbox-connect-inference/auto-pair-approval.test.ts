@@ -292,12 +292,9 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         "claude-sonnet-4-20250514",
       );
 
-      const result = runConnect(
-        tmpDir,
-        sandboxName,
-        { NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1" },
-        ["--probe-only"],
-      );
+      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1" }, [
+        "--probe-only",
+      ]);
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
@@ -326,12 +323,9 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         "claude-sonnet-4-20250514",
       );
 
-      const result = runConnect(
-        tmpDir,
-        sandboxName,
-        { NEMOCLAW_TEST_GATEWAY_DOWN: "1" },
-        ["--probe-only"],
-      );
+      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_GATEWAY_DOWN: "1" }, [
+        "--probe-only",
+      ]);
       expect(result.status).toBe(1);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));

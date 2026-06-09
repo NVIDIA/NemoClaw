@@ -12,10 +12,15 @@ import {
   type SessionUpdates,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
-import { advanceTo } from "./result";
+import { advanceTo, branchTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardSequencePhase } from "./sequence-runner";
-import { initialOnboardFlowPhases, runInitialOnboardFlowSequence } from "./flow-slices";
+import {
+  coreOnboardFlowPhases,
+  initialOnboardFlowPhases,
+  runCoreOnboardFlowSequence,
+  runInitialOnboardFlowSequence,
+} from "./flow-slices";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
@@ -131,5 +136,48 @@ describe("onboard flow slices", () => {
     });
 
     expect(result.session.machine.state).toBe("provider_selection");
+  });
+
+  it("selects only core provider/sandbox phases", () => {
+    expect(
+      coreOnboardFlowPhases([
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "sandbox"),
+        phase("sandbox", "openclaw"),
+        phase("openclaw", "policies"),
+      ]).map((entry) => entry.state),
+    ).toEqual(["provider_selection", "sandbox"]);
+  });
+
+  it("runs the core slice and stops at the selected branch state", async () => {
+    const result = await runCoreOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: MACHINE_SNAPSHOT_VERSION,
+            state: "provider_selection",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
+      phases: [
+        {
+          state: "provider_selection",
+          run: (ctx) => ({
+            context: ctx,
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          }),
+        },
+        { state: "sandbox", run: (ctx) => ({ context: ctx, result: branchTo("openclaw") }) },
+        phase("openclaw", "policies"),
+      ],
+    });
+
+    expect(result.session.machine.state).toBe("openclaw");
   });
 });

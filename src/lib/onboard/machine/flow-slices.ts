@@ -20,6 +20,14 @@ export function initialOnboardFlowPhases<Context extends OnboardFlowContext>(
   ];
 }
 
+export function coreOnboardFlowPhases<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+): OnboardSequencePhase<Context>[] {
+  return phases.filter(
+    (phase) => phase.state === "provider_selection" || phase.state === "sandbox",
+  );
+}
+
 export async function runInitialOnboardFlowSequence<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -29,5 +37,17 @@ export async function runInitialOnboardFlowSequence<Context extends OnboardFlowC
     ...options,
     phases: initialOnboardFlowPhases(options.phases),
     stopStates: ["provider_selection"],
+  });
+}
+
+export async function runCoreOnboardFlowSequence<Context extends OnboardFlowContext>(options: {
+  context: Context;
+  runtime: OnboardMachineRunnerRuntime;
+  phases: readonly OnboardSequencePhase<Context>[];
+}) {
+  return runOnboardSequenceWithRunner({
+    ...options,
+    phases: coreOnboardFlowPhases(options.phases),
+    stopStates: ["openclaw", "agent_setup"],
   });
 }
