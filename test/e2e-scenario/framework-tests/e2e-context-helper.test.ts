@@ -20,7 +20,7 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
 }
 
 describe("E2E context helper (runtime/lib/context.sh)", () => {
-  it("context_should_write_and_source_values", () => {
+  it("context helper writes and sources values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
@@ -43,7 +43,7 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
     }
   });
 
-  it("context_require_should_fail_for_missing_value", () => {
+  it("context require fails for missing values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
@@ -61,7 +61,7 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
     }
   });
 
-  it("context_dump_should_redact_sensitive_values", () => {
+  it("context dump redacts sensitive values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
