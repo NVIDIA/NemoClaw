@@ -114,6 +114,7 @@ export function detachSandboxProviders(
     const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
     });
     if (result.status === 0) {
       detached.push(name);
@@ -171,6 +172,7 @@ export function recoverAttachedProvider(
     const result = runOpenshell(["sandbox", "provider", "detach", sandbox, providerName], {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
     });
     if (result.status === 0) {
       detached.push(sandbox);
@@ -264,6 +266,7 @@ export function deleteProviderWithRecovery(
   let result = runOpenshell(["provider", "delete", providerName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
+    suppressOutput: true,
   });
   let recoveryFailures: Array<{ sandbox: string; output: string }> = [];
   if (result.status !== 0) {
@@ -275,6 +278,7 @@ export function deleteProviderWithRecovery(
       result = runOpenshell(["provider", "delete", providerName], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
       });
     }
   }
