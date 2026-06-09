@@ -773,15 +773,12 @@ describe("required probe and pending steps fail closed", () => {
     }
   });
 
-  it("test_expected_failure_no_side_effects_step_in_registry_is_required", async () => {
+  it("test_expected_failure_no_side_effects_step_is_not_in_active_registry", async () => {
     const { assertionRegistry } = await import("../scenarios/assertions/registry.ts");
     const group = assertionRegistry.groups.find(
       (g) => g.id === "runtime.expected-failure.no-side-effects",
     );
-    expect(group).toBeDefined();
-    for (const step of group?.steps ?? []) {
-      expect(step.required).toBe(true);
-    }
+    expect(group).toBeUndefined();
   });
 });
 

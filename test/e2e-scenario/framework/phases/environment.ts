@@ -74,9 +74,8 @@ export class EnvironmentPhaseFixture {
     if (expectation === "required") {
       assertExitZero(result.result, `docker runtime ${runtime}`);
     }
-    if (expectation === "missing" && result.available) {
-      throw new Error(`docker runtime ${runtime} expected Docker to be unavailable, but 'docker info' succeeded.`);
-    }
+    // Missing-runtime scenarios simulate Docker failure at the phase that
+    // needs it; this probe records host reality without blocking composition.
     return result;
   }
 

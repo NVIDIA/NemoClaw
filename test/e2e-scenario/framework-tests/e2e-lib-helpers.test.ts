@@ -15,6 +15,7 @@ const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/install");
+const ONBOARD_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/onboard");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", ["-c", script], {
@@ -55,6 +56,192 @@ describe("E2E shell helpers", () => {
       );
       expect(r.status).not.toBe(0);
       expect(r.stderr).toMatch(/E2E_SANDBOX_NAME|E2E_CONTEXT_DIR|context/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no_docker_onboarding_worker_should_preserve_seeded_context_and_redact_log", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-context-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  expected='onboard --non-interactive --yes --yes-i-accept-third-party-software'
+  if [[ "$*" != "\${expected}" ]]; then
+    echo "unexpected nemoclaw args: $*" >&2
+    exit 2
+  fi
+  if [[ "\${NEMOCLAW_AGENT:-}" != "openclaw" || "\${NEMOCLAW_PROVIDER:-}" != "cloud" || "\${NEMOCLAW_SANDBOX_NAME:-}" != "e2e-preserved" ]]; then
+    echo "unexpected nemoclaw env: agent=\${NEMOCLAW_AGENT:-unset} provider=\${NEMOCLAW_PROVIDER:-unset} sandbox=\${NEMOCLAW_SANDBOX_NAME:-unset}" >&2
+    exit 2
+  fi
+  echo "NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
+  echo "Docker is required before onboarding" >&2
+  exit 42
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const contextBody = fs.readFileSync(path.join(tmp, "context.env"), "utf8");
+      expect(contextBody).toMatch(/^E2E_SANDBOX_NAME=e2e-preserved$/m);
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("Docker is required before onboarding");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).not.toContain("secret-token");
+      const tempEntries = fs.readdirSync(tmp, { recursive: true }).map(String).join("\n");
+      expect(tempEntries).not.toContain("negative-preflight.raw.log");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no_docker_onboarding_worker_should_fail_on_unrelated_onboarding_errors", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-unrelated-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  expected='onboard --non-interactive --yes --yes-i-accept-third-party-software'
+  if [[ "$*" != "\${expected}" ]]; then
+    echo "unexpected nemoclaw args: $*" >&2
+    exit 2
+  fi
+  if [[ "\${NEMOCLAW_AGENT:-}" != "openclaw" || "\${NEMOCLAW_PROVIDER:-}" != "cloud" || "\${NEMOCLAW_SANDBOX_NAME:-}" != "e2e-preserved" ]]; then
+    echo "unexpected nemoclaw env: agent=\${NEMOCLAW_AGENT:-unset} provider=\${NEMOCLAW_PROVIDER:-unset} sandbox=\${NEMOCLAW_SANDBOX_NAME:-unset}" >&2
+    exit 2
+  fi
+  echo "provider rejected NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
+  exit 42
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(r.status).toBe(42);
+      expect(`${r.stdout}\n${r.stderr}`).toContain("failed without Docker-missing preflight signature");
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("provider rejected");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).not.toContain("secret-token");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no_docker_onboarding_worker_should_accept_current_preflight_wording", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-wording-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  echo "Docker is not reachable. Please fix Docker and try again." >&2
+  exit 1
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("Docker is not reachable");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no_docker_redactor_fallback_should_redact_sensitive_env_values_without_python", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-redactor-"));
+    const noPythonBin = path.join(tmp, "bin");
+    const logPath = path.join(tmp, "negative-preflight.log");
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        mkdir -p "${noPythonBin}"
+        for cmd in rm mktemp sed env cat mv; do
+          ln -s "$(command -v "\${cmd}")" "${noPythonBin}/\${cmd}"
+        done
+        . "${ONBOARD_DIR}/cloud-openclaw-no-docker.sh"
+        export NVIDIA_API_KEY=plain-secret-value
+        PATH="${noPythonBin}"
+        printf 'plain-secret-value\\nDocker is required before onboarding\\n' | e2e_no_docker_write_redacted_preflight_log "${logPath}"
+      `,
+        { TMPDIR: tmp },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const logBody = fs.readFileSync(logPath, "utf8");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).toContain("Docker is required before onboarding");
+      expect(logBody).not.toContain("plain-secret-value");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

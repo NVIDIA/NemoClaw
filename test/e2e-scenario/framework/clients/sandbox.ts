@@ -56,7 +56,7 @@ export class SandboxClient {
   }
 }
 
-function validateSandboxName(name: string): void {
+export function validateSandboxName(name: string): void {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name)) {
     throw new Error(`sandbox name is invalid for fixture client: ${name}`);
   }
