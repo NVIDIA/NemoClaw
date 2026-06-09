@@ -112,7 +112,7 @@ describe("compiler emits state-validation phase actions from expected-state regi
     ]);
   });
 
-  it("compiler hard-errors on a scenario referencing an unknown expected_state id", () => {
+  it("compiler fails hard on a scenario referencing an unknown expected-state ID", () => {
     expect(() =>
       compileRunPlans([
         {

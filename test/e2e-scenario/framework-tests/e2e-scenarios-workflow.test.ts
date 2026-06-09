@@ -36,7 +36,7 @@ describe("e2e-scenarios workflow boundary", () => {
     expect(validateE2eScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("routes_every_typed_scenario_id_to_its_resolved_runner", () => {
+  it("routes every typed scenario ID to its resolved runner", () => {
     const scenarios = listScenarios().sort((left, right) => left.id.localeCompare(right.id));
     const routes = routesFromWorkflow();
     const typedIds = scenarios.map((scenario) => scenario.id);

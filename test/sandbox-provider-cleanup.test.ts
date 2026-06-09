@@ -159,6 +159,28 @@ describe("detachSandboxProviders", () => {
     expect(result.failures).toEqual([]);
   });
 
+  it("suppresses output for tolerated missing-sandbox detach probes", () => {
+    const { runOpenshell } = buildRunOpenshell(
+      new Map(),
+      { status: 1, stderr: "Error: status: NotFound, sandbox 'phantom' not found" },
+    );
+
+    const result = detachSandboxProviders("phantom", {
+      runOpenshell,
+      tolerateMissingSandbox: true,
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(runOpenshell).toHaveBeenCalledTimes(SANDBOX_PROVIDER_SUFFIXES.length);
+    for (const [, opts] of runOpenshell.mock.calls) {
+      expect(opts).toMatchObject({
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  });
+
   it("collects non-tolerated failures without aborting the loop", () => {
     const responses = new Map<string, RunResult>([
       [

@@ -28,6 +28,9 @@ const { isPrivateHostname, isPrivateIp } = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
+const {
+  buildHermesUpstreamHeader,
+}: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -348,6 +351,20 @@ function serializeConfig(config: ConfigObject, format: string): string {
 }
 
 /**
+ * Pure body composition for {@link writeSandboxConfig}: serialize the config
+ * and prepend agent-specific headers. Extracted so unit tests can assert the
+ * exact byte sequence that lands in the sandbox without driving the
+ * privileged docker exec path.
+ */
+function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
+  const body = serializeConfig(config, target.format);
+  if (target.agentName === "hermes" && target.format === "yaml") {
+    return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
+  }
+  return body;
+}
+
+/**
  * Parse a CLI-provided config value as JSON when possible, otherwise keep it
  * as a string literal.
  */
@@ -401,7 +418,7 @@ function writeSandboxConfig(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   try {
-    fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
+    fs.writeFileSync(tmpFile, composeSandboxConfigBody(config, target), { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
     privilegedSandboxExec(
@@ -1022,26 +1039,27 @@ function confirmYesNo(prompt: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export {
-  DEFAULT_AGENT_CONFIG,
-  configGet,
-  configSet,
-  configRotateToken,
-  parseConfigGetArgs,
-  resolveAgentConfig,
-  readSandboxConfig,
-  writeSandboxConfig,
-  recomputeSandboxConfigHash,
   buildRecomputeSandboxConfigHashScript,
-  privilegedSandboxExecArgv,
-  extractDotpath,
-  setDotpath,
-  validateConfigDotpath,
-  findClobberingAncestor,
   classifyNewKeyGate,
-  validateUrlValue,
-  validateUrlValueWithDns,
-  rewriteConfigUrlsWithDnsPinning,
+  composeSandboxConfigBody,
+  configGet,
+  configRotateToken,
+  configSet,
+  DEFAULT_AGENT_CONFIG,
+  extractDotpath,
+  findClobberingAncestor,
   formatConfigValueForLogs,
   parseConfig,
+  parseConfigGetArgs,
+  privilegedSandboxExecArgv,
+  readSandboxConfig,
   readStdin,
+  recomputeSandboxConfigHash,
+  resolveAgentConfig,
+  rewriteConfigUrlsWithDnsPinning,
+  setDotpath,
+  validateConfigDotpath,
+  validateUrlValue,
+  validateUrlValueWithDns,
+  writeSandboxConfig,
 };

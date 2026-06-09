@@ -17,6 +17,7 @@ import {
   collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
   detectSandboxFallbackDns,
+  detectTegraDeviceGroupGids,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
   getDockerGpuPatchNetworkMode,
@@ -797,6 +798,123 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     // has a loopback-only resolver.
     expect(args).not.toEqual(expect.arrayContaining(["--network", "host"]));
     expect(args).toEqual(expect.arrayContaining(["--dns", "8.8.8.8"]));
+  });
+});
+
+// Jetson `/dev/nvmap` group-permission propagation (#4231). The reporter's
+// Jetson Orin sandbox saw the GPU devices mounted but CUDA failed with
+// `NvRmMemInitNvmap ... Permission denied` / `cuInit(0)=999` because the
+// sandbox user (uid/gid 998) was not in the `video` group that owns
+// `/dev/nvmap` (`crw-rw---- root video`). The Jetson recreate must grant that
+// group via `--group-add` so CUDA can initialize.
+describe("Jetson /dev/nvmap group propagation (#4231)", () => {
+  it("returns the owning GID(s) of present Tegra device nodes, skipping missing and root-owned", () => {
+    const deviceGids: Record<string, number> = {
+      "/dev/nvmap": 44, // root video
+      "/dev/nvhost-ctrl": 44,
+      "/dev/nvhost-gpu": 0, // root root — skipped (root already has access)
+      "/dev/nvgpu/igpu0/ctrl": 110, // render
+      // every other Tegra node is absent on this host
+    };
+    const gids = detectTegraDeviceGroupGids({
+      statDeviceGid: (p: string) => (p in deviceGids ? deviceGids[p] : null),
+    });
+    // Deduped, sorted numerically, root (0) and missing nodes excluded.
+    expect(gids).toEqual(["44", "110"]);
+  });
+
+  it("returns no GIDs when no Tegra device nodes are present (non-Jetson host)", () => {
+    expect(detectTegraDeviceGroupGids({ statDeviceGid: () => null })).toEqual([]);
+  });
+
+  it("emits --group-add for extraGroupGids and dedupes against existing GroupAdd", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.GroupAdd = ["44"]; // baseline already carries video
+    const args = buildDockerGpuCloneRunArgs(
+      inspect,
+      buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
+      { extraGroupGids: ["44", "110"] },
+    );
+    // `44` is added exactly once (baseline + extra deduped); `110` added.
+    expect(args.filter((arg, i) => args[i - 1] === "--group-add" && arg === "44").length).toBe(1);
+    expect(args).toEqual(expect.arrayContaining(["--group-add", "110"]));
+  });
+
+  it("does not add --group-add when extraGroupGids is absent", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.GroupAdd = [];
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+    expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
+  });
+
+  it("plumbs detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspectFixture()]);
+      if (args[0] === "info") return "";
+      return "";
+    });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
+
+    recreateOpenShellDockerSandboxWithGpu(
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
+      {
+        dockerCapture,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-05-15T00:00:00Z"),
+        detectSandboxFallbackDns: () => null,
+        detectTegraDeviceGroupGids: detectTegraDeviceGroupGidsStub,
+      },
+    );
+
+    expect(detectTegraDeviceGroupGidsStub).toHaveBeenCalled();
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      expect.arrayContaining(["--group-add", "44"]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("does not add Tegra device GIDs for the generic (non-Jetson) backend", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspectFixture()]);
+      if (args[0] === "info") return "";
+      return "";
+    });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
+
+    recreateOpenShellDockerSandboxWithGpu(
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "generic" },
+      {
+        dockerCapture,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-05-15T00:00:00Z"),
+        detectSandboxFallbackDns: () => null,
+        detectTegraDeviceGroupGids: detectTegraDeviceGroupGidsStub,
+      },
+    );
+
+    // Generic backend never queries Tegra device groups and never emits the
+    // extra --group-add (inspectFixture has no baseline GroupAdd).
+    expect(detectTegraDeviceGroupGidsStub).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["--group-add", "44"]),
+      expect.anything(),
+    );
   });
 });
 

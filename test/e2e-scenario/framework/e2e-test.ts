@@ -84,8 +84,8 @@ export const test = base.extend<E2EScenarioFixtures>({
   environment: async ({ host }, use) => {
     await use(new EnvironmentPhaseFixture(host));
   },
-  onboard: async ({ host, secrets }, use) => {
-    await use(new OnboardingPhaseFixture(host, secrets));
+  onboard: async ({ cleanup, host, secrets }, use) => {
+    await use(new OnboardingPhaseFixture(host, secrets, cleanup));
   },
   stateValidation: async ({ host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox));

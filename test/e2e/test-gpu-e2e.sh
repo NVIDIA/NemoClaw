@@ -320,19 +320,32 @@ else
   fail "Onboard GPU proof missing: cuInit(0)"
 fi
 
-# 4d.1: Host-network local inference reachability gate (#4509). When the GPU
-# patch wires OpenClaw to the direct 127.0.0.1 sandbox URL, onboard must prove
-# the recreated host-network container can actually reach that endpoint before
-# declaring success — instead of leaving an unreachable loopback to surface as
-# an opaque ECONNREFUSED during the first agent prompt.
-if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
-  if grep -Fq "GPU host-network local inference reachable from sandbox" "$INSTALL_LOG"; then
-    pass "Onboard proved host-network local inference reachable before success"
+# 4d.1: GPU sandbox local-inference reachability gate (#4509). Onboard must
+# prove the OpenClaw agent runtime can reach the local inference backend from
+# inside the sandbox's own network namespace — the context the agent's LLM
+# client uses — before declaring success. PR #4609 probed this with `docker
+# exec` against the recreated `--network host` container, whose main namespace
+# is the host's, so a probe there passed while the agent (in OpenShell's
+# isolated sandbox netns) still got ECONNREFUSED. The gate now probes via
+# `openshell sandbox exec`, so this proof reflects the real runtime path.
+if grep -Fq "Docker GPU mode selected" "$INSTALL_LOG"; then
+  if grep -Fq "GPU sandbox runtime reached local inference" "$INSTALL_LOG"; then
+    pass "Onboard proved local inference reachable from the sandbox runtime (#4509)"
   else
-    fail "Onboard did not prove host-network local inference reachability (#4509 gate missing)"
+    fail "Onboard did not prove sandbox-runtime local inference reachability (#4509 gate missing)"
   fi
 else
-  skip "Host-network direct sandbox URL not active; inference reachability gate not exercised"
+  skip "Docker GPU patch recreate not exercised; sandbox-runtime inference gate not asserted"
+fi
+# If host networking was opted into, onboard must downgrade it to the
+# OpenShell-managed bridge path for local inference (host loopback is not
+# reachable from the sandbox network namespace).
+if [ "${NEMOCLAW_DOCKER_GPU_PATCH_NETWORK:-}" = "host" ]; then
+  if grep -Fq "keeps OpenShell bridge networking for local inference" "$INSTALL_LOG"; then
+    pass "Host-network opt-in downgraded to bridge for local inference (#4509)"
+  else
+    fail "Host-network opt-in was NOT downgraded for local inference (#4509)"
+  fi
 fi
 
 # 4e: Inference provider is ollama-local
@@ -533,37 +546,16 @@ else
   fail "[LOCAL] Direct Ollama: empty response"
 fi
 
-# 5b: Inference through sandbox → provider route → Ollama. When the Docker GPU
-# patch preserves the original sandbox network, inference still goes through
-# inference.local; use docker exec only to avoid depending on OpenShell exec
-# after the container is recreated. Host-network GPU patch runs are the only
-# mode where OpenClaw is configured with a direct loopback Ollama URL.
+# 5b: Inference through the sandbox → OpenShell route → Ollama, proven from the
+# ACTUAL OpenClaw runtime context (#4509). This MUST go through `openshell
+# sandbox exec` — the agent runs in OpenShell's isolated sandbox network
+# namespace, so a `docker exec` probe against the recreated container (whose
+# main namespace is the host's under `--network host`) does NOT exercise the
+# path the agent uses and previously masked the reopened ECONNREFUSED. OpenClaw
+# is wired to the OpenShell-managed inference endpoint (inference.local), never
+# a direct container loopback URL.
 SANDBOX_INFERENCE_URL="https://inference.local/v1/chat/completions"
-SANDBOX_INFERENCE_EXEC="openshell"
-SANDBOX_INFERENCE_DOCKER_EXEC_ENV=()
-if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
-  OLLAMA_HOST_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
-  SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
-  SANDBOX_INFERENCE_EXEC="docker"
-elif grep -Fq "Docker-driver GPU patch active" "$INSTALL_LOG"; then
-  SANDBOX_INFERENCE_EXEC="docker"
-fi
-if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ] && [[ "$SANDBOX_INFERENCE_URL" == https://inference.local/* ]]; then
-  INFERENCE_PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
-  INFERENCE_PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
-  INFERENCE_PROXY_URL="http://${INFERENCE_PROXY_HOST}:${INFERENCE_PROXY_PORT}"
-  INFERENCE_NO_PROXY="localhost,127.0.0.1,::1,${INFERENCE_PROXY_HOST}"
-  SANDBOX_INFERENCE_DOCKER_EXEC_ENV=(
-    --env "HTTP_PROXY=${INFERENCE_PROXY_URL}"
-    --env "HTTPS_PROXY=${INFERENCE_PROXY_URL}"
-    --env "NO_PROXY=${INFERENCE_NO_PROXY}"
-    --env "http_proxy=${INFERENCE_PROXY_URL}"
-    --env "https_proxy=${INFERENCE_PROXY_URL}"
-    --env "no_proxy=${INFERENCE_NO_PROXY}"
-  )
-  info "[LOCAL] Docker GPU inference proof will use OpenShell proxy ${INFERENCE_PROXY_URL}"
-fi
-info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
+info "[LOCAL] Sandbox inference test (via openshell sandbox exec) → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
 sandbox_probe_failure=""
 sandbox_response=""
 TIMEOUT_CMD=""
@@ -577,19 +569,18 @@ sandbox_curl_cmd=$(printf "curl -skS --max-time 90 %q -H %q -d %q" \
 run_sandbox_inference_probe() {
   sandbox_probe_failure=""
   sandbox_response=""
-  if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ]; then
-    sandbox_container_id=$(docker ps --quiet \
-      --filter "label=openshell.ai/managed-by=openshell" \
-      --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
-      | head -n 1)
-    if [ -n "$sandbox_container_id" ]; then
-      info "[LOCAL] Using docker exec for Docker GPU sandbox inference proof (${sandbox_container_id:0:12})..."
-      sandbox_response=$($TIMEOUT_CMD docker exec "${SANDBOX_INFERENCE_DOCKER_EXEC_ENV[@]}" "$sandbox_container_id" sh -lc "$sandbox_curl_cmd" 2>&1) || true
+  # Always exercise the real OpenClaw runtime context (the sandbox's own
+  # network namespace) so a host-only reachability path can never mask an
+  # agent-side ECONNREFUSED (#4509).
+  local probe_status
+  sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1)
+  probe_status=$?
+  if [ "$probe_status" -ne 0 ]; then
+    if [ "$probe_status" -eq 124 ]; then
+      sandbox_probe_failure="sandbox inference probe timed out (openshell sandbox exec)"
     else
-      sandbox_probe_failure="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
+      sandbox_probe_failure="openshell sandbox exec failed (status ${probe_status}): ${sandbox_response:0:200}"
     fi
-  else
-    sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
   fi
 }
 
