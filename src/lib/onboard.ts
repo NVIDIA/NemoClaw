@@ -141,7 +141,6 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
@@ -379,7 +378,6 @@ const {
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
   exitOnSandboxGpuConfigErrors,
-  formatSandboxGpuPassthroughNote,
   resolveSandboxGpuFlagFromOptions,
   validateSandboxGpuPreflight,
 } = sandboxGpuPreflight;
@@ -460,14 +458,8 @@ const {
   handleFinalizationState,
 }: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
 const {
-  handleGatewayState,
-}: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
-const {
   handlePoliciesState,
 }: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
-const {
-  handlePreflightState,
-}: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const {
   handleProviderInferenceState,
 }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
@@ -475,8 +467,9 @@ const {
   handleSandboxState,
 }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
 const {
-  runInitialOnboardFlowSequence,
-}: typeof import("./onboard/machine/flow-slices") = require("./onboard/machine/flow-slices");
+  createInitialOnboardFlowPhases,
+  runInitialOnboardFlowSlice,
+}: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
 const {
   advanceTo,
 }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
@@ -6416,17 +6409,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resume) note("  (resume mode)");
     console.log("  ===================");
 
-    type InitialOnboardFlowContext = import("./onboard/machine/flow-context").OnboardFlowContext<
-      typeof agent,
-      ReturnType<typeof nim.detectGpu>,
-      ReturnType<typeof resolveSandboxGpuConfig>
-    > & {
-      resumeHasResolvedGpuIntent: boolean;
-      requestedGpuPassthrough: boolean;
-    };
-
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
+    type InitialOnboardFlowContext =
+      import("./onboard/machine/initial-flow-phases").InitialOnboardFlowContext<
+        typeof agent,
+        ReturnType<typeof nim.detectGpu>,
+        ReturnType<typeof resolveSandboxGpuConfig>
+      >;
     const initialFlowContext: InitialOnboardFlowContext = {
       resume,
       fresh,
@@ -6454,174 +6444,75 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       requestedGpuPassthrough: opts.gpu === true,
     };
 
-    const preflightPhase: import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext> =
-      {
-        state: "preflight",
-        async run(context) {
-          const preflightResult = await handlePreflightState({
-            resume: context.resume,
-            session: context.session,
-            recordedSandboxName: context.recordedSandboxName,
-            requestedSandboxName: context.requestedSandboxName,
-            explicitSandboxGpuFlag,
-            sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
-            gpuRequested: opts.gpu === true,
-            noGpu: opts.noGpu === true,
-            env: process.env,
-            deps: {
-              getSandbox: registry.getSandbox.bind(registry),
-              getResumeSandboxGpuOverrides,
-              detectGpu: nim.detectGpu,
-              runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
-              assessHost,
-              assertCdiNvidiaGpuSpecPresent,
-              // Resume backstops for #3508/#3630/Podman: the cached preflight
-              // step does not capture host Docker/DNS state, and a session
-              // written by an older NemoClaw may not have run the new bridge/
-              // DNS fatal checks (mirrors the assertCdiNvidiaGpuSpecPresent
-              // resume pattern). Podman rejection runs first so users on
-              // unsupported runtimes don't see Docker-specific diagnostics.
-              rejectUnsupportedContainerRuntime,
-              assertDockerBridgeAndContainerDnsHealthy,
-              resolveSandboxGpuConfig,
-              validateSandboxGpuPreflight,
-              skippedStepMessage,
-              recordStateSkipped,
-              startRecordedStep,
-              recordStepComplete,
-              updateSession: onboardSession.updateSession,
-            },
-          });
-          if (context.resume && _preflightDashboardPort === null)
-            preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
-
-          const preflightGpu = preflightResult.gpu ?? null;
-          if (preflightResult.gpuPassthrough) {
-            note(
-              formatSandboxGpuPassthroughNote({
-                hostGpuPlatform: preflightResult.sandboxGpuConfig.hostGpuPlatform,
-                resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
-                recordedGpuPassthroughBeforePreflight,
-                requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
-                sandboxGpuMode: preflightResult.sandboxGpuConfig.mode,
-              }),
-            );
-          } else if (preflightGpu?.platform === "jetson") {
-            note("  Sandbox GPU disabled by configuration on Jetson/Tegra.");
-          } else if (process.platform === "linux" && !opts.noGpu) {
-            try {
-              const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
-              if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
-                const smi = spawnSync(
-                  "nvidia-smi",
-                  ["--query-gpu=name", "--format=csv,noheader,nounits"],
-                  { encoding: "utf-8", timeout: 5000 },
-                );
-                note(
-                  smi.status === 0 && smi.stdout?.trim()
-                    ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
-                    : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.",
-                );
-              }
-            } catch {
-              /* lspci not available — skip hint */
-            }
-          }
-          return {
-            context: {
-              ...context,
-              session: preflightResult.session,
-              gpu: preflightGpu,
-              sandboxGpuConfig: preflightResult.sandboxGpuConfig,
-              gpuPassthrough: preflightResult.gpuPassthrough,
-              resumeHasResolvedGpuIntent: preflightResult.resumeHasResolvedGpuIntent,
-              requestedGpuPassthrough: preflightResult.requestedGpuPassthrough,
-            },
-            result: preflightResult.stateResult,
-          };
-        },
-      };
-
-    const gatewayPhase: import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext> =
-      {
-        state: "gateway",
-        async run(context) {
-          const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
-          const gatewayResult = await handleGatewayState({
-            resume: context.resume,
-            session: context.session,
-            initialGatewayReuseState: gatewaySnapshot.gatewayReuseState,
-            gpu: context.gpu,
-            gpuPassthrough: context.gpuPassthrough,
-            gatewayName: GATEWAY_NAME,
-            recordedSandboxName: context.recordedSandboxName,
-            requestedSandboxName: context.requestedSandboxName,
-            recreateSandbox: isRecreateSandbox(),
-            deps: {
-              refreshDockerDriverGatewayReuseState,
-              gatewayCliSupportsLifecycleCommands: () =>
-                gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-              verifyGatewayContainerRunning,
-              waitForGatewayHttpReady,
-              recoverGatewayRuntime,
-              getGatewayLocalEndpoint,
-              stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
-              destroyGateway,
-              destroyGatewayForReuse,
-              getGatewayClusterImageDrift,
-              stopAllDashboardForwards,
-              reconcileGatewayGpuReuseForGpuIntent,
-              isLinuxDockerDriverGatewayEnabled,
-              retireLegacyGatewayForDockerDriverUpgrade,
-              destroyGatewayRuntimeForGpuReuse: () =>
-                destroyGateway(
-                  () => undefined,
-                  () => false,
-                ),
-              skippedStepMessage,
-              recordStateSkipped,
-              note,
-              startRecordedStep,
-              startGateway,
-              recordStepComplete,
-              exitProcess: (code) => process.exit(code),
-            },
-          });
-          return {
-            context: { ...context, session: gatewayResult.session },
-            result: gatewayResult.stateResult,
-          };
-        },
-      };
-
-    const initialRuntimeSession = await onboardRuntimeBoundary.getRuntime().session();
-    // Keep resume on the compatibility path for now: resume intentionally re-runs
-    // preflight/gateway backstops even when the saved machine is already ahead.
-    const initialFlowResult =
-      !resume && initialRuntimeSession.machine.state === "preflight"
-        ? await runInitialOnboardFlowSequence({
-            context: initialFlowContext,
-            runtime: onboardRuntimeBoundary.getRuntime(),
-            phases: [preflightPhase, gatewayPhase],
-          })
-        : await (async () => {
-            const preflightPhaseResult = await preflightPhase.run(initialFlowContext);
-            for (const stateResult of Array.isArray(preflightPhaseResult.result)
-              ? preflightPhaseResult.result
-              : [preflightPhaseResult.result]) {
-              await recordStateResult(stateResult);
-            }
-            const gatewayPhaseResult = await gatewayPhase.run(preflightPhaseResult.context);
-            for (const stateResult of Array.isArray(gatewayPhaseResult.result)
-              ? gatewayPhaseResult.result
-              : [gatewayPhaseResult.result]) {
-              await recordStateResult(stateResult);
-            }
-            return {
-              context: gatewayPhaseResult.context,
-              session: await onboardRuntimeBoundary.getRuntime().session(),
-            };
-          })();
+    const [preflightPhase, gatewayPhase] = createInitialOnboardFlowPhases({
+      explicitSandboxGpuFlag,
+      sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
+      gpuRequested: opts.gpu === true,
+      noGpu: opts.noGpu === true,
+      env: process.env,
+      recordedGpuPassthroughBeforePreflight,
+      ensureResumePreflightDashboardPortAvailable: () => {
+        if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
+      },
+      preflightDeps: {
+        getSandbox: registry.getSandbox.bind(registry),
+        getResumeSandboxGpuOverrides,
+        detectGpu: nim.detectGpu,
+        runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
+        assessHost,
+        assertCdiNvidiaGpuSpecPresent,
+        rejectUnsupportedContainerRuntime,
+        assertDockerBridgeAndContainerDnsHealthy,
+        resolveSandboxGpuConfig,
+        validateSandboxGpuPreflight,
+        skippedStepMessage,
+        recordStateSkipped,
+        startRecordedStep,
+        recordStepComplete,
+        updateSession: onboardSession.updateSession,
+      },
+      getInitialGatewayReuseState: () =>
+        selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
+      gatewayName: GATEWAY_NAME,
+      recreateSandbox: isRecreateSandbox,
+      gatewayDeps: {
+        refreshDockerDriverGatewayReuseState,
+        gatewayCliSupportsLifecycleCommands: () =>
+          gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+        verifyGatewayContainerRunning,
+        waitForGatewayHttpReady,
+        recoverGatewayRuntime,
+        getGatewayLocalEndpoint,
+        stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
+        destroyGateway,
+        destroyGatewayForReuse,
+        getGatewayClusterImageDrift,
+        stopAllDashboardForwards,
+        reconcileGatewayGpuReuseForGpuIntent,
+        isLinuxDockerDriverGatewayEnabled,
+        retireLegacyGatewayForDockerDriverUpgrade,
+        destroyGatewayRuntimeForGpuReuse: () =>
+          destroyGateway(
+            () => undefined,
+            () => false,
+          ),
+        skippedStepMessage,
+        recordStateSkipped,
+        note,
+        startRecordedStep,
+        startGateway,
+        recordStepComplete,
+        exitProcess: (code) => process.exit(code),
+      },
+      note,
+    });
+    const initialFlowResult = await runInitialOnboardFlowSlice({
+      context: initialFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [preflightPhase, gatewayPhase],
+      resume,
+      recordStateResult,
+    });
 
     const initialContext = initialFlowResult.context;
     if (!initialContext.sandboxGpuConfig) {
