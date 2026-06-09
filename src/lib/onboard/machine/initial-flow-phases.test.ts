@@ -186,6 +186,62 @@ describe("initial onboard flow phases", () => {
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
+  it("returns the runtime session after resume compatibility state recording", async () => {
+    const phaseSession = createSession({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 0,
+      },
+    });
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 0,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => ({
+          context: { ...ctx, session: phaseSession },
+          result: advanceTo("gateway"),
+        }),
+      },
+    ];
+
+    const result = await runInitialOnboardFlowSlice({
+      context: context({ resume: true, session: phaseSession }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async () => {
+          throw new Error("resume compatibility path should not use strict applyResult");
+        },
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (stateResult) => {
+        if (stateResult.type === "transition") {
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: stateResult.next,
+              stateEnteredAt: "2026-06-09T00:01:00.000Z",
+              revision: 1,
+            },
+          });
+        }
+      },
+    });
+
+    expect(result.context.session).toBe(phaseSession);
+    expect(result.session).toBe(runtimeSession);
+    expect(result.session.machine.state).toBe("gateway");
+  });
+
   it("runs resume preflight and gateway backstops when saved machine state is already ahead", async () => {
     const calls: string[] = [];
     const gpu: Gpu = { type: "nvidia", platform: "linux" };
@@ -339,27 +395,28 @@ describe("initial onboard flow phases", () => {
 
     expect(result.session.machine.state).toBe("provider_selection");
     expect(ensureResumePreflightDashboardPortAvailable).toHaveBeenCalledOnce();
-    expect(calls).toEqual(
-      expect.arrayContaining([
-        "get-sandbox",
-        "resume-gpu-overrides",
-        "detect-gpu",
-        "skip-preflight",
-        "record-preflight-skipped",
-        "assess-host",
-        "reject-unsupported-runtime",
-        "assert-cdi",
-        "assert-bridge-dns",
-        "ensure-resume-preflight-port",
-        "initial-gateway-reuse-state",
-        "refresh-gateway-reuse",
-        "gateway-lifecycle-support",
-        "reconcile-gateway-gpu",
-        "skip-gateway",
-        "record-gateway-skipped",
-        "record-gateway-complete",
-      ]),
-    );
+    expect(calls).toEqual([
+      "get-sandbox",
+      "resume-gpu-overrides",
+      "skip-preflight",
+      "record-preflight-skipped",
+      "detect-gpu",
+      "resolve-gpu-config",
+      "validate-gpu-preflight",
+      "assess-host",
+      "reject-unsupported-runtime",
+      "assert-cdi",
+      "assert-bridge-dns",
+      "resolve-gpu-config",
+      "ensure-resume-preflight-port",
+      "initial-gateway-reuse-state",
+      "refresh-gateway-reuse",
+      "gateway-lifecycle-support",
+      "reconcile-gateway-gpu",
+      "skip-gateway",
+      "record-gateway-skipped",
+      "record-gateway-complete",
+    ]);
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 
