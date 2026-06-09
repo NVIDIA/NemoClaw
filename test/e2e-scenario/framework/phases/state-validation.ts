@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
   trustedProviderEndpoint,
@@ -12,6 +16,36 @@ import type { ShellProbeResult } from "../shell-probe.ts";
 import { probesForState, requireExpectedState } from "../../scenarios/expected-states.ts";
 import type { ExpectedState, StateProbeId } from "../../scenarios/types.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
+
+// Mirror of `src/lib/state/registry.ts::REGISTRY_FILE`. The fixture
+// owns its own copy because the framework code must not import from
+// `src/lib/**` (CLI source) — that boundary keeps the live runner
+// honest about probing only host-observable state.
+const NEMOCLAW_REGISTRY_RELPATH = [".nemoclaw", "sandboxes.json"] as const;
+const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+
+export interface ProbeIO {
+  readRegistry?(): { entries: Record<string, unknown> } | null;
+}
+
+function defaultRegistryPath(): string {
+  const home = process.env.HOME ?? os.homedir();
+  return path.join(home, ...NEMOCLAW_REGISTRY_RELPATH);
+}
+
+function defaultReadRegistry(): { entries: Record<string, unknown> } | null {
+  const file = defaultRegistryPath();
+  if (!fs.existsSync(file)) return null;
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { entries: {} };
+    const entries = (parsed as { sandboxes?: Record<string, unknown> }).sandboxes;
+    return { entries: entries && typeof entries === "object" ? entries : {} };
+  } catch {
+    return { entries: {} };
+  }
+}
 
 export interface StateValidationProbeResult {
   id: StateProbeId;
@@ -74,14 +108,23 @@ function isMissingOpenShellError(error: unknown): boolean {
 }
 
 export class StateValidationPhaseFixture {
+  private readonly io: ProbeIO;
+
   constructor(
     private readonly host: HostCliClient,
     private readonly gateway: GatewayClient,
     private readonly sandbox: SandboxClient,
-  ) {}
+    io: ProbeIO = {},
+  ) {
+    this.io = io;
+  }
 
-  async from(expectedStateId: string, instance?: NemoClawInstance): Promise<StateValidationResult> {
-    const state = requireExpectedState(expectedStateId);
+  async from(
+    expectedState: string | ExpectedState,
+    instance?: NemoClawInstance,
+  ): Promise<StateValidationResult> {
+    const state =
+      typeof expectedState === "string" ? requireExpectedState(expectedState) : expectedState;
     const probes: StateValidationProbeResult[] = [];
     for (const probe of probesForState(state)) {
       probes.push(await this.runProbe(probe, instance));
@@ -104,6 +147,10 @@ export class StateValidationPhaseFixture {
         return await this.expectSandboxRunning(requireInstance(probe, instance));
       case "sandbox-absent":
         return await this.expectSandboxAbsent(requireInstance(probe, instance));
+      case "local-registry-entry-present":
+        return this.expectLocalRegistryEntryPresent(requireInstance(probe, instance));
+      case "docker-sandbox-container-present":
+        return await this.expectDockerSandboxContainerPresent(requireInstance(probe, instance));
       default: {
         const _exhaustive: never = probe;
         throw new Error(`Unsupported state-validation probe '${_exhaustive}'.`);
@@ -229,6 +276,64 @@ export class StateValidationPhaseFixture {
       );
     }
     return { id: "sandbox-running", status: "passed", results: [result] };
+  }
+
+  private expectLocalRegistryEntryPresent(instance: NemoClawInstance): StateValidationProbeResult {
+    const reader = this.io.readRegistry ?? defaultReadRegistry;
+    const registry = reader();
+    if (!registry) {
+      throw new Error(
+        `state-validation expected local registry entry for '${instance.sandboxName}', ` +
+          `but ${defaultRegistryPath()} does not exist.`,
+      );
+    }
+    if (!Object.prototype.hasOwnProperty.call(registry.entries, instance.sandboxName)) {
+      const present = Object.keys(registry.entries).sort().join(", ") || "(none)";
+      throw new Error(
+        `state-validation expected local registry entry for '${instance.sandboxName}', ` +
+          `but the registry contains: ${present}.`,
+      );
+    }
+    return { id: "local-registry-entry-present", status: "passed", results: [] };
+  }
+
+  private async expectDockerSandboxContainerPresent(
+    instance: NemoClawInstance,
+  ): Promise<StateValidationProbeResult> {
+    const result = await this.host.command(
+      "docker",
+      [
+        "ps",
+        "-a",
+        "--filter",
+        `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}`,
+        "--format",
+        "{{.Names}}",
+      ],
+      {
+        artifactName: `docker-sandbox-container-present-${instance.sandboxName}`,
+        env: statusProbeEnv(),
+        timeoutMs: 15_000,
+      },
+    );
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `state-validation could not query Docker for label '${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}' ` +
+          `(exit ${result.exitCode}).`,
+      );
+    }
+    const names = result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (names.length === 0) {
+      throw new Error(
+        `state-validation expected at least one Docker container labeled ` +
+          `'${OPENSHELL_SANDBOX_NAME_LABEL}=${instance.sandboxName}' (running, stopped, or ` +
+          `*-nemoclaw-gpu-backup-* sibling), but docker ps -a returned none.`,
+      );
+    }
+    return { id: "docker-sandbox-container-present", status: "passed", results: [result] };
   }
 
   private async expectSandboxAbsent(

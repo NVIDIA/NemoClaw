@@ -131,6 +131,7 @@ describe("typed scenario matrix", () => {
   it("builds the default live Vitest matrix from fixture-supported scenarios only", () => {
     expect(buildLiveScenarioMatrix().map((entry) => entry.id)).toEqual([
       "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-docker-post-reboot-recovery",
     ]);
     expect(buildLiveScenarioMatrix()[0]).toMatchObject({
       id: "ubuntu-repo-cloud-openclaw",
@@ -144,6 +145,22 @@ describe("typed scenario matrix", () => {
       supported: true,
       supportReasons: [],
       pendingRuntimeSuites: ["smoke", "inference", "credentials"],
+    });
+    // Failing-test-first guard for #4423. Pinned in the matrix to
+    // confirm the lifecycle whitelist + post-reboot-recovery scenario
+    // are wired together; the actual RED/GREEN behavior is exercised
+    // by the live runner (gates on the fix landing in src/lib/).
+    expect(buildLiveScenarioMatrix()[1]).toMatchObject({
+      id: "ubuntu-repo-docker-post-reboot-recovery",
+      runner: "ubuntu-latest",
+      platform: "ubuntu-local",
+      install: "repo-current",
+      runtime: "docker-running",
+      onboarding: "cloud-openclaw",
+      expectedStateId: "post-reboot-recovery-ready",
+      requiredSecrets: ["NVIDIA_API_KEY"],
+      supported: true,
+      supportReasons: [],
     });
   });
 
@@ -163,7 +180,10 @@ describe("typed scenario matrix", () => {
     const lines = result.stdout.trim().split("\n");
     expect(lines.length, "live matrix output must be a single line").toBe(1);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.map((entry: { id: string }) => entry.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
+    expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
+      "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
   });
 
   it("--emit-live-matrix honors explicit scenario selections", () => {
