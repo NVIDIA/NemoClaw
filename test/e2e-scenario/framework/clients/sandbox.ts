@@ -32,13 +32,13 @@ export class SandboxClient {
     );
   }
 
-  list(): Promise<ShellProbeResult> {
-    return this.openshell(["sandbox", "list"], { artifactName: "sandbox-list" });
+  list(options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    return this.openshell(["sandbox", "list"], { artifactName: "sandbox-list", ...options });
   }
 
-  status(name: string): Promise<ShellProbeResult> {
+  status(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}` });
+    return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}`, ...options });
   }
 
   exec(name: string, command: string[], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
@@ -49,8 +49,8 @@ export class SandboxClient {
     });
   }
 
-  async expectRunning(name: string): Promise<ShellProbeResult> {
-    const result = await this.status(name);
+  async expectRunning(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+    const result = await this.status(name, options);
     assertExitZero(result, `openshell sandbox status ${name}`);
     return result;
   }
