@@ -503,6 +503,10 @@ describe("runInferenceSet", () => {
       { ignoreError: true },
     );
     expect(config).toEqual({
+      _nemoclaw_upstream: {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      },
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
@@ -712,6 +716,12 @@ describe("runInferenceSet", () => {
       base_url: "https://inference.local",
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
+    });
+    // The upstream annotation must track the selected provider together with
+    // the API-family field, so the two cannot drift apart on later switches.
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
     });
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",

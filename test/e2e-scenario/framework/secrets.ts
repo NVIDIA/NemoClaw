@@ -4,28 +4,16 @@
 import { redactString } from "../scenarios/orchestrators/redaction.ts";
 
 const SENSITIVE_NAME_PATTERN = /(api[_-]?key|token|secret|password|credential)/i;
-const EXPLICIT_SECRET_REDACTION = "[REDACTED]";
 
 /**
- * Bridge-only fixture secret helper.
+ * Fixture-scoped env-secret store.
  *
- * The Vitest fixture layer still needs a small SecretStore while the scenario
- * runner migration is in flight; #4989 tracks consolidating it into shared E2E
- * framework infra. Canonical secret-shaped token matching belongs to
- * scenarios/orchestrators/redaction.ts. Keep explicit fixture secret-value
- * replacement here and always layer the parity-tested framework redactor
- * underneath it so this path does not become a second pattern source.
+ * Holds the per-test view of `process.env` and lets fixtures discover
+ * sensitive values by name. Redaction itself is owned by the canonical
+ * entry point in scenarios/orchestrators/redaction.ts; this class only
+ * supplies the explicit values it knows about and delegates. There is
+ * no separate fixture redaction pattern source.
  */
-
-export function redactText(text: string, secretValues: Iterable<string>): string {
-  let redacted = text;
-  for (const value of secretValues) {
-    if (!value) continue;
-    redacted = redacted.split(value).join(EXPLICIT_SECRET_REDACTION);
-  }
-  return redactString(redacted);
-}
-
 export class SecretStore {
   private readonly env: NodeJS.ProcessEnv;
   private readonly skip: (note?: string) => never;
@@ -62,6 +50,6 @@ export class SecretStore {
   }
 
   redact(text: string, extraValues: string[] = []): string {
-    return redactText(text, this.redactionValues(extraValues));
+    return redactString(text, this.redactionValues(extraValues));
   }
 }

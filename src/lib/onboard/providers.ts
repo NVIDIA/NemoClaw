@@ -77,8 +77,16 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "gemini-2.5-flash",
     skipVerify: true,
   },
+  // Hermes Provider is a single menu entry by design: every model family it
+  // serves (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI,
+  // Arcee) routes through the same Nous portal endpoint and the same
+  // credential. After this entry is selected, the model picker lists the
+  // family options via nousModels.getHermesProviderModelOptions(). The label
+  // names all nine families so QA scripts and operators can discover them
+  // without first selecting the entry.
   hermesProvider: {
-    label: "Hermes Provider",
+    label:
+      "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
     providerName: "hermes-provider",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
