@@ -574,7 +574,6 @@ else
   fail "C5a: channels remove telegram did not unregister"
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
-assert_host_telegram_config "after channels remove"
 assert_host_telegram_plan "removed" "after channels remove"
 
 info "Rebuilding sandbox to apply the remove..."
@@ -621,6 +620,6 @@ else
   pass "C6c: 'telegram' preset removed from policy list after remove+rebuild"
 fi
 
-assert_host_telegram_config "after remove+rebuild"
+assert_host_telegram_plan "removed" "after remove+rebuild"
 
 print_summary

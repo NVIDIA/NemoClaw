@@ -520,5 +520,12 @@ const ctx = module.exports;
       [],
       "messaging plan channels must be empty after removing telegram",
     );
+    assert.deepEqual(
+      messagingPlanUpdate.updates.messaging.plan.credentialBindings.filter(
+        (entry: { channelId: string }) => entry.channelId === "telegram",
+      ),
+      [],
+      "telegram credential bindings must be removed",
+    );
   });
 });

@@ -383,6 +383,25 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(rebuiltPlan);
   });
 
+  it("preserves an env-staged empty plan on non-interactive resume", async () => {
+    const emptyPlan = makeMinimalPlan("my-assistant");
+    const session = createSession({
+      sandboxName: "my-assistant",
+      messagingPlan: emptyPlan,
+    });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => [] as string[]);
+    const { deps, calls, getSession } = createDeps({
+      getRecordedMessagingChannelsForResume,
+      readMessagingPlanFromEnv: () => emptyPlan,
+    });
+
+    const result = await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "my-assistant" });
+
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(result.selectedMessagingChannels).toEqual([]);
+    expect(getSession().messagingPlan).toEqual(emptyPlan);
+  });
+
   it("does not restore plan to env when registry has no entry", async () => {
     const session = createSession({
       sandboxName: "my-assistant",

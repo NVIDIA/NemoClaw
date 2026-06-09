@@ -31,7 +31,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 /** Derive configured channel ids from a plan. */
 export function getChannelsFromPlan(plan: SandboxMessagingPlan | null | undefined): string[] | null {
-  if (!plan || plan.channels.length === 0) return null;
+  if (!plan) return null;
   return plan.channels.map((c) => c.channelId);
 }
 
@@ -39,7 +39,7 @@ export function getChannelsFromPlan(plan: SandboxMessagingPlan | null | undefine
 export function getActiveChannelsFromPlan(
   plan: SandboxMessagingPlan | null | undefined,
 ): string[] | null {
-  if (!plan || plan.channels.length === 0) return null;
+  if (!plan) return null;
   const disabled = new Set(plan.disabledChannels);
   return plan.channels
     .filter((channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId))

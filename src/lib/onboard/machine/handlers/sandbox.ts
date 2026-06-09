@@ -265,6 +265,10 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     let messagingPlan: SandboxMessagingPlan | null = null;
     if (recordedMessagingChannels) {
       selectedMessagingChannels = recordedMessagingChannels;
+      const envPlan = deps.readMessagingPlanFromEnv();
+      if (envPlan) {
+        messagingPlan = envPlan;
+      }
       if (selectedMessagingChannels.length > 0) {
         deps.note(`  [non-interactive] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`);
         // Prefer a plan already in env over the session plan. rebuild.ts stages
@@ -274,10 +278,7 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
         // disabled state and reactivate stopped channels after rebuild.
         // Only restore the session plan when the env is empty, i.e. for plain
         // process-restart resumes where no external caller staged a plan.
-        const envPlan = deps.readMessagingPlanFromEnv();
-        if (envPlan) {
-          messagingPlan = envPlan;
-        } else {
+        if (!envPlan) {
           // Registry is always current — updated by stop/start/add/remove.
           // Works for plain process-restart resumes and cancel-then-resume
           // when sandbox step had previously completed.
