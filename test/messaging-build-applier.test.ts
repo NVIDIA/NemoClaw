@@ -407,6 +407,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       fs.writeFileSync(
         path.join(hermesDir, "config.yaml"),
         [
+          "# Managed by NemoClaw - Hermes configuration",
+          "# Upstream provider: openai",
+          "# OpenShell rewrites model.base_url to the upstream endpoint at request time.",
           "_config_version: 12",
           "platform_toolsets:",
           "  api_server:",

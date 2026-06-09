@@ -700,7 +700,7 @@ function parseGeneratedYamlObject(existing: string | undefined, target: string):
   const lines = existing
     .split(/\r?\n/)
     .map((line, index): GeneratedYamlLine | null => {
-      if (line.trim().length === 0) return null;
+      if (isIgnorableGeneratedYamlLine(line)) return null;
       const indent = line.match(/^ */)?.[0].length ?? 0;
       return { indent, text: line.slice(indent), lineNumber: index + 1 };
     })
@@ -711,6 +711,11 @@ function parseGeneratedYamlObject(existing: string | undefined, target: string):
     throw new MessagingBuildApplierError(`Messaging YAML target ${target} must contain an object.`);
   }
   return parsed as JsonObject;
+}
+
+function isIgnorableGeneratedYamlLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length === 0 || trimmed.startsWith("#") || trimmed === "---" || trimmed === "...";
 }
 
 function parseGeneratedYamlBlock(
