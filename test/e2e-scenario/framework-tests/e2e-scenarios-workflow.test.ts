@@ -6,13 +6,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-
-import { listScenarios } from "../scenarios/registry.ts";
-import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 import {
   validateE2eScenariosWorkflowBoundary,
   validateE2eVitestScenariosWorkflowBoundary,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import { listScenarios } from "../scenarios/registry.ts";
+import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
@@ -116,7 +115,7 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
   });
 
-  it("flags direct dispatch-input interpolation and missing hidden artifact upload", () => {
+  it("flags direct dispatch-input interpolation and unsafe artifact upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     fs.writeFileSync(
@@ -152,7 +151,7 @@ jobs:
         with:
           name: e2e-vitest-scenarios
           path: .e2e/vitest/
-          include-hidden-files: false
+          include-hidden-files: true
           if-no-files-found: ignore
 `,
     );
@@ -161,14 +160,31 @@ jobs:
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
+          "workflow_dispatch missing input: scenarios",
+          "workflow_dispatch must not expose legacy test_filter input",
+          "workflow missing generate-matrix job",
+          "generate-matrix job must run on ubuntu-latest",
+          "live-scenarios job must run on the matrix runner",
+          "live-scenarios job must depend on generate-matrix",
+          "live-scenarios strategy.fail-fast must be false",
+          "live-scenarios matrix.include must come from generate-matrix output",
+          "live-scenarios job must write artifacts under e2e-artifacts/vitest",
+          "live-scenarios artifacts must be scoped by matrix.id",
+          "live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI",
           "checkout action must be pinned to a full commit SHA",
           "checkout step must set persist-credentials=false",
           "setup-node action must be pinned to a full commit SHA",
           "run-scenario job missing step: Build CLI",
+          "Vitest step must pass matrix.id through SCENARIO_ID env",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
+          "step 'Run Vitest live E2E scenarios' run script must include test/e2e-scenario/live/registry-scenarios.test.ts",
+          "step 'Run Vitest live E2E scenarios' run script must include \"^${SCENARIO_ID}$\"",
           "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
-          "summary step must pass display filter through FILTER_LABEL env",
-          "artifact upload must set include-hidden-files: true",
+          "summary step must pass matrix.id through SCENARIO_ID env",
+          "summary step must pass matrix.label through SCENARIO_LABEL env",
+          "artifact upload must set include-hidden-files: false",
+          "artifact upload name must include matrix.id",
+          "artifact upload path must be non-hidden and scoped by matrix.id",
           "upload-artifact action must be pinned to a full commit SHA",
         ]),
       );
