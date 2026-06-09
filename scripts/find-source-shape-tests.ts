@@ -210,18 +210,6 @@ function isReadFileCall(node: ts.CallExpression): boolean {
   return false;
 }
 
-function isSourceTextLikeName(name: string): boolean {
-  return /(src|source|text|content|body|block|snippet|heredoc|docker|script|shell|fn|lines?|matches|calls|usages)/i.test(
-    name,
-  );
-}
-
-function isTextDerivation(initText: string): boolean {
-  return /(\.indexOf\b|\.search\b|\.includes\b|\.match(All)?\b|\.slice\b|\.split\b|\.replace(All)?\b|\.trim(End)?\b|\.join\b|String\(|(?:YAML|yaml|JSON)\.parse\b|yaml\.load\b|Heredoc\b|Snippet\b|Block\b|extract[A-Z]|load[A-Z]|parse[A-Z])/.test(
-    initText,
-  );
-}
-
 function isExecutionResultDerivation(initText: string): boolean {
   return /\b(?:spawnSync|execFileSync|execSync|run(?:Logged|Docker|Bash|WithLib|Embedded|Patch|Hermes|Openclaw|Daemon|Fetch|Command)\w*)\b/.test(
     initText,

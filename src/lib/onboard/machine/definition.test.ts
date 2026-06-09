@@ -92,5 +92,22 @@ describe("onboard machine definition", () => {
       state: "gateway",
       stepName: "gateway",
     });
+    expect(getOnboardMachineStateDefinition("complete")).toMatchObject({
+      state: "complete",
+      terminal: true,
+    });
+    expect(getOnboardMachineStateDefinition("init")).toMatchObject({
+      state: "init",
+      terminal: false,
+    });
+    expect("stepName" in getOnboardMachineStateDefinition("init")).toBe(false);
+  });
+
+  it("throws when looking up an unknown state", () => {
+    expect(() =>
+      getOnboardMachineStateDefinition(
+        "unknown" as Parameters<typeof getOnboardMachineStateDefinition>[0],
+      ),
+    ).toThrow("Unknown onboarding machine state: unknown");
   });
 });

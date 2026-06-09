@@ -1,0 +1,245 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI / Codebase Growth Guardrails
+
+# pull_request_target runs in the base repo context, so this policy cannot be
+# bypassed by editing workflow files or scripts in the PR. Keep this workflow
+# data-only: do not check out or execute PR code. It only reads GitHub's
+# file-level diff metadata.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  codebase-growth-guardrails:
+    name: codebase-growth-guardrails
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Block newly added JavaScript files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | select((.filename | test("\\.(js|cjs|mjs)$")) and (.status == "added" or (.status == "renamed" and ((.previous_filename // "") | test("\\.(js|cjs|mjs)$") | not)))) | [.status, .filename, (.previous_filename // "")] | @tsv')"
+
+          if [ -z "$rows" ]; then
+            echo "PASS: no newly added .js, .cjs, or .mjs files."
+            exit 0
+          fi
+
+          cat <<'EOF'
+          FAIL: this PR adds JavaScript source files.
+
+          NemoClaw is standardizing on TypeScript for new Node.js code. Please
+          use .ts for new source, test, and script files instead of .js, .cjs,
+          or .mjs. Existing JavaScript files may still be modified or deleted.
+
+          Blocked files:
+          EOF
+          while IFS=$'\t' read -r file_status file_path previous_path; do
+            if [ -n "$previous_path" ]; then
+              echo "          - ${file_path} (${file_status} from ${previous_path})"
+            else
+              echo "          - ${file_path} (${file_status})"
+            fi
+          done <<< "$rows"
+          exit 1
+
+      - name: Require src/lib/onboard.ts to be net-neutral or smaller
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          TARGET_FILE: src/lib/onboard.ts
+          EXTRACTION_DIR: src/lib/onboard/
+        run: |
+          set -euo pipefail
+
+          # Intentionally hard-code TARGET_FILE in the jq expression. gh's jq
+          # filter does not accept shell variables directly, and missing
+          # previous_filename values must not match every file.
+          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | select(.filename == "src/lib/onboard.ts" or .previous_filename == "src/lib/onboard.ts") | [.additions, .deletions, .filename] | @tsv')"
+
+          if [ -z "$rows" ]; then
+            echo "${TARGET_FILE} was not changed. New modules under ${EXTRACTION_DIR} are allowed."
+            exit 0
+          fi
+
+          additions=0
+          deletions=0
+          while IFS=$'\t' read -r file_additions file_deletions _file_path; do
+            if [ -z "${file_additions:-}" ]; then
+              continue
+            fi
+            additions=$((additions + file_additions))
+            deletions=$((deletions + file_deletions))
+          done <<< "$rows"
+
+          net=$((additions - deletions))
+          echo "${TARGET_FILE}: +${additions}/-${deletions} (net ${net})"
+          echo "Growth under ${EXTRACTION_DIR} is allowed; this budget applies only to ${TARGET_FILE}."
+
+          if [ "$additions" -le "$deletions" ]; then
+            echo "PASS: ${TARGET_FILE} is net-neutral or smaller."
+            exit 0
+          fi
+
+          cat <<EOF
+          FAIL: ${TARGET_FILE} grew by ${net} line(s).
+
+          ${TARGET_FILE} is already about 12k lines. Please move new logic into
+          focused modules under ${EXTRACTION_DIR}, or reduce ${TARGET_FILE} by at
+          least as many lines as this PR adds there.
+
+          This check allows src/lib/onboard/** to grow. It only blocks net growth
+          in the top-level onboard entrypoint.
+          EOF
+          exit 1
+
+      - name: Require changed test files to stay within size budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          node <<'NODE'
+          const BUDGET_FILE = "ci/test-file-size-budget.json";
+          const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
+          const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$/;
+          const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
+          const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
+          const violations = [];
+
+          function countLines(text) {
+            return text === "" ? 0 : (text.match(/\r\n|\r|\n/g)?.length ?? 0) + (/(?:\r\n|\r|\n)$/.test(text) ? 0 : 1);
+          }
+
+          function parseBudget(text, label) {
+            const budget = JSON.parse(text);
+            const legacyMaxLines = budget.legacyMaxLines ?? {};
+            if (!Number.isInteger(budget.defaultMaxLines) || budget.defaultMaxLines <= 0) {
+              throw new Error(`${label} must define positive integer defaultMaxLines`);
+            }
+            if (typeof legacyMaxLines !== "object" || legacyMaxLines === null || Array.isArray(legacyMaxLines)) {
+              throw new Error(`${label} legacyMaxLines must be an object`);
+            }
+            for (const [file, maxLines] of Object.entries(legacyMaxLines)) {
+              if (!Number.isInteger(maxLines) || maxLines <= 0) {
+                throw new Error(`${label} has invalid legacy budget for ${file}: ${maxLines}`);
+              }
+            }
+            return { defaultMaxLines: budget.defaultMaxLines, legacyMaxLines };
+          }
+
+          async function getJson(url) {
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            return response.json();
+          }
+
+          async function getPullFiles() {
+            const files = [];
+            for (let page = 1; ; page += 1) {
+              const batch = await getJson(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}`);
+              files.push(...batch);
+              if (batch.length < 100) return files;
+            }
+          }
+
+          async function getContent(repo, ref, file) {
+            const encodedPath = file.split("/").map(encodeURIComponent).join("/");
+            const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+            const response = await fetch(url, { headers });
+            if (response.status === 404) return null;
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            const body = await response.json();
+            if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
+              throw new Error(`Could not decode file contents for ${file}`);
+            }
+            return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+          }
+
+          async function checkLegacyFile(file, maxLines, headBudget) {
+            const text = await getContent(HEAD_REPO, HEAD_SHA, file);
+            if (text === null) {
+              violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
+              return;
+            }
+            const lines = countLines(text);
+            if (lines > maxLines) violations.push(`${file} has ${lines} line(s), above its legacy budget ${maxLines}`);
+            if (lines < maxLines) {
+              violations.push(`${file}: ${lines} line(s) < ${maxLines} legacy budget; lower the budget entry`);
+            }
+          }
+
+          async function validateBudget(baseBudget, headBudget, baseWasFallback) {
+            if (baseWasFallback) return;
+            if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
+              violations.push(`defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`);
+            }
+            for (const [file, baseMax] of Object.entries(baseBudget.legacyMaxLines)) {
+              const headMax = headBudget.legacyMaxLines[file];
+              const text = headMax === undefined ? await getContent(HEAD_REPO, HEAD_SHA, file) : null;
+              if (headMax > baseMax) violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
+              if (headMax === undefined && text !== null && countLines(text) > headBudget.defaultMaxLines) {
+                violations.push(`${file} removed its legacy budget while still exceeding defaultMaxLines`);
+              }
+            }
+            for (const [file, headMax] of Object.entries(headBudget.legacyMaxLines)) {
+              if (baseBudget.legacyMaxLines[file] === undefined && headMax > headBudget.defaultMaxLines) {
+                violations.push(`${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`);
+              }
+              await checkLegacyFile(file, headMax, headBudget);
+            }
+          }
+
+          async function main() {
+            const files = await getPullFiles();
+            const baseText = await getContent(REPO, BASE_SHA, BUDGET_FILE);
+            const baseWasFallback = baseText === null;
+            const budgetChanged = files.some(({ filename, previous_filename }) => filename === BUDGET_FILE || previous_filename === BUDGET_FILE);
+            const headText = budgetChanged ? await getContent(HEAD_REPO, HEAD_SHA, BUDGET_FILE) : baseText;
+            if (budgetChanged && headText === null) throw new Error(`${BUDGET_FILE} must remain present and parseable at the PR head`);
+
+            const baseBudget = parseBudget(baseText ?? FALLBACK_BUDGET, "base budget");
+            const headBudget = parseBudget(headText ?? FALLBACK_BUDGET, "head budget");
+            const changedTests = files.filter(({ filename, status }) => status !== "removed" && TEST_FILE_RE.test(filename));
+
+            await validateBudget(baseBudget, headBudget, baseWasFallback);
+            for (const { filename } of changedTests) {
+              const text = await getContent(HEAD_REPO, HEAD_SHA, filename);
+              if (text === null) throw new Error(`Changed test file ${filename} was not found at the PR head`);
+              const lines = countLines(text);
+              const maxLines = headBudget.legacyMaxLines[filename] ?? headBudget.defaultMaxLines;
+              if (lines > maxLines) violations.push(`${filename}: ${lines} line(s) > ${maxLines}`);
+            }
+
+            if (violations.length > 0) {
+              console.error("FAIL: test size budget policy would be weakened or exceeded.");
+              for (const violation of violations) console.error(`- ${violation}`);
+              process.exit(1);
+            }
+            console.log(`PASS: test size budget policy is monotonic and ${changedTests.length} changed test file(s) are within budget.`);
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE

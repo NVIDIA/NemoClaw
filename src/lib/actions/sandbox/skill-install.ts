@@ -16,14 +16,20 @@ import { ensureLiveSandboxOrExit } from "./gateway-state";
 export function printSkillInstallUsage(): void {
   console.log("");
   console.log(`  Usage: ${CLI_NAME} <sandbox> skill install <path>`);
+  console.log(`         ${CLI_NAME} <sandbox> skill remove <name>`);
   console.log("");
-  console.log("  Deploy a skill directory to a running sandbox.");
+  console.log("  Deploy or remove a skill in a running sandbox.");
+  console.log("");
+  console.log("  install <path>  Deploy a skill directory to the sandbox.");
   console.log(
-    "  <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
+    "    <path> must be a skill directory containing a SKILL.md (with 'name:' frontmatter),",
   );
   console.log(
-    "  or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
+    "    or a direct path to a SKILL.md file. All non-dot files in the directory are uploaded.",
   );
+  console.log("");
+  console.log("  remove <name>   Remove an installed skill from the sandbox by name.");
+  console.log("    <name> is the skill name from SKILL.md frontmatter (e.g. my-skill).");
   console.log("");
 }
 
@@ -61,12 +67,111 @@ export type SkillInstallRequest = {
   extraArgs?: string[];
 };
 
+export type SkillRemoveRequest = {
+  command?: string;
+  name?: string;
+  extraArgs?: string[];
+};
+
 export function printPluginInstallHint(): void {
   console.error("  This looks like an OpenClaw plugin, not a SKILL.md agent skill.");
   console.error("  `skill install` only accepts skill directories or direct SKILL.md paths.");
   console.error(
     "  To use an OpenClaw plugin today, bake it into a custom sandbox image with `nemoclaw onboard --from <Dockerfile>`.",
   );
+}
+
+/**
+ * Remove an installed skill from a live sandbox by name.
+ */
+export async function removeSandboxSkill(
+  sandboxName: string,
+  request: SkillRemoveRequest = {},
+): Promise<void> {
+  const skillName = request.name;
+  const extraArgs = request.extraArgs ?? [];
+  if (skillName === "--help" || skillName === "-h") {
+    printSkillInstallUsage();
+    return;
+  }
+  if (extraArgs.length > 0) {
+    console.error(`  Unknown argument(s) for skill remove: ${extraArgs.join(", ")}`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> skill remove <name>`);
+    process.exit(1);
+  }
+  if (!skillName) {
+    console.error(`  Usage: ${CLI_NAME} <sandbox> skill remove <name>`);
+    console.error("  <name> is the skill name from the SKILL.md frontmatter.");
+    process.exit(1);
+  }
+  if (!skillInstall.validateSkillName(skillName)) {
+    console.error(`  Invalid skill name: '${skillName}'`);
+    console.error("  Skill names must match [A-Za-z0-9._-] and must not be '.' or '..'.");
+    process.exit(1);
+  }
+
+  await ensureLiveSandboxOrExit(sandboxName);
+
+  const agent = agentRuntime.getSessionAgent(sandboxName);
+  const paths = skillInstall.resolveSkillPaths(agent, skillName);
+
+  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
+  if (sshConfigResult.status !== 0) {
+    console.error("  Failed to obtain SSH configuration for the sandbox.");
+    process.exit(1);
+  }
+
+  const tmpSshConfig = path.join(
+    os.tmpdir(),
+    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
+  );
+  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+
+  try {
+    const ctx = { configFile: tmpSshConfig, sandboxName };
+
+    const existsCheck = skillInstall.checkExisting(ctx, paths);
+    if (existsCheck === null) {
+      console.error(
+        `  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (!existsCheck) {
+      console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = skillInstall.removeSkill(ctx, paths);
+    for (const msg of result.messages) {
+      if (msg.startsWith("Warning:")) {
+        console.error(`  ${YW}${msg}${R}`);
+      } else {
+        console.log(`  ${D}${msg}${R}`);
+      }
+    }
+
+    const gone = skillInstall.verifyRemove(ctx, paths);
+    if (gone) {
+      console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
+    } else {
+      console.error("  Skill removal could not be verified.");
+      console.error("  The sandbox may be unreachable, or the skill directory may still exist.");
+      process.exitCode = 1;
+      return;
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpSshConfig);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -83,9 +188,18 @@ export async function installSandboxSkill(
     return;
   }
 
+  if (sub === "remove") {
+    await removeSandboxSkill(sandboxName, {
+      command: "remove",
+      name: request.path,
+      extraArgs: request.extraArgs,
+    });
+    return;
+  }
+
   if (sub !== "install") {
     console.error(`  Unknown skill subcommand: ${sub}`);
-    console.error("  Valid subcommands: install");
+    console.error("  Valid subcommands: install, remove");
     process.exit(1);
   }
 
@@ -187,8 +301,21 @@ export async function installSandboxSkill(
   try {
     const ctx = { configFile: tmpSshConfig, sandboxName };
 
-    // 5. Check if skill already exists (update vs fresh install)
-    const isUpdate = skillInstall.checkExisting(ctx, paths);
+    // 5. Check if skill already exists (update vs fresh install). This probe is
+    //    advisory for install only: stale SSH config files and transient remote
+    //    shell startup failures can make the stat probe inconclusive even when a
+    //    subsequent upload succeeds. Upload plus verifyInstall() remain the
+    //    source of truth for install success; remove keeps null fatal because it
+    //    is destructive. Once OpenShell exposes a typed stat API or SSH probe
+    //    failures are reliably distinguishable from absent dirs across supported
+    //    versions, remove this fallback and fail before upload.
+    const existingCheck = skillInstall.checkExisting(ctx, paths);
+    if (existingCheck === null) {
+      console.error(
+        `  ${YW}Warning: could not check sandbox for existing skill — treating as fresh install.${R}`,
+      );
+    }
+    const isUpdate = existingCheck === true;
 
     // 6. Upload skill directory
     const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
@@ -216,7 +343,10 @@ export async function installSandboxSkill(
       const verb = isUpdate ? "updated" : "installed";
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
     } else {
-      console.error(`  Skill uploaded but verification failed at ${paths.uploadDir}/SKILL.md`);
+      console.error(
+        `  Skill uploaded but verification failed: SKILL.md missing at ${paths.uploadDir}` +
+          (paths.isOpenClaw && paths.mirrorDir ? ` or its agent mirror ${paths.mirrorDir}` : ""),
+      );
       process.exit(1);
     }
   } finally {

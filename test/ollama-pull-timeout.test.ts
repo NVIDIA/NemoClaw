@@ -75,7 +75,7 @@ const { pullOllamaModel } = require(${proxyPath});
 
 const originalLog = console.log;
 console.log = () => {};
-pullOllamaModel("qwen2.5:7b")
+pullOllamaModel("qwen3.5:9b")
   .then((ok) => {
     console.log = originalLog;
     originalLog(JSON.stringify({ ok, captured }));

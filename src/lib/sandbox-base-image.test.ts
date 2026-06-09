@@ -19,22 +19,34 @@ import {
 const tmpRoots: string[] = [];
 const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
 const emptyGitConfig = path.join(emptyGitConfigDir, "gitconfig");
+const emptyGitHooksDir = path.join(emptyGitConfigDir, "hooks");
 const emptyGitConfigFd = fs.openSync(emptyGitConfig, "wx", 0o600);
 fs.closeSync(emptyGitConfigFd);
+fs.mkdirSync(emptyGitHooksDir, { mode: 0o700 });
 
-const gitEnv = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: emptyGitConfig,
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_AUTHOR_NAME: "Test User",
-  GIT_AUTHOR_EMAIL: "test@example.com",
-  GIT_COMMITTER_NAME: "Test User",
-  GIT_COMMITTER_EMAIL: "test@example.com",
-};
+function buildGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return {
+    ...env,
+    GIT_CONFIG_GLOBAL: emptyGitConfig,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_AUTHOR_NAME: "Test User",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test User",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+}
+
+const gitEnv = buildGitEnv();
 
 function git(root: string, args: string[]) {
-  const result = spawnSync("git", ["-C", root, ...args], {
+  const result = spawnSync("git", ["-c", `core.hooksPath=${emptyGitHooksDir}`, "-C", root, ...args], {
     encoding: "utf-8",
     env: gitEnv,
   });

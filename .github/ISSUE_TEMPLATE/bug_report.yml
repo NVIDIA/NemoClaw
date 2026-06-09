@@ -1,6 +1,7 @@
 name: Bug Report
-description: Report a bug you confirmed and could not fix.
-labels: ["bug", "status: triage"]
+description: Report a bug you encountered and can reproduce.
+type: Bug
+labels: ["needs: triage"]
 body:
   - type: textarea
     id: description
@@ -28,7 +29,8 @@ body:
       label: Environment
       description: OS, Node.js version, Docker version, NemoClaw version, and any other relevant details.
       placeholder: |
-        - OS: macOS 15.2 / Ubuntu 24.04 / Windows 11 + WSL2
+        - OS: Ubuntu 24.04 / Windows 11 + WSL2 / macOS 15.2
+        - Hardware: DGX Spark / DGX Station / N1X / Jetson / x86_64 workstation / other
         - Node.js: v20.x
         - Docker: Docker Desktop 4.x / Docker Engine 27.x
         - NemoClaw: v0.x.x (output of `nemoclaw --version`)
