@@ -252,6 +252,10 @@ export function printWrongGatewayActiveGuidance(
   sandboxName: string,
   activeGateway: string | null | undefined,
   writer: (message: string) => void = console.error,
+  // The command to re-run after switching gateways. Defaults to `connect`;
+  // callers in a different recovery flow (e.g. `rebuild`) pass their own so the
+  // guidance points back to the workflow the user actually invoked.
+  retryCommand = "connect",
 ): void {
   const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
   writer(
@@ -259,7 +263,7 @@ export function printWrongGatewayActiveGuidance(
   );
   writer("  Switch gateways and retry:");
   writer("      openshell gateway select nemoclaw");
-  writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
+  writer(`  Then re-run: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
 
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */
