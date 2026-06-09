@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
-import { assertGatedModelAccess, type VllmModelDef } from "./vllm-models";
+import { BACK_TO_SELECTION, isBackToSelection, type BackToSelection } from "../navigation";
+import {
+  assertGatedModelAccess,
+  modelsForPlatform,
+  selectVllmModelFromEnv,
+  type VllmModelDef,
+  type VllmPlatform,
+} from "./vllm-models";
 
 export interface VllmModelPromptOptions {
   /**
@@ -94,4 +100,63 @@ function orderWithDefaultFirst(
 ): VllmModelDef[] {
   const others = models.filter((model) => model.id !== defaultModel.id);
   return [defaultModel, ...others];
+}
+
+export type VllmModelSource = "env" | "default" | "picker";
+
+export interface VllmModelResolutionContext {
+  /** Human label printed in picker/summary, e.g. `"DGX Spark"`. */
+  name: string;
+  /** Picker filters the registry by this platform tag. */
+  platform: VllmPlatform;
+  /** Selected when the env var is unset and the run is non-interactive. */
+  defaultModel: VllmModelDef;
+}
+
+export interface ResolveVllmInstallModelOptions {
+  nonInteractive: boolean;
+  promptFn: (question: string) => Promise<string>;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Resolve which vLLM model the installer should serve, applying the same
+ * precedence used by `installVllm`:
+ *
+ *   1. `NEMOCLAW_VLLM_MODEL=<envValue-or-HF-id>` — automation override.
+ *   2. Non-interactive runs fall back to the profile default without prompting.
+ *   3. Interactive runs offer a platform-filtered picker; the picker also
+ *      re-runs `assertGatedModelAccess` on the selection.
+ *
+ * Returns `null` when the env override fails the gated-token check, when the
+ * picker is dismissed via `back`, or when any other resolution error fires —
+ * the failure is logged through `console.error` so the install summary stays
+ * out of the resolved-model path.
+ */
+export async function resolveVllmInstallModel(
+  profile: VllmModelResolutionContext,
+  opts: ResolveVllmInstallModelOptions,
+): Promise<{ model: VllmModelDef; source: VllmModelSource } | null> {
+  try {
+    const envOverride = selectVllmModelFromEnv(opts.env);
+    if (envOverride) {
+      assertGatedModelAccess(envOverride, opts.env);
+      return { model: envOverride, source: "env" };
+    }
+    if (opts.nonInteractive) {
+      assertGatedModelAccess(profile.defaultModel, opts.env);
+      return { model: profile.defaultModel, source: "default" };
+    }
+    const pick = await promptVllmModel(
+      profile.name,
+      modelsForPlatform(profile.platform),
+      profile.defaultModel,
+      { promptFn: opts.promptFn, env: opts.env },
+    );
+    if (isBackToSelection(pick)) return null;
+    return { model: pick, source: "picker" };
+  } catch (err) {
+    console.error(`  vLLM install failed: ${(err as Error).message}`);
+    return null;
+  }
 }

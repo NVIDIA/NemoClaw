@@ -16,15 +16,11 @@ import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
   VLLM_MODELS,
-  assertGatedModelAccess,
   buildVllmServeCommand,
-  modelsForPlatform,
-  selectVllmModelFromEnv,
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
-import { promptVllmModel } from "./vllm-prompt";
-import { isBackToSelection } from "../navigation";
+import { resolveVllmInstallModel } from "./vllm-prompt";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
@@ -507,44 +503,15 @@ export async function installVllm(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
-  // Resolve the model to serve:
-  //   1. `NEMOCLAW_VLLM_MODEL` always wins (automation / scripts).
-  //   2. Non-interactive runs fall back to the per-platform profile default.
-  //   3. Interactive runs offer a picker over the curated registry filtered
-  //      by the profile's platform so the menu only lists models that fit
-  //      the host. The picker re-runs the gated-token assertion before
-  //      returning so the failure mode for an unauthenticated gated pick
-  //      surfaces inside the picker loop rather than after the confirmation.
-  // Gated-model access (HF_TOKEN required for models like DeepSeek-R1
-  // Distill 70B) is validated before touching docker so the user does not
-  // burn a multi-minute pull on a 401.
-  let model: VllmModelDef;
-  let modelSource: "env" | "default" | "picker";
-  try {
-    const envOverride = selectVllmModelFromEnv();
-    if (envOverride) {
-      model = envOverride;
-      modelSource = "env";
-      assertGatedModelAccess(model);
-    } else if (opts.nonInteractive) {
-      model = profile.defaultModel;
-      modelSource = "default";
-      assertGatedModelAccess(model);
-    } else {
-      const pick = await promptVllmModel(
-        profile.name,
-        modelsForPlatform(profile.platform),
-        profile.defaultModel,
-        { promptFn: opts.promptFn },
-      );
-      if (isBackToSelection(pick)) return { ok: false };
-      model = pick;
-      modelSource = "picker";
-    }
-  } catch (err) {
-    console.error(`  vLLM install failed: ${(err as Error).message}`);
-    return { ok: false };
-  }
+  // Model selection lives in `resolveVllmInstallModel` so this entry point
+  // stays focused on the docker side effects. Gated-model access is checked
+  // there before any docker work happens.
+  const resolved = await resolveVllmInstallModel(profile, {
+    nonInteractive: opts.nonInteractive,
+    promptFn: opts.promptFn,
+  });
+  if (!resolved) return { ok: false };
+  const { model, source: modelSource } = resolved;
 
   console.log("");
   console.log(`  vLLM (${profile.name}):`);

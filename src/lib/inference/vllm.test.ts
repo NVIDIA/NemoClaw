@@ -175,7 +175,7 @@ describe("installVllm model resolution", () => {
 
   it("uses the profile default and skips the picker in non-interactive mode", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const promptFn = vi.fn();
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -185,7 +185,7 @@ describe("installVllm model resolution", () => {
 
     expect(result).toEqual({ ok: false });
     expect(promptFn).not.toHaveBeenCalled();
-    const summary = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(summary).toContain("Model: nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(summary).not.toContain("NEMOCLAW_VLLM_MODEL override");
   });
@@ -193,7 +193,7 @@ describe("installVllm model resolution", () => {
   it("annotates the summary as a NEMOCLAW_VLLM_MODEL override when the env var resolves", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "qwen3.6-27b";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const promptFn = vi.fn();
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -203,14 +203,14 @@ describe("installVllm model resolution", () => {
 
     expect(result).toEqual({ ok: false });
     expect(promptFn).not.toHaveBeenCalled();
-    const summary = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(summary).toContain("Model: Qwen/Qwen3.6-27B-FP8 (NEMOCLAW_VLLM_MODEL override)");
   });
 
   it("offers the interactive picker when no env override is set", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const queue = ["", "n"];
-    const promptFn = vi.fn(async () => queue.shift() ?? "");
+    const promptFn = vi.fn<(q: string) => Promise<string>>(async () => queue.shift() ?? "");
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -219,7 +219,8 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
-    const questions = promptFn.mock.calls.map((c) => String(c[0]));
+    const questions = promptFn.mock.calls.map((c: [string]) => c[0]);
+    expect(questions.length).toBeGreaterThanOrEqual(2);
     expect(questions[0]).toContain("Choose model [1]");
     expect(questions[1]).toContain("Continue?");
   });
@@ -227,7 +228,7 @@ describe("installVllm model resolution", () => {
   it("fails the env override before any docker work when a gated model has no HF token", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "deepseek-r1-distill-70b";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    const promptFn = vi.fn();
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -238,7 +239,7 @@ describe("installVllm model resolution", () => {
     expect(result).toEqual({ ok: false });
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.runCapture).not.toHaveBeenCalled();
-    const errors = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(errors).toMatch(/gated on Hugging Face/);
   });
 });
