@@ -572,10 +572,7 @@ import {
 } from "./onboard/hermes-managed-tools";
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./onboard/messaging-state";
-import {
-  getValidatedMessagingToken,
-  getValidatedMessagingTokenByEnvKey,
-} from "./onboard/messaging-token";
+import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
