@@ -220,7 +220,11 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   const initialRuntimeSession = await options.runtime.session();
   // Keep resume on the compatibility path for now: resume intentionally re-runs
   // preflight/gateway backstops even when the saved machine is already ahead.
-  if (!options.resume && initialRuntimeSession.machine.state === "preflight") {
+  if (
+    !options.resume &&
+    (initialRuntimeSession.machine.state === "init" ||
+      initialRuntimeSession.machine.state === "preflight")
+  ) {
     return runInitialOnboardFlowSequence({
       context: options.context,
       runtime: options.runtime,
