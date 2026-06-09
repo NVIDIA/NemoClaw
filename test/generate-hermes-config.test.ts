@@ -470,12 +470,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.slack).toEqual({ enabled: true });
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
     expect(envFile).toContain("TELEGRAM_ALLOWED_USERS=123456789\n");
-    expect(envFile).toContain(
-      "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n",
-    );
-    expect(envFile).toContain(
-      "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
-    );
+    expect(envFile).toContain("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
+    expect(envFile).toContain("SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n");
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
@@ -608,25 +604,21 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("discovers and validates Hermes manifests without changing runtime output", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "hermes/fixture.json",
-      {
-        id: "fixture-hermes",
-        agent: "hermes",
-        description: "Fixture Hermes setup",
-        match: {
-          modelIds: ["fixture/hermes-model"],
-          providerKey: "custom",
-          baseUrl: "https://inference.local/v1",
-        },
-        effects: {
-          hermesCompat: {
-            future: true,
-          },
+    const registryDir = writeRegistryManifest(blueprintDir, "hermes/fixture.json", {
+      id: "fixture-hermes",
+      agent: "hermes",
+      description: "Fixture Hermes setup",
+      match: {
+        modelIds: ["fixture/hermes-model"],
+        providerKey: "custom",
+        baseUrl: "https://inference.local/v1",
+      },
+      effects: {
+        hermesCompat: {
+          future: true,
         },
       },
-    );
+    });
 
     const { config } = runConfigScript({
       NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
@@ -693,19 +685,15 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("rejects unknown Hermes model-specific effect keys", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "hermes/bad-effect.json",
-      {
-        id: "bad-hermes-effect",
-        agent: "hermes",
-        description: "Invalid Hermes effect",
-        match: { modelIds: ["test-model"] },
-        effects: {
-          openclawCompat: {},
-        },
+    const registryDir = writeRegistryManifest(blueprintDir, "hermes/bad-effect.json", {
+      id: "bad-hermes-effect",
+      agent: "hermes",
+      description: "Invalid Hermes effect",
+      match: { modelIds: ["test-model"] },
+      effects: {
+        openclawCompat: {},
       },
-    );
+    });
 
     const result = runConfigScriptRaw({
       NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
@@ -727,19 +715,15 @@ describe("agents/hermes/generate-config.ts", () => {
     );
 
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "hermes/empty-match.json",
-      {
-        id: "empty-hermes-match",
-        agent: "hermes",
-        description: "Invalid Hermes match",
-        match: {},
-        effects: {
-          hermesCompat: {},
-        },
+    const registryDir = writeRegistryManifest(blueprintDir, "hermes/empty-match.json", {
+      id: "empty-hermes-match",
+      agent: "hermes",
+      description: "Invalid Hermes match",
+      match: {},
+      effects: {
+        hermesCompat: {},
       },
-    );
+    });
 
     const emptyMatchResult = runConfigScriptRaw({
       NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,

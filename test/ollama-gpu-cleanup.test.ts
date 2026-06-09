@@ -65,9 +65,7 @@ describe("Ollama GPU cleanup", () => {
     withMockedSpawnSync(
       ({ args }) => {
         if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok(
-            JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }),
-          );
+          return ok(JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }));
         }
         return ok();
       },

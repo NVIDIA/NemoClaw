@@ -39,7 +39,9 @@ describe("plan compiler", () => {
       expect(fs.existsSync(summaryPath)).toBe(true);
       const plans = JSON.parse(fs.readFileSync(planPath, "utf8"));
       expect(plans[0].scenarioId).toBe("ubuntu-repo-cloud-openclaw");
-      expect(fs.readFileSync(summaryPath, "utf8")).toContain("Scenario: ubuntu-repo-cloud-openclaw");
+      expect(fs.readFileSync(summaryPath, "utf8")).toContain(
+        "Scenario: ubuntu-repo-cloud-openclaw",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -50,11 +52,13 @@ describe("plan compiler", () => {
     const onboarding = plan.phases.find((phase) => phase.name === "onboarding");
     const runtime = plan.phases.find((phase) => phase.name === "runtime");
 
-    expect(onboarding?.assertionGroups.map((group) => group.id)).toContain("onboarding.base-installed");
-    expect(runtime?.assertionGroups.map((group) => group.id)).toContain("suite.smoke");
-    expect(runtime?.assertionGroups.flatMap((group) => group.steps.map((step) => step.id))).toContain(
-      "runtime.smoke.gateway-health",
+    expect(onboarding?.assertionGroups.map((group) => group.id)).toContain(
+      "onboarding.base-installed",
     );
+    expect(runtime?.assertionGroups.map((group) => group.id)).toContain("suite.smoke");
+    expect(
+      runtime?.assertionGroups.flatMap((group) => group.steps.map((step) => step.id)),
+    ).toContain("runtime.smoke.gateway-health");
   });
 
   it("should show timeout and retry policy in plan", () => {
@@ -81,7 +85,9 @@ describe("plan compiler", () => {
       onboardingAssertionIds: [],
     };
 
-    expect(() => compileRunPlans([badScenario])).toThrow(/incompatible.*platform|platform.*incompatible/i);
+    expect(() => compileRunPlans([badScenario])).toThrow(
+      /incompatible.*platform|platform.*incompatible/i,
+    );
   });
 
   it("should reject suite filter", () => {

@@ -171,7 +171,14 @@ describe("executeDeploy", () => {
       ...overrides,
     };
 
-    return { options, calls, logs, errors, interactive, setPlainBrevList: (value: string) => (plainBrevList = value) };
+    return {
+      options,
+      calls,
+      logs,
+      errors,
+      interactive,
+      setPlainBrevList: (value: string) => (plainBrevList = value),
+    };
   }
 
   it("uses the standard installer, syncs a buildable checkout, pins SSH host keys, and connects to the requested sandbox", async () => {
@@ -179,19 +186,46 @@ describe("executeDeploy", () => {
 
     await executeDeploy(fixture.options);
 
-    expect(fixture.calls.some((call) => call.command?.[0] === "brev" && call.command.includes("create") && call.command.includes("--provider") && call.command.includes("gcp"))).toBe(true);
+    expect(
+      fixture.calls.some(
+        (call) =>
+          call.command?.[0] === "brev" &&
+          call.command.includes("create") &&
+          call.command.includes("--provider") &&
+          call.command.includes("gcp"),
+      ),
+    ).toBe(true);
     const rsync = fixture.calls.find((call) => call.command?.[0] === "rsync")?.command ?? [];
     expect(rsync).toContain("/repo/root/");
     expect(rsync).toContain("--exclude");
     expect(rsync).toContain("dist");
     expect(rsync).not.toContain("src");
-    expect(fixture.calls.some((call) => call.file === "ssh-keyscan" && call.args?.includes("target.example.test"))).toBe(true);
-    const sshCommands = [...fixture.calls.flatMap((call) => call.command ?? []), ...fixture.interactive.flat()];
+    expect(
+      fixture.calls.some(
+        (call) => call.file === "ssh-keyscan" && call.args?.includes("target.example.test"),
+      ),
+    ).toBe(true);
+    const sshCommands = [
+      ...fixture.calls.flatMap((call) => call.command ?? []),
+      ...fixture.interactive.flat(),
+    ];
     expect(sshCommands).toContain("StrictHostKeyChecking=yes");
     expect(sshCommands.some((arg) => String(arg).startsWith("UserKnownHostsFile="))).toBe(true);
     expect(sshCommands).not.toContain("StrictHostKeyChecking=accept-new");
-    expect(fixture.interactive.some((command) => command.join(" ").includes("bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software"))).toBe(true);
-    expect(fixture.interactive.some((command) => command.join(" ").includes("openshell sandbox connect 'my-box'"))).toBe(true);
+    expect(
+      fixture.interactive.some((command) =>
+        command
+          .join(" ")
+          .includes(
+            "bash scripts/install.sh --non-interactive --yes-i-accept-third-party-software",
+          ),
+      ),
+    ).toBe(true);
+    expect(
+      fixture.interactive.some((command) =>
+        command.join(" ").includes("openshell sandbox connect 'my-box'"),
+      ),
+    ).toBe(true);
     expect(fixture.logs.join("\n")).toContain("Skipping service startup");
   });
 

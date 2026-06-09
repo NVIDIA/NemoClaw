@@ -29,9 +29,7 @@ export default class SandboxSessionsResetCommand extends NemoClawCommand {
     "--reason new registers a fresh session under the same key without preserving the",
     "archive trail; the default --reason reset archives the prior transcript.",
   ].join("\n");
-  static usage = [
-    "<name> <key> [--agent <id>] [--reason new|reset] [--json] [--verbose]",
-  ];
+  static usage = ["<name> <key> [--agent <id>] [--reason new|reset] [--json] [--verbose]"];
   static examples = [
     "<%= config.bin %> sandbox sessions reset alpha main",
     "<%= config.bin %> sandbox sessions reset alpha agent:work:telegram:t-1",

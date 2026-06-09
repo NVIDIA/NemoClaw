@@ -15,8 +15,7 @@ export default class UninstallCliCommand extends NemoClawCommand {
   static description = "Run the local uninstall.sh script; remote fallback is disabled.";
   static usage = ["uninstall [flags]"];
   static examples = ["<%= config.bin %> uninstall --yes"];
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     this.parsed = true;

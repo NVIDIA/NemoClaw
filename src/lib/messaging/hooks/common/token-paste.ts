@@ -50,9 +50,7 @@ export function createTokenPasteHook(options: TokenPasteHookOptions = {}): Messa
       if (output.kind !== "secret") continue;
       const field = resolveTokenPasteField(context.channelId, output, options);
       if (!field) {
-        throw new Error(
-          `No token-paste field registered for ${context.channelId}.${output.id}`,
-        );
+        throw new Error(`No token-paste field registered for ${context.channelId}.${output.id}`);
       }
       const resolved = await resolveTokenValue(
         context.channelId,
@@ -138,9 +136,7 @@ async function resolveTokenValue(
     throw new Error(`No token entered for ${field.envKey}.`);
   }
   if (field.format && !field.format.test(token)) {
-    log(
-      `  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`,
-    );
+    log(`  ✗ Invalid format. ${field.formatHint || "Check the token and try again."}`);
     log(formatSkippedInvalidTokenMessage(channelId, output));
     throw new Error(
       `Invalid token format for ${field.envKey}. ${
@@ -167,9 +163,7 @@ function persistTokenValue(
 }
 
 async function missingPhaseOnePrompt(): Promise<string> {
-  throw new Error(
-    "Token-paste hook requires an injected prompt implementation in phase 1.",
-  );
+  throw new Error("Token-paste hook requires an injected prompt implementation in phase 1.");
 }
 
 function normalizeCredentialValue(value: string | null | undefined): string {
@@ -194,8 +188,7 @@ function resolveManifestTokenPasteField(
   output: ChannelHookOutputSpec,
 ): TokenPasteField | null {
   const input = manifest.inputs.find(
-    (entry): entry is ChannelSecretInputSpec =>
-      entry.kind === "secret" && entry.id === output.id,
+    (entry): entry is ChannelSecretInputSpec => entry.kind === "secret" && entry.id === output.id,
   );
   if (!input?.envKey) return null;
   return {
@@ -253,10 +246,7 @@ function tokenNoun(output: ChannelHookOutputSpec): string {
   return output.id === "appToken" ? "app token" : "token";
 }
 
-function formatSkippedNoTokenMessage(
-  channelId: string,
-  output: ChannelHookOutputSpec,
-): string {
+function formatSkippedNoTokenMessage(channelId: string, output: ChannelHookOutputSpec): string {
   if (output.id === "appToken") {
     return `  Skipped ${channelId} app token (Socket Mode requires both tokens)`;
   }

@@ -128,9 +128,7 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
 
     expect(warnings).toContain("Failed to terminate shields timer PID 4242");
     expect(
-      warnings.some((message) =>
-        message.includes("Failed to remove shields cleanup artifact"),
-      ),
+      warnings.some((message) => message.includes("Failed to remove shields cleanup artifact")),
     ).toBe(true);
     expect(rmSync).toHaveBeenCalledTimes(2);
     expect(rmSync.mock.calls[0][0]).toContain("shields-alpha.json");

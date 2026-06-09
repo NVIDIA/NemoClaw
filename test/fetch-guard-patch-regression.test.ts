@@ -43,7 +43,7 @@ const REVIEWED_OPENCLAW_2026_5_27_SSRF_POLICY_SHAPE = [
   '  if (!normalized) throw new Error("Invalid hostname");',
   "  const hostnameAllowlist = normalizeHostnameAllowlist(policy?.hostnameAllowlist);",
   "  const skipPrivateNetworkChecks = shouldSkipPrivateNetworkChecks(normalized, policy);",
-  '  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);',
+  "  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);",
   "  if (!skipPrivateNetworkChecks) assertAllowedHostOrIpOrThrow(normalized, policy);",
   "  return {",
   "    normalized,",
@@ -125,7 +125,11 @@ function readDockerfileBaseOpenClawVersion(): string {
 }
 
 function readDockerfileOpenClawVersion(): string {
-  return readRequiredMatch(DOCKERFILE, /^ARG OPENCLAW_VERSION=([^\s]+)/m, "OpenClaw runtime version");
+  return readRequiredMatch(
+    DOCKERFILE,
+    /^ARG OPENCLAW_VERSION=([^\s]+)/m,
+    "OpenClaw runtime version",
+  );
 }
 
 function readDockerfileBaseOpenClawIntegrity(): string {
@@ -406,9 +410,10 @@ describe("fetch-guard patch regression guard", () => {
       blueprintMinVersion,
       "Dockerfile.base OpenClaw target must satisfy the blueprint minimum.",
     );
-    expect(runtimeVersion, "Dockerfile and Dockerfile.base must build the same OpenClaw target.").toBe(
-      baseImageVersion,
-    );
+    expect(
+      runtimeVersion,
+      "Dockerfile and Dockerfile.base must build the same OpenClaw target.",
+    ).toBe(baseImageVersion);
     expect(readDockerfileBaseOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
     expect(readDockerfileOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
     expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
@@ -513,9 +518,9 @@ describe("fetch-guard patch regression guard", () => {
         expect(trusted.policy).toEqual({
           allowedHostnames: ["host.openshell.internal"],
         });
-        expect(() => (globalThis as any).assertHostnameAllowedWithPolicy("host.openshell.internal")).toThrow(
-          /blocked host\.openshell\.internal/,
-        );
+        expect(() =>
+          (globalThis as any).assertHostnameAllowedWithPolicy("host.openshell.internal"),
+        ).toThrow(/blocked host\.openshell\.internal/);
         delete process.env.OPENSHELL_SANDBOX;
         await expect(
           (globalThis as any).fetchWithWebToolsNetworkGuard({
@@ -653,7 +658,6 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 
   it("applies the proxy validator patch while the target function still exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-proxy-skip-"));
@@ -874,7 +878,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
   });
 
   it("fails closed when the web_fetch trusted-proxy callsite disappears but web fetch refs remain", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-host-gateway-unknown-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-host-gateway-unknown-"),
+    );
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(
@@ -908,7 +914,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
   });
 
   it("fails closed when the web_fetch target disappears but the runtime useEnvProxy symbol remains", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-use-env-proxy-unknown-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-use-env-proxy-unknown-"),
+    );
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(
@@ -1108,7 +1116,11 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION);
+      const patch = runFetchGuardPatchBlock(
+        dist,
+        tmp,
+        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+      );
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 4 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
@@ -1146,7 +1158,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
   });
 
   it("reports Patch 4 not needed when the managed-proxy gate is absent", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-managed-proxy-absent-"));
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-managed-proxy-absent-"),
+    );
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
     fs.writeFileSync(
@@ -1189,9 +1203,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     try {
       const patch = runFetchGuardPatchBlock(dist, tmp, "2026.6.1");
       expect(patch.status).toBe(1);
-      expect(patch.stderr).toContain(
-        "Patch 4 target missing but managed-proxy references remain",
-      );
+      expect(patch.stderr).toContain("Patch 4 target missing but managed-proxy references remain");
       expect(patch.stderr).toContain("Patch 4 cannot safely skip");
       expect(patch.stderr).toContain("OpenClaw 2026.6.1");
     } finally {

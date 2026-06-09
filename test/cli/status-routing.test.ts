@@ -17,9 +17,7 @@ describe("CLI status routing", () => {
   });
 
   it("sandbox status --help advertises --json flag", () => {
-    const home = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-help-json-"),
-    );
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-help-json-"));
     writeSandboxRegistry(home);
     const r = runWithEnv("sandbox status alpha --help", { HOME: home });
     expect(r.code).toBe(0);

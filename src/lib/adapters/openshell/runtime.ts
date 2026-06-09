@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import type { StdioOptions } from "node:child_process";
 
 import { ROOT } from "../../runner";
@@ -91,9 +90,7 @@ export function isCommandTimeout(result: { error?: Error }) {
   return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
-export function getInstalledOpenshellVersionOrNull(
-  opts: { timeout?: number } = {},
-): string | null {
+export function getInstalledOpenshellVersionOrNull(opts: { timeout?: number } = {}): string | null {
   return getInstalledOpenshellVersion(getOpenshellBinary(), {
     cwd: ROOT,
     timeout: opts.timeout,

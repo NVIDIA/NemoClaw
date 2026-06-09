@@ -318,9 +318,7 @@ describe("CLI dispatch", () => {
       expect(out).toMatch(/gated on Hugging Face/);
       expect(out).toMatch(/HF_TOKEN/);
       expect(out).toMatch(/HUGGING_FACE_HUB_TOKEN/);
-      expect(out).toContain(
-        "NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path",
-      );
+      expect(out).toContain("NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path");
       const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
       expect(calls).not.toMatch(/\bsandbox\s+(get|connect|list)\b/);
     } finally {
@@ -349,5 +347,4 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Command order is: nemoclaw <sandbox-name> connect");
     expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
   });
-
 });

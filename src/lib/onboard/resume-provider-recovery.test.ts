@@ -80,7 +80,11 @@ describe("ensureResumeProviderReady", () => {
 
   it("returns false-forced when the provider still exists in the gateway", async () => {
     const { deps } = makeDeps({ providerExists: true });
-    const result = await ensureResumeProviderReady("compatible-endpoint", "COMPATIBLE_API_KEY", deps);
+    const result = await ensureResumeProviderReady(
+      "compatible-endpoint",
+      "COMPATIBLE_API_KEY",
+      deps,
+    );
     expect(result.forceInferenceSetup).toBe(false);
     expect(result.credentialEnv).toBe("COMPATIBLE_API_KEY");
   });

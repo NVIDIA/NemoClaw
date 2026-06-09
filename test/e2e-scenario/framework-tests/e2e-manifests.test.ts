@@ -35,7 +35,9 @@ describe("NemoClawInstance manifests", () => {
       },
     };
 
-    expect(() => validateManifest(badManifest, "bad.yaml")).toThrow(/assertion|suite|product-facing/i);
+    expect(() => validateManifest(badManifest, "bad.yaml")).toThrow(
+      /assertion|suite|product-facing/i,
+    );
   });
 
   it("should reject raw secret values in manifest", () => {
@@ -50,11 +52,15 @@ describe("NemoClawInstance manifests", () => {
       },
     };
 
-    expect(() => validateManifest(badManifest, "bad-secret.yaml")).toThrow(/raw secret|credentialRefs/i);
+    expect(() => validateManifest(badManifest, "bad-secret.yaml")).toThrow(
+      /raw secret|credentialRefs/i,
+    );
   });
 
   it("should cover every typed scenario manifest need", () => {
-    const manifestNames = new Set(loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name));
+    const manifestNames = new Set(
+      loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name),
+    );
     const missingManifests = listScenarios()
       .map((scenario) => scenario.manifestPath)
       .filter((manifestPath): manifestPath is string => Boolean(manifestPath))
@@ -69,7 +75,9 @@ describe("NemoClawInstance manifests", () => {
 
     expect(plan.manifestPath).toBe("test/e2e-scenario/manifests/openclaw-nvidia.yaml");
     expect(plan.manifestPath).toBeDefined();
-    expect(plan.manifest).toEqual(loadManifest(path.join(REPO_ROOT, plan.manifestPath as string)).document);
+    expect(plan.manifest).toEqual(
+      loadManifest(path.join(REPO_ROOT, plan.manifestPath as string)).document,
+    );
     expect(plan.manifest?.spec.setup.install.source).toBe("repo-current");
     expect(plan.manifest?.spec.onboarding.agent).toBe("openclaw");
     expect(plan.manifest?.spec.onboarding.provider).toBe("nvidia");

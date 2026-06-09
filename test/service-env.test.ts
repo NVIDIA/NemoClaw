@@ -20,10 +20,7 @@ import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-const RC_CLEAN_SCRIPT = join(
-  import.meta.dirname,
-  "../scripts/lib/clean_runtime_shell_env_shim.py",
-);
+const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");
 
 function rcShimWrapperHeader(): string {
   return `export NEMOCLAW_RC_CLEAN_SCRIPT=${JSON.stringify(RC_CLEAN_SCRIPT)}`;
@@ -317,10 +314,7 @@ describe("service environment", () => {
         throw new Error("Failed to extract _TOOL_REDIRECTS block from scripts/nemoclaw-start.sh");
       }
       const block = `${src.slice(start, end)}done`;
-      const tmpFile = join(
-        tmpdir(),
-        `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`,
-      );
+      const tmpFile = join(tmpdir(), `nemoclaw-tool-redirects-npm-online-${process.pid}.sh`);
       try {
         writeFileSync(
           tmpFile,
@@ -365,10 +359,7 @@ describe("service environment", () => {
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
           '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
           'export OPENCLAW_GATEWAY_TOKEN="probe-token"',
-          persistBlock.replaceAll(
-            "/tmp/nemoclaw-proxy-env.sh",
-            `${fakeDataDir}/proxy-env.sh`,
-          ),
+          persistBlock.replaceAll("/tmp/nemoclaw-proxy-env.sh", `${fakeDataDir}/proxy-env.sh`),
           `env -i HOME=/tmp bash --noprofile --norc -c 'source ${fakeDataDir}/proxy-env.sh; printf "%s\\n" "$npm_config_offline" "$NPM_CONFIG_OFFLINE"'`,
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -1231,6 +1222,5 @@ describe("service environment", () => {
         }
       }
     });
-
   });
 });

@@ -218,8 +218,7 @@ function inboundSignal(input: WhatsappProbeInput): DiagnosticSignal {
         label: "Inbound delivery",
         severity: "warn",
         detail: "bridge has not published a heartbeat — inbound delivery is not observable",
-        hint:
-          "send a test message to the bot from a paired phone; if `lastInboundAt` stays null, the bridge is not subscribed to inbound events",
+        hint: "send a test message to the bot from a paired phone; if `lastInboundAt` stays null, the bridge is not subscribed to inbound events",
       };
     }
     return {
@@ -248,8 +247,7 @@ function inboundSignal(input: WhatsappProbeInput): DiagnosticSignal {
         hb.messagesHandled !== null
           ? `paired but no inbound message observed (messagesHandled=${hb.messagesHandled})`
           : "paired but no inbound message observed (lastInboundAt is null)",
-      hint:
-        "send a test message to the bot from a paired phone, then re-run; if it stays null, restart the bridge and re-check logs",
+      hint: "send a test message to the bot from a paired phone, then re-run; if it stays null, restart the bridge and re-check logs",
     };
   }
   const stale = minutesSince(lastInbound, input.probedAt);
@@ -500,7 +498,10 @@ const SAFE_CONNECTION_STATES = new Set([
 
 function sanitizeConnectionState(value: string | null): string | null {
   if (!value) return null;
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (normalized.length > 32) return "other";
   return SAFE_CONNECTION_STATES.has(normalized) ? normalized : "other";
 }
@@ -529,8 +530,7 @@ function categorizeNote(value: string | null): string | null {
 // `channels status --json` despite the redaction guarantee. Re-emit the
 // canonical `toISOString()` form so the rendered output is deterministic
 // regardless of the bridge's exact serialization.
-const STRICT_ISO_8601 =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+const STRICT_ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
 
 function sanitizeTimestamp(value: string | null): string | null {
   if (value === null) return null;
@@ -595,7 +595,10 @@ const LOG_PATTERNS: Array<{ pattern: RegExp; summary: string }> = [
   { pattern: /401\b|unauthorized/i, summary: "401 unauthorized" },
   { pattern: /qr\b.*(expired|timeout)/i, summary: "qr expired" },
   { pattern: /restartRequired|loggedOut|logged out/i, summary: "session logged out" },
-  { pattern: /getMessage.*missing|message-not-found/i, summary: "getMessage miss (out-of-order delivery)" },
+  {
+    pattern: /getMessage.*missing|message-not-found/i,
+    summary: "getMessage miss (out-of-order delivery)",
+  },
 ];
 
 export function summarizeWhatsappLogLines(lines: readonly string[]): string[] {

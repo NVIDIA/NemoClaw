@@ -34,9 +34,7 @@ describe("gateway GPU passthrough inspection", () => {
     expect(inspectLegacyGatewayGpuPassthroughResult(0, '[{"Driver":"nvidia"}]')).toBe(
       "gpu-enabled",
     );
-    expect(inspectLegacyGatewayGpuPassthroughResult(1, "", "No such object: x")).toBe(
-      "not-found",
-    );
+    expect(inspectLegacyGatewayGpuPassthroughResult(1, "", "No such object: x")).toBe("not-found");
     expect(inspectLegacyGatewayGpuPassthroughResult(1, "")).toBe("unknown");
     expect(inspectLegacyGatewayGpuPassthroughResult(0, "")).toBe("unknown");
   });
@@ -131,9 +129,7 @@ describe("gateway GPU passthrough inspection", () => {
 
   it("allows CPU-only gateway restart for empty registry or the one sandbox being recreated", () => {
     expect(canRestartCpuOnlyGatewayForGpuIntent([], null, false)).toBe(true);
-    expect(canRestartCpuOnlyGatewayForGpuIntent(["my-assistant"], "my-assistant", true)).toBe(
-      true,
-    );
+    expect(canRestartCpuOnlyGatewayForGpuIntent(["my-assistant"], "my-assistant", true)).toBe(true);
     expect(canRestartCpuOnlyGatewayForGpuIntent(["my-assistant"], "my-assistant", false)).toBe(
       false,
     );

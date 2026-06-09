@@ -46,8 +46,12 @@ describe("getOllamaPullTimeoutMs", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-pull-timeout-"));
     const scriptPath = path.join(tmpDir, "http-timeout-check.js");
-    const proxyPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"));
-    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    );
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
     const script = `
 const { EventEmitter } = require("events");
 const { PassThrough } = require("stream");
