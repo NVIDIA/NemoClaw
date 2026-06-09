@@ -923,10 +923,13 @@ describe("regression guards", () => {
     // Permission denied`. Root cause: the sandbox landlock filesystem policy
     // never granted the devpts PTY devices, so forkpty() open of /dev/ptmx
     // (-> /dev/pts/ptmx) and the /dev/pts/<n> slave was denied with EACCES.
-    const policyDir = path.join(repoRoot, "nemoclaw-blueprint", "policies");
-    for (const policyFile of ["openclaw-sandbox.yaml", "openclaw-sandbox-permissive.yaml"]) {
+    for (const policyFile of [
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
+      path.join("agents", "openclaw", "policy-permissive.yaml"),
+    ]) {
       it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
-        const doc = YAML.parse(fs.readFileSync(path.join(policyDir, policyFile), "utf-8"));
+        const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));
         const readWrite: string[] = doc.filesystem_policy?.read_write ?? [];
         // devpts must be writable — tmux opens the master and slave O_RDWR.
         expect(readWrite).toContain("/dev/pts");
