@@ -9,7 +9,10 @@ import { describe, expect, it } from "vitest";
 
 import { listScenarios } from "../scenarios/registry.ts";
 import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
-import { validateE2eScenariosWorkflowBoundary } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import {
+  validateE2eScenariosWorkflowBoundary,
+  validateE2eVitestScenariosWorkflowBoundary,
+} from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
@@ -98,6 +101,73 @@ jobs:
           "artifact upload must set include-hidden-files: false (raw context.env must not leak)",
           "artifact upload path must include .e2e/actions/ (redacted action evidence)",
           "artifact upload path must include .e2e/logs/ (redacted shell-step evidence)",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("e2e-vitest-scenarios workflow boundary", () => {
+  it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
+    expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
+  });
+
+  it("flags direct dispatch-input interpolation and missing hidden artifact upload", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    fs.writeFileSync(
+      workflowPath,
+      `
+"on":
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        required: false
+permissions:
+  contents: read
+jobs:
+  live-scenarios:
+    runs-on: ubuntu-latest
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/vitest
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Run Vitest live E2E scenarios
+        env:
+          TEST_FILTER: \${{ inputs.test_filter }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Summarize artifacts
+        run: echo "\${{ github.event.inputs['test_filter'] }}"
+      - name: Upload Vitest E2E artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-vitest-scenarios
+          path: .e2e/vitest/
+          include-hidden-files: false
+          if-no-files-found: ignore
+`,
+    );
+
+    try {
+      const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "checkout action must be pinned to a full commit SHA",
+          "checkout step must set persist-credentials=false",
+          "setup-node action must be pinned to a full commit SHA",
+          "run-scenario job missing step: Build CLI",
+          "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
+          "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
+          "summary step must pass display filter through FILTER_LABEL env",
+          "artifact upload must set include-hidden-files: true",
+          "upload-artifact action must be pinned to a full commit SHA",
         ]),
       );
     } finally {

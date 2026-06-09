@@ -8,6 +8,12 @@ import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
+const DEFAULT_VITEST_WORKFLOW_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "workflows",
+  "e2e-vitest-scenarios.yaml",
+);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & { name?: string; run?: string; uses?: string; with?: WorkflowRecord };
@@ -56,6 +62,39 @@ function requireRunDoesNotContain(errors: string[], step: WorkflowStep | undefin
   }
 }
 
+function requireWorkflowDispatch(errors: string[], triggers: WorkflowRecord): WorkflowRecord {
+  const workflowDispatch = asRecord(triggers.workflow_dispatch);
+  if (Object.keys(workflowDispatch).length === 0) errors.push("workflow must support workflow_dispatch");
+  return workflowDispatch;
+}
+
+function rejectAutomaticTriggers(errors: string[], triggers: WorkflowRecord): void {
+  for (const unsafe of ["push", "pull_request", "pull_request_target", "schedule"]) {
+    if (Object.hasOwn(triggers, unsafe)) errors.push(`workflow must not run on ${unsafe}`);
+  }
+}
+
+function requireFullShaAction(errors: string[], step: WorkflowStep | undefined, description: string): void {
+  if (!step) return;
+  if (!/@[0-9a-f]{40}$/i.test(stringValue(step.uses))) {
+    errors.push(`${description} action must be pinned to a full commit SHA`);
+  }
+}
+
+function requireNoDispatchInputInterpolation(
+  errors: string[],
+  steps: readonly WorkflowStep[],
+): void {
+  const expressionPattern = /\$\{\{\s*(?:inputs|github\.event\.inputs)\s*(?:\.|\[)/;
+  for (const step of steps) {
+    if (expressionPattern.test(stringValue(step.run))) {
+      errors.push(
+        `step '${step.name ?? "<unnamed>"}' run script must not interpolate dispatch inputs directly`,
+      );
+    }
+  }
+}
+
 export function validateE2eScenariosWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): string[] {
@@ -63,13 +102,10 @@ export function validateE2eScenariosWorkflowBoundary(
   const errors: string[] = [];
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
-  const workflowDispatch = asRecord(triggers.workflow_dispatch);
+  const workflowDispatch = requireWorkflowDispatch(errors, triggers);
   const workflowCall = asRecord(triggers.workflow_call);
-  if (Object.keys(workflowDispatch).length === 0) errors.push("workflow must support workflow_dispatch");
   if (Object.keys(workflowCall).length === 0) errors.push("workflow must support workflow_call");
-  for (const unsafe of ["push", "pull_request", "pull_request_target", "schedule"]) {
-    if (Object.hasOwn(triggers, unsafe)) errors.push(`workflow must not run on ${unsafe}`);
-  }
+  rejectAutomaticTriggers(errors, triggers);
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
@@ -165,6 +201,88 @@ export function validateE2eScenariosWorkflowBoundary(
     if (line.trim() === ".e2e/") {
       errors.push("artifact upload path must not list bare .e2e/ (use explicit subpaths to avoid context.env leakage)");
     }
+  }
+
+  return errors;
+}
+
+export function validateE2eVitestScenariosWorkflowBoundary(
+  workflowPath = DEFAULT_VITEST_WORKFLOW_PATH,
+): string[] {
+  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
+  const errors: string[] = [];
+  const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
+
+  const workflowDispatch = requireWorkflowDispatch(errors, triggers);
+  rejectAutomaticTriggers(errors, triggers);
+
+  const dispatchInputs = asRecord(workflowDispatch.inputs);
+  requireInput(errors, dispatchInputs, "test_filter");
+
+  const permissions = asRecord(workflow.permissions);
+  if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
+
+  const jobs = asRecord(workflow.jobs);
+  const liveScenarios = asRecord(jobs["live-scenarios"]);
+  if (Object.keys(liveScenarios).length === 0) errors.push("workflow missing live-scenarios job");
+  if (liveScenarios["runs-on"] !== "ubuntu-latest") {
+    errors.push("live-scenarios job must run on ubuntu-latest");
+  }
+
+  const jobEnv = asRecord(liveScenarios.env);
+  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("live-scenarios job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes(".e2e/vitest")) {
+    errors.push("live-scenarios job must write artifacts under .e2e/vitest");
+  }
+
+  const steps = asSteps(liveScenarios.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push("live-scenarios job missing checkout step");
+  requireFullShaAction(errors, checkout, "checkout");
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push("checkout step must set persist-credentials=false");
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push("live-scenarios job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "setup-node");
+
+  const buildCli = requireStep(errors, steps, "Build CLI");
+  requireRunContains(errors, buildCli, "npm run build:cli");
+
+  const runVitest = requireStep(errors, steps, "Run Vitest live E2E scenarios");
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.TEST_FILTER !== "${{ inputs.test_filter }}") {
+    errors.push("Vitest step must pass test_filter through TEST_FILTER env");
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
+  requireRunContains(errors, runVitest, '"${TEST_FILTER}"');
+
+  const summary = requireStep(errors, steps, "Summarize artifacts");
+  const summaryEnv = asRecord(summary?.env);
+  if (summaryEnv.FILTER_LABEL !== "${{ inputs.test_filter || 'all' }}") {
+    errors.push("summary step must pass display filter through FILTER_LABEL env");
+  }
+  requireRunContains(errors, summary, "${FILTER_LABEL}");
+
+  const upload = requireStep(errors, steps, "Upload Vitest E2E artifacts");
+  requireFullShaAction(errors, upload, "upload-artifact");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-vitest-scenarios") {
+    errors.push("artifact upload name must be e2e-vitest-scenarios");
+  }
+  if (uploadWith.path !== ".e2e/vitest/") {
+    errors.push("artifact upload path must be .e2e/vitest/");
+  }
+  if (uploadWith["include-hidden-files"] !== true) {
+    errors.push("artifact upload must set include-hidden-files: true");
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push("artifact upload must ignore missing fixture artifacts");
   }
 
   return errors;
