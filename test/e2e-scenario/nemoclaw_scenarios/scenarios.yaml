@@ -65,7 +65,7 @@ onboarding:
     agent: openclaw
     provider: nvidia
     inference_route: inference-local
-    model: nvidia/nemotron-3-super-120b-a12b
+    model: nvidia/nemotron-3-ultra-550b-a55b
     policy_presets:
     - npm
     - pypi

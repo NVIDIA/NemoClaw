@@ -53,7 +53,7 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, Nemotron 3 Ultra 550B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
+| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Ultra 550B, Nemotron 3 Super 120B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
@@ -308,7 +308,7 @@ Managed vLLM uses these profiles:
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
-| DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 **Note:**
@@ -345,10 +345,10 @@ Recognized slugs are:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | Default on the DGX Station profile |
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override |
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on the DGX Station profile |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | Default on the DGX Spark profile |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | Supported override |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
 
 The slug is case-insensitive; the full Hugging Face id is also accepted.

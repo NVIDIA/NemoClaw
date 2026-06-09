@@ -96,7 +96,7 @@ export function renderHermesCommandsReference(source: string): string {
 }
 
 function splitFrontmatter(source: string): { frontmatter: string; body: string } {
-  const match = source.match(/^(---\n[\s\S]*?\n---\n)([\s\S]*)$/);
+  const match = source.match(/^(\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n)([\s\S]*)$/);
   if (!match) {
     throw new Error("commands.mdx must start with YAML frontmatter");
   }

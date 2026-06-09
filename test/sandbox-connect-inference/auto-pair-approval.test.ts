@@ -6,7 +6,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { testTimeoutOptions } from "../helpers/timeouts";
-import { extractApprovalPassScript, runApprovalPassScript, runConnect, setupFixture } from "./helpers";
+import {
+  decodeWrappedSandboxScript,
+  extractApprovalPassScript,
+  runApprovalPassScript,
+  runConnect,
+  setupFixture,
+} from "./helpers";
 
 describe("sandbox connect auto-pair approval pass (#4263)", () => {
   it(
@@ -197,13 +203,14 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       // Approval-pass exec was attempted (and the fake openshell exited
       // non-zero for it, per the hook above).
-      const approvalExec = (state.sandboxExecCalls as string[][]).find(
-        (call) =>
-          call.includes("--") &&
-          call.some((segment) => segment.includes("openclaw")) &&
-          call.some((segment) => segment.includes("devices")) &&
-          call.some((segment) => segment.includes("approve")),
-      );
+      const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
+        if (!call.includes("--")) return false;
+        // The payload is base64-wrapped for OpenShell exec; decode to identify it.
+        const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
+        return (
+          inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve")
+        );
+      });
       expect(approvalExec).toBeDefined();
       // Despite the approval-pass failure, SSH handoff still happens.
       expect(state.sandboxConnectCalls).toContainEqual([

@@ -32,7 +32,7 @@ Pass `--sandbox <name>` when you do not want to use the default registered sandb
 ### NVIDIA Endpoints
 
 ```bash
-nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 ### OpenAI
@@ -221,19 +221,29 @@ nemoclaw onboard --resume --recreate-sandbox
 Use `nemoclaw inference get` to print the provider and model the gateway is currently routing to.
 Run it before `nemoclaw inference set` to confirm the starting state, or after a switch to verify the new route.
 
-```console
-$ nemoclaw inference get
+```bash
+nemoclaw inference get
+```
+
+Expected output:
+
+```text
 Provider: nvidia-prod
-Model:    nvidia/nemotron-3-super-120b-a12b
+Model:    nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 Pass `--json` for machine-readable output.
 
-```console
-$ nemoclaw inference get --json
+```bash
+nemoclaw inference get --json
+```
+
+Expected output:
+
+```json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-ultra-550b-a55b"
 }
 ```
 

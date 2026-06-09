@@ -103,7 +103,7 @@ Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` before onboarding only if you want Hermes'
 NemoHermes is ready
 
 Sandbox:  my-hermes
-Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+Model:    nvidia/nemotron-3-ultra-550b-a55b (NVIDIA Endpoints)
 
 Access
 
@@ -143,8 +143,13 @@ To chat with the agent from a terminal, follow these steps:
 The onboard flow starts the dashboard port forward automatically.
 Open the dashboard from the host:
 
-```console
-$ nemohermes my-hermes dashboard-url --quiet
+```bash
+nemohermes my-hermes dashboard-url --quiet
+```
+
+Expected output:
+
+```text
 http://127.0.0.1:18789/
 ```
 

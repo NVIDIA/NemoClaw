@@ -71,7 +71,7 @@ if ! command -v nemoclaw >/dev/null 2>&1; then
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-onboard-negative}"
-CLOUD_MODEL="${NEMOCLAW_ONBOARD_NEGATIVE_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
+CLOUD_MODEL="${NEMOCLAW_ONBOARD_NEGATIVE_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}"
 PORT_CONFLICT_PORT="${NEMOCLAW_ONBOARD_NEGATIVE_CONFLICT_PORT:-18080}"
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY_FILE="$HOME/.nemoclaw/sandboxes.json"

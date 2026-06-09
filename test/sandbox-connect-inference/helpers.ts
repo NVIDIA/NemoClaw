@@ -149,13 +149,23 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     fs.writeFileSync(stateFile, JSON.stringify(state));
     // Test hook (#4263 / CodeRabbit): when the connect-time auto-pair
     // approval pass is specifically targeted, simulate the failure
-    // path the production code must tolerate. The approval-pass script
-    // is identifiable by its embedded \`openclaw devices approve\` call.
+    // path the production code must tolerate. The approval-pass script is
+    // base64-wrapped for OpenShell exec, so decode the payload first; it is
+    // identifiable by its embedded \`openclaw devices approve\` call.
+    let approvalCmd = command;
+    const wrapMatch = command.match(/printf %s '([A-Za-z0-9+/=]+)' \\| base64 -d/);
+    if (wrapMatch) {
+      try {
+        approvalCmd = Buffer.from(wrapMatch[1], "base64").toString("utf8");
+      } catch (_err) {
+        approvalCmd = command;
+      }
+    }
     if (
       process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
-      command.includes("openclaw") &&
-      command.includes("devices") &&
-      command.includes("approve")
+      approvalCmd.includes("openclaw") &&
+      approvalCmd.includes("devices") &&
+      approvalCmd.includes("approve")
     ) {
       process.stderr.write("simulated sandbox exec failure\\n");
       process.exit(7);
@@ -422,19 +432,34 @@ export function runConnect(
 
 export function extractApprovalPassScript(stateFile: string, sandboxName: string): string {
   const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-  const approvalExec = (state.sandboxExecCalls as string[][]).find(
-    (call) =>
-      call.includes("--") &&
-      call.some((segment) => segment.includes("openclaw")) &&
-      call.some((segment) => segment.includes("devices")) &&
-      call.some((segment) => segment.includes("approve")),
-  );
+  // The approval pass is base64-wrapped so it survives OpenShell exec's
+  // no-newline-in-args rule (see wrapSandboxShellScript), so identify the call
+  // by its decoded payload, not by literal segments.
+  const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
+    if (!call.includes("--")) return false;
+    const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
+    return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
+  });
   expect(approvalExec).toBeDefined();
   expect(approvalExec).toContain("sandbox");
   expect(approvalExec).toContain("exec");
   expect(approvalExec).toContain("--name");
   expect(approvalExec).toContain(sandboxName);
-  return approvalExec?.[approvalExec.length - 1] || "";
+  const lastArg = approvalExec?.[approvalExec.length - 1] || "";
+  // Decode it back to the literal payload so callers can assert on/run the
+  // real script.
+  return decodeWrappedSandboxScript(lastArg);
+}
+
+/**
+ * Reverse `wrapSandboxShellScript`: extract the base64 payload from a
+ * `printf %s '<b64>' | base64 -d` wrapper and decode it. Returns the input
+ * unchanged when it is not wrapped.
+ */
+export function decodeWrappedSandboxScript(wrapped: string): string {
+  const match = wrapped.match(/printf %s '([A-Za-z0-9+/=]+)' \| base64 -d/);
+  if (!match) return wrapped;
+  return Buffer.from(match[1], "base64").toString("utf-8");
 }
 
 export function runApprovalPassScript(
