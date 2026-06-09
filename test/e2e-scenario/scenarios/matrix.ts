@@ -26,3 +26,23 @@ export function brevLaunchableRemote(onboarding: string): ScenarioEnvironment {
 export function ubuntuRepoNoDocker(onboarding: string): ScenarioEnvironment {
   return { platform: "ubuntu-local", install: "repo-current", runtime: "docker-missing", onboarding };
 }
+
+/**
+ * ubuntu-local + repo-current + docker-running + a lifecycle profile.
+ * Use for scenarios whose runtime assertions depend on a post-onboard
+ * state mutation (rebuild, upgrade, snapshot+restore). The lifecycle
+ * profile id maps to a worker under nemoclaw_scenarios/lifecycle/ via
+ * its dispatcher.
+ */
+export function ubuntuRepoDockerLifecycle(
+  onboarding: string,
+  lifecycle: string,
+): ScenarioEnvironment {
+  return {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "docker-running",
+    onboarding,
+    lifecycle,
+  };
+}

@@ -22,7 +22,7 @@
 # disabled and the bridge won't start, even if the per-account state files
 # above exist. The patch also restores the openclaw-weixin plugin registry and
 # load path because later OpenClaw config rewrites can drop them while leaving
-# the pre-installed extension files in place. generate-openclaw-config.py
+# the pre-installed extension files in place. generate-openclaw-config.mts
 # invokes this only after the base image's installed plugin metadata, install
 # registry, or preinstalled-plugin signal proves OpenClaw knows the WeChat
 # channel id.
@@ -240,7 +240,7 @@ def _patch_openclaw_config(account_id: str) -> None:
     to decide which accounts to start at boot."""
     cfg_path = _state_dir() / "openclaw.json"
     if not cfg_path.exists():
-        # generate-openclaw-config.py runs before us and is responsible for
+        # generate-openclaw-config.mts runs before us and is responsible for
         # producing openclaw.json. If it's missing, something else broke; bail
         # without inventing a config.
         print(
@@ -348,7 +348,7 @@ def main() -> int:
     # Empty accountId is the expected state when the operator did not go
     # through a host-side QR login (e.g. wechat channel never picked) —
     # no-op silently instead of warning, since this script now runs on
-    # every build from generate-openclaw-config.py.
+    # every build from generate-openclaw-config.mts.
     if not account_id:
         return 0
 

@@ -135,7 +135,6 @@ registry.getSandbox = () => ({
   agent: ${JSON.stringify(sandboxAgent)},
   messagingChannels: [${JSON.stringify(channelInRegistry)}],
   disabledChannels: [],
-  providerCredentialHashes: {},
   policies: ${JSON.stringify(presetNamesApplied)},
 });
 registry.updateSandbox = (name, updates) => {
@@ -382,7 +381,6 @@ registryOverride.getSandbox = () => ({
   agent: "openclaw",
   messagingChannels: [],
   disabledChannels: [],
-  providerCredentialHashes: {},
   policies: [],
 });
 const policiesOverride = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "policy/index.js"))});

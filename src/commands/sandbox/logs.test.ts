@@ -55,4 +55,30 @@ describe("SandboxLogsCommand", () => {
       since: null,
     });
   });
+
+  it("rejects invalid tail values before running the logs action", async () => {
+    await expect(SandboxLogsCommand.run(["alpha", "--tail", "0"], rootDir)).rejects.toThrow(
+      /tail/i,
+    );
+
+    expect(showSandboxLogs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { args: ["alpha", "--tail"], pattern: /tail/i },
+    { args: ["alpha", "-n", "foo"], pattern: /integer|tail/i },
+    { args: ["alpha", "--since"], pattern: /since/i },
+  ])("rejects malformed logs flags %# before running the logs action", async ({ args, pattern }) => {
+    await expect(SandboxLogsCommand.run(args, rootDir)).rejects.toThrow(pattern);
+
+    expect(showSandboxLogs).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed since values before running the logs action", async () => {
+    await expect(SandboxLogsCommand.run(["alpha", "--since", "someday"], rootDir)).rejects.toThrow(
+      /since requires a positive duration/,
+    );
+
+    expect(showSandboxLogs).not.toHaveBeenCalled();
+  });
 });

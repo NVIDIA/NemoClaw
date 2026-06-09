@@ -102,6 +102,7 @@ describe("sandbox config sync helpers", () => {
     try {
       const nemoclawDir = path.join(homeDir, ".nemoclaw");
       fs.mkdirSync(nemoclawDir, { mode: 0o755 });
+      fs.chmodSync(nemoclawDir, 0o755);
       const script = buildSandboxConfigSyncScript({
         endpointType: "custom",
         endpointUrl: "https://inference.local/v1",
@@ -128,6 +129,7 @@ describe("sandbox config sync helpers", () => {
     try {
       const nemoclawDir = path.join(homeDir, ".nemoclaw");
       fs.mkdirSync(nemoclawDir, { mode: 0o755 });
+      fs.chmodSync(nemoclawDir, 0o755);
       writeFakeCommand(fakeBin, "id", "1234");
       writeFakeCommand(fakeBin, "stat", "0");
       const script = buildSandboxConfigSyncScript({
