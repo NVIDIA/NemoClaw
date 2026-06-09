@@ -182,8 +182,13 @@ It is not installed by the standard `curl -fsSL https://www.nvidia.com/nemoclaw.
 
 ### Backup
 
-```console
-$ ./scripts/backup-workspace.sh backup my-assistant
+```bash
+./scripts/backup-workspace.sh backup my-assistant
+```
+
+Expected output:
+
+```text
 Backing up workspace from sandbox 'my-assistant'...
 Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
 ```
@@ -206,8 +211,13 @@ Restore from a specific timestamp:
 
 List backed-up files to confirm completeness:
 
-```console
-$ ls -la ~/.nemoclaw/backups/20260320-120000/
+```bash
+ls -la ~/.nemoclaw/backups/20260320-120000/
+```
+
+Expected output:
+
+```text
 AGENTS.md
 IDENTITY.md
 MEMORY.md

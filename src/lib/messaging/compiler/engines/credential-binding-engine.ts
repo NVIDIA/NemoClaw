@@ -7,6 +7,7 @@ import type {
   SandboxMessagingInputReference,
 } from "../../manifest";
 import type { ManifestCompilerContext } from "../types";
+import { hashCredential } from "../../../security/credential-hash";
 import { resolveSandboxNameTemplate } from "./template";
 
 export function planCredentialBindings(
@@ -16,6 +17,14 @@ export function planCredentialBindings(
 ): SandboxMessagingCredentialBindingPlan[] {
   return manifest.credentials.map((credential) => {
     const sourceInput = inputs.find((input) => input.inputId === credential.sourceInput);
+    const credentialAvailable =
+      sourceInput?.credentialAvailable === true ||
+      context.credentialAvailability?.[credential.id] === true ||
+      context.credentialAvailability?.[`${manifest.id}.${credential.id}`] === true;
+
+    const envKey = sourceInput?.sourceEnv ?? credential.providerEnvKey;
+    const credentialHash =
+      credentialAvailable ? (hashCredential(process.env[envKey]) ?? undefined) : undefined;
 
     return {
       channelId: manifest.id,
@@ -24,10 +33,8 @@ export function planCredentialBindings(
       providerName: resolveSandboxNameTemplate(credential.providerName, context.sandboxName),
       providerEnvKey: credential.providerEnvKey,
       placeholder: credential.placeholder,
-      credentialAvailable:
-        sourceInput?.credentialAvailable === true ||
-        context.credentialAvailability?.[credential.id] === true ||
-        context.credentialAvailability?.[`${manifest.id}.${credential.id}`] === true,
+      credentialAvailable,
+      ...(credentialHash !== undefined ? { credentialHash } : {}),
     };
   });
 }

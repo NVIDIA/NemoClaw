@@ -143,7 +143,6 @@ registry.getSandbox = () => ({
   agent: ${JSON.stringify(sandboxAgent)},
   messagingChannels: [],
   disabledChannels: [],
-  providerCredentialHashes: {},
 });
 registry.updateSandbox = (name, updates) => {
   registryUpdates.push({ name, updates });
@@ -934,7 +933,6 @@ registry.getSandbox = () => ({
   agent: "openclaw",
   messagingChannels: ["telegram"],
   disabledChannels: [],
-  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "prior-hash" },
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 const ctx = module.exports;
@@ -980,11 +978,6 @@ process.exit = (code) => {
       ["telegram"],
       `re-add failure must keep prior 'telegram' in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
     );
-    assert.deepEqual(
-      lastRegistry.updates.providerCredentialHashes,
-      { TELEGRAM_BOT_TOKEN: "prior-hash" },
-      `re-add failure must restore prior credential hashes; got ${JSON.stringify(payload.registryUpdates)}`,
-    );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
       `re-add failure must restore prior credentials via saveCredential; got ${JSON.stringify(payload.savedCredentialKeys)}`,
@@ -1011,7 +1004,6 @@ registry.getSandbox = () => ({
   agent: "openclaw",
   messagingChannels: ["telegram"],
   disabledChannels: [],
-  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "prior-hash" },
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 let upsertCalls = 0;
@@ -1059,11 +1051,6 @@ process.exit = (code) => {
       lastRegistry.updates.messagingChannels,
       ["telegram"],
       `registry restoration must precede gateway re-upsert so an upsert failure cannot orphan the channel; got ${JSON.stringify(payload.registryUpdates)}`,
-    );
-    assert.deepEqual(
-      lastRegistry.updates.providerCredentialHashes,
-      { TELEGRAM_BOT_TOKEN: "prior-hash" },
-      `prior credential hashes must be restored before any gateway side effect; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
@@ -1666,7 +1653,6 @@ registry.getSandbox = () => ({
   agent: global.__testAgent || "openclaw",
   messagingChannels: [],
   disabledChannels: [],
-  providerCredentialHashes: {},
 });
 registry.updateSandbox = () => true;
 

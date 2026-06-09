@@ -85,8 +85,7 @@ export function runTarListing(
       return `${failureLabel} failed (exit ${status}): ${(result.stderr || "").substring(0, 200)}`;
     }
 
-    const listingSize = statSync(listingPath).size;
-    if (listingSize > TAR_LISTING_MAX_OUTPUT_BYTES) {
+    if (statSync(listingPath).size > TAR_LISTING_MAX_OUTPUT_BYTES) {
       return `${failureLabel} exceeded ${TAR_LISTING_MAX_OUTPUT_BYTES} bytes`;
     }
 

@@ -88,6 +88,8 @@
 #   launchable-smoke-e2e     Community install path (brev-launchable-ci-cpu.sh) on ubuntu-latest.
 #   gpu-e2e                  Local Ollama inference on an NVKS ephemeral GPU runner.
 #   gpu-double-onboard-e2e   Ollama proxy token consistency after re-onboard (#2553).
+#   gpu-jetson-nvmap-e2e     Jetson Orin /dev/nvmap CUDA usability + status proof (#4231).
+#                            Gated behind vars.JETSON_E2E_ENABLED; needs a Jetson runner.
 #   concurrent-gateway-ports-e2e
 #                            Two sandboxes coexisting on the same host with distinct
 #                            NEMOCLAW_GATEWAY_PORT values; verifies per-instance
@@ -143,7 +145,7 @@ on:
           onboard-resume-e2e, onboard-negative-paths-e2e, runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e, overlayfs-autofix-e2e,
           device-auth-health-e2e, launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          concurrent-gateway-ports-e2e
+          gpu-jetson-nvmap-e2e, concurrent-gateway-ports-e2e
         required: false
         type: string
         default: ""
@@ -2107,6 +2109,67 @@ jobs:
           path: /tmp/nemoclaw-gpu-double-onboard-test.log
           if-no-files-found: ignore
 
+  # ── Jetson nvmap GPU status E2E (#4231) ──────────────────────
+  # Reproduces the reporter's exact Jetson Orin workflow: onboard with GPU,
+  # then prove the sandbox user can open /dev/nvmap (CUDA cuInit(0)=0) and that
+  # `nemoclaw status` reports proven CUDA usability instead of a misleading
+  # bare "enabled". Requires a Jetson/Tegra (arm64 L4T) GPU runner, which the
+  # project does not yet host — so this job is gated behind
+  # `vars.JETSON_E2E_ENABLED` (unset by default → skipped) and an explicit
+  # runner label. When a Jetson runner is provisioned, set the variable and
+  # point `runs-on` at its label. The same fix has deterministic, hardware-free
+  # regression coverage in src/lib/onboard/docker-gpu-patch.test.ts.
+  gpu-jetson-nvmap-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      vars.JETSON_E2E_ENABLED == 'true' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',gpu-jetson-nvmap-e2e,'))
+    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+    timeout-minutes: 40
+    env:
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-jetson-nvmap"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_PROVIDER: "ollama"
+    steps:
+      - *target-ref-checkout
+
+      - *dockerhub-auth-step
+
+      - name: Verify Jetson GPU availability
+        run: |
+          echo "=== Tegra release ==="
+          cat /etc/nv_tegra_release 2>/dev/null || echo "(no /etc/nv_tegra_release)"
+          echo ""
+          echo "=== /dev/nvmap ==="
+          ls -l /dev/nvmap 2>/dev/null || echo "(no /dev/nvmap)"
+          echo ""
+          echo "=== Docker ==="
+          docker info --format '{{.ServerVersion}}'
+          docker info --format '{{json .Runtimes}}'
+
+      - name: Run Jetson nvmap GPU E2E test (#4231)
+        run: bash test/e2e/test-jetson-nvmap-gpu.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-jetson-nvmap-install-log
+          path: /tmp/nemoclaw-jetson-nvmap-e2e-install.log
+          if-no-files-found: ignore
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gpu-jetson-nvmap-test-log
+          path: /tmp/nemoclaw-jetson-nvmap-e2e-test.log
+          if-no-files-found: ignore
+
   concurrent-gateway-ports-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -2228,6 +2291,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        gpu-jetson-nvmap-e2e,
         concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
@@ -2344,6 +2408,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        gpu-jetson-nvmap-e2e,
         concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
@@ -2519,6 +2584,7 @@ jobs:
         launchable-smoke-e2e,
         gpu-e2e,
         gpu-double-onboard-e2e,
+        gpu-jetson-nvmap-e2e,
         concurrent-gateway-ports-e2e,
       ]
     if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}

@@ -13,8 +13,25 @@ export interface ValidationClassification {
 }
 
 export interface SandboxCreateFailure {
-  kind: "image_transfer_timeout" | "image_transfer_reset" | "sandbox_create_incomplete" | "tls_cert_mismatch" | "unknown";
+  kind:
+    | "image_transfer_timeout"
+    | "image_transfer_reset"
+    | "image_upload_container_missing"
+    | "sandbox_create_incomplete"
+    | "tls_cert_mismatch"
+    | "unknown";
   uploadedToGateway: boolean;
+}
+
+export interface SandboxCreateRecoveryPlan {
+  /**
+   * Emit the Linux ARM64 (aarch64) local-registry / image-ref workaround for
+   * the misleading "failed to upload image tar into container" Docker 404. The
+   * gateway container is healthy; OpenShell's large-tar upload path is the
+   * problem, and pushing the built image to a local registry then creating
+   * from the image ref bypasses it. See #3266.
+   */
+  arm64ImageRefWorkaround: boolean;
 }
 
 export interface GatewayStartFailure {
@@ -92,10 +109,49 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   if (/invalid peer certificate|BadSignature|handshake verification failed|certificate verify failed|SSL certificate problem|x509: certificate|unknown authority/i.test(text)) {
     return { kind: "tls_cert_mismatch", uploadedToGateway };
   }
+  // Misleading "container does not exist" 404 raised while OpenShell streams the
+  // built image tar into the (healthy) gateway container. Reported on Linux
+  // ARM64 with large images: the gateway is up and a same-size archive PUT
+  // succeeds directly, so the Docker 404 is a symptom of the tar-upload path,
+  // not a missing gateway. Match the distinctive upload-tar phrase, or the
+  // combined 404 + container-missing + gateway-container-name shape. See #3266.
+  if (
+    /failed to upload image tar into container/i.test(text) ||
+    (/status code 404/i.test(text) &&
+      /(container does not exist|no container with name or ID)/i.test(text) &&
+      /openshell-cluster-nemoclaw/i.test(text))
+  ) {
+    return { kind: "image_upload_container_missing", uploadedToGateway };
+  }
   if (/Created sandbox:/i.test(text)) {
     return { kind: "sandbox_create_incomplete", uploadedToGateway: true };
   }
   return { kind: "unknown", uploadedToGateway };
+}
+
+/**
+ * Decide how to recover from a classified sandbox-create failure. Pure: takes
+ * the classification plus the host platform/arch, returns a typed plan. Kept
+ * separate from the I/O hint printer so the retry/workaround decision can be
+ * unit-tested without spying on the console.
+ *
+ * Today the only special-cased recovery is the Linux ARM64 image-tar-upload
+ * 404 (#3266); every other failure leaves the plan flags false so callers fall
+ * through to the existing generic resume guidance.
+ */
+export function planSandboxCreateRecovery(
+  failure: SandboxCreateFailure,
+  {
+    platform = process.platform,
+    arch = process.arch,
+  }: { platform?: NodeJS.Platform; arch?: NodeJS.Architecture } = {},
+): SandboxCreateRecoveryPlan {
+  return {
+    arm64ImageRefWorkaround:
+      failure.kind === "image_upload_container_missing" &&
+      platform === "linux" &&
+      arch === "arm64",
+  };
 }
 
 /**

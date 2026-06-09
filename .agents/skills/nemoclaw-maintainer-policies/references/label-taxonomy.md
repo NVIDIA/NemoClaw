@@ -59,7 +59,8 @@ Use area labels for the affected product or code surface, not for every concept 
 
 - `area: install` for prerequisites or setup mechanics; `area: onboarding` for first-run flow and onboarding state; `area: packaging` for shipped artifacts, images, registries, or distribution.
 - `area: inference` for model execution or output behavior; `area: providers` for provider integration, configuration, or selection work; `area: routing` for dispatch, fallback, or model-selection logic; `area: local-models` for local runtime, download, launch, or connectivity.
-- `area: integrations` for external app or bridge behavior; `area: messaging` when message delivery or channel lifecycle is the affected subsystem; add a specific `integration:*` label when one listed integration is involved.
+- `area: integrations` for external app or bridge behavior; `area: messaging` when message delivery or channel lifecycle is the affected subsystem; add the specific `integration:*` label when one listed integration is named or clearly implicated. Do not use only `area: integrations` when the affected integration is one of the canonical `integration:*` values.
+- `area: ci` for workflow, check, release automation, nightly-runner, or test infrastructure failures. Do not add `area: ci` merely because an e2e failure was observed in CI; use both `area: ci` and `area: e2e` only when the CI workflow, runner, scheduling, logs, or test infrastructure is part of the affected surface.
 
 | Label | Description |
 |---|---|
@@ -96,6 +97,8 @@ Positive signals include platform-specific errors, platform-specific code paths,
 When evidence is ambiguous, use the platform label only when the platform seems routing-relevant or likely causal. Otherwise, leave it off and explain what evidence would make it platform-specific.
 
 When a more specific platform label applies, prefer it over a broader one unless both are independently routing-relevant. Do not add `platform: container`, `platform: arm64`, or an OS label just because the environment template mentions Docker, CPU architecture, or OS.
+
+Use the specific platform labels when the platform appears in the reported failure signature, title, or affected install path. For example, `Windows ARM`, `Windows ARM64`, or `aarch64` failure text supports `platform: arm64`; `WSL`, `WSL2`, or "Windows Subsystem for Linux" supports `platform: wsl`.
 
 | Label | Description |
 |---|---|
@@ -136,12 +139,14 @@ Integration labels apply when a recurring external app, channel, tool, or agent 
 
 Use `area: integrations` for integration subsystem work, and add `integration:*` when a listed integration is named or clearly implicated. Use `area: messaging` when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with `integration:*` when the messaging issue is specific to a listed integration.
 
+Specific integration labels are routing labels. If the title, body, linked issue, test name, file path, or PR prefix names `Hermes`, `OpenClaw`, `Discord`, `Slack`, `Telegram`, `WeChat`, `WhatsApp`, or `Brave` as the affected subject, include the corresponding `integration:*` label. Do not replace the specific label with only `area: integrations`.
+
 | Label | Description |
 |---|---|
 | `integration: brave` | Brave integration behavior. |
 | `integration: discord` | Discord bridge or channel lifecycle. |
-| `integration: hermes` | Hermes startup, plugin, or sandbox behavior. |
-| `integration: openclaw` | OpenClaw runtime, plugins, configuration, or bridge. |
+| `integration: hermes` | Hermes startup, plugin, sandbox, TUI, or Hermes model/tool-call behavior. |
+| `integration: openclaw` | OpenClaw runtime, TUI, e2e tests, stubs, plugins, configuration, or bridge. |
 | `integration: slack` | Slack bridge, manifest, auth, or delivery behavior. |
 | `integration: telegram` | Telegram bot, bridge, polling, or delivery. |
 | `integration: wechat` | WeChat channel or bridge behavior. |
@@ -149,15 +154,15 @@ Use `area: integrations` for integration subsystem work, and add `integration:*`
 
 ### Needs
 
-`needs:*` labels are action queues. Remove them when the action is complete. `Needs Review` is a Project Status value, not a label.
+`needs:*` labels are blocking action queues. Remove them when the action is complete. `Needs Review` is a Project Status value, not a label. Normal initial triage should not add `needs: triage`; that label is an inbox/placeholder signal for unprocessed items.
 
 | Label | Applies To | Description |
 |---|---|---|
 | `needs: cleanup-review` | Issue, PR | Stale, superseded, competing, convergence-needed, or closure-candidate item needs maintainer judgment. |
 | `needs: design` | Issue, PR | Product or architecture direction is unclear or cross-cutting. |
-| `needs: info` | Issue, PR | Missing repro, logs, version, platform, answer, or PR context. |
+| `needs: info` | Issue, PR | Missing repro, logs, version, platform, answer, or PR context required before work can proceed. Optional clarifying questions should use `questions_for_author` without this label. |
 | `needs: rebase` | PR | Merge conflicts, dirty merge state, or rebase requested. |
-| `needs: triage` | Issue, PR | New issue or PR needs maintainer review for project workflow assignment, labeling, ownership, or next action. |
+| `needs: triage` | Issue, PR | Existing inbox/placeholder signal for unprocessed items. Do not newly add from normal triage once Type, labels, and Project fields are being recommended. |
 | `needs: unblock` | Issue, PR | Blocked item needs a dependency or decision resolved. |
 
 Do not combine:

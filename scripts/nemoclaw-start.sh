@@ -92,15 +92,9 @@ fi
 # shellcheck source=scripts/lib/sandbox-init.sh
 source "$_SANDBOX_INIT"
 
-# Harden: limit process count to prevent fork bombs (ref: #809)
-# Best-effort: some container runtimes (e.g., brev) restrict ulimit
-# modification, returning "Invalid argument". Warn but don't block startup.
-if ! ulimit -Su 512 2>/dev/null; then
-  echo "[SECURITY] Could not set soft nproc limit (container runtime may restrict ulimit)" >&2
-fi
-if ! ulimit -Hu 512 2>/dev/null; then
-  echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
-fi
+# Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before the capsh
+# drop and the setpriv step-down, so the caps are inherited and unraisable.
+harden_resource_limits
 
 # PATH was already locked down at the top of this script (before the
 # early stderr capture). This comment marks the original location.
@@ -1466,13 +1460,16 @@ install_telegram_diagnostics() {
 }
 
 # ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
-# The upstream @openclaw/whatsapp QR renders at full size and overflows DGX
-# Spark terminals (NemoClaw#4522). This preload forces qrcode-terminal into
-# the same `{ small: true }` half-block mode the host-side WeChat path uses.
-# Unlike the diagnostics/guard preloads it is NOT added to the global
-# NODE_OPTIONS — the gateway never renders the pairing QR. The openclaw()
-# guard injects it for the single `channels login --channel whatsapp`
-# invocation, so we only need the file present in the sandbox.
+# The upstream @openclaw/whatsapp QR renders at full size (~56 rows) and
+# overflows DGX Spark terminals (NemoClaw#4522). The plugin renders through
+# `renderQrTerminal()` → the `qrcode` package's toString(text,{type:"terminal"})
+# WITHOUT a `small` flag, so it defaults to full size. This preload patches the
+# qrcode package to force `{ small: true }` half-block rendering for terminal
+# output, roughly quartering the area without changing the payload.
+# It is NOT added to the global boot NODE_OPTIONS (the gateway never renders the
+# pairing QR); instead it is wired into the connect-session NODE_OPTIONS (so any
+# openclaw invocation in the session gets it, not just the openclaw() shell
+# function) and the openclaw() guard injects it as defense-in-depth.
 _WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
 _WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
 
@@ -2227,6 +2224,45 @@ PROXYEOF
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
+# #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
+# shell, outside any NemoClaw wrapper command) tightens the mutable OpenClaw
+# config tree back to single-user 700/600 — even when it exits nonzero (e.g. it
+# hits EACCES on a root-locked shell init file). That blocks the gateway UID,
+# a member of the sandbox group, from persisting config writes. Restore the
+# setgid + group-writable contract (2770 dir / 660 config) after every openclaw
+# invocation routed through this guard, regardless of exit code. Best-effort and
+# idempotent: it skips when shields are up (config dir owned by root) so the lock
+# is never weakened, and is a no-op when the contract already holds. The
+# baseline re-lock stays a root-only startup concern (this runs as the sandbox
+# user), so it is intentionally not attempted here. Kept in sync with the
+# entrypoint's normalize_mutable_config_perms.
+_nemoclaw_restore_mutable_config_perms() {
+  local _nemoclaw_oc_dir _nemoclaw_oc_owner _nemoclaw_oc_dir_mode _nemoclaw_oc_file_mode _nemoclaw_oc_hash_mode
+  _nemoclaw_oc_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+  [ -d "$_nemoclaw_oc_dir" ] || return 0
+  _nemoclaw_oc_owner="$(stat -c '%U' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Su' "$_nemoclaw_oc_dir" 2>/dev/null || echo unknown)"
+  # Shields up — config is intentionally root-locked; never weaken it.
+  [ "$_nemoclaw_oc_owner" = "root" ] && return 0
+  _nemoclaw_oc_dir_mode="$(stat -c '%a' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir" 2>/dev/null || echo '')"
+  _nemoclaw_oc_file_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || echo '')"
+  _nemoclaw_oc_hash_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || echo '')"
+  # Fast path: contract already intact (2770 dir, 660 config + hash when present).
+  # Check .config-hash too so a doctor run that tightened only it is still fixed.
+  if [ "$_nemoclaw_oc_dir_mode" = "2770" ] &&
+    { [ "$_nemoclaw_oc_file_mode" = "660" ] || [ -z "$_nemoclaw_oc_file_mode" ]; } &&
+    { [ "$_nemoclaw_oc_hash_mode" = "660" ] || [ -z "$_nemoclaw_oc_hash_mode" ]; }; then
+    return 0
+  fi
+  chmod -R g+rwX,o-rwx "$_nemoclaw_oc_dir" 2>/dev/null || true
+  find "$_nemoclaw_oc_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+  chmod 2770 "$_nemoclaw_oc_dir" 2>/dev/null || true
+  chmod 660 "$_nemoclaw_oc_dir/openclaw.json" "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || true
+  # Keep the recovery baseline out of the group-writable contract — it is a
+  # read-only trust anchor (root:sandbox 0440 when root re-locks it). The
+  # recursive chmod above would otherwise loosen it to group-writable in
+  # rootless mode, where the root-only re-lock is skipped (#4538).
+  chmod g-w "$_nemoclaw_oc_dir/openclaw.json.nemoclaw-baseline" 2>/dev/null || true
+}
 openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
@@ -2430,6 +2466,10 @@ PYAPPROVEAFTER
             esac
             echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
+            # Defense-in-depth: the connect-session NODE_OPTIONS already wires
+            # this preload in for every openclaw invocation; injecting it again
+            # here covers non-connect shells (e.g. `openshell sandbox exec`).
+            # The preload is idempotent, so a double --require is harmless.
             # Literal path: this guard body is emitted inside a single-quoted
             # heredoc, so shell variables are intentionally not expanded here.
             # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
@@ -2485,7 +2525,19 @@ PYAPPROVEAFTER
       done
       ;;
   esac
+  # #4538: re-assert the mutable config perm contract after any openclaw run
+  # (notably `doctor --fix`), even on a nonzero exit, then preserve its status.
+  # Drop errexit around the call (mirroring the devices-approve branch above) so
+  # a nonzero openclaw exit cannot abort the guard before the restore runs — the
+  # nonzero-exit case is the exact #4538 scenario.
+  local _nemoclaw_oc_errexit=0
+  case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
+  set +e
   command openclaw "$@"
+  local _nemoclaw_oc_status=$?
+  _nemoclaw_restore_mutable_config_perms
+  [ "$_nemoclaw_oc_errexit" = "1" ] && set -e
+  return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
 GUARDENVEOF
@@ -2517,6 +2569,15 @@ GUARDENVEOF
     # by install_slack_channel_guard() — conditional on the file existing at
     # source-time so connect sessions started before Slack is configured are safe.
     echo "[ -f \"$_SLACK_GUARD_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SLACK_GUARD_SCRIPT\""
+    # WhatsApp compact-QR preload for connect sessions (NemoClaw#4522). The
+    # in-sandbox `openclaw channels login --channel whatsapp` QR renders full
+    # size (~56 rows) and overflows the terminal. Wiring the preload into the
+    # connect-session NODE_OPTIONS forces compact rendering for ANY openclaw
+    # invocation in the session — not only the openclaw() shell-function path,
+    # which a direct binary call would bypass. The file is installed by
+    # install_whatsapp_qr_compact() only for WhatsApp sandboxes, so the
+    # source-time `[ -f ]` check leaves non-WhatsApp connect sessions untouched.
+    echo "[ -f \"$_WHATSAPP_QR_COMPACT_SCRIPT\" ] && export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WHATSAPP_QR_COMPACT_SCRIPT\""
     # Tool cache redirects — generated from _TOOL_REDIRECTS (single source of truth)
     echo '# Tool cache redirects — keep transient tool state under /tmp'
     for _redir in "${_TOOL_REDIRECTS[@]}"; do

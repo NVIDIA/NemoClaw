@@ -17,10 +17,6 @@ _E2E_INST_OL_RUNTIME_LIB="$(cd "${_E2E_INST_OL_DIR}/../../runtime/lib" && pwd)"
 
 e2e_install_ollama() {
   e2e_env_trace "install-ollama"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] install-ollama (skipped)"
-    return 0
-  fi
   local ollama_url="${E2E_OLLAMA_INSTALL_URL:-https://ollama.ai/install.sh}"
   if ! command -v ollama >/dev/null 2>&1; then
     if ! curl -fsSL --retry 3 --retry-delay 2 "${ollama_url}" | bash; then

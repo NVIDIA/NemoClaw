@@ -12,8 +12,6 @@
 #   older_base_image_prepare <tag> [--registry ghcr.io/nvidia/nemoclaw]
 #     Writes a minimal Dockerfile to a temp location whose first line is
 #     `FROM <registry>:<tag>`, and prints the Dockerfile path on stdout.
-#     Honors E2E_DRY_RUN: skips the `docker pull` step (but still writes
-#     the Dockerfile, which is what callers inspect).
 #   older_base_image_cleanup <dockerfile-path>
 #     Removes the generated Dockerfile and (if present) its build context.
 
@@ -50,11 +48,9 @@ LABEL nemoclaw.e2e.fixture=older-base-image
 EOF
 
   e2e_env_trace "fixture:older-base-image" "${registry}:${tag}"
-  if ! e2e_env_is_dry_run; then
-    if command -v docker >/dev/null 2>&1; then
-      docker pull "${registry}:${tag}" >&2 \
-        || echo "older_base_image_prepare: docker pull failed (continuing; build may still succeed on cached layers)" >&2
-    fi
+  if command -v docker >/dev/null 2>&1; then
+    docker pull "${registry}:${tag}" >&2 \
+      || echo "older_base_image_prepare: docker pull failed (continuing; build may still succeed on cached layers)" >&2
   fi
   printf '%s\n' "${dockerfile}"
 }

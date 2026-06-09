@@ -24,6 +24,7 @@ import {
   mergeRequiredOpenclawOtelPolicyPresets,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
+import { seedInitialPolicyContext } from "./policy-context-seed";
 import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
@@ -286,9 +287,11 @@ export async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ): Promise<string[]> {
-  return withPolicyApplicationTrace(sandboxName, options, () =>
+  const chosen = await withPolicyApplicationTrace(sandboxName, options, () =>
     setupPoliciesWithSelectionInner(deps, sandboxName, options),
   );
+  seedInitialPolicyContext(sandboxName);
+  return chosen;
 }
 
 async function setupPoliciesWithSelectionInner(

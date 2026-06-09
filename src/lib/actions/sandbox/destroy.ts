@@ -21,6 +21,12 @@ import {
 } from "../../domain/sandbox/destroy";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import {
+  SANDBOX_PROVIDER_SUFFIXES,
+  emitProviderDetachResidualHint,
+  runSandboxProviderPreDeleteCleanup,
+} from "../../onboard/sandbox-provider-cleanup";
+import { redact } from "../../security/redact";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import type { Session } from "../../state/onboard-session";
@@ -247,15 +253,13 @@ export function cleanupSandboxServices(
     // PID directory may not exist — ignore.
   }
 
-  // Delete messaging providers created during onboard. Suppress stderr so
-  // "! Provider not found" noise doesn't appear when messaging was never configured.
-  for (const suffix of [
-    "telegram-bridge",
-    "discord-bridge",
-    "slack-bridge",
-    "slack-app",
-    "wechat-bridge",
-  ]) {
+  // Delete every per-sandbox messaging and search provider created during
+  // onboard. Suppress stderr so "! Provider not found" noise doesn't appear
+  // when messaging was never configured. The suffix set is shared with the
+  // onboard rebuild path's pre-delete detach via
+  // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
+  // drift on which providers count as per-sandbox state.
+  for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
@@ -296,8 +300,7 @@ export function removeShieldsState(
     } catch (error) {
       // force: true already suppresses ENOENT; warn on real failures
       // (e.g. EPERM) so stale state doesn't silently survive.
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code !== "ENOENT") {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const message = error instanceof Error ? error.message : String(error);
         warn(
           `Failed to remove shields cleanup artifact '${filePath}': ${message}`,
@@ -450,6 +453,10 @@ export async function destroySandbox(
       opts?: Record<string, unknown>,
     ) => { status: number | null; stdout?: string; stderr?: string };
   };
+  const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
+    runOpenshell,
+    redact,
+  });
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -514,5 +521,8 @@ export async function destroySandbox(
       `  Sandbox '${sandboxName}' was already absent from the live gateway.`,
     );
   }
+  emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (m) =>
+    console.warn(`  ${YW}⚠${R}${m}`),
+  );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }

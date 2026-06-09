@@ -88,7 +88,117 @@ Dry run:
 Anti-examples:
 
 - Do not add `documentation`; set native Issue Type `Documentation`.
-- Do not add `status: triage`; use `needs: triage` only if maintainer workflow review is still needed.
+- Do not add `status: triage` or `needs: triage` from normal triage output.
+
+### Named Integration Issue
+
+Evidence:
+
+- The title is `[hermes] Missing hermes TUI`.
+- The affected subject is the Hermes integration.
+
+Dry run:
+
+```json
+{
+  "item_number": 104,
+  "item_kind": "issue",
+  "issue_type_to_set": "Bug",
+  "labels_to_add": ["integration: hermes", "area: ui"],
+  "labels_to_remove": [],
+  "labels_to_create": [],
+  "labels_to_delete": [],
+  "issue_fields_to_set": {},
+  "project_fields_to_set": {
+    "Status": "Backlog"
+  },
+  "recommended_action": "triage",
+  "confidence": "high",
+  "rationale": {
+    "issue_type_to_set": "The report describes missing expected UI behavior.",
+    "integration: hermes": "The title names Hermes as the affected integration.",
+    "area: ui": "The missing surface is the TUI."
+  },
+  "questions_for_author": [],
+  "human_review_required": false
+}
+```
+
+Anti-examples:
+
+- Do not use only `area: integrations` when a listed integration such as Hermes is the affected subject.
+- Do not add `needs: info` if the title and body already provide enough routing evidence.
+
+### OpenClaw E2E Failure
+
+Evidence:
+
+- The title includes `openclaw-tui-chat-correlation-e2e`.
+- The report is a nightly/e2e failure involving OpenClaw.
+
+Dry run:
+
+```json
+{
+  "item_number": 105,
+  "item_kind": "issue",
+  "issue_type_to_set": "Bug",
+  "labels_to_add": ["area: e2e", "area: ci", "integration: openclaw"],
+  "labels_to_remove": [],
+  "labels_to_create": [],
+  "labels_to_delete": [],
+  "issue_fields_to_set": {},
+  "project_fields_to_set": {
+    "Status": "Backlog"
+  },
+  "recommended_action": "triage",
+  "confidence": "high",
+  "rationale": {
+    "issue_type_to_set": "The report describes a failing validation path.",
+    "area: e2e": "The affected test is an e2e flow.",
+    "area: ci": "The failure is from nightly validation infrastructure.",
+    "integration: openclaw": "The test name identifies OpenClaw as the affected integration."
+  },
+  "questions_for_author": [],
+  "human_review_required": false
+}
+```
+
+### Windows ARM Install Failure In WSL
+
+Evidence:
+
+- The title includes `[Windows ARM][Install]`.
+- The body says WSL2 has no Ubuntu distro.
+
+Dry run:
+
+```json
+{
+  "item_number": 106,
+  "item_kind": "issue",
+  "issue_type_to_set": "Bug",
+  "labels_to_add": ["area: install", "platform: windows", "platform: arm64", "platform: wsl"],
+  "labels_to_remove": [],
+  "labels_to_create": [],
+  "labels_to_delete": [],
+  "issue_fields_to_set": {},
+  "project_fields_to_set": {
+    "Status": "Backlog"
+  },
+  "recommended_action": "triage",
+  "confidence": "high",
+  "rationale": {
+    "issue_type_to_set": "The report describes broken install behavior.",
+    "area: install": "The failure occurs during installation.",
+    "platform: windows": "The title identifies Windows as the host platform.",
+    "platform: arm64": "The title identifies Windows ARM.",
+    "platform: wsl": "The body identifies WSL2 as part of the failing setup."
+  },
+  "questions_for_author": [],
+  "human_review_required": false
+}
+```
 
 ### Feature Request Needing Design
 

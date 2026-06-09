@@ -15,13 +15,14 @@ These instructions are for agents and skills that evaluate NemoClaw issues and P
 - Keep changes minimal: only add labels or fields that change routing, actionability, or reporting.
 - Project Status is a Project field, not a label. Valid values include `No Status`, `Backlog`, `In Progress`, `Blocked`, `Needs Review`, `NV QA`, `Done`, `Won't Fix`, and `Duplicate`.
 - Set `human_review_required: true` when the proposed write is outside the current authorization context, has elevated risk, or needs maintainer judgment before execution.
+- Normal initial triage should not add inbox or placeholder labels such as `needs: triage`. Use `questions_for_author` without a `needs:*` label when a question is useful but the item is still actionable.
 
 ## Issue Flow
 
 1. Classify the issue using native GitHub Issue Type: `Bug`, `Enhancement`, `Task`, `Documentation`, `Epic`, or `Initiative`.
 2. Add area labels only when the affected surface is clear.
-3. Add platform, provider, or integration labels only with explicit evidence.
-4. Add `needs:*` only when an immediate action queue is needed.
+3. Add platform, provider, or integration labels only with explicit evidence. When a listed integration is named as the affected subject, include the matching `integration:*` label rather than only the broad `area: integrations` label.
+4. Add `needs:*` only when an immediate blocking action queue is needed. Do not add `needs: triage` during normal triage.
 5. Recommend Project Priority from impact evidence, not user urgency language.
 6. Recommend Project Status separately from labels.
 7. Ask for missing information when the report is not actionable.
@@ -30,12 +31,12 @@ These instructions are for agents and skills that evaluate NemoClaw issues and P
 ## PR Flow
 
 1. Identify whether the PR is draft, conflicted, stale, blocked, or review-ready.
-2. Apply exactly one PR type label only when enough evidence exists: `bug-fix`, `feature`, `refactor`, or `chore`.
+2. Apply exactly one PR type label only when enough evidence exists: `bug-fix`, `feature`, `refactor`, or `chore`. Conventional commit prefixes are strong evidence: `fix` maps to `bug-fix`, `feat` maps to `feature`, `refactor` maps to `refactor`, and `chore`, docs-only, CI-only, skill-sync, dependency, packaging, or generated-policy maintenance maps to `chore`.
 3. Add `security` when the PR touches credentials, permissions, SSRF, sandbox escape risk, policy enforcement, or trusted installer paths.
 4. Add area/platform/provider/integration labels based on files changed and PR intent when useful for review routing.
 5. Recommend Project Status `Needs Review` for non-draft, conflict-free PRs that are awaiting maintainer review.
 6. Add `needs: rebase` when conflicts or rebase state blocks review.
-7. Add `needs: info` when contributor intent or required context is missing.
+7. Add `needs: info` only when contributor action is required before review can proceed. If the title, body, linked issue, or files changed provide enough routing evidence, ask optional questions without adding `needs: info`.
 8. Daily `v0.0.x` labels activate PRs for daily release work; adding one is not a readiness claim.
 
 ## Minimal Labeling
@@ -47,7 +48,7 @@ For issues, a high-quality dry run often includes:
 - Native Issue Type.
 - Zero to two area labels.
 - Optional platform/provider/integration labels when directly evidenced.
-- Optional `needs:*`.
+- Optional blocking `needs:*`; do not add `needs: triage` in normal triage output.
 - Project Priority and Status recommendations.
 - Optional daily release label only when the issue needs daily tracking, regression attention, or "needs PR" coordination.
 
@@ -56,7 +57,7 @@ For PRs, a high-quality dry run often includes:
 - One PR type label.
 - Area labels for review routing.
 - Optional `security`.
-- Optional `needs:*`.
+- Optional blocking `needs:*`; do not add `needs: triage` in normal triage output.
 - Project Status recommendation.
 - Optional daily release label only when the maintainer workflow activates the PR.
 
@@ -74,9 +75,9 @@ Never apply a label from a low-confidence inference.
 
 ## When To Ask For Info
 
-Use `needs: info` and ask targeted questions when:
+Use `needs: info` and ask targeted questions only when author action is required before work can proceed:
 
-- A bug report lacks reproduction steps, expected behavior, actual behavior, version, environment, or logs.
+- A bug report lacks the specific reproduction steps, expected behavior, actual behavior, version, environment, or logs needed to route or investigate it.
 - A platform-specific claim lacks platform details.
 - A provider or integration issue lacks provider/integration configuration.
 - A PR does not explain intent, scope, or linked issue and the diff could be interpreted multiple ways.
@@ -86,9 +87,9 @@ Ask for exact missing fields. Do not ask broad questions like "Can you provide m
 
 ## When To Use Needs Labels
 
-- `needs: triage`: Newly created issue or PR needs maintainer review for project workflow assignment, labeling, ownership, or next action.
-- `needs: info`: Author action is required before work can proceed.
-- `needs: design`: Product or architecture decision is required.
+- `needs: triage`: Existing inbox or placeholder label for unprocessed items. Normal triage agents should not newly add it once they are producing Type, label, and Project field recommendations.
+- `needs: info`: Author action is required before work can proceed; optional clarifying questions alone are not enough.
+- `needs: design`: Product or architecture decision is required and implementation cannot proceed from the current report.
 - `needs: rebase`: PR cannot proceed because of conflicts or stale base.
 - `needs: unblock`: Blocked item needs a decision or dependency resolved.
 - `needs: cleanup-review`: Stale, superseded, competing, convergence-needed, or closure-candidate item needs maintainer judgment.
@@ -187,7 +188,7 @@ Recommendation:
 ### Anti-Examples
 
 - Do not add `bug` to a new issue. Set native Issue Type `Bug`.
-- Do not add `status: triage`; use `needs: triage` only if an action queue is still needed.
+- Do not add `status: triage` or `needs: triage` from normal triage output.
 - Do not add `priority: high`; recommend Project Priority instead.
 - Do not treat an issue `v0.0.x` label as release inclusion; PR labels own daily release activation.
 - Do not add `needs: review`; use Project Status `Needs Review` for review-ready PRs.

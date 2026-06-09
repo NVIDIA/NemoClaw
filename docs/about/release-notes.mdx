@@ -13,6 +13,17 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.61
+
+NemoClaw v0.0.61 improves sandbox network visibility, onboarding recovery, Hermes isolation, local inference restart behavior, and release validation:
+
+- Agents and operators can inspect a redacted policy context that lists active presets, allowed host categories, approval paths, and policy drift states. Strict SSRF fetches now route through the sandbox proxy, stale `sandboxes.json` locks held by recycled PIDs are reclaimed, and dashboard tool-scope approvals can recover through doctor after sandbox startup. For more information, refer to [Customize the Network Policy](../network-policy/customize-network-policy).
+- Sandbox hardening now caps open file descriptors at entrypoint, preserves the tunnel service PID directory across restarts, and keeps build-time plugin install state from forcing runtime npm calls offline. NemoClaw also closed coordinated code-scanning findings and consolidated HTTP probe policy handling without changing the operator contract. For more information, refer to [Security Best Practices](../security/best-practices).
+- Onboarding and rebuild paths recover more reliably across host and provider drift. ARM64 image-tar upload failures receive a clear classification with an image-reference workaround, rebuild detaches sandbox providers before delete, rebuilt resume snapshots keep session state, and messaging selector key sequences work during onboarding. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Local inference and Hermes setup cover more restart and configuration edge cases. Managed inference hostnames bypass host proxies, managed vLLM restarts after host reboot, DGX Station managed vLLM defaults to `Qwen/Qwen3.6-27B-FP8`, Hermes rejects dashboard port collisions during configuration, and Hermes recovery enforces the environment-secret boundary. For more information, refer to [Use a Local Inference Server](../inference/use-local-inference).
+- Messaging setup gives clearer feedback and stores more deterministic state. Slack now notifies the sender when a channel `@mention` is denied, operator-supplied placeholder keys can be registered during onboarding, `messagingPlan` persists into resume state, and channel conflict detection now uses the manifest-plan architecture. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- Release validation now uses real shell assertions in the e2e scenario runner, includes an opt-in live scenario project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
+
 ## v0.0.60
 
 NemoClaw v0.0.60 improves runtime guidance, sandbox lifecycle reliability, local inference setup, messaging enrollment, and maintainer safeguards:

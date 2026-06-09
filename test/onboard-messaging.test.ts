@@ -488,7 +488,7 @@ const { createSandbox } = require(${onboardPath});
   );
 
   it(
-    "does not reuse existing messaging providers during non-interactive recreate when tokens are not in the host env",
+    "reuses existing messaging providers during non-interactive recreate when tokens are not in the host env",
     { timeout: 60_000 },
     async () => {
       const repoRoot = path.join(import.meta.dirname, "..");
@@ -527,12 +527,6 @@ const registerCalls = [];
 registry.registerSandbox({
   name: "my-assistant",
   messagingChannels: ["discord", "slack"],
-  providerCredentialHashes: {
-    DISCORD_BOT_TOKEN: "hash-discord",
-    SLACK_BOT_TOKEN: "hash-slack-bot",
-    SLACK_APP_TOKEN: "hash-slack-app",
-    TELEGRAM_BOT_TOKEN: "hash-telegram",
-  },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -646,13 +640,12 @@ const { createSandbox } = require(${onboardPath});
       );
       assert.ok(createCommand, "expected sandbox create command");
       assert.equal(createCommand.dockerfileReadError, undefined);
-      assert.doesNotMatch(createCommand.command, /--provider my-assistant-discord-bridge/);
-      assert.doesNotMatch(createCommand.command, /--provider my-assistant-slack-bridge/);
-      assert.doesNotMatch(createCommand.command, /--provider my-assistant-slack-app/);
+      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
+      assert.match(createCommand.command, /--provider my-assistant-slack-app/);
 
       assert.deepEqual(activeChannelsFromDockerfile(createCommand.dockerfileContent), []);
       assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
-      assert.equal(payload.registerCalls[0]?.providerCredentialHashes, undefined);
     },
   );
 
@@ -694,7 +687,6 @@ registry.registerSandbox({
   name: "my-assistant",
   messagingChannels: ["telegram"],
   disabledChannels: ["telegram"],
-  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-telegram" },
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);

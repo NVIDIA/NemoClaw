@@ -110,6 +110,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       "regression-2717-slack-bridge",
       "regression-2717-slack-app",
       "regression-2717-wechat-bridge",
+      "regression-2717-brave-search",
     ]);
   });
 });

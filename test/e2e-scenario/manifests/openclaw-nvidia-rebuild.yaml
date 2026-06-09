@@ -1,0 +1,30 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-rebuild
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    # Lifecycle phase opt-in. Routes through
+    # nemoclaw_scenarios/lifecycle/dispatch.sh to the
+    # rebuild-current-version worker, which seeds a workspace marker,
+    # invokes `nemoclaw <sandbox> rebuild --yes`, and publishes the
+    # marker contract to runtime-phase assertions.
+    lifecycle: rebuild-current-version
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY

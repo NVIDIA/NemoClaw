@@ -126,6 +126,7 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
+const { runSandboxProviderPreDeleteCleanup } = require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -904,30 +905,6 @@ function upsertMessagingProviders(
 }
 const providerExistsInGateway = (name: string) => onboardProviders.providerExistsInGateway(name, runOpenshell);
 
-// Tri-state probe factory for messaging-conflict backfill. An upfront liveness
-// check is necessary because `openshell provider get` exits non-zero for both
-// "provider not attached" and "gateway unreachable"; without the liveness
-// gate, a transient gateway failure would be recorded as "no providers" and
-// permanently suppress future backfill retries.
-function makeConflictProbe() {
-  let gatewayAlive: boolean | null = null;
-  const isGatewayAlive = () => {
-    if (gatewayAlive === null) {
-      const result = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-      // runCaptureOpenshell returns stdout/stderr as a single string; treat
-      // any non-empty output as a sign openshell answered. Empty output with
-      // ignoreError typically means the binary failed to produce anything.
-      gatewayAlive = typeof result === "string" && result.length > 0;
-    }
-    return gatewayAlive;
-  };
-  return {
-    providerExists: (name: string) => {
-      if (!isGatewayAlive()) return "error";
-      return providerExistsInGateway(name) ? "present" : "absent";
-    },
-  };
-}
 
 function verifyInferenceRoute(_provider: string, _model: string): void {
   const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
@@ -2795,33 +2772,30 @@ async function createSandbox(
   // the sandbox reuse decision so we can detect stale sandboxes that were created
   // without provider attachments (security: prevents legacy raw-env-var leaks).
 
-  // The UI toggle list can include channels the user toggled on but then
-  // skipped the token prompt for. Only channels with a real token will have a
-  // provider attached, so the conflict check must filter out the skipped ones
-  // (otherwise we warn about phantom channels that will never poll).
-  const conflictCheckChannels = Array.isArray(enabledChannels)
-    ? enabledChannels.flatMap((name) => {
-        const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        if (!def || !def.envKey || !getValidatedMessagingToken(def, def.envKey)) return [];
-        const tokenEnvKeys = getChannelTokenKeys(def);
-        const credentialHashes: Record<string, string> = {};
-        for (const envKey of tokenEnvKeys) {
-          const hash = hashCredential(getValidatedMessagingToken(def, envKey));
-          if (hash) credentialHashes[envKey] = hash;
-        }
-        if (Object.keys(credentialHashes).length === 0) return [];
-        return [{ channel: name, credentialHashes }];
-      })
-    : [];
-
   // Messaging channels like Telegram (getUpdates), Discord (gateway), and Slack
   // (Socket Mode) enforce one consumer per channel credential. Two sandboxes
   // sharing a credential silently break both bridges (see #1953). Warn before
   // we commit.
-  if (conflictCheckChannels.length > 0) {
-    const { backfillMessagingChannels, findChannelConflicts } = require("./messaging-conflict");
-    backfillMessagingChannels(registry, makeConflictProbe());
-    const conflicts = findChannelConflicts(sandboxName, conflictCheckChannels, registry);
+  //
+  // The compiled plan (written to env by setupMessagingChannels) is the source
+  // of truth: credential hashes and active-channel membership are read from
+  // plan.credentialBindings rather than from MESSAGING_CHANNELS constants.
+  // Validate sandbox identity before trusting the env plan: a stale plan from a
+  // prior run of a different sandbox must not gate or bypass conflict detection
+  // for the current sandbox creation.
+  const envPlan = readMessagingPlanFromEnv();
+  const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
+  const hasPlanCredentials = currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
+  if (hasPlanCredentials) {
+    const { backfillMessagingChannels, findChannelConflictsFromPlan, createMessagingConflictProbe } =
+      require("./messaging/applier") as typeof import("./messaging/applier");
+    const probe = createMessagingConflictProbe({
+      checkGatewayLiveness: () =>
+        runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
+      providerExists: (name) => providerExistsInGateway(name),
+    });
+    backfillMessagingChannels(registry, probe);
+    const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan!, registry);
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
         const detail =
@@ -2914,6 +2888,22 @@ async function createSandbox(
   if (braveWebSearchEnabled) messagingTokenDefs.push({ name: `${sandboxName}-brave-search`, envKey: webSearch.BRAVE_API_KEY_ENV, token: braveApiKey, providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID });
   const extraPlaceholderKeys: string[] = require("./onboard/extra-placeholder-keys").registerExtraPlaceholderProviders(sandboxName, messagingTokenDefs);
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
+  const reusableMessagingProviders: string[] = [];
+  const reusableMessagingChannels: string[] = [];
+  if (enabledChannels != null) {
+    for (const { name, envKey, token } of messagingTokenDefs) {
+      if (token) continue;
+      const channel =
+        envKey === "SLACK_APP_TOKEN" ? "slack" : getMessagingChannelForEnvKey(envKey);
+      if (!channel || !enabledChannels.includes(channel)) continue;
+      if (!providerExistsInGateway(name)) continue;
+      reusableMessagingProviders.push(name);
+      if (!reusableMessagingChannels.includes(channel)) {
+        reusableMessagingChannels.push(channel);
+      }
+    }
+  }
+
   const existingRegistryEntryBeforePrune = registry.getSandbox(sandboxName);
 
   // Reconcile local registry state with the live OpenShell gateway state.
@@ -3190,6 +3180,7 @@ async function createSandbox(
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
+    runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });
     runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     if (previousEntry?.imageTag) {
       const rmiResult = dockerRmi(previousEntry.imageTag, {
@@ -3323,6 +3314,7 @@ async function createSandbox(
           }
           return [];
         }),
+      ...reusableMessagingChannels,
       ...qrSelectedChannels,
     ]),
   ];
@@ -3361,11 +3353,13 @@ async function createSandbox(
   ];
 
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  // The recreate path above just deleted the previous sandbox, so any
-  // attached providers are detached and safe to delete+create. That's
-  // required for the legacy Brave generic→brave type migration since
-  // `openshell provider update` cannot change `--type` (#3626).
-  const messagingProviders = upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true });
+  runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact, tolerateMissingSandbox: true });
+  const messagingProviders = [
+    ...new Set([
+      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
+      ...reusableMessagingProviders,
+    ]),
+  ];
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
   }
@@ -3432,12 +3426,16 @@ async function createSandbox(
     }
   }
   const buildId = String(Date.now());
-  const sandboxInferenceBaseUrlOverride =
-    dockerGpuLocalInference.dockerGpuPatchHostNetworkInferenceBaseUrl(
-      effectiveSandboxGpuConfig,
-      provider,
-      { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
-    );
+  // OpenClaw never uses a direct container-loopback inference URL: the agent's
+  // isolated sandbox netns can't reach the host loopback even under --network
+  // host. For local providers this drops the host-network GPU opt-in so
+  // inference uses the reachable inference.local route (re-checking the bridge
+  // it now needs); OpenClaw falls back to OpenShell-managed routing (#4509).
+  await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(provider, effectiveSandboxGpuConfig, {
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    log: console.log,
+  });
+  const sandboxInferenceBaseUrlOverride = null;
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -3570,7 +3568,7 @@ async function createSandbox(
         console.error(createResult.output);
       }
       console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output);
+      printSandboxCreateRecoveryHints(createResult.output, { createArgs });
       process.exit(createResult.status || 1);
     }
   }
@@ -3678,14 +3676,6 @@ async function createSandbox(
     hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
   hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
-  // Register only after confirmed ready — prevents phantom entries
-  const providerCredentialHashes: Record<string, string> = {};
-  for (const { envKey, token } of messagingTokenDefs) {
-    const hash = token ? hashCredential(token) : null;
-    if (hash) {
-      providerCredentialHashes[envKey] = hash;
-    }
-  }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
@@ -3700,8 +3690,6 @@ async function createSandbox(
     ...sandboxRuntimeFields,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
-    providerCredentialHashes:
-      Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     policies: initialSandboxPolicy.appliedPresets,
     // Persist the operator's configured channel set, not the post-disabled-filter
     // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
@@ -4150,7 +4138,7 @@ async function setupNim(
         }
 
         console.log("");
-        console.log("  Inference options:");
+        console.log("  Select your inference provider:");
         options.forEach((o, i) => {
           console.log(`    ${i + 1}) ${o.label}`);
         });
@@ -5754,7 +5742,7 @@ async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ) {
-  const selectedTier = await setupPoliciesWithSelectionImpl(
+  return setupPoliciesWithSelectionImpl(
     {
       policies,
       tiers,
@@ -5773,7 +5761,6 @@ async function setupPoliciesWithSelection(
     sandboxName,
     options,
   );
-  return selectedTier;
 }
 
 const {
@@ -6248,11 +6235,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         /* lspci not available — skip hint */
       }
     }
-    dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-      note,
-    });
-
     const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
     const gatewayResult = await handleGatewayState({
       resume,

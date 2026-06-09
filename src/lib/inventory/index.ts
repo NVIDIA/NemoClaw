@@ -18,7 +18,6 @@ export interface SandboxEntry {
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[] | null;
-  providerCredentialHashes?: Record<string, string> | null;
   messagingChannels?: string[] | null;
   agent?: string | null;
   dashboardPort?: number | null;

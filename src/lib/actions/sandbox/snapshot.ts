@@ -127,8 +127,7 @@ function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: s
       ],
       { ignoreError: true, timeout: 10000 },
     );
-    const img = output.trim().split(/\s+/)[0];
-    return img || null;
+    return output.trim().split(/\s+/)[0] || null;
   } catch {
     return null;
   }

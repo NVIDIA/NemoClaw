@@ -251,6 +251,7 @@ jobs:
 
       - name: Run ephemeral Brev E2E
         env:
+          NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1"
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}

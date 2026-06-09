@@ -21,15 +21,153 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  static-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Run basic checks
-        uses: ./.github/actions/basic-checks
+      - name: Run static checks
+        uses: ./.github/actions/ci-static-checks
+
+  build-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run build and type checks
+        uses: ./.github/actions/ci-build-typecheck
+
+  installer-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run installer integration tests
+        uses: ./.github/actions/ci-installer-integration
+
+  cli-test-shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run CLI coverage shard
+        uses: ./.github/actions/ci-cli-coverage-shard
+        with:
+          shard: ${{ matrix.shard }}
+          shard-count: "5"
+
+  cli-tests:
+    needs: cli-test-shards
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+        run: |
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Merge CLI coverage
+        uses: ./.github/actions/ci-cli-coverage-merge
+        with:
+          shard-count: "5"
+
+  plugin-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run plugin coverage
+        uses: ./.github/actions/ci-plugin-coverage
+
+  test-e2e-ollama-proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run Ollama auth proxy E2E tests
+        run: bash test/e2e-ollama-proxy.sh
+
+  checks:
+    needs:
+      - static-checks
+      - build-typecheck
+      - installer-integration
+      - cli-tests
+      - plugin-tests
+      - test-e2e-ollama-proxy
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Verify required main checks
+        env:
+          STATIC_RESULT: ${{ needs['static-checks'].result }}
+          BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
+          PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
+        run: |
+          set -euo pipefail
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              echo "::error title=${name} failed::Expected success, got ${result}"
+              exit 1
+            fi
+          }
+
+          require_success "static-checks" "$STATIC_RESULT"
+          require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+          require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+          require_success "cli-tests" "$CLI_TESTS_RESULT"
+          require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+          require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
 
   sandbox-images-and-e2e:
     needs: checks
