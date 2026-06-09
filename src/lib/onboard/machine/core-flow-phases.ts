@@ -8,7 +8,14 @@ import {
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
+import type { OnboardStateResult } from "./result";
+import type {
+  OnboardMachineRunnerResult,
+  OnboardMachineRunnerRuntime,
+  OnboardStateHandlerResult,
+} from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
+import { runCoreOnboardFlowSequence } from "./flow-slices";
 
 export interface CoreOnboardFlowPhaseOptions<
   Context extends OnboardFlowContext,
@@ -133,4 +140,38 @@ export function createCoreOnboardFlowPhases<
   };
 
   return [providerInferencePhase, sandboxPhase];
+}
+
+function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
+  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
+  return [result as OnboardStateResult];
+}
+
+export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
+  context: Context;
+  runtime: OnboardMachineRunnerRuntime;
+  phases: readonly OnboardSequencePhase<Context>[];
+  resume: boolean;
+  recordStateResult(result: OnboardStateResult): Promise<unknown>;
+}): Promise<OnboardMachineRunnerResult<Context>> {
+  const coreRuntimeSession = await options.runtime.session();
+  // Keep resume on the compatibility path for now: resume can intentionally
+  // re-run provider/sandbox repair checks even when saved machine state is ahead.
+  if (!options.resume && coreRuntimeSession.machine.state === "provider_selection") {
+    return runCoreOnboardFlowSequence({
+      context: options.context,
+      runtime: options.runtime,
+      phases: options.phases,
+    });
+  }
+
+  let context = options.context;
+  for (const phase of options.phases) {
+    const phaseResult = await phase.run(context);
+    for (const stateResult of stateResults(phaseResult.result)) {
+      await options.recordStateResult(stateResult);
+    }
+    context = phaseResult.context;
+  }
+  return { context, session: await options.runtime.session() };
 }

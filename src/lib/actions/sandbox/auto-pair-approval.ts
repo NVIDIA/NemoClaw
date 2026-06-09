@@ -41,9 +41,26 @@ import { ROOT } from "../../state/paths";
 
 // Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
 // shell/python startup slack fits inside the outer spawnSync cap, so a wedged
-// sandbox can never block the caller.
+// sandbox can never block the caller. These are the defaults for the doctor
+// recovery surface (#4616), which batch-clears any backlog of pending upgrades.
 export const AUTO_PAIR_MAX_APPROVALS = 8;
 export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
+// Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
+const AUTO_PAIR_LIST_TIMEOUT_S = 2;
+const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
+
+// Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
+// supply a tighter budget — a single realistic pending CLI/webchat scope
+// upgrade (maxApprovals = 1) on the watcher's 10s approve budget with a 15s
+// outer cap — via ./connect-autopair-budget. The doctor surface (#4616) uses
+// the defaults above to drain a backlog. Callers that omit a field inherit the
+// default, so the historical doctor payload stays byte-stable.
+export type AutoPairApprovalBudget = {
+  maxApprovals?: number;
+  listTimeoutS?: number;
+  approveTimeoutS?: number;
+  timeoutMs?: number;
+};
 
 const AUTO_PAIR_POLICY_PATH = path.join(
   ROOT,
@@ -102,11 +119,14 @@ export function readAutoPairApprovalPolicyModule(): string | null {
  */
 export function buildAutoPairApprovalScript(
   approvalPolicyModuleB64: string,
-  options: { emitSummary?: boolean } = {},
+  options: { emitSummary?: boolean; budget?: AutoPairApprovalBudget } = {},
 ): string {
   const summaryLine = options.emitSummary
     ? "print(f'__NEMOCLAW_AUTO_PAIR_APPROVED__={approved_count}')\n"
     : "";
+  const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
+  const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
+  const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
   return `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -131,12 +151,12 @@ except Exception:
     sys.exit(0)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-MAX_APPROVALS = ${AUTO_PAIR_MAX_APPROVALS}
+MAX_APPROVALS = ${maxApprovals}
 
 try:
     proc = subprocess.run(
         [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=2,
+        capture_output=True, text=True, timeout=${listTimeoutS},
     )
 except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
     sys.exit(0)
@@ -171,7 +191,7 @@ for device in pending:
     try:
         approve_proc = subprocess.run(
             [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
+            capture_output=True, text=True, timeout=${approveTimeoutS}, env=approve_env,
         )
         if approve_proc.returncode == 0:
             approved_count += 1
@@ -194,7 +214,7 @@ exit 0
  */
 export function runSandboxAutoPairApprovalPass(
   sandboxName: string,
-  options: { capture?: boolean } = {},
+  options: { capture?: boolean; budget?: AutoPairApprovalBudget } = {},
 ): AutoPairApprovalResult {
   const capture = options.capture === true;
   const approvalPolicyModule = readAutoPairApprovalPolicyModule();
@@ -202,7 +222,11 @@ export function runSandboxAutoPairApprovalPass(
     return { attempted: false, reported: false, approved: 0 };
   }
   const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
-  const script = buildAutoPairApprovalScript(approvalPolicyModuleB64, { emitSummary: capture });
+  const script = buildAutoPairApprovalScript(approvalPolicyModuleB64, {
+    emitSummary: capture,
+    budget: options.budget,
+  });
+  const outerTimeoutMs = options.budget?.timeoutMs ?? AUTO_PAIR_APPROVAL_TIMEOUT_MS;
   // Lazy require: `adapters/openshell/runtime` pulls in `runner`, whose
   // load-time `require("./platform")` cannot be resolved by the Vitest TS
   // loader. Importing it here keeps this module unit-testable in-process.
@@ -217,7 +241,7 @@ export function runSandboxAutoPairApprovalPass(
         env: process.env,
         stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "ignore", "ignore"],
         encoding: "utf-8",
-        timeout: AUTO_PAIR_APPROVAL_TIMEOUT_MS,
+        timeout: outerTimeoutMs,
       },
     );
     if (!capture) {

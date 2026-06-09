@@ -77,6 +77,31 @@ const onboardingFailureGatewayPortConflict: ExpectedState = {
   sandbox: { expected: "absent" },
 };
 
+// Post-reboot recovery contract for #4423. After the lifecycle phase
+// stops the OpenShell gateway runtime + the labeled sandbox container,
+// the user-visible invariants are:
+//
+//   * `cli` still installed.
+//   * `gateway` healthy: the user-systemd unit from #4580 brings the
+//     gateway back up before status runs.
+//   * `sandbox` running by the time validation completes: a correct
+//     fix performs Docker-backed recovery before responding.
+//   * `localRegistry` entry preserved: this is the user-visible
+//     regression target. On unfixed code, the destructive `missing`
+//     branch wipes the entry; on fixed code it survives because
+//     Docker corroborated the sandbox container existence.
+//   * `dockerSandboxContainer` still present: the recovery path must
+//     not delete the labeled container or its `*-nemoclaw-gpu-backup-*`
+//     sibling as a side effect.
+const postRebootRecoveryReady: ExpectedState = {
+  id: "post-reboot-recovery-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "openclaw" },
+  localRegistry: { expected: "present" },
+  dockerSandboxContainer: { expected: "present" },
+};
+
 const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
   cloudOpenclawCustomPoliciesReady,
@@ -86,6 +111,7 @@ const REGISTRY: readonly ExpectedState[] = [
   preflightFailureNoSandbox,
   onboardingFailureInvalidNvidiaKey,
   onboardingFailureGatewayPortConflict,
+  postRebootRecoveryReady,
 ];
 
 const BY_ID: ReadonlyMap<string, ExpectedState> = new Map(
@@ -130,6 +156,16 @@ export function probesForState(state: ExpectedState): readonly StateProbeId[] {
     probes.push("sandbox-running");
   } else if (state.sandbox?.expected === "absent") {
     probes.push("sandbox-absent");
+  }
+  // Host-side aspects. "absent" deliberately emits no probe today: it
+  // would require asserting the registry/container does NOT exist,
+  // which has no scenario in flight. Add when a negative scenario
+  // needs it.
+  if (state.localRegistry?.expected === "present") {
+    probes.push("local-registry-entry-present");
+  }
+  if (state.dockerSandboxContainer?.expected === "present") {
+    probes.push("docker-sandbox-container-present");
   }
   return probes;
 }

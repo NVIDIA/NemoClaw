@@ -216,15 +216,19 @@ function writeModelRouterInstalledFingerprint(
   fs.writeFileSync(modelRouterFingerprintPath(venvDir), `${fingerprint}\n`, { mode: 0o600 });
 }
 
-function isManagedModelRouterCurrent(
+export function isManagedModelRouterCurrent(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
 ): boolean {
   if (!isExecutableFile(modelRouterCommandPath(venvDir))) return false;
   const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  return Boolean(
-    sourceFingerprint && readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint,
-  );
+  if (sourceFingerprint) {
+    return readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint;
+  }
+  // When source fingerprint is unavailable (no git), accept an existing
+  // install-prefixed fingerprint to avoid reinstalling on every onboard.
+  const installed = readModelRouterInstalledFingerprint(venvDir);
+  return installed !== null && installed.startsWith("install:");
 }
 
 function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): void {
@@ -274,7 +278,10 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
   if (!isExecutableFile(routerCommand)) {
     throw new Error("Model Router install did not produce the model-router command.");
   }
-  writeModelRouterInstalledFingerprint(sourceFingerprint, venvDir);
+  const version =
+    JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
+  const effectiveFingerprint = sourceFingerprint ?? `install:${version}`;
+  writeModelRouterInstalledFingerprint(effectiveFingerprint, venvDir);
   return routerCommand;
 }
 
