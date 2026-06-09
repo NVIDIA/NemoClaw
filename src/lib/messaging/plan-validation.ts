@@ -833,7 +833,7 @@ function assertSerializableValue(
     });
     return;
   }
-  if (typeof value === "object" && value !== null) {
+  if (isPlainObject(value)) {
     assertAcyclicObject(value, path, visiting, () => {
       for (const [key, entry] of Object.entries(value)) {
         assertSerializableValue(entry, `${path}.${key}`, visiting);
@@ -842,6 +842,12 @@ function assertSerializableValue(
     return;
   }
   fail(path, "expected JSON-serializable value");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function assertAcyclicObject(
