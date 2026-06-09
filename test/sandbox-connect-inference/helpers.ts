@@ -167,6 +167,17 @@ if (args[0] === "sandbox" && args[1] === "exec") {
       process.stderr.write("simulated sandbox exec failure\\n");
       process.exit(7);
     }
+    // Test hook (#4504): force the in-sandbox gateway health probe to report
+    // STOPPED so the probe path takes the not-running branch and (when recovery
+    // also fails) the probe-failure exit — where the approval sweep must NOT run.
+    if (
+      process.env.NEMOCLAW_TEST_GATEWAY_DOWN === "1" &&
+      command.includes("/health") &&
+      command.includes("HTTP_CODE")
+    ) {
+      process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nSTOPPED\\n");
+      process.exit(0);
+    }
     process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
     process.exit(0);
   }

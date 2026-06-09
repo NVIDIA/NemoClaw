@@ -877,4 +877,230 @@ const { setupInference } = require(${onboardPath});
       }
     },
   );
+
+  it(
+    "writes fallback fingerprint file when git source fingerprint is unavailable",
+    testTimeoutOptions(30_000),
+    () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-fallback-fp-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const venvDir = path.join(tmpDir, "model-router-venv");
+      const fakeRouterSource = path.join(tmpDir, "model-router-source.js");
+      const setupLog = path.join(tmpDir, "router-setup.log");
+      const scriptPath = path.join(tmpDir, "setup-router-fallback-fp-check.js");
+      const routerPort = 48000 + (process.pid % 10000);
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+      );
+
+      try {
+        fs.mkdirSync(fakeBin, { recursive: true });
+        fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+          mode: 0o755,
+        });
+        fs.writeFileSync(
+          path.join(fakeBin, "python3"),
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+            'if [ "$1" = "-c" ]; then',
+            '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+            "  exit 0",
+            "fi",
+            'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
+            '  venv_dir="$3"',
+            '  mkdir -p "$venv_dir/bin"',
+            "  cat > \"$venv_dir/bin/python\" <<'PY'",
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            `printf "venv-python %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+            'if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then',
+            '  venv_bin="$(cd "$(dirname "$0")" && pwd)"',
+            `  cp ${JSON.stringify(fakeRouterSource)} "$venv_bin/model-router"`,
+            '  chmod +x "$venv_bin/model-router"',
+            "  exit 0",
+            "fi",
+            "exit 97",
+            "PY",
+            '  chmod +x "$venv_dir/bin/python"',
+            "  exit 0",
+            "fi",
+            "exit 96",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        fs.writeFileSync(
+          fakeRouterSource,
+          [
+            `#!${process.execPath}`,
+            'const fs = require("fs");',
+            'const http = require("http");',
+            'const path = require("path");',
+            "const args = process.argv.slice(2);",
+            'if (args[0] === "proxy-config") {',
+            '  const output = args[args.indexOf("--output") + 1];',
+            "  fs.mkdirSync(path.dirname(output), { recursive: true });",
+            '  fs.writeFileSync(output, "model_list: []\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (args[0] === "proxy") {',
+            '  const port = Number(args[args.indexOf("--port") + 1] || "4000");',
+            "  const server = http.createServer((req, res) => {",
+            '    if (req.url === "/health") { res.statusCode = 200; res.end("ok"); return; }',
+            "    res.statusCode = 404;",
+            "    res.end();",
+            "  });",
+            '  server.listen(port, "127.0.0.1");',
+            "  setTimeout(() => process.exit(0), 10000);",
+            "} else {",
+            "  process.exit(1);",
+            "}",
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const routerPort = ${routerPort};
+const repoRoot = ${JSON.stringify(repoRoot)};
+const blueprintPath = path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml");
+const routerPyproject = path.join(repoRoot, "nemoclaw-blueprint", "router", "llm-router", "pyproject.toml");
+const originalReadFileSync = fs.readFileSync;
+const originalRun = runner.run;
+const originalExistsSync = fs.existsSync;
+fs.existsSync = (filePath) => {
+  if (filePath === routerPyproject || String(filePath) === routerPyproject) return true;
+  return originalExistsSync(filePath);
+};
+fs.readFileSync = (filePath, ...args) => {
+  const raw = originalReadFileSync(filePath, ...args);
+  if (filePath === blueprintPath || String(filePath) === blueprintPath) {
+    return String(raw)
+      .replace('endpoint: "http://localhost:4000/v1"', 'endpoint: "http://localhost:' + routerPort + '/v1"')
+      .replace("port: 4000", "port: " + routerPort);
+  }
+  return raw;
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
+    return originalRun(command, opts);
+  }
+  if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected pip3 invocation in test harness: " + cmd);
+  }
+  if (cmd.includes("git -C") || /^git(?:\s|$)/.test(cmd)) {
+    throw new Error("unexpected git invocation in test harness: " + cmd);
+  }
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  // Return empty for ALL git commands so source fingerprint is null
+  if (cmd.includes("git ")) return "";
+  if (cmd.includes("command -v") && /model-router$/.test(cmd)) return "";
+  if (cmd.includes("command -v") && /python3$/.test(cmd)) {
+    return ${JSON.stringify(path.join(fakeBin, "python3"))};
+  }
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: nvidia-router",
+      "  Model: nvidia-routed",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+
+process.env.NVIDIA_API_KEY = "nvapi-router-secret";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "router-box",
+    "nvidia-routed",
+    "nvidia-router",
+    "http://host.openshell.internal:" + routerPort + "/v1",
+    "NVIDIA_API_KEY",
+  );
+  const fpPath = path.join(${JSON.stringify(venvDir)}, ${JSON.stringify(MODEL_ROUTER_FINGERPRINT_FILE)});
+  const fpExists = fs.existsSync(fpPath);
+  const fpContent = fpExists ? fs.readFileSync(fpPath, "utf8").trim() : null;
+
+  // Verify isManagedModelRouterCurrent returns true on a subsequent check
+  // when sourceFingerprint is null but the install: fingerprint file exists.
+  // Import the module and call it directly.
+  const modelRouter = require(${JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "onboard", "model-router.js"),
+  )});
+  const isCurrent = modelRouter.isManagedModelRouterCurrent(
+    ${JSON.stringify(path.join(tmpDir, "nonexistent-router-dir"))},
+    ${JSON.stringify(venvDir)},
+  );
+
+  console.log(JSON.stringify({ fpExists, fpContent, isCurrent }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+        fs.writeFileSync(scriptPath, script);
+
+        const result = spawnSync(process.execPath, [scriptPath], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            HOME: tmpDir,
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+            ROUTER_SETUP_LOG: setupLog,
+            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+          },
+        });
+
+        assert.equal(result.status, 0, result.stderr);
+        const payload = parseStdoutJson<{
+          fpExists: boolean;
+          fpContent: string | null;
+          isCurrent: boolean;
+        }>(result.stdout);
+        assert.ok(payload.fpExists, "fingerprint file must exist after install even without git");
+        assert.ok(payload.fpContent, "fingerprint content must not be empty");
+        assert.match(
+          payload.fpContent!,
+          /^install:.+$/,
+          "fallback fingerprint must use install:<token> format",
+        );
+        assert.doesNotMatch(
+          payload.fpContent!,
+          /^install:\d{13,}$/,
+          "fallback fingerprint must not use a timestamp",
+        );
+        assert.ok(
+          payload.isCurrent,
+          "isManagedModelRouterCurrent must return true when install: fingerprint exists and source is unavailable",
+        );
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

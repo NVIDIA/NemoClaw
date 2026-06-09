@@ -561,6 +561,7 @@ import {
   type MessagingChannelConfig,
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
+import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
@@ -6809,11 +6810,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
-        checkAndRecoverSandboxProcesses: (name, options) => {
-          const processRecovery: typeof import("./actions/sandbox/process-recovery") =
-            require("./actions/sandbox/process-recovery");
-          processRecovery.checkAndRecoverSandboxProcesses(name, options);
-        },
+        ...finalizationHandlerDeps,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
