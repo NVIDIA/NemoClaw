@@ -50,4 +50,27 @@ describe("live Vitest registry discovery support", () => {
       reasons: ["runtime 'docker-missing' is not wired for live Vitest fixtures"],
     });
   });
+
+  it("keeps unwhitelisted lifecycle profiles skipped with the lifecycle reason", () => {
+    const scenario = listScenarios().find((entry) => entry.id === "ubuntu-rebuild-openclaw");
+
+    expect(scenario).toBeTruthy();
+    expect(liveScenarioSupport(scenario!)).toMatchObject({
+      supported: false,
+      reasons: ["lifecycle 'rebuild-current-version' is not wired for live Vitest fixtures"],
+    });
+  });
+
+  it("accepts the whitelisted post-reboot-recovery lifecycle scenario", () => {
+    const scenario = listScenarios().find(
+      (entry) => entry.id === "ubuntu-repo-docker-post-reboot-recovery",
+    );
+
+    expect(scenario).toBeTruthy();
+    expect(scenario!.environment?.lifecycle).toBe("post-reboot-recovery");
+    expect(liveScenarioSupport(scenario!)).toMatchObject({
+      supported: true,
+      reasons: [],
+    });
+  });
 });

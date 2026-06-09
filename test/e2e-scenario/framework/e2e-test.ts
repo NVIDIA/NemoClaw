@@ -14,6 +14,7 @@ import {
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {
   EnvironmentPhaseFixture,
+  LifecyclePhaseFixture,
   OnboardingPhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
@@ -32,6 +33,7 @@ export interface E2EScenarioFixtures {
   state: StateClient;
   environment: EnvironmentPhaseFixture;
   onboard: OnboardingPhaseFixture;
+  lifecycle: LifecyclePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
 }
 
@@ -90,6 +92,9 @@ export const test = base.extend<E2EScenarioFixtures>({
   },
   onboard: async ({ cleanup, host, secrets }, use) => {
     await use(new OnboardingPhaseFixture(host, secrets, cleanup));
+  },
+  lifecycle: async ({ cleanup, host, sandbox }, use) => {
+    await use(new LifecyclePhaseFixture(host, sandbox, cleanup));
   },
   stateValidation: async ({ host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox));
