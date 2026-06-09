@@ -530,25 +530,42 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
   if (repro.error || !Array.isArray(repro.sentRuns) || !Array.isArray(repro.events)) return false;
 
   const analysis = analyzeIssue2603Trace(repro);
-  return (
+
+  // Original check: zero chat events captured at all.
+  const zeroChatEvents =
     repro.sentRuns.length === 3 &&
     analysis.chatEvents.length === 0 &&
     analysis.emptyFinalsForSubmittedRuns.length === 0 &&
     analysis.duplicateReplies.length === 0 &&
     analysis.uncorrelatedReplies.length === 0 &&
-    analysis.missingReplies.length === repro.sentRuns.length
-  );
+    analysis.missingReplies.length === repro.sentRuns.length;
+
+  // Extended check: chat events exist but none belong to submitted runs —
+  // the captured events are orphaned/stale (e.g. aborted runs from a
+  // previous session or unrelated background activity) and every submitted
+  // reply is still missing. Without this guard the retry never fires when
+  // the sandbox emits aborted events for runs the test did not submit.
+  const submittedRunIds = new Set(repro.sentRuns.map((entry) => entry.runId));
+  const orphanedEvents =
+    repro.sentRuns.length === 3 &&
+    analysis.chatEvents.length > 0 &&
+    analysis.chatEvents.every((event) => !event.runId || !submittedRunIds.has(event.runId)) &&
+    analysis.missingReplies.length === repro.sentRuns.length;
+
+  return zeroChatEvents || orphanedEvents;
 }
 
-// The zero-chat-events failure is an observability race at the live repro boundary:
-// OpenClaw accepts the chat.send requests, but this websocket client captures no
-// chat stream events before assertions. The source boundary is the pinned
-// OpenClaw 2026.5.x gateway/websocket runtime inside the sandbox, so this
-// NemoClaw-side E2E can only keep the #2603/#3145 correlation assertions stable
-// while preserving signal for real empty-final, duplicate-turn, and
-// uncorrelated-reply regressions. Remove this retry when OpenClaw exposes a
-// deterministic chat subscription/readiness acknowledgement or the 10x nightly
-// sweep no longer shows the zero-event capture signature without this guard.
+// The event-capture failure is an observability race at the live repro boundary:
+// OpenClaw accepts the chat.send requests, but this websocket client either
+// captures no chat stream events, or captures only orphaned/stale events from
+// unrelated runs (e.g. aborted background activity), before assertions. The
+// source boundary is the pinned OpenClaw 2026.5.x gateway/websocket runtime
+// inside the sandbox, so this NemoClaw-side E2E can only keep the #2603/#3145
+// correlation assertions stable while preserving signal for real empty-final,
+// duplicate-turn, and uncorrelated-reply regressions. Remove this retry when
+// OpenClaw exposes a deterministic chat subscription/readiness acknowledgement
+// or the 10x nightly sweep no longer shows event capture failures without this
+// guard.
 function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIssue2603Run {
   const attempts: LiveIssue2603Trace[] = [];
   let repro = runLiveIssue2603Repro(sandboxName);
@@ -556,7 +573,7 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
 
   if (looksLikeEventCaptureFailure(repro)) {
     console.warn(
-      "ISSUE2603_RETRY captured zero chat events after accepted sends; retrying with a fresh session",
+      "ISSUE2603_RETRY event capture failure (zero or orphaned chat events); retrying with a fresh session",
     );
     repro = runLiveIssue2603Repro(sandboxName);
     attempts.push(repro);
@@ -647,7 +664,8 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     expect(analysis.uncorrelatedReplies).toEqual([]);
   });
 
-  it("only retries the live repro when no chat events were captured", () => {
+  it("retries the live repro on zero or orphaned chat events", () => {
+    // Zero chat events — original retry trigger.
     expect(
       looksLikeEventCaptureFailure({
         sentRuns: capturedIssue2603Trace.sentRuns,
@@ -656,6 +674,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
       }),
     ).toBe(true);
 
+    // Chat event from a submitted run — not a capture failure; do not retry.
     expect(
       looksLikeEventCaptureFailure({
         sentRuns: capturedIssue2603Trace.sentRuns,
@@ -671,6 +690,20 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
         historyMessages: [],
       }),
     ).toBe(false);
+
+    // Orphaned events — chat events exist but none belong to submitted runs.
+    // All submitted replies are still missing. Should retry.
+    expect(
+      looksLikeEventCaptureFailure({
+        sentRuns: capturedIssue2603Trace.sentRuns,
+        events: [
+          { event: "chat", payload: { runId: "orphan-aaa", state: "aborted" } },
+          { event: "chat", payload: { runId: "orphan-bbb", state: "aborted" } },
+          { event: "chat", payload: { runId: "orphan-ccc", state: "aborted" } },
+        ],
+        historyMessages: [],
+      }),
+    ).toBe(true);
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
