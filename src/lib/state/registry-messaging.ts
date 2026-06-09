@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { parseValidSandboxMessagingPlan } from "../messaging/plan-validation";
 import type { SandboxRegistry } from "./registry";
 
 export interface SandboxMessagingState {
@@ -26,9 +27,11 @@ export function cloneSandboxMessagingState(
   messaging: SandboxMessagingState | undefined,
 ): SandboxMessagingState | undefined {
   if (!messaging || messaging.schemaVersion !== 1) return undefined;
+  const plan = parseValidSandboxMessagingPlan(messaging.plan);
+  if (!plan) return undefined;
   return {
     schemaVersion: 1,
-    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
+    plan: JSON.parse(JSON.stringify(plan)) as SandboxMessagingPlan,
   };
 }
 
@@ -36,7 +39,7 @@ export function getMessagingPlanFromEntry(
   entry: MessagingEntry | null | undefined,
 ): SandboxMessagingPlan | null {
   const plan = entry?.messaging?.schemaVersion === 1 ? entry.messaging.plan : null;
-  return plan?.schemaVersion === 1 ? plan : null;
+  return parseValidSandboxMessagingPlan(plan);
 }
 
 export function getConfiguredMessagingChannelsFromEntry(

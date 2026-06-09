@@ -10,6 +10,7 @@ import type {
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
 } from "../manifest";
+import { parseValidSandboxMessagingPlan } from "../plan-validation";
 import { ManifestCompiler } from "./manifest-compiler";
 import type { ManifestCompilerContext, MessagingCompilerCredentialAvailability } from "./types";
 
@@ -55,7 +56,7 @@ export class MessagingWorkflowPlanner {
   async buildChannelAddPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerChannelAddContext,
   ): Promise<SandboxMessagingPlan> {
-    const existingPlan = readSandboxEntryPlan(context);
+    const existingPlan = readSandboxEntryPlan(context, this.registry);
     const compiledPlan = await this.buildPlan({
       sandboxName: context.sandboxName,
       agent: context.agent,
@@ -66,7 +67,7 @@ export class MessagingWorkflowPlanner {
       supportedChannelIds: context.supportedChannelIds,
       credentialAvailability: mergeAvailability(
         credentialAvailabilityFromPlan(existingPlan),
-        this.credentialAvailabilityFromSandboxEntry(context.sandboxEntry, [context.channelId]),
+        this.credentialAvailabilityFromSandboxEntry(context, [context.channelId]),
         context.credentialAvailability,
       ),
     });
@@ -97,7 +98,7 @@ export class MessagingWorkflowPlanner {
   async buildRebuildPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
-    const existingPlan = readSandboxEntryPlan(context);
+    const existingPlan = readSandboxEntryPlan(context, this.registry);
     if (!existingPlan) return null;
     return setPlanDisabledChannels(existingPlan, existingPlan.disabledChannels, "rebuild");
   }
@@ -137,16 +138,16 @@ export class MessagingWorkflowPlanner {
     context: MessagingWorkflowPlannerChannelMutationContext,
     workflow: MessagingCompilerWorkflow,
   ): Promise<SandboxMessagingPlan | null> {
-    const existingPlan = readSandboxEntryPlan(context);
+    const existingPlan = readSandboxEntryPlan(context, this.registry);
     if (existingPlan) return { ...clonePlan(existingPlan), workflow };
     return null;
   }
 
   private credentialAvailabilityFromSandboxEntry(
-    sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+    context: MessagingWorkflowPlannerSandboxContext,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
-    const plan = sandboxEntry?.messaging?.plan;
+    const plan = readSandboxEntryPlan(context, this.registry);
     if (!plan) return undefined;
 
     const availability: Record<string, boolean> = {};
@@ -214,18 +215,20 @@ function onlyConfiguredChannels(
 }
 
 function readSandboxEntryPlan(
-  context: Pick<MessagingWorkflowPlannerSandboxContext, "agent" | "sandboxEntry" | "sandboxName">,
+  context: Pick<
+    MessagingWorkflowPlannerSandboxContext,
+    "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+  >,
+  registry: ChannelManifestRegistry,
 ): SandboxMessagingPlan | null {
   const plan = context.sandboxEntry?.messaging?.plan;
-  if (
-    !plan ||
-    plan.schemaVersion !== 1 ||
-    plan.sandboxName !== context.sandboxName ||
-    plan.agent !== context.agent
-  ) {
-    return null;
-  }
-  return clonePlan(plan);
+  const validPlan = parseValidSandboxMessagingPlan(plan, {
+    registry,
+    sandboxName: context.sandboxName,
+    agent: context.agent,
+    supportedChannelIds: context.supportedChannelIds,
+  });
+  return validPlan ? clonePlan(validPlan) : null;
 }
 
 function clonePlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
