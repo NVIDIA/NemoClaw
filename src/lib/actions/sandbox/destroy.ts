@@ -300,8 +300,7 @@ export function removeShieldsState(
     } catch (error) {
       // force: true already suppresses ENOENT; warn on real failures
       // (e.g. EPERM) so stale state doesn't silently survive.
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code !== "ENOENT") {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const message = error instanceof Error ? error.message : String(error);
         warn(
           `Failed to remove shields cleanup artifact '${filePath}': ${message}`,

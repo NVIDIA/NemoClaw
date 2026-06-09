@@ -704,8 +704,7 @@ export function setConfigValue(document: UnknownRecord, configPath: string, valu
     if (isArrayIndex) {
       const array = requireArray(current, configPath);
       const arrayIndex = Number.parseInt(token, 10);
-      const entry = array[arrayIndex];
-      if (entry == null) {
+      if (array[arrayIndex] == null) {
         array[arrayIndex] = isArrayIndexToken(nextToken) ? [] : {};
       }
       current = array[arrayIndex];

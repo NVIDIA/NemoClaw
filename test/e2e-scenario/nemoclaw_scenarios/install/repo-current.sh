@@ -5,7 +5,6 @@
 # Install from a checked-out repo (repo-current / repo-checkout profile).
 #
 # Split from the install dispatcher to keep scenario setup logic flat and to
-# make the per-profile code discoverable by grep. Honors E2E_DRY_RUN.
 
 _E2E_INST_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _E2E_INST_REPO_RUNTIME_LIB="$(cd "${_E2E_INST_REPO_DIR}/../../runtime/lib" && pwd)"
@@ -16,10 +15,6 @@ _E2E_INST_REPO_RUNTIME_LIB="$(cd "${_E2E_INST_REPO_DIR}/../../runtime/lib" && pw
 
 e2e_install_repo() {
   e2e_env_trace "install-repo"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] install-repo (skipped)"
-    return 0
-  fi
   local repo_root
   repo_root="$(cd "${_E2E_INST_REPO_DIR}/../../../.." && pwd)"
   cd "${repo_root}" || return

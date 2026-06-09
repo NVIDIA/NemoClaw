@@ -15,10 +15,6 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 
 echo "local-ollama-inference:ollama-models-health"
 e2e_context_require E2E_PROVIDER
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would GET ollama /api/tags via host Ollama"
-  exit 0
-fi
 # GPU Ollama scenarios mirror legacy test-gpu-e2e.sh: validate the host
 # Ollama daemon directly because Docker GPU host networking bypasses the
 # normal dashboard/gateway forward path.
