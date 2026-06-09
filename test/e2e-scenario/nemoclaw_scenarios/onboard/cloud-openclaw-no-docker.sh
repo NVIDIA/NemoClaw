@@ -32,7 +32,10 @@
 
 e2e_onboard_cloud_openclaw_no_docker() {
   e2e_env_apply_noninteractive
-  e2e_context_init
+  # The TS runner already seeded context.env. Resolve the directory and
+  # keep existing keys (notably E2E_SANDBOX_NAME) for state-validation.
+  e2e_context_path >/dev/null
+  mkdir -p "${E2E_CONTEXT_DIR}"
 
   local log shim_dir rc=0
   log="${E2E_CONTEXT_DIR}/negative-preflight.log"

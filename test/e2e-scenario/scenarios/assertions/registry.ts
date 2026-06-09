@@ -280,7 +280,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
     shellStep({ id: "lifecycle.sandbox.list-and-status", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/00-list-and-status.sh" }),
     shellStep({ id: "lifecycle.sandbox.logs-and-exec", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/01-logs-and-exec.sh" }),
   ]),
-  suiteGroup("snapshot", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
+  suiteGroup("snapshot", [smokeSteps[2]]),
   suiteGroup("snapshot-lifecycle", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
   suiteGroup("rebuild", [
     shellStep({ id: "lifecycle.rebuild.state-preserved", phase: "runtime", ref: "test/e2e-scenario/validation_suites/rebuild_upgrade/00-state-preserved.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),

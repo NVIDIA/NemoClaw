@@ -15,6 +15,7 @@ const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/install");
+const ONBOARD_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/onboard");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", ["-c", script], {
@@ -55,6 +56,51 @@ describe("E2E shell helpers", () => {
       );
       expect(r.status).not.toBe(0);
       expect(r.stderr).toMatch(/E2E_SANDBOX_NAME|E2E_CONTEXT_DIR|context/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("no_docker_onboarding_worker_should_preserve_seeded_context", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-context-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  echo "Docker is required before onboarding" >&2
+  exit 42
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const contextBody = fs.readFileSync(path.join(tmp, "context.env"), "utf8");
+      expect(contextBody).toMatch(/^E2E_SANDBOX_NAME=e2e-preserved$/m);
+      expect(fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8")).toContain(
+        "Docker is required before onboarding",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
