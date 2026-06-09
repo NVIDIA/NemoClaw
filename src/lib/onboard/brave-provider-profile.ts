@@ -40,7 +40,8 @@ type TokenDefShape = { providerType?: string; token: string | null };
 
 function bufferOrStringToText(value: string | Buffer | null | undefined): string {
   if (typeof value === "string") return value;
-  if (value && typeof (value as Buffer).toString === "function") return (value as Buffer).toString();
+  if (value && typeof (value as Buffer).toString === "function")
+    return (value as Buffer).toString();
   return "";
 }
 

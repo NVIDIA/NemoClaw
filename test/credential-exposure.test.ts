@@ -112,8 +112,12 @@ describe("credential exposure in process arguments", () => {
 
       withLocalNoProxy(env);
 
-      expect(env.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
-      expect(env.no_proxy).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+      expect(env.NO_PROXY).toBe(
+        "corp.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+      );
+      expect(env.no_proxy).toBe(
+        "corp.internal,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+      );
     }
   });
 
@@ -145,5 +149,4 @@ describe("credential exposure in process arguments", () => {
   it("onboard curl probes use explicit timeouts", () => {
     expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
   });
-
 });

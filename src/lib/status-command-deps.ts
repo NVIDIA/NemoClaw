@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
 import { getLiveGatewayInference } from "./inference/live";
 import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
-import { backfillMessagingChannels, findAllOverlaps } from "./messaging-conflict";
+import { backfillMessagingChannels, findAllOverlaps } from "./messaging/applier";
 import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";

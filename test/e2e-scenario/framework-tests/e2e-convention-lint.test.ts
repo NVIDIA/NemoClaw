@@ -10,7 +10,11 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LINT_BIN = path.join(REPO_ROOT, "scripts/e2e/lint-conventions.ts");
 
-function runTsx(scriptPath: string, args: string[] = [], env: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runTsx(
+  scriptPath: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tsx = path.join(REPO_ROOT, "node_modules/.bin/tsx");
   return spawnSync(tsx, [scriptPath, ...args], {
     env: { ...process.env, ...env },
@@ -51,23 +55,23 @@ describe("Phase 1.G convention lint", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("lint_should_flag_step_that_reexports_noninteractive_env", () => {
-    writeStep(tmp, "00-bad.sh", 'export DEBIAN_FRONTEND=noninteractive\necho hi');
+  it("flags steps that reexport noninteractive env", () => {
+    writeStep(tmp, "00-bad.sh", "export DEBIAN_FRONTEND=noninteractive\necho hi");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-bad\.sh/);
     expect(r.stdout + r.stderr).toMatch(/DEBIAN_FRONTEND|non.?interactive/i);
   });
 
-  it("lint_should_flag_step_that_registers_own_trap", () => {
-    writeStep(tmp, "00-trap.sh", 'trap cleanup EXIT');
+  it("flags steps that register their own trap", () => {
+    writeStep(tmp, "00-trap.sh", "trap cleanup EXIT");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-trap\.sh/);
     expect(r.stdout + r.stderr).toMatch(/trap/i);
   });
 
-  it("lint_should_flag_step_that_calls_section", () => {
+  it("flags steps that call section", () => {
     writeStep(tmp, "00-section.sh", 'section "Phase 3: X"');
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
@@ -75,29 +79,28 @@ describe("Phase 1.G convention lint", () => {
     expect(r.stdout + r.stderr).toMatch(/section/i);
   });
 
-  it("lint_should_flag_step_writing_to_tmp_log_path", () => {
-    writeStep(tmp, "00-tmplog.sh", 'echo hi > /tmp/foo.log');
+  it("flags steps that write to a tmp log path", () => {
+    writeStep(tmp, "00-tmplog.sh", "echo hi > /tmp/foo.log");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-tmplog\.sh/);
     expect(r.stdout + r.stderr).toMatch(/\/tmp.*\.log|E2E_CONTEXT_DIR/);
   });
 
-  it("lint_should_flag_nonstandard_repo_root_discovery_pattern", () => {
+  it("flags nonstandard repo root discovery patterns", () => {
     writeStep(tmp, "00-reporoot.sh", 'REPO_ROOT="$(git rev-parse --show-toplevel)"');
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/repo.?root|git rev-parse/i);
   });
 
-  it("lint_should_not_require_legacy_scripts_to_update_parity_map", () => {
+  it("does not require legacy scripts to update the parity map", () => {
     writeLegacy(tmp, "test-new-thing.sh", '# legacy script\npass "something"');
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
-
-  it("lint_should_pass_on_current_repo_state", () => {
+  it("passes on the current repo state", () => {
     const r = runTsx(LINT_BIN);
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });

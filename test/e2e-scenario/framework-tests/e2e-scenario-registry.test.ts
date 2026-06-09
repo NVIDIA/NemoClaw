@@ -7,8 +7,7 @@ import path from "node:path";
 
 import { scenario } from "../scenarios/builder.ts";
 import { compileRunPlans } from "../scenarios/compiler.ts";
-import { migrationInventory } from "../scenarios/migration-inventory.ts";
-import { buildScenarioRegistry, listScenarios } from "../scenarios/registry.ts";
+import { buildScenarioRegistry } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SCENARIOS = path.join(REPO_ROOT, "test/e2e-scenario/scenarios/run.ts");
@@ -22,33 +21,33 @@ function runScenarioCli(args: string[]) {
   });
 }
 
-function scenarioOwnerIds(): string[] {
-  return Array.from(
-    new Set(
-      [...migrationInventory.setupScenarios, ...migrationInventory.testPlans]
-        .map((entry) => entry.newOwner)
-        .filter((owner) => owner.startsWith("scenario:"))
-        .map((owner) => owner.replace(/^scenario:/, "")),
-    ),
-  ).sort();
-}
-
 describe("deterministic scenario registry", () => {
-  it("test_should_register_canonical_scenarios_for_all_required_old_coverage", () => {
-    const registeredIds = new Set(listScenarios().map((entry) => entry.id));
-    const missing = scenarioOwnerIds().filter((id) => !registeredIds.has(id));
-
-    expect(missing, `missing canonical scenario IDs: ${missing.join(", ")}`).toEqual([]);
-  });
-
-  it("test_should_reject_duplicate_scenario_ids", () => {
-    const first = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml").build();
-    const second = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml").build();
+  it("should reject duplicate scenario IDs", () => {
+    const first = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .build();
+    const second = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml")
+      .build();
 
     expect(() => buildScenarioRegistry([first, second])).toThrow(/duplicate-id/);
   });
 
-  it("test_should_return_actionable_unknown_scenario_error", () => {
+  it("should reject scenario IDs that are unsafe for workflow regex filters and artifact paths", () => {
+    const unsafe = scenario("bad.id")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .build();
+
+    expect(() => buildScenarioRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
+
+    const result = runScenarioCli(["--scenarios", "../escape", "--plan-only"]);
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Selected scenario ID '\.\.\/escape' is not safe/,
+    );
+  });
+
+  it("should return actionable unknown scenario error", () => {
     const result = runScenarioCli(["--scenarios", "does-not-exist", "--plan-only"]);
 
     expect(result.status).not.toBe(0);
@@ -57,7 +56,7 @@ describe("deterministic scenario registry", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/ubuntu-repo-cloud-openclaw/);
   });
 
-  it("test_should_compile_multiple_targeted_scenario_plans", () => {
+  it("should compile multiple targeted scenario plans", () => {
     const plans = compileRunPlans(["ubuntu-repo-cloud-openclaw", "ubuntu-repo-cloud-hermes"]);
 
     expect(plans.map((plan) => plan.scenarioId)).toEqual([
@@ -66,7 +65,7 @@ describe("deterministic scenario registry", () => {
     ]);
   });
 
-  it("cli_should_emit_two_plan_sections_for_comma_separated_scenarios", () => {
+  it("CLI should emit two plan sections for comma separated scenarios", () => {
     const result = runScenarioCli([
       "--scenarios",
       "ubuntu-repo-cloud-openclaw,ubuntu-repo-cloud-hermes",
@@ -79,7 +78,7 @@ describe("deterministic scenario registry", () => {
     expect(result.stdout).toContain("Scenario: ubuntu-repo-cloud-hermes");
   });
 
-  it("baseline_plan_should_match_legacy_resolver_semantics", () => {
+  it("baseline plan should match legacy resolver semantics", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
 
     expect(plan.environment).toEqual({

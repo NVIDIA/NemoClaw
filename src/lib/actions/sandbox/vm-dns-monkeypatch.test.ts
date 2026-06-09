@@ -11,10 +11,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
 }));
 
-import {
-  applyOpenShellVmDnsMonkeypatch,
-  shouldApplyVmDnsMonkeypatch,
-} from "./vm-dns-monkeypatch";
+import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 const tempDirs: string[] = [];
 

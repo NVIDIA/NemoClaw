@@ -22,6 +22,9 @@
   var startupProbeLogged = false;
   var inferenceLogged = false;
   var credentialLogged = false;
+  var runtimeConfigLogged = false;
+  var sendMessageLogged = false;
+  var inboundUpdateLogged = false;
   var inDiagnosticWrite = false;
 
   function sanitize(value) {
@@ -76,9 +79,15 @@
     return { hostname: hostname, path: path };
   }
 
-  function isTelegramStartupProbe(info) {
+  function telegramApiMethod(info) {
     if (!info || info.hostname !== 'api.telegram.org') return;
-    return /\/(?:bot[^/]+\/)?(?:getUpdates|getMe|getWebhookInfo)(?:\?|$)/.test(info.path);
+    var match = /\/(?:bot[^/]+\/)?([^/?]+)(?:\?|$)/.exec(info.path || '');
+    return match && match[1] ? match[1] : '';
+  }
+
+  function isTelegramStartupProbe(info) {
+    var method = telegramApiMethod(info);
+    return method === 'getUpdates' || method === 'getMe' || method === 'getWebhookInfo';
   }
 
   function maybeLogTelegramStartupProbe(info, statusCode) {
@@ -110,18 +119,100 @@
     emit('[telegram] [default] Bot API startup probe failed: ' + sanitize(detail).slice(0, 300));
   }
 
-  function readTelegramBotToken(config) {
-    if (!config || typeof config !== 'object') return '';
+  function maybeLogTelegramSendMessage(info, statusCode) {
+    if (sendMessageLogged || telegramApiMethod(info) !== 'sendMessage') return;
+    sendMessageLogged = true;
+    emit('[telegram] [default] outbound sendMessage attempted; Bot API returned HTTP ' + Number(statusCode || 0));
+  }
+
+  function senderAllowlistState(senderId) {
+    if (senderId === undefined || senderId === null) return 'unknown';
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    try {
+      var fs = require('fs');
+      var account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+      if (!account || account.dmPolicy !== 'allowlist') return 'not-applicable';
+      var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom.map(String) : [];
+      return allowFrom.indexOf(String(senderId)) === -1 ? 'false' : 'true';
+    } catch (_e) {
+      return 'unknown';
+    }
+  }
+
+  function maybeLogTelegramInboundUpdate(info, body) {
+    if (inboundUpdateLogged || telegramApiMethod(info) !== 'getUpdates') return;
+    var payload = null;
+    try {
+      payload = JSON.parse(String(body || ''));
+    } catch (_e) {
+      return;
+    }
+    if (!payload || payload.ok !== true || !Array.isArray(payload.result)) return;
+    for (var i = 0; i < payload.result.length; i += 1) {
+      var update = payload.result[i];
+      if (!update || typeof update !== 'object') continue;
+      var message = update.message || update.edited_message || update.channel_post || update.edited_channel_post;
+      if (!message || typeof message !== 'object') continue;
+      inboundUpdateLogged = true;
+      var chat = message.chat && typeof message.chat === 'object' ? message.chat : {};
+      var from = message.from && typeof message.from === 'object' ? message.from : {};
+      var chatType = typeof chat.type === 'string' ? sanitize(chat.type).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) : 'unknown';
+      var updateIdState = update.update_id === undefined || update.update_id === null ? 'missing' : 'present';
+      var messageIdState = message.message_id === undefined || message.message_id === null ? 'missing' : 'present';
+      emit(
+        '[telegram] [default] inbound update received (update_id=' +
+          updateIdState +
+          '; message_id=' +
+          messageIdState +
+          '; chat_type=' +
+          chatType +
+          '; sender_allowlisted=' +
+          senderAllowlistState(from.id) +
+          ')'
+      );
+      return;
+    }
+  }
+
+  function readTelegramAccount(config) {
+    if (!config || typeof config !== 'object') return null;
     var channel = config.channels && config.channels.telegram;
-    if (!channel || typeof channel !== 'object') return '';
+    if (!channel || typeof channel !== 'object') return null;
     var accounts = channel.accounts;
-    if (!accounts || typeof accounts !== 'object') return '';
+    if (!accounts || typeof accounts !== 'object') return null;
     var account = accounts.default || accounts.main;
     if (!account || typeof account !== 'object') {
       var keys = Object.keys(accounts);
       account = keys.length ? accounts[keys[0]] : null;
     }
+    return account && typeof account === 'object' ? account : null;
+  }
+
+  function readTelegramBotToken(config) {
+    var account = readTelegramAccount(config);
     return account && typeof account.botToken === 'string' ? account.botToken : '';
+  }
+
+  function maybeLogRuntimeConfigDiagnostics() {
+    if (runtimeConfigLogged) return;
+    runtimeConfigLogged = true;
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    var account = null;
+    try {
+      var fs = require('fs');
+      account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+    } catch (_e) {
+      return;
+    }
+    if (!account) return;
+    var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom : [];
+    if (account.dmPolicy === 'allowlist') {
+      if (allowFrom.length > 0) {
+        emit('[telegram] [default] DM allowlist configured (' + allowFrom.length + ' entr' + (allowFrom.length === 1 ? 'y' : 'ies') + ')');
+      } else {
+        emit('[telegram] [default] DM allowlist is empty; set TELEGRAM_ALLOWED_IDS before rebuild or complete OpenClaw pairing before expecting direct-message replies');
+      }
+    }
   }
 
   function maybeLogCredentialPlaceholderDiagnostics() {
@@ -157,6 +248,20 @@
       if (info && info.hostname === 'api.telegram.org' && req && typeof req.once === 'function') {
         req.once('response', function (res) {
           maybeLogTelegramStartupProbe(info, res && res.statusCode);
+          maybeLogTelegramSendMessage(info, res && res.statusCode);
+          if (!inboundUpdateLogged && telegramApiMethod(info) === 'getUpdates' && res && typeof res.on === 'function') {
+            var responseChunks = [];
+            var responseBytes = 0;
+            res.on('data', function (chunk) {
+              if (responseBytes >= 65536) return;
+              var text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+              responseBytes += Buffer.byteLength(text);
+              if (responseBytes <= 65536) responseChunks.push(text);
+            });
+            res.on('end', function () {
+              maybeLogTelegramInboundUpdate(info, responseChunks.join(''));
+            });
+          }
         });
         req.once('error', function (error) {
           maybeLogTelegramStartupError(info, error);
@@ -191,4 +296,50 @@
   wrapHttp(https, 'request');
   wrapHttp(https, 'get');
   process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
+
+  // Defense in depth for #4314/#4390: if Telegram is configured but the
+  // bridge module never logs "starting provider" and never hits the Bot
+  // API within the startup window, surface a single actionable breadcrumb
+  // so the channel is observably broken instead of silently invisible.
+  //
+  // Gate to the OpenClaw gateway process flavors only. The preload is
+  // exported via NODE_OPTIONS, so every short-lived Node child the user
+  // spawns inside the sandbox (CLI tools, shells, npm scripts) also requires
+  // this file; without the gate the timer would emit a false "bridge did
+  // not start" line from every Node command even while the real gateway
+  // bridge is healthy. Mirrors sandbox-safety-net.js's gatewayProcessFlavor.
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+  if (!gatewayProcessFlavor()) return;
+  process.nextTick(maybeLogRuntimeConfigDiagnostics);
+  var STARTUP_GRACE_MS = Number(process.env.NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS || '') || 15000;
+  var noStartupTimer = setTimeout(function () {
+    if (providerStarted || startupProbeLogged) return;
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    try {
+      var fs = require('fs');
+      var cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      var telegram = cfg && cfg.channels && cfg.channels.telegram;
+      if (!telegram || telegram.enabled === false) return;
+      var accounts = telegram.accounts || {};
+      if (!Object.keys(accounts).length) return;
+    } catch (_e) {
+      return;
+    }
+    emit(
+      '[telegram] [default] bridge did not start within ' +
+        Math.round(STARTUP_GRACE_MS / 1000) +
+        's; check channels.telegram.enabled, plugin entries, and gateway log'
+    );
+  }, STARTUP_GRACE_MS);
+  if (typeof noStartupTimer.unref === 'function') noStartupTimer.unref();
 })();

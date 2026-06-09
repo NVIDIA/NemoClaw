@@ -20,13 +20,7 @@ import {
 } from "../scripts/validate-configs";
 
 describe("isDangerousHost", () => {
-  it.each([
-    "*",
-    "0.0.0.0",
-    "0.0.0.0/0",
-    "::",
-    "::/0",
-  ])("flags %s as dangerous", (host) => {
+  it.each(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"])("flags %s as dangerous", (host) => {
     expect(isDangerousHost(host)).toBe(true);
   });
 
@@ -134,14 +128,17 @@ describe("findDangerousHosts", () => {
       version: 1,
       network_policies: {
         a: { endpoints: [{ host: "*", port: 80 }] },
-        b: { endpoints: [{ host: "example.com", port: 443 }, { host: "::", port: 53 }] },
+        b: {
+          endpoints: [
+            { host: "example.com", port: 443 },
+            { host: "::", port: 53 },
+          ],
+        },
       },
     };
     const findings = findDangerousHosts(doc);
     expect(findings.map((f) => f.host).sort()).toEqual(["*", "::"]);
-    expect(findings.find((f) => f.host === "*")?.path).toBe(
-      "/network_policies/a/endpoints/0/host",
-    );
+    expect(findings.find((f) => f.host === "*")?.path).toBe("/network_policies/a/endpoints/0/host");
     expect(findings.find((f) => f.host === "::")?.path).toBe(
       "/network_policies/b/endpoints/1/host",
     );

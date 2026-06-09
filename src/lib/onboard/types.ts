@@ -23,9 +23,7 @@ export interface ProbeResultBase {
   message: string;
 }
 
-export type ProbeResult =
-  | ({ ok: true } & ProbeResultBase)
-  | ({ ok: false } & ProbeResultBase);
+export type ProbeResult = ({ ok: true } & ProbeResultBase) | ({ ok: false } & ProbeResultBase);
 
 export interface ModelCatalogFetchSuccess {
   ok: true;

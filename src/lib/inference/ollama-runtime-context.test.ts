@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   parseOllamaRuntimeContextLength,
   probeOllamaRuntimeModelStatus,
   resetOllamaRuntimeContextWindowAutoState,
@@ -28,10 +29,8 @@ describe("Ollama runtime context helpers", () => {
     expect(parseOllamaRuntimeContextLength(null)).toEqual({});
     expect(parseOllamaRuntimeContextLength("   ")).toEqual({});
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", processor: "100% GPU" }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", processor: "100% GPU" }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -51,10 +50,8 @@ describe("Ollama runtime context helpers", () => {
       expect(parsed.warning).toContain("non-positive or malformed context_length");
     }
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: "bogus" }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: "bogus" }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -67,10 +64,8 @@ describe("Ollama runtime context helpers", () => {
     expect(parsed.contextLength).toBeUndefined();
     expect(parsed.warning).toContain("above NemoClaw's auto-detect ceiling");
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: 10_000_000 }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: 10_000_000 }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -89,21 +84,61 @@ describe("Ollama runtime context helpers", () => {
         models: [{ name: "qwen3.6:35b", context_length: "262144", processor: "100% GPU" }],
       });
 
-    expect(
-      resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, getOllamaHost, capture),
-    ).toBe(262144);
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, getOllamaHost, capture)).toBe(
+      262144,
+    );
     expect(
       resolveOllamaRuntimeContextWindow("qwen3.6:35b", "131072", getOllamaHost, capture),
     ).toBeNull();
     expect(
       resolveOllamaRuntimeContextWindow("qwen3.6:35b", "bogus", getOllamaHost, capture),
     ).toBeNull();
-    expect(
-      resolveOllamaRuntimeContextWindow("qwen3.6:35b", "   ", getOllamaHost, capture),
-    ).toBe(262144);
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "   ", getOllamaHost, capture)).toBe(
+      262144,
+    );
     expect(
       resolveOllamaRuntimeContextWindow("other:model", null, getOllamaHost, capture),
     ).toBeNull();
+  });
+
+  it("raises the auto-adopted context window to the agent floor when the daemon reports below it", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const messages: string[] = [];
+    const options = {
+      env,
+      logger: {
+        log: (message: string) => messages.push(message),
+        warn: (message: string) => messages.push(message),
+      },
+      runCaptureImpl: () =>
+        JSON.stringify({
+          models: [{ name: "llama3.2:3b", context_length: 4096, processor: "100% GPU" }],
+        }),
+    };
+
+    applyOllamaRuntimeContextWindow("llama3.2:3b", getOllamaHost, options);
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe(String(MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW));
+    expect(messages.some((m) => m.includes("Raising Ollama runtime context window"))).toBe(true);
+  });
+
+  it("preserves a daemon-reported context window above the agent floor", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const messages: string[] = [];
+    const options = {
+      env,
+      logger: {
+        log: (message: string) => messages.push(message),
+        warn: (message: string) => messages.push(message),
+      },
+      runCaptureImpl: () =>
+        JSON.stringify({
+          models: [{ name: "qwen3.5:9b", context_length: 32_768, processor: "100% GPU" }],
+        }),
+    };
+
+    applyOllamaRuntimeContextWindow("qwen3.5:9b", getOllamaHost, options);
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+    expect(messages.some((m) => m.includes("Raising Ollama runtime context window"))).toBe(false);
   });
 
   it("applies and clears only auto-detected context window state", () => {

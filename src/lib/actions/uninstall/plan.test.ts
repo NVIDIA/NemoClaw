@@ -46,9 +46,19 @@ describe("uninstall plan actions", () => {
       });
       const actions = flattenUninstallPlan(plan);
 
-      expect(actions).toEqual(expect.arrayContaining([{ kind: "preserve-shim", reason: "regular file is not an installer-managed shim" }]));
-      expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-path", path: path.join(tmp, ".nemoclaw") }]));
-      expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-runtime-glob", pattern: path.join(tmp, "tmp", "nemoclaw-create-*.log") }]));
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          { kind: "preserve-shim", reason: "regular file is not an installer-managed shim" },
+        ]),
+      );
+      expect(actions).toEqual(
+        expect.arrayContaining([{ kind: "delete-path", path: path.join(tmp, ".nemoclaw") }]),
+      );
+      expect(actions).toEqual(
+        expect.arrayContaining([
+          { kind: "delete-runtime-glob", pattern: path.join(tmp, "tmp", "nemoclaw-create-*.log") },
+        ]),
+      );
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }

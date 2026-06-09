@@ -12,9 +12,7 @@ type ProviderInferencePhaseHandler<Context extends OnboardFlowContext> = (
   result: OnboardFlowPhaseResult<Context>["result"];
 }>;
 
-type SandboxPhaseHandler<Context extends OnboardFlowContext> = (
-  context: Context,
-) => Promise<{
+type SandboxPhaseHandler<Context extends OnboardFlowContext> = (context: Context) => Promise<{
   context: Partial<Context>;
   result: OnboardFlowPhaseResult<Context>["result"];
 }>;

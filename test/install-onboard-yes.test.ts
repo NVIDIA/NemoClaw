@@ -23,11 +23,9 @@ function runOnboardWithMockCli(
   const stubBin = path.join(tmp, "stub-cli");
   const argvLog = path.join(tmp, "argv.txt");
 
-  fs.writeFileSync(
-    stubBin,
-    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`,
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
+    mode: 0o755,
+  });
 
   const cliBin = assignments.cliBin ?? stubBin;
   // Quote each assignment so an empty string survives the heredoc — `_CLI_PATH=`
@@ -68,11 +66,9 @@ function runOnboardWithStubAtPath(
   const stubBin = path.join(tmp, "stub-cli");
   const argvLog = path.join(tmp, "argv.txt");
 
-  fs.writeFileSync(
-    stubBin,
-    `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`,
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
+    mode: 0o755,
+  });
 
   const snippet = `
     set -e

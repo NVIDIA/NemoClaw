@@ -8,10 +8,11 @@ import {
   gpuRepoDockerCdi,
   macosRepoDocker,
   ubuntuRepoDocker,
+  ubuntuRepoDockerLifecycle,
   ubuntuRepoNoDocker,
   wslRepoDocker,
 } from "../matrix.ts";
-import type { ScenarioDefinition, ScenarioEnvironment } from "../types.ts";
+import type { ExpectedFailureContract, ScenarioDefinition, ScenarioEnvironment } from "../types.ts";
 
 interface CanonicalScenarioInput {
   id: string;
@@ -24,7 +25,7 @@ interface CanonicalScenarioInput {
   runnerRequirements?: string[];
   requiredSecrets?: string[];
   skippedCapabilities?: Array<Record<string, unknown>>;
-  expectedFailure?: Record<string, unknown>;
+  expectedFailure?: ExpectedFailureContract;
 }
 
 function canonicalScenario(input: CanonicalScenarioInput): ScenarioDefinition {
@@ -131,6 +132,23 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     },
   },
   {
+    // Rebuild scenario. Onboards an OpenClaw sandbox normally, then
+    // the lifecycle phase seeds a workspace marker, runs
+    // `nemoclaw rebuild --yes`, and publishes the marker contract to
+    // runtime-phase assertions in rebuild_upgrade.sh. Mirrors the
+    // workspace-state-preservation invariant from
+    // test/e2e/test-rebuild-openclaw.sh; the broader version-upgrade
+    // dimension (build OLD-version base image first) belongs to a
+    // future `rebuild-from-old-version` lifecycle profile and is
+    // intentionally out of scope here.
+    id: "ubuntu-rebuild-openclaw",
+    manifestName: "openclaw-nvidia-rebuild",
+    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "rebuild-current-version"),
+    expectedStateId: "cloud-openclaw-ready",
+    suiteIds: ["smoke", "rebuild", "upgrade"],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+  },
+  {
     id: "ubuntu-repo-openai-compatible-openclaw",
     manifestName: "openclaw-openai-compatible",
     environment: ubuntuRepoDocker("openai-compatible-openclaw"),
@@ -184,7 +202,7 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     environment: ubuntuRepoDocker("cloud-nvidia-hermes-slack"),
     expectedStateId: "cloud-hermes-ready",
     suiteIds: ["smoke"],
-    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
+    requiredSecrets: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
   },
   {
     id: "ubuntu-repo-cloud-openclaw-resume",
@@ -231,7 +249,15 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     manifestName: "openclaw-nvidia-custom-policies",
     environment: ubuntuRepoDocker("cloud-openclaw-custom-policies"),
     expectedStateId: "cloud-openclaw-custom-policies-ready",
-    suiteIds: ["smoke", "inference", "credentials", "onboarding-state", "baseline-onboarding", "model-router", "snapshot-lifecycle"],
+    suiteIds: [
+      "smoke",
+      "inference",
+      "credentials",
+      "onboarding-state",
+      "baseline-onboarding",
+      "model-router",
+      "snapshot-lifecycle",
+    ],
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-security-best-practices-001",
+    "question": "I'm evaluating NemoClaw security best practices. Help me understand the risk posture of each configurable control so I can justify the setup to my team or security reviewers.",
+    "expected_skill": "nemoclaw-user-configure-security",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand the risk posture of each configurable control and gives enough concrete guidance, decision criteria, verification steps, or risk framing to justify the setup to my team or security reviewers.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

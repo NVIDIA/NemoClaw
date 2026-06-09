@@ -73,9 +73,7 @@ const CMDLINE_MARKERS = ["openclaw-gateway", "openshell-forward", "openshell for
 const TERM_WAIT_MS = 1000;
 const KILL_WAIT_MS = 1000;
 
-function toRunResult(
-  result: ReturnType<typeof spawnSync>,
-): RunResult {
+function toRunResult(result: ReturnType<typeof spawnSync>): RunResult {
   return {
     status: result.status,
     stdout: typeof result.stdout === "string" ? result.stdout : String(result.stdout ?? ""),
@@ -83,11 +81,7 @@ function toRunResult(
   };
 }
 
-function defaultRun(
-  command: string,
-  args: string[],
-  options: SpawnSyncOptions = {},
-): RunResult {
+function defaultRun(command: string, args: string[], options: SpawnSyncOptions = {}): RunResult {
   return toRunResult(spawnSync(command, args, { encoding: "utf-8", ...options }));
 }
 
@@ -101,11 +95,10 @@ function defaultKill(pid: number, signal?: NodeJS.Signals | number): boolean {
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  const probe = spawnSync(
-    "sh",
-    ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`],
-    { env, encoding: "utf-8" },
-  );
+  const probe = spawnSync("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
+    env,
+    encoding: "utf-8",
+  });
   return probe.status === 0;
 }
 
@@ -140,9 +133,7 @@ function pidOwnedByCurrentUser(pid: number, deps: StaleGatewayDeps): boolean {
 }
 
 function pidExists(pid: number, deps: StaleGatewayDeps): boolean {
-  return (
-    deps.run("ps", ["-p", String(pid), "-o", "pid="], { env: deps.env }).status === 0
-  );
+  return deps.run("ps", ["-p", String(pid), "-o", "pid="], { env: deps.env }).status === 0;
 }
 
 function waitForExit(pid: number, deps: StaleGatewayDeps, timeoutMs: number): boolean {
