@@ -201,6 +201,8 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   const initialRuntimeSession = await options.runtime.session();
   // Keep resume on the compatibility path for now: resume intentionally re-runs
   // preflight/gateway backstops even when the saved machine is already ahead.
+  // Remove this fallback only after resume repairs are modeled as strict FSM
+  // transitions that preserve these safety checks before later phases run.
   if (
     !options.resume &&
     (initialRuntimeSession.machine.state === "init" ||
