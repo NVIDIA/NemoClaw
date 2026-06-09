@@ -1,0 +1,198 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, expectTypeOf, it } from "vitest";
+
+import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
+import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
+import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
+import type { EnvironmentReady } from "../framework/phases/index.ts";
+import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../framework/shell-probe.ts";
+
+interface RunnerCall {
+  command: string;
+  args: string[];
+  options?: ShellProbeRunOptions;
+}
+
+function shellResult(exitCode: number, output = ""): ShellProbeResult {
+  return {
+    command: [],
+    exitCode,
+    signal: null,
+    timedOut: false,
+    stdout: output,
+    stderr: exitCode === 0 ? "" : output,
+    artifacts: {
+      stdout: "/tmp/stdout.txt",
+      stderr: "/tmp/stderr.txt",
+      result: "/tmp/result.json",
+    },
+  };
+}
+
+class FakeRunner implements CommandRunner {
+  readonly calls: RunnerCall[] = [];
+  private readonly responses: ShellProbeResult[] = [];
+
+  enqueue(response: ShellProbeResult): void {
+    this.responses.push(response);
+  }
+
+  async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
+    this.calls.push({ command: command.command, args: [...command.args], options });
+    return this.responses.shift() ?? shellResult(0);
+  }
+}
+
+class FakeSecrets implements OnboardingSecrets {
+  readonly requiredCalls: string[] = [];
+
+  constructor(private readonly values: Record<string, string | undefined> = {}) {}
+
+  required(name: string): string {
+    this.requiredCalls.push(name);
+    const value = this.values[name];
+    if (!value) throw new Error(`skip: missing required E2E secret: ${name}`);
+    return value;
+  }
+}
+
+function ready(overrides: Partial<EnvironmentReady> = {}): EnvironmentReady {
+  return {
+    platform: "ubuntu-local",
+    install: "repo-current",
+    runtime: "docker-running",
+    onboarding: "cloud-openclaw",
+    cliPath: "nemoclaw",
+    docker: {
+      id: "docker-running",
+      expectation: "required",
+      available: true,
+      result: shellResult(0),
+    },
+    ...overrides,
+  };
+}
+
+describe("onboarding phase fixture", () => {
+  it("runs cloud OpenClaw onboarding with explicit non-interactive inputs", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    const instance = await onboard.from(ready(), { sandboxName: "e2e-ubuntu-repo-cloud-openclaw" });
+
+    expect(instance).toMatchObject({
+      onboarding: "cloud-openclaw",
+      sandboxName: "e2e-ubuntu-repo-cloud-openclaw",
+      agent: "openclaw",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: "http://127.0.0.1:18789",
+    });
+    expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
+    expect(runner.calls).toEqual([
+      {
+        command: "nemoclaw",
+        args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+        options: {
+          artifactName: "onboard-cloud-openclaw",
+          env: {
+            NEMOCLAW_AGENT: "openclaw",
+            NEMOCLAW_PROVIDER: "cloud",
+            NEMOCLAW_SANDBOX_NAME: "e2e-ubuntu-repo-cloud-openclaw",
+          },
+          inheritEnv: true,
+          redactionValues: ["secret-token"],
+          timeoutMs: 900_000,
+        },
+      },
+    ]);
+  });
+
+  it("fails cloud OpenClaw onboarding on non-zero exit", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(42, "provider rejected credential"));
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+
+    await expect(onboard.from(ready())).rejects.toThrow(/cloud-openclaw onboarding failed: provider rejected/);
+  });
+
+  it("requires Docker for cloud OpenClaw onboarding", async () => {
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(new FakeRunner()), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+
+    await expect(
+      onboard.from(
+        ready({
+          docker: { id: "docker-running", expectation: "required", available: false },
+        }),
+      ),
+    ).rejects.toThrow(/requires an available Docker runtime/);
+  });
+
+  it("runs the no-Docker negative path with a failing Docker shim", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(7, "Cannot connect to the Docker daemon"));
+    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    const instance = await onboard.from(
+      ready({
+        runtime: "docker-missing",
+        onboarding: "cloud-openclaw-no-docker",
+        docker: { id: "docker-missing", expectation: "missing", available: false },
+      }),
+      { sandboxName: "e2e-no-docker" },
+    );
+
+    expect(instance).toMatchObject({
+      onboarding: "cloud-openclaw-no-docker",
+      sandboxName: "e2e-no-docker",
+      expectedFailure: {
+        phase: "preflight",
+        errorClass: "docker-missing",
+      },
+    });
+    expect(secrets.requiredCalls).toEqual([]);
+    expect(runner.calls[0]).toMatchObject({
+      command: "nemoclaw",
+      args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+      options: {
+        artifactName: "onboard-cloud-openclaw-no-docker",
+        inheritEnv: true,
+        timeoutMs: 900_000,
+      },
+    });
+    expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
+  });
+
+  it("fails the no-Docker path when onboarding unexpectedly succeeds", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "onboarded\n"));
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
+
+    await expect(
+      onboard.from(
+        ready({
+          runtime: "docker-missing",
+          onboarding: "cloud-openclaw-no-docker",
+          docker: { id: "docker-missing", expectation: "missing", available: false },
+        }),
+      ),
+    ).rejects.toThrow(/unexpectedly succeeded/);
+  });
+
+  it("rejects unsupported onboarding profiles", async () => {
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(new FakeRunner()), new FakeSecrets());
+
+    await expect(onboard.from(ready({ onboarding: "cloud-hermes" }))).rejects.toThrow(
+      /Unsupported onboarding profile 'cloud-hermes'/,
+    );
+  });
+
+  it("exposes the onboarding phase on the Vitest scenario context", () => {
+    expectTypeOf<E2EScenarioFixtures["onboard"]>().toEqualTypeOf<OnboardingPhaseFixture>();
+  });
+});

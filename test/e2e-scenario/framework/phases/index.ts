@@ -7,3 +7,10 @@ export {
   type DockerRuntimeReady,
   type EnvironmentReady,
 } from "./environment.ts";
+export {
+  OnboardingPhaseFixture,
+  type NemoClawInstance,
+  type OnboardingExpectedFailure,
+  type OnboardingOptions,
+  type OnboardingSecrets,
+} from "./onboarding.ts";
