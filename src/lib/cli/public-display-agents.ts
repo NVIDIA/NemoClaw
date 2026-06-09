@@ -4,6 +4,14 @@
 import type { PublicDisplayLayout } from "./public-display-layout";
 
 export const SANDBOX_AGENTS_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
+  "sandbox:agents:list": [
+    {
+      group: "Sandbox Management",
+      order: 16.4,
+      flags: "[openclaw-agents-list-flags...]",
+      description: "List OpenClaw agents configured in the sandbox",
+    },
+  ],
   "sandbox:agents:add": [
     {
       group: "Sandbox Management",
