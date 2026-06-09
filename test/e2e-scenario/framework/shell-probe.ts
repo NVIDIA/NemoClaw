@@ -137,7 +137,9 @@ export class ShellProbe {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     const redactionValues = options.redactionValues ?? [];
-    const enforcedValues = redactionValues.filter((value) => value && value.length > 0);
+    const enforcedValues = [
+      ...new Set(redactionValues.filter((value) => value && value.length > 0)),
+    ].sort((a, b) => b.length - a.length);
     const enforceLocalRedaction = (text: string): string => {
       let out = text;
       for (const value of enforcedValues) {
@@ -146,9 +148,7 @@ export class ShellProbe {
       return out;
     };
     const redactProbeText = (text: string) =>
-      enforcedValues.length > 0
-        ? enforceLocalRedaction(this.redact(text, redactionValues))
-        : this.redact(text, redactionValues);
+      this.redact(enforcedValues.length > 0 ? enforceLocalRedaction(text) : text, redactionValues);
     const redactedCommand = [command, ...args].map(redactProbeText);
     const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
     const writeArtifacts = async (result: Omit<ShellProbeResult, "artifacts">): Promise<ShellProbeResult["artifacts"]> => ({
