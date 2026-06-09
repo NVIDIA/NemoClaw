@@ -184,6 +184,44 @@ describe("onboarding phase fixture", () => {
     expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
   });
 
+  it("does not add an empty PATH segment when the no-Docker base env has no PATH", async () => {
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    delete process.env.HOME;
+    delete process.env.PATH;
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(7, "Docker is required before onboarding"));
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(runner),
+        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+      );
+
+      await onboard.from(
+        ready({
+          runtime: "docker-missing",
+          onboarding: "cloud-openclaw-no-docker",
+          docker: { id: "docker-missing", expectation: "missing", available: false },
+        }),
+      );
+
+      const pathValue = runner.calls[0]?.options?.env?.PATH;
+      expect(pathValue).toContain("e2e-no-docker-");
+      expect(pathValue?.split(":")).not.toContain("");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
+  });
+
   it("fails the no-Docker path when onboarding unexpectedly succeeds", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));

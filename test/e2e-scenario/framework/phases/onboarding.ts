@@ -63,10 +63,17 @@ function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.
 }
 
 function noDockerShim(): string {
+  // Simulate the Docker-missing preflight state while the host still has a
+  // real Docker binary. Remove this once the scenario can inject a Docker
+  // client boundary directly instead of shadowing command lookup.
   return `#!/usr/bin/env bash
 printf 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\\n' >&2
 exit 1
 `;
+}
+
+function prependPath(pathEntry: string, currentPath?: string): string {
+  return currentPath ? `${pathEntry}:${currentPath}` : pathEntry;
 }
 
 function resultText(result: ShellProbeResult): string {
@@ -131,7 +138,7 @@ export class OnboardingPhaseFixture {
       await writeFile(shimPath, noDockerShim(), "utf8");
       await chmod(shimPath, 0o700);
       const env = commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey });
-      env.PATH = `${shimDir}:${env.PATH ?? ""}`;
+      env.PATH = prependPath(shimDir, env.PATH);
       const result = await this.host.nemoclaw(ONBOARD_ARGS, {
         artifactName: "onboard-cloud-openclaw-no-docker",
         env,
