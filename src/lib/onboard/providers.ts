@@ -78,7 +78,7 @@ const REMOTE_PROVIDER_CONFIG = {
     skipVerify: true,
   },
   hermesProvider: {
-    label: "Hermes Provider",
+    label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, …)",
     providerName: "hermes-provider",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",

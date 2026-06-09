@@ -7,9 +7,13 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } = require(
-  "../../../dist/lib/onboard/providers",
-) as {
+const {
+  buildProviderArgs,
+  providerExistsInGateway,
+  upsertProvider,
+  upsertMessagingProviders,
+  REMOTE_PROVIDER_CONFIG,
+} = require("../../../dist/lib/onboard/providers") as {
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -37,6 +41,7 @@ const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessag
     runOpenshell: RunOpenshell,
     options?: { replaceExisting?: boolean; bestEffort?: boolean },
   ) => string[];
+  REMOTE_PROVIDER_CONFIG: Record<string, { label: string; providerName: string }>;
 };
 
 describe("onboard provider helpers", () => {
@@ -87,6 +92,14 @@ describe("onboard provider helpers", () => {
     );
     expect(args).toContain("--config");
     expect(args).toContain("ANTHROPIC_BASE_URL=https://api.anthropic.example.com");
+  });
+
+  it("advertises the Hermes Provider model families in the menu label", () => {
+    const label = REMOTE_PROVIDER_CONFIG.hermesProvider.label;
+    expect(label.startsWith("Hermes Provider")).toBe(true);
+    for (const family of ["Moonshot", "Z-AI", "MiniMax", "Qwen", "Xiaomi"]) {
+      expect(label).toContain(family);
+    }
   });
 
   it("ignores base URL for generic providers", () => {

@@ -4137,7 +4137,7 @@ async function setupNim(
         }
 
         console.log("");
-        console.log("  Inference options:");
+        console.log("  Select your inference provider:");
         options.forEach((o, i) => {
           console.log(`    ${i + 1}) ${o.label}`);
         });
