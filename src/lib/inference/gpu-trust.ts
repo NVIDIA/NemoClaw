@@ -42,9 +42,7 @@ export interface DockerGpuProofResult {
 // host is not a proof candidate (not ARM64 WSL Docker Desktop), preserving the
 // #3988 fail-closed default; otherwise it returns the bounded Docker GPU proof
 // outcome so a passing real GPU can be trusted without trusting the name alone.
-export type Arm64WslDockerDesktopGpuProver = (
-  gpuNames: string[],
-) => DockerGpuProofResult | null;
+export type Arm64WslDockerDesktopGpuProver = (gpuNames: string[]) => DockerGpuProofResult | null;
 
 export function isPlausibleNvidiaGpuName(name: string): boolean {
   return !!name && !isDenylistedNvidiaGpuName(name) && NVIDIA_GPU_NAME_PATTERN.test(name);

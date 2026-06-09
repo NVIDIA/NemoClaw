@@ -26,9 +26,7 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function makeRun(
-  responses: Map<string, RunResult | ((args: string[]) => RunResult)>,
-): {
+function makeRun(responses: Map<string, RunResult | ((args: string[]) => RunResult)>): {
   calls: RunArgs[];
   run: HostGatewayProcessDeps["run"];
 } {
@@ -266,9 +264,9 @@ describe("stopHostGatewayProcesses", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999456\n")],
-      ...psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
+      ...(psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
         key === "ps -p 9999123 -o pid=" ? [key, notFound()] : [key, value],
-      ) as [string, RunResult | ((args: string[]) => RunResult)][],
+      ) as [string, RunResult | ((args: string[]) => RunResult)][]),
       ...psResponses(9999456, { exited }),
     ]);
     const { run } = makeRun(responses);

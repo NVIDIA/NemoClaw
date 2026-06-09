@@ -170,10 +170,7 @@ function runHermesPortValidation(opts: {
   }
 }
 
-function runHermesEnvSecretBoundary(opts: {
-  envFile?: string;
-  symlinkEnvFile?: boolean;
-}) {
+function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -245,10 +242,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
   }
 }
 
-function runTirithMarkerBootstrap(opts: {
-  markerReason?: string;
-  symlinkMarker?: boolean;
-}) {
+function runTirithMarkerBootstrap(opts: { markerReason?: string; symlinkMarker?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const marker = path.join(hermesHome, ".tirith-install-failed");
@@ -333,7 +327,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      "NEMOCLAW_CMD=(bash -c 'test ! -e \"$1/.tirith-install-failed\"' bash \"$HERMES_DIR\")",
+      'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
     ].join("\n"),
     { mode: 0o700 },
@@ -509,9 +503,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
         const entryPath = path.join(hermesHome, entry);
         return [
           entry,
-          fs.existsSync(entryPath)
-            ? (fs.statSync(entryPath).mode & 0o777).toString(8)
-            : "missing",
+          fs.existsSync(entryPath) ? (fs.statSync(entryPath).mode & 0o777).toString(8) : "missing",
         ];
       }),
     );
@@ -642,7 +634,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
   });
-
 });
 
 describe("agents/hermes/start.sh port validation", () => {
@@ -763,7 +754,9 @@ describe("agents/hermes/start.sh validator-path bootstrap", () => {
   });
 
   it("falls back to the script-relative validator when the install path is absent", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"),
+    );
     const scriptDir = path.join(tmpDir, "agents", "hermes");
     const fallbackValidator = path.join(scriptDir, "validate-env-secret-boundary.py");
     fs.mkdirSync(scriptDir, { recursive: true });
@@ -962,9 +955,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -977,9 +968,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
 
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
@@ -1015,9 +1004,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -1029,9 +1016,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("regular");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain("has hard-link count");
     expect(run.configYamlMode).toBe("600");
     expect(run.configYamlContent).toBe("model: test\n");
@@ -1045,14 +1030,16 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
   it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({ orphanSocat: true, staleLock: false, stalePid: false });
+    const run = runHermesGatewayRuntimeCleanup({
+      orphanSocat: true,
+      staleLock: false,
+      stalePid: false,
+    });
 
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe("456");
@@ -1083,10 +1070,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   });
 });
 
-function runShieldsUpRuntimeEnv(opts: {
-  locked: boolean;
-  presetValue?: string;
-}) {
+function runShieldsUpRuntimeEnv(opts: { locked: boolean; presetValue?: string }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shields-env-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -1144,9 +1128,7 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.kanbanValue).toBe("0");
-    expect(run.result.stderr).toContain(
-      "Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0",
-    );
+    expect(run.result.stderr).toContain("Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
     expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
   });
 

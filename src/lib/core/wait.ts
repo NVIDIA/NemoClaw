@@ -77,24 +77,28 @@ const TCP_PROBE_SCRIPT =
  */
 export function waitForPort(port: number, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
-  return waitUntil(() => {
-    try {
-      const nc = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
-      // If nc actually ran, trust its verdict. If nc is missing it returns
-      // ENOENT (error set, status null) -- fall back to a Node-based probe
-      // rather than reporting the port unreachable.
-      if (nc.error == null && typeof nc.status === "number") {
-        return nc.status === 0;
+  return waitUntil(
+    () => {
+      try {
+        const nc = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
+        // If nc actually ran, trust its verdict. If nc is missing it returns
+        // ENOENT (error set, status null) -- fall back to a Node-based probe
+        // rather than reporting the port unreachable.
+        if (nc.error == null && typeof nc.status === "number") {
+          return nc.status === 0;
+        }
+        const probe = spawnSync(process.execPath, ["-e", TCP_PROBE_SCRIPT, String(port)], {
+          stdio: "ignore",
+          timeout: 2000,
+        });
+        return probe.status === 0;
+      } catch {
+        return false;
       }
-      const probe = spawnSync(process.execPath, ["-e", TCP_PROBE_SCRIPT, String(port)], {
-        stdio: "ignore",
-        timeout: 2000,
-      });
-      return probe.status === 0;
-    } catch {
-      return false;
-    }
-  }, timeoutSeconds, 200);
+    },
+    timeoutSeconds,
+    200,
+  );
 }
 
 /**
@@ -103,16 +107,20 @@ export function waitForPort(port: number, timeoutSeconds = 5): boolean {
 export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
   const env = buildLoopbackProbeEnv();
-  return waitUntil(() => {
-    try {
-      const result = spawnSync(
-        "curl",
-        buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
-        { stdio: "ignore", env },
-      );
-      return result.status === 0;
-    } catch {
-      return false;
-    }
-  }, timeoutSeconds, 200);
+  return waitUntil(
+    () => {
+      try {
+        const result = spawnSync(
+          "curl",
+          buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
+          { stdio: "ignore", env },
+        );
+        return result.status === 0;
+      } catch {
+        return false;
+      }
+    },
+    timeoutSeconds,
+    200,
+  );
 }

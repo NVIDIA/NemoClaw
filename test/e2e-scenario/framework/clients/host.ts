@@ -26,7 +26,11 @@ export class HostCliClient {
     return this.cliPath;
   }
 
-  command(command: string, args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  command(
+    command: string,
+    args: string[] = [],
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     const merged: ShellProbeRunOptions = { ...options };
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;

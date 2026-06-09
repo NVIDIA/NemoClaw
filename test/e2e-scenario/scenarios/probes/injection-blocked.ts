@@ -59,7 +59,10 @@ function uniqueMarkerPath(): string {
 
 export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise<ProbeOutcome> => {
   if (!ctx.sandboxName) {
-    return { status: "failed", message: "injectionBlockedProbe: E2E_SANDBOX_NAME missing in context.env" };
+    return {
+      status: "failed",
+      message: "injectionBlockedProbe: E2E_SANDBOX_NAME missing in context.env",
+    };
   }
 
   const markerPath = uniqueMarkerPath();
@@ -92,11 +95,10 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
   // string must NOT use $() inside the literal; the host-side bash
   // wrapper passes the script verbatim and the sandbox shell reads
   // the payload as data.
-  const echoResult = await runSandboxCmd(
-    ctx,
-    ["sh", "-c", 'MSG=$(cat); printf "%s\n" "$MSG"'],
-    { perCallSeconds: PER_CALL_SECONDS, stdin: payload },
-  );
+  const echoResult = await runSandboxCmd(ctx, ["sh", "-c", 'MSG=$(cat); printf "%s\n" "$MSG"'], {
+    perCallSeconds: PER_CALL_SECONDS,
+    stdin: payload,
+  });
   evidence.echoExitCode = echoResult.exitCode;
   evidence.echoStdoutTail = echoResult.stdout;
   evidence.echoStderrTail = echoResult.stderr;

@@ -11,7 +11,11 @@ import { ArtifactSink } from "../framework/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../framework/cleanup.ts";
 import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
-import { ShellProbe, trustedShellCommand, type TrustedShellCommand } from "../framework/shell-probe.ts";
+import {
+  ShellProbe,
+  trustedShellCommand,
+  type TrustedShellCommand,
+} from "../framework/shell-probe.ts";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -138,7 +142,10 @@ describe("E2E fixture primitives", () => {
       const result = await probe.run(
         trustedShellCommand({
           command: process.execPath,
-          args: ["-e", `console.log(${JSON.stringify(secret)}); console.error(${JSON.stringify(secret)});`],
+          args: [
+            "-e",
+            `console.log(${JSON.stringify(secret)}); console.error(${JSON.stringify(secret)});`,
+          ],
           reason: "verify ShellProbe enforces redactionValues regardless of injected redactor",
         }),
         {
@@ -153,10 +160,17 @@ describe("E2E fixture primitives", () => {
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
-      const written = fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.result.json"), "utf8");
+      const written = fs.readFileSync(
+        artifacts.pathFor("shell/options-redaction-enforced.result.json"),
+        "utf8",
+      );
       expect(written).not.toContain(secret);
-      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8")).not.toContain(secret);
-      expect(fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stderr.txt"), "utf8")).not.toContain(secret);
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8"),
+      ).not.toContain(secret);
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stderr.txt"), "utf8"),
+      ).not.toContain(secret);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -179,7 +193,10 @@ describe("E2E fixture primitives", () => {
       const result = await probe.run(
         trustedShellCommand({
           command: process.execPath,
-          args: ["-e", `console.log(${JSON.stringify(longer)}); console.error(${JSON.stringify(longer)});`],
+          args: [
+            "-e",
+            `console.log(${JSON.stringify(longer)}); console.error(${JSON.stringify(longer)});`,
+          ],
           reason: "verify ShellProbe longest-first ordering for overlapping redactionValues",
         }),
         {
@@ -194,11 +211,18 @@ describe("E2E fixture primitives", () => {
       expect(result.stdout).not.toContain("-beta-gamma-delta");
       expect(result.stderr).not.toContain(longer);
       expect(result.stderr).not.toContain("-beta-gamma-delta");
-      const written = fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.result.json"), "utf8");
+      const written = fs.readFileSync(
+        artifacts.pathFor("shell/overlap-shorter-first.result.json"),
+        "utf8",
+      );
       expect(written).not.toContain(longer);
       expect(written).not.toContain("-beta-gamma-delta");
-      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stdout.txt"), "utf8")).not.toContain("-beta-gamma-delta");
-      expect(fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stderr.txt"), "utf8")).not.toContain("-beta-gamma-delta");
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stdout.txt"), "utf8"),
+      ).not.toContain("-beta-gamma-delta");
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/overlap-shorter-first.stderr.txt"), "utf8"),
+      ).not.toContain("-beta-gamma-delta");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -231,12 +255,17 @@ describe("E2E fixture primitives", () => {
         if (type === "abort") abortRemoves += 1;
         return removeEventListener(type, listener, options);
       };
-      controller.signal.addEventListener = instrumentedAddEventListener as typeof controller.signal.addEventListener;
-      controller.signal.removeEventListener = instrumentedRemoveEventListener as typeof controller.signal.removeEventListener;
+      controller.signal.addEventListener =
+        instrumentedAddEventListener as typeof controller.signal.addEventListener;
+      controller.signal.removeEventListener =
+        instrumentedRemoveEventListener as typeof controller.signal.removeEventListener;
       const probe = new ShellProbe({
         artifacts,
         redact: (text, extraValues = []) =>
-          [secret, ...extraValues].reduce((redacted, value) => redacted.split(value).join("[REDACTED]"), text),
+          [secret, ...extraValues].reduce(
+            (redacted, value) => redacted.split(value).join("[REDACTED]"),
+            text,
+          ),
         signal: controller.signal,
       });
 
@@ -264,8 +293,12 @@ describe("E2E fixture primitives", () => {
       expect(message).not.toContain(secret);
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
-      expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.result.json"), "utf8")).not.toContain(secret);
-      expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.stderr.txt"), "utf8")).toContain("[REDACTED]");
+      expect(
+        fs.readFileSync(artifacts.pathFor("shell/spawn-error.result.json"), "utf8"),
+      ).not.toContain(secret);
+      expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.stderr.txt"), "utf8")).toContain(
+        "[REDACTED]",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -383,43 +416,42 @@ describe("E2E fixture primitives", () => {
   });
 });
 
-e2eTest("fixture context captures redacted shell artifacts", async ({
-  artifacts,
-  cleanup,
-  shellProbe,
-}) => {
-  const marker = await artifacts.writeText("context.txt", "fixture-ready");
-  cleanup.add("write cleanup marker", async () => {
-    await artifacts.writeText("cleanup-marker.txt", "done");
-  });
+e2eTest(
+  "fixture context captures redacted shell artifacts",
+  async ({ artifacts, cleanup, shellProbe }) => {
+    const marker = await artifacts.writeText("context.txt", "fixture-ready");
+    cleanup.add("write cleanup marker", async () => {
+      await artifacts.writeText("cleanup-marker.txt", "done");
+    });
 
-  const secret = "shell-probe-secret-value";
-  const result = await shellProbe.run(
-    trustedShellCommand({
-      command: process.execPath,
-      args: [
-        "-e",
-        "console.log(process.env.NEMOCLAW_TEST_TOKEN); console.error(process.argv[1]);",
-        secret,
-      ],
-      reason: "exercise fixture shell artifact redaction",
-    }),
-    {
-      artifactName: "redaction-proof",
-      env: { NEMOCLAW_TEST_TOKEN: secret },
-      redactionValues: [secret],
-      timeoutMs: 5_000,
-    },
-  );
+    const secret = "shell-probe-secret-value";
+    const result = await shellProbe.run(
+      trustedShellCommand({
+        command: process.execPath,
+        args: [
+          "-e",
+          "console.log(process.env.NEMOCLAW_TEST_TOKEN); console.error(process.argv[1]);",
+          secret,
+        ],
+        reason: "exercise fixture shell artifact redaction",
+      }),
+      {
+        artifactName: "redaction-proof",
+        env: { NEMOCLAW_TEST_TOKEN: secret },
+        redactionValues: [secret],
+        timeoutMs: 5_000,
+      },
+    );
 
-  expect(fs.readFileSync(marker, "utf8")).toBe("fixture-ready");
-  expect(result.exitCode).toBe(0);
-  expect(result.stdout).toContain("[REDACTED]");
-  expect(result.stderr).toContain("[REDACTED]");
-  expect(result.stdout).not.toContain(secret);
-  expect(result.stderr).not.toContain(secret);
-  expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(secret);
-});
+    expect(fs.readFileSync(marker, "utf8")).toBe("fixture-ready");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("[REDACTED]");
+    expect(result.stderr).toContain("[REDACTED]");
+    expect(result.stdout).not.toContain(secret);
+    expect(result.stderr).not.toContain(secret);
+    expect(fs.readFileSync(result.artifacts.result, "utf8")).not.toContain(secret);
+  },
+);
 
 e2eTest("shell probe uses explicit env and escalates ignored timeouts", async ({ shellProbe }) => {
   const parentSecretName = "NEMOCLAW_PARENT_SECRET_FOR_PROBE_TEST";

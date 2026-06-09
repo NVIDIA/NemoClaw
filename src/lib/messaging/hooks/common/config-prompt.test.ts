@@ -6,10 +6,7 @@ import { describe, expect, it } from "vitest";
 import { discordManifest, slackManifest, telegramManifest } from "../../channels";
 import { runMessagingHook } from "../hook-runner";
 import { MessagingHookRegistry } from "../registry";
-import {
-  COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
-  createConfigPromptHook,
-} from "./config-prompt";
+import { COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID, createConfigPromptHook } from "./config-prompt";
 
 describe("common config-prompt hook implementation", () => {
   it("prompts manifest config outputs in hook declaration order", async () => {
@@ -28,9 +25,7 @@ describe("common config-prompt hook implementation", () => {
         }),
       },
     ]);
-    const hook = telegramManifest.hooks.find(
-      (entry) => entry.id === "telegram-config-prompt",
-    );
+    const hook = telegramManifest.hooks.find((entry) => entry.id === "telegram-config-prompt");
 
     if (!hook) throw new Error("missing Telegram config-prompt hook");
 
@@ -74,9 +69,7 @@ describe("common config-prompt hook implementation", () => {
         }),
       },
     ]);
-    const hook = discordManifest.hooks.find(
-      (entry) => entry.id === "discord-config-prompt",
-    );
+    const hook = discordManifest.hooks.find((entry) => entry.id === "discord-config-prompt");
 
     if (!hook) throw new Error("missing Discord config-prompt hook");
 
@@ -87,9 +80,7 @@ describe("common config-prompt hook implementation", () => {
     ).resolves.toMatchObject({
       outputs: {},
     });
-    expect(questions).toEqual([
-      "  Discord Server ID (for guild workspace access): ",
-    ]);
+    expect(questions).toEqual(["  Discord Server ID (for guild workspace access): "]);
   });
 
   it("prompts Slack user and channel allowlists from the manifest", async () => {
@@ -103,9 +94,7 @@ describe("common config-prompt hook implementation", () => {
           log: () => {},
           prompt: async (question) => {
             questions.push(question);
-            return question.includes("Channel IDs")
-              ? "C012AB3CD,C987ZY6XW"
-              : "U01ABC2DEF3";
+            return question.includes("Channel IDs") ? "C012AB3CD,C987ZY6XW" : "U01ABC2DEF3";
           },
         }),
       },
@@ -155,9 +144,7 @@ describe("common config-prompt hook implementation", () => {
         }),
       },
     ]);
-    const hook = telegramManifest.hooks.find(
-      (entry) => entry.id === "telegram-config-prompt",
-    );
+    const hook = telegramManifest.hooks.find((entry) => entry.id === "telegram-config-prompt");
 
     if (!hook) throw new Error("missing Telegram config-prompt hook");
 

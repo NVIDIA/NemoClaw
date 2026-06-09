@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { Args, Flags } from "@oclif/core";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
@@ -21,7 +20,7 @@ export default class SandboxConfigSetCommand extends NemoClawCommand {
   static usage = ["<name> --key <dotpath> --value <value> [--restart] [--config-accept-new-path]"];
   static examples = [
     "<%= config.bin %> alpha config set --key model --value nvidia/nemotron",
-    '<%= config.bin %> alpha config set --key web_search --value true --restart',
+    "<%= config.bin %> alpha config set --key web_search --value true --restart",
   ];
   static args = {
     sandboxName: sandboxNameArg,
@@ -32,7 +31,9 @@ export default class SandboxConfigSetCommand extends NemoClawCommand {
       description: "Value to write; JSON values are parsed when possible",
       required: true,
     }),
-    restart: Flags.boolean({ description: "Signal the sandbox agent process to reload after writing" }),
+    restart: Flags.boolean({
+      description: "Signal the sandbox agent process to reload after writing",
+    }),
     "config-accept-new-path": Flags.boolean({
       description: "Allow creating a config key that does not already exist",
     }),

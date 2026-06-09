@@ -10,11 +10,17 @@ type Agent = { name: string } | null;
 type VerifyChain = { port: number };
 type VerificationResult = { ok: boolean };
 
-function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {}) {
+function createDeps(
+  overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {},
+) {
   const calls = {
     setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
-    postVerify: vi.fn(async () => createSession({ machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 } })),
+    postVerify: vi.fn(async () =>
+      createSession({
+        machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 },
+      }),
+    ),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),

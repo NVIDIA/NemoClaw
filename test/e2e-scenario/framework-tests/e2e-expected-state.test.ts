@@ -15,7 +15,13 @@ import {
 } from "../scenarios/expected-states.ts";
 import { ScenarioRunner } from "../scenarios/orchestrators/runner.ts";
 import { listScenarios } from "../scenarios/registry.ts";
-import type { ExpectedState, PhaseName, PhaseResult, RunContext, RunPlanPhase } from "../scenarios/types.ts";
+import type {
+  ExpectedState,
+  PhaseName,
+  PhaseResult,
+  RunContext,
+  RunPlanPhase,
+} from "../scenarios/types.ts";
 
 function freshCtx(): RunContext {
   return { contextDir: fs.mkdtempSync(path.join(os.tmpdir(), "e2e-state-")) };
@@ -94,9 +100,7 @@ describe("compiler emits state-validation phase actions from expected-state regi
     for (const action of stateValidationPhase!.actions) {
       expect(action.kind).toBe("shell-fn");
       expect(action.fn).toBe("e2e_state_probe");
-      expect(action.scriptRef).toBe(
-        "test/e2e-scenario/nemoclaw_scenarios/probes/dispatch.sh",
-      );
+      expect(action.scriptRef).toBe("test/e2e-scenario/nemoclaw_scenarios/probes/dispatch.sh");
       expect(action.timeoutSeconds).toBe(30);
     }
   });
@@ -265,7 +269,12 @@ describe("ScenarioRunner short-circuit semantics around state-validation", () =>
       let runtimeCalled = false;
       const runner = new ScenarioRunner({
         environment: {
-          run: async () => ({ phase: "environment", status: "passed", actions: [], assertions: [] }),
+          run: async () => ({
+            phase: "environment",
+            status: "passed",
+            actions: [],
+            assertions: [],
+          }),
         },
         onboarding: {
           run: async () => ({ phase: "onboarding", status: "passed", actions: [], assertions: [] }),
@@ -313,7 +322,10 @@ describe("expected-state registry covers every scenario referenced in the typed 
     }
     expect(referenced.size).toBeGreaterThan(0);
     for (const id of referenced) {
-      expect(getExpectedState(id), `expected_state '${id}' must be in the typed registry`).toBeDefined();
+      expect(
+        getExpectedState(id),
+        `expected_state '${id}' must be in the typed registry`,
+      ).toBeDefined();
     }
   });
 });

@@ -57,9 +57,7 @@ function mockBuiltinPresets() {
     { file: "github.yaml", name: "github", description: "GitHub API access" },
   ]);
   vi.mocked(policies.listCustomPresets).mockReturnValue([]);
-  vi.mocked(policies.loadPreset).mockImplementation(
-    (name: string) => PRESET_CONTENT[name] ?? null,
-  );
+  vi.mocked(policies.loadPreset).mockImplementation((name: string) => PRESET_CONTENT[name] ?? null);
   vi.mocked(policies.getPresetEndpoints).mockImplementation((content: string) => {
     const hosts: string[] = [];
     const regex = /host:\s*(\S+)/g;

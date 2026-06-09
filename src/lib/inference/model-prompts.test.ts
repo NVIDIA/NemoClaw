@@ -168,17 +168,11 @@ describe("model prompt helpers", () => {
   it("keeps a safe current remote default that is not in the curated list", async () => {
     const writeLine = vi.fn();
     const promptFn = promptSequence([""]);
-    const result = await promptRemoteModel(
-      "OpenAI",
-      "openai",
-      "custom/provider-model",
-      null,
-      {
-        promptFn,
-        writeLine,
-        remoteModelOptions: { openai: ["model-1", "model-2", "model-3"] },
-      },
-    );
+    const result = await promptRemoteModel("OpenAI", "openai", "custom/provider-model", null, {
+      promptFn,
+      writeLine,
+      remoteModelOptions: { openai: ["model-1", "model-2", "model-3"] },
+    });
 
     expect(result).toBe("custom/provider-model");
     expect(promptFn).toHaveBeenCalledWith("  Choose model [5]: ");

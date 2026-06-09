@@ -35,7 +35,18 @@ describe("sandbox logs helpers", () => {
         lines: "25",
         since: null,
       }),
-    ).toEqual(["sandbox", "exec", "-n", "alpha", "--", "tail", "-n", "25", "-f", "/tmp/gateway.log"]);
+    ).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "tail",
+      "-n",
+      "25",
+      "-f",
+      "/tmp/gateway.log",
+    ]);
     expect(
       buildSandboxLogsArgs("alpha", {
         follow: true,
@@ -70,7 +81,6 @@ describe("sandbox logs helpers", () => {
     expect(exitCodeFromSignal("SIGINT")).toBe(130);
   });
 });
-
 
 import { mergeTailLogLines, parseLineTimestamp } from "./logs";
 

@@ -46,10 +46,7 @@ export default defineConfig({
         test: {
           name: "installer-integration",
           include: runInstallerIntegration
-            ? [
-                "test/install-preflight.test.ts",
-                "test/install-openshell-version-check.test.ts",
-              ]
+            ? ["test/install-preflight.test.ts", "test/install-openshell-version-check.test.ts"]
             : [],
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly with:

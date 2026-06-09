@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 
@@ -36,7 +35,8 @@ const onboardProviders = require("../../onboard/providers");
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import * as policies from "../../policy";
 
-const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
+const onboardSession =
+  require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
@@ -56,10 +56,7 @@ import {
   persistChannelTokens,
 } from "../../sandbox/channels";
 import * as registry from "../../state/registry";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
@@ -443,9 +440,7 @@ async function checkChannelAddConflict(
       );
       process.exit(1);
     }
-    const answer = (
-      await askPrompt("  Continue without a completed conflict check? [y/N]: ")
-    )
+    const answer = (await askPrompt("  Continue without a completed conflict check? [y/N]: "))
       .trim()
       .toLowerCase();
     if (answer === "y" || answer === "yes") return true;
@@ -740,9 +735,7 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     ),
   );
   if (credentialWarnings.length > 0) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`,
-    );
+    console.log(`  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`);
     for (const line of credentialWarnings.slice(0, 3)) {
       console.log(`    ${line}`);
     }
@@ -760,9 +753,7 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     /\bstarting provider\b|\bprovider ready\b/.test(line),
   );
   if (positiveStartup) {
-    console.log(
-      `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
-    );
+    console.log(`  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`);
     if (channelName === "telegram") {
       printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
     }
@@ -882,14 +873,18 @@ function assertAddChannelPlanActive(
   const channelPlan = plan.channels.find((channel) => channel.channelId === manifest.id);
   if (channelPlan?.active) return channelPlan;
 
-  const missing = channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
+  const missing =
+    channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
     console.error(
       `  Missing required input(s) for channel '${manifest.id}': ${missing
         .map(formatMissingInput)
         .join(", ")}.`,
     );
-    if (manifest.auth.mode === "host-qr" && getMessagingToken(manifest.credentials[0]?.providerEnvKey)) {
+    if (
+      manifest.auth.mode === "host-qr" &&
+      getMessagingToken(manifest.credentials[0]?.providerEnvKey)
+    ) {
       console.error(
         `  Run '${CLI_NAME} ${sandboxName} channels remove ${manifest.id}' then '${CLI_NAME} ${sandboxName} channels add ${manifest.id}' to capture fresh account metadata.`,
       );
@@ -918,7 +913,7 @@ function hydrateAddChannelEnvFromSession(sandboxName: string, channelId: string)
   if (channelId !== "wechat") return;
   const savedSession = safeLoadOnboardSession();
   const savedWechat =
-    savedSession?.sandboxName === sandboxName ? savedSession.wechatConfig ?? null : null;
+    savedSession?.sandboxName === sandboxName ? (savedSession.wechatConfig ?? null) : null;
   if (!savedWechat) return;
   if (savedWechat.accountId && !process.env.WECHAT_ACCOUNT_ID) {
     process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
@@ -960,7 +955,9 @@ function persistManifestMessagingConfig(sandboxName: string, manifest: ChannelMa
   }
 }
 
-function readManifestMessagingConfigFromEnv(manifest: ChannelManifest): MessagingChannelConfig | null {
+function readManifestMessagingConfigFromEnv(
+  manifest: ChannelManifest,
+): MessagingChannelConfig | null {
   const result: MessagingChannelConfig = {};
   for (const input of manifest.inputs) {
     if (input.kind !== "config" || !input.envKey) continue;
@@ -1401,8 +1398,7 @@ export async function removeSandboxChannel(
     sessionForSandbox = null;
   }
   const sessionPolicyPresets =
-    sessionForSandbox?.sandboxName === sandboxName &&
-    Array.isArray(sessionForSandbox.policyPresets)
+    sessionForSandbox?.sandboxName === sandboxName && Array.isArray(sessionForSandbox.policyPresets)
       ? sessionForSandbox.policyPresets
       : [];
   const hasChannelResidue =
@@ -1419,7 +1415,11 @@ export async function removeSandboxChannel(
   // when the registry/policy show no residue — `channels remove` on a
   // never-configured/already-clean sandbox must remain a quiet no-op even
   // when the sandbox is stopped (#4001 review).
-  if (isQrChannel && hasChannelResidue && !clearSandboxChannelDurableState(sandboxName, canonical)) {
+  if (
+    isQrChannel &&
+    hasChannelResidue &&
+    !clearSandboxChannelDurableState(sandboxName, canonical)
+  ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
     );

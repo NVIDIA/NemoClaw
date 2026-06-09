@@ -149,5 +149,4 @@ describe("credential exposure in process arguments", () => {
   it("onboard curl probes use explicit timeouts", () => {
     expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
   });
-
 });

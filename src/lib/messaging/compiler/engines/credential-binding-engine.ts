@@ -23,8 +23,9 @@ export function planCredentialBindings(
       context.credentialAvailability?.[`${manifest.id}.${credential.id}`] === true;
 
     const envKey = sourceInput?.sourceEnv ?? credential.providerEnvKey;
-    const credentialHash =
-      credentialAvailable ? (hashCredential(process.env[envKey]) ?? undefined) : undefined;
+    const credentialHash = credentialAvailable
+      ? (hashCredential(process.env[envKey]) ?? undefined)
+      : undefined;
 
     return {
       channelId: manifest.id,
