@@ -351,6 +351,20 @@ function serializeConfig(config: ConfigObject, format: string): string {
 }
 
 /**
+ * Pure body composition for {@link writeSandboxConfig}: serialize the config
+ * and prepend agent-specific headers. Extracted so unit tests can assert the
+ * exact byte sequence that lands in the sandbox without driving the
+ * privileged docker exec path.
+ */
+function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
+  const body = serializeConfig(config, target.format);
+  if (target.agentName === "hermes" && target.format === "yaml") {
+    return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
+  }
+  return body;
+}
+
+/**
  * Parse a CLI-provided config value as JSON when possible, otherwise keep it
  * as a string literal.
  */
@@ -404,12 +418,7 @@ function writeSandboxConfig(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   try {
-    const body = serializeConfig(config, target.format);
-    const header =
-      target.agentName === "hermes" && target.format === "yaml"
-        ? buildHermesUpstreamHeader(config as Record<string, unknown>)
-        : "";
-    fs.writeFileSync(tmpFile, `${header}${body}`, { mode: 0o600 });
+    fs.writeFileSync(tmpFile, composeSandboxConfigBody(config, target), { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
     privilegedSandboxExec(
@@ -1032,6 +1041,7 @@ function confirmYesNo(prompt: string): Promise<boolean> {
 export {
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
+  composeSandboxConfigBody,
   configGet,
   configRotateToken,
   configSet,

@@ -225,6 +225,62 @@ describe("dockerfile patch helpers", () => {
     );
   });
 
+  it("writes the user-selected upstream provider into NEMOCLAW_UPSTREAM_PROVIDER", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-super-120b-a12b",
+      "https://chat.example",
+      "build-1",
+      "nvidia-prod",
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    // The managed route key stays "inference" for the proxied NVIDIA route...
+    expect(patched).toContain("ARG NEMOCLAW_PROVIDER_KEY=inference");
+    // ...while the user-facing upstream provider name flows through the new
+    // arg, so the Hermes config's _nemoclaw_upstream annotation can record
+    // what the operator actually picked.
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia-prod");
+  });
+
+  it("falls back to the provider key when no upstream provider is supplied", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(dockerfilePath, "custom-model", "https://chat.example", "build-1");
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toMatch(/^ARG NEMOCLAW_UPSTREAM_PROVIDER=.+$/m);
+    expect(patched).not.toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=old");
+  });
+
   it("can override the sandbox inference base URL for Docker GPU host networking", () => {
     const dockerfilePath = dockerfileWith(
       [
