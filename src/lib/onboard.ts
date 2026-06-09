@@ -6520,7 +6520,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
     session = initialContext.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const { resumeHasResolvedGpuIntent, requestedGpuPassthrough, gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
