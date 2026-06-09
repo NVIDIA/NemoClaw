@@ -23,7 +23,7 @@ Under `nemohermes`, pass `--sandbox <name>` when more than one Hermes sandbox is
 ### NVIDIA Endpoints
 
 ```console
-$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 ### OpenAI
@@ -170,7 +170,7 @@ Run it before `nemoclaw inference set` to confirm the starting state, or after a
 ```console
 $ nemoclaw inference get
 Provider: nvidia-prod
-Model:    nvidia/nemotron-3-super-120b-a12b
+Model:    nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 Pass `--json` for machine-readable output.
@@ -179,7 +179,7 @@ Pass `--json` for machine-readable output.
 $ nemoclaw inference get --json
 {
   "provider": "nvidia-prod",
-  "model": "nvidia/nemotron-3-super-120b-a12b"
+  "model": "nvidia/nemotron-3-ultra-550b-a55b"
 }
 ```
 
