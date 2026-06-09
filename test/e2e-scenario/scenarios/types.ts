@@ -16,12 +16,23 @@ export type PhaseResultName = PhaseName | NegativeContractPhase;
 // nemoclaw_scenarios/probes/. Inference and credentials probes are
 // declared but not yet implemented; the compiler skips emitting actions
 // for them until the probe scripts land.
+//
+// `local-registry-entry-present` and `docker-sandbox-container-present`
+// are host-side aspects of the sandbox: the local NemoClaw registry
+// (`~/.nemoclaw/sandboxes.json`) and the Docker container labeled with
+// `openshell.ai/sandbox-name=<name>` (running OR stopped, including
+// `*-nemoclaw-gpu-backup-*` siblings). These probes let scenarios
+// assert preservation invariants that diverge from the live gateway
+// view of the sandbox, which is precisely the regression class
+// covered by the post-reboot recovery work tracked in #4423.
 export type StateProbeId =
   | "cli-installed"
   | "gateway-healthy"
   | "gateway-absent"
   | "sandbox-running"
-  | "sandbox-absent";
+  | "sandbox-absent"
+  | "local-registry-entry-present"
+  | "docker-sandbox-container-present";
 
 // User-facing phase the negative-scenario contract advertises. Wider
 // than PhaseName because manifests may declare "preflight" failures,
@@ -74,6 +85,18 @@ export interface ExpectedState {
   credentials?: {
     expected: ExpectedPresence;
   };
+  // Host-side registry entry for the scenario's sandbox name.
+  // "present" means `~/.nemoclaw/sandboxes.json` retains the entry,
+  // even if the live gateway can no longer see the sandbox. This is
+  // orthogonal to `sandbox.expected`: registry preservation is the
+  // user-visible regression target for #4423.
+  localRegistry?: { expected: ExpectedPresence };
+  // Host-side Docker container labeled `openshell.ai/sandbox-name=<name>`.
+  // "present" matches running OR stopped containers, including
+  // `*-nemoclaw-gpu-backup-*` siblings produced by the GPU patch path.
+  // Used to assert that recovery information remains available even
+  // when the live OpenShell gateway returns NotFound.
+  dockerSandboxContainer?: { expected: ExpectedPresence };
 }
 
 export type TransientClassifier =

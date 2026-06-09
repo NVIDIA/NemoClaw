@@ -108,9 +108,17 @@ function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
   };
 }
 
-function fixture(runner: FakeRunner): StateValidationPhaseFixture {
+function fixture(
+  runner: FakeRunner,
+  io: ConstructorParameters<typeof StateValidationPhaseFixture>[3] = {},
+): StateValidationPhaseFixture {
   const host = new HostCliClient(runner);
-  return new StateValidationPhaseFixture(host, new GatewayClient(host), new SandboxClient(runner));
+  return new StateValidationPhaseFixture(
+    host,
+    new GatewayClient(host),
+    new SandboxClient(runner),
+    io,
+  );
 }
 
 describe("state-validation phase fixture", () => {
@@ -455,5 +463,110 @@ describe("state-validation phase fixture", () => {
     expectTypeOf<
       E2EScenarioFixtures["stateValidation"]
     >().toEqualTypeOf<StateValidationPhaseFixture>();
+  });
+});
+
+describe("state-validation host-side probes", () => {
+  const localRegistryState = {
+    id: "synthetic-local-registry-present",
+    localRegistry: { expected: "present" as const },
+  };
+  const dockerContainerState = {
+    id: "synthetic-docker-container-present",
+    dockerSandboxContainer: { expected: "present" as const },
+  };
+
+  it("local-registry-entry-present passes when the registry contains the sandbox name", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, {
+      readRegistry: () => ({
+        entries: { "e2e-ubuntu-repo-cloud-openclaw": { name: "e2e-ubuntu-repo-cloud-openclaw" } },
+      }),
+    });
+
+    const result = await fx.from(localRegistryState, instance());
+
+    expect(result.probes.map((probe) => probe.id)).toEqual(["local-registry-entry-present"]);
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("local-registry-entry-present fails when the registry file is missing", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, { readRegistry: () => null });
+
+    await expect(fx.from(localRegistryState, instance())).rejects.toThrow(
+      /expected local registry entry for 'e2e-ubuntu-repo-cloud-openclaw'.*does not exist/,
+    );
+  });
+
+  it("local-registry-entry-present fails when the sandbox name is missing from registry", async () => {
+    const runner = new FakeRunner();
+    const fx = fixture(runner, {
+      readRegistry: () => ({ entries: { "some-other-sandbox": {} } }),
+    });
+
+    await expect(fx.from(localRegistryState, instance())).rejects.toThrow(
+      /registry contains: some-other-sandbox/,
+    );
+  });
+
+  it("docker-sandbox-container-present passes when docker ps -a returns labeled names", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "e2e-ubuntu-repo-cloud-openclaw\n"));
+    const fx = fixture(runner);
+
+    const result = await fx.from(dockerContainerState, instance());
+
+    expect(result.probes.map((probe) => probe.id)).toEqual(["docker-sandbox-container-present"]);
+    expect(runner.calls).toEqual([
+      {
+        command: "docker",
+        args: [
+          "ps",
+          "-a",
+          "--filter",
+          "label=openshell.ai/sandbox-name=e2e-ubuntu-repo-cloud-openclaw",
+          "--format",
+          "{{.Names}}",
+        ],
+        options: {
+          artifactName: "docker-sandbox-container-present-e2e-ubuntu-repo-cloud-openclaw",
+          env: expect.objectContaining({ PATH: expect.any(String) }),
+          timeoutMs: 15_000,
+        },
+      },
+    ]);
+  });
+
+  it("docker-sandbox-container-present matches *-nemoclaw-gpu-backup-* sibling containers", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(
+      shellResult(0, "e2e-ubuntu-repo-cloud-openclaw-nemoclaw-gpu-backup-1717280000000\n"),
+    );
+    const fx = fixture(runner);
+
+    const result = await fx.from(dockerContainerState, instance());
+
+    expect(result.probes.map((probe) => probe.id)).toEqual(["docker-sandbox-container-present"]);
+  });
+
+  it("docker-sandbox-container-present fails when docker ps -a returns no labeled container", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "\n"));
+    const fx = fixture(runner);
+
+    await expect(fx.from(dockerContainerState, instance())).rejects.toThrow(
+      /docker ps -a returned none/,
+    );
+  });
+
+  it("docker-sandbox-container-present fails when docker ps -a exits non-zero", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "Cannot connect to the Docker daemon"));
+    const fx = fixture(runner);
+
+    await expect(fx.from(dockerContainerState, instance())).rejects.toThrow(
+      /could not query Docker for label.*exit 1/,
+    );
   });
 });
