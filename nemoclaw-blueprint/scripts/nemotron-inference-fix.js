@@ -126,7 +126,34 @@
   // tools are intentionally NOT in this set: they don't let the model
   // write a file or run a command, so they don't change the "no way to
   // perform the asked action" condition that #4851 cares about.
-  var EXECUTION_TOOL_NAME_RE = /(^|_)(bash|exec|execute|run|shell|cmd|command|write|edit|patch|create|save|fs|filesystem)(_|$)/i;
+  //
+  // Tight allowlist (not a broad regex) to avoid false positives on
+  // harmless business tools like `create_ticket`, `run_query`, `save_search`,
+  // `command_palette` that contain "create"/"run"/"save"/"command" but don't
+  // give the model the ability to write a file or execute a shell command.
+  // Match exact known names + the canonical OpenClaw/MCP suffixes.
+  var EXECUTION_TOOL_NAMES = new Set([
+    'bash',
+    'bash_execute',
+    'exec',
+    'execute',
+    'execute_command',
+    'shell',
+    'shell_execute',
+    'run_command',
+    'run_shell',
+    'write_file',
+    'file_write',
+    'edit_file',
+    'file_edit',
+    'patch_file',
+    'file_patch',
+    'create_file',
+    'file_create',
+    'apply_patch',
+    'str_replace_editor',
+    'computer',
+  ]);
 
   function isExecutionCapableTool(tool) {
     if (!tool || typeof tool !== 'object') return false;
@@ -138,7 +165,7 @@
       name = tool.function.name;
     }
     if (!name) return false;
-    return EXECUTION_TOOL_NAME_RE.test(name);
+    return EXECUTION_TOOL_NAMES.has(name.toLowerCase());
   }
 
   function hasExecutionCapableTool(body) {

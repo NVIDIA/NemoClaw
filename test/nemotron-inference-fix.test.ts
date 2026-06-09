@@ -403,6 +403,26 @@ send(JSON.stringify({
     { type: 'function', function: { name: 'bash_execute', parameters: {} } },
   ],
 }));
+// case 7: Ultra 550B with tools whose names contain broad tokens
+// (create/run/save/command) but are NOT actually execution-capable —
+// expect INJECTION because the tight allowlist rejects these false
+// positives (would have been swallowed by a substring regex match).
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [
+    { type: 'function', function: { name: 'create_ticket', parameters: {} } },
+    { type: 'function', function: { name: 'run_query', parameters: {} } },
+    { type: 'function', function: { name: 'save_search', parameters: {} } },
+    { type: 'function', function: { name: 'command_palette', parameters: {} } },
+  ],
+}));
+// case 8: Ultra 550B with write_file specifically — expect NO injection
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [{ type: 'function', function: { name: 'write_file', parameters: {} } }],
+}));
 console.log(JSON.stringify(records));
 `;
 
@@ -412,7 +432,7 @@ console.log(JSON.stringify(records));
     });
     expect(result.status, result.stderr).toBe(0);
     const records = JSON.parse(result.stdout.trim());
-    expect(records).toHaveLength(7);
+    expect(records).toHaveLength(9);
 
     // case 0: system message injected at position 0
     const ultraBare = JSON.parse(records[0].writes.join(""));
@@ -459,5 +479,83 @@ console.log(JSON.stringify(records));
     const ultraWithMixedTools = JSON.parse(records[6].writes.join(""));
     expect(ultraWithMixedTools.messages).toHaveLength(1);
     expect(ultraWithMixedTools.messages[0].role).toBe("user");
+
+    // case 7: harmless business-tool names with broad tokens (create/run/
+    // save/command) — injection STILL fires; tight allowlist rejects false
+    // positives that a substring regex would have swallowed
+    const ultraWithBusinessTools = JSON.parse(records[7].writes.join(""));
+    expect(ultraWithBusinessTools.messages[0].role).toBe("system");
+    expect(ultraWithBusinessTools.messages[0].content).toMatch(/do not have tools/i);
+    expect(ultraWithBusinessTools.tools).toHaveLength(4);
+
+    // case 8: write_file — explicit canonical exec tool, no injection
+    const ultraWithWriteFile = JSON.parse(records[8].writes.join(""));
+    expect(ultraWithWriteFile.messages).toHaveLength(1);
+    expect(ultraWithWriteFile.messages[0].role).toBe("user");
+  });
+
+  it("preload pins path+model as the intended scope boundary (#4851)", () => {
+    // Contract test: the Ultra 550B tool-less injection is scoped by HTTP
+    // path (/v1/chat/completions) + model regex, not by destination host.
+    // This preload runs inside NemoClaw-managed sandboxes where the only
+    // chat-completions destination is the inference.local route bound to
+    // NVIDIA Build. The path+model boundary is the intentional contract.
+    // This test pins that contract so a future change toward narrower
+    // (host-aware) gating is a deliberate decision, not silent drift.
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const records = [];
+http.request = function (options) {
+  const record = { options, writes: [], headers: {}, removed: [] };
+  records.push(record);
+  return {
+    write(chunk) {
+      record.writes.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+      return true;
+    },
+    end(cb) { if (typeof cb === 'function') cb(); return true; },
+    getHeader(name) { return record.headers[name]; },
+    setHeader(name, value) { record.headers[name] = value; },
+    removeHeader(name) { record.removed.push(name); delete record.headers[name]; },
+  };
+};
+${preload}
+function send(host, body) {
+  const req = http.request({ method: 'POST', host, path: '/v1/chat/completions' });
+  req.write(body);
+  req.end();
+}
+// Different upstream hosts — all matching the path+model contract
+send('inference.local', JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+}));
+send('integrate.api.nvidia.com', JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+}));
+send('some-other-openai-compat-host.example.com', JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+}));
+console.log(JSON.stringify(records));
+`;
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+    expect(records).toHaveLength(3);
+
+    // All three hosts get the injection — host is intentionally NOT part
+    // of the scope boundary. If this assertion ever changes, the
+    // documented contract above must change too.
+    for (const r of records) {
+      const body = JSON.parse(r.writes.join(""));
+      expect(body.messages[0].role).toBe("system");
+      expect(body.messages[0].content).toMatch(/do not have tools/i);
+    }
   });
 });
