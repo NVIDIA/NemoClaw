@@ -176,4 +176,50 @@ describe("initial onboard flow phases", () => {
 
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
+
+  it("uses the strict runner for fresh init sessions", async () => {
+    const order: string[] = [];
+    const session = createSession();
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => {
+          order.push("preflight");
+          return { context: ctx, result: advanceTo("gateway") };
+        },
+      },
+      {
+        state: "gateway",
+        run: (ctx) => {
+          order.push("gateway");
+          return { context: ctx, result: advanceTo("provider_selection") };
+        },
+      },
+    ];
+
+    const result = await runInitialOnboardFlowSlice({
+      context: context(),
+      runtime: {
+        session: async () => session,
+        applyResult: async (stateResult) => {
+          if (stateResult.type === "transition") {
+            session.machine = {
+              ...session.machine,
+              state: stateResult.next,
+              revision: session.machine.revision + 1,
+            };
+          }
+          return session;
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async () => {
+        throw new Error("compatibility recorder should not run");
+      },
+    });
+
+    expect(order).toEqual(["preflight", "gateway"]);
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
 });
