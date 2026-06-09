@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-resources-agent-skills-001",
+    "question": "I'm looking at NemoClaw agent skills. Help me find a skill that can guide installation, policy, inference, or operations so I can delegate the right workflow to my AI coding assistant.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find a skill that can guide installation, policy, inference, or operations and gives enough concrete guidance, decision criteria, verification steps, or risk framing to delegate the right workflow to my AI coding assistant.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

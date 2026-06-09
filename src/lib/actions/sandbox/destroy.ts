@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
@@ -21,6 +20,13 @@ import {
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import {
+  SANDBOX_PROVIDER_SUFFIXES,
+  emitProviderDetachResidualHint,
+  runSandboxProviderPreDeleteCleanup,
+} from "../../onboard/sandbox-provider-cleanup";
+import { redact } from "../../security/redact";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import type { Session } from "../../state/onboard-session";
@@ -81,57 +87,6 @@ type RemoveShieldsStateDeps = {
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
-function dockerDriverGatewayPidFile(): string {
-  const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
-  const stateDir =
-    configured && configured.trim()
-      ? path.resolve(configured.trim())
-      : path.join(
-          os.homedir(),
-          ".local",
-          "state",
-          "nemoclaw",
-          "openshell-docker-gateway",
-        );
-  return path.join(stateDir, "openshell-gateway.pid");
-}
-
-function isDockerDriverGatewayPid(pid: number): boolean {
-  try {
-    const cmdline = fs
-      .readFileSync(`/proc/${pid}/cmdline`, "utf-8")
-      .replace(/\0/g, " ");
-    return cmdline.includes("openshell-gateway") || cmdline.includes("openclaw-gateway");
-  } catch {
-    return false;
-  }
-}
-
-function stopDockerDriverGatewayProcess(): void {
-  const pidFile = dockerDriverGatewayPidFile();
-  let pid: number | null = null;
-  try {
-    pid = Number.parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
-  } catch {
-    return;
-  }
-  if (!Number.isInteger(pid) || pid <= 0) {
-    fs.rmSync(pidFile, { force: true });
-    return;
-  }
-  if (!isDockerDriverGatewayPid(pid)) {
-    fs.rmSync(pidFile, { force: true });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    fs.rmSync(pidFile, { force: true });
-    return;
-  }
-  fs.rmSync(pidFile, { force: true });
-}
-
 function cleanupGatewayAfterLastSandbox(): void {
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: (
@@ -156,7 +111,12 @@ function cleanupGatewayAfterLastSandbox(): void {
   // openshell record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
   if (process.platform === "linux") {
-    stopDockerDriverGatewayProcess();
+    // Sandbox destroy is conservative: only stop the host gateway whose PID
+    // file we wrote during onboard. Disable the pgrep sweep so a stray
+    // openshell-gateway under another user/project on the same host (rare but
+    // possible on shared hosts) is not torn down by a NemoClaw `destroy`.
+    // The uninstall path keeps the broader sweep on (run-plan.ts).
+    stopHostGatewayProcesses({}, { usePgrepFallback: false });
     const removeResult = runOpenshell(
       ["gateway", "remove", NEMOCLAW_GATEWAY_NAME],
       {
@@ -293,15 +253,13 @@ export function cleanupSandboxServices(
     // PID directory may not exist — ignore.
   }
 
-  // Delete messaging providers created during onboard. Suppress stderr so
-  // "! Provider not found" noise doesn't appear when messaging was never configured.
-  for (const suffix of [
-    "telegram-bridge",
-    "discord-bridge",
-    "slack-bridge",
-    "slack-app",
-    "wechat-bridge",
-  ]) {
+  // Delete every per-sandbox messaging and search provider created during
+  // onboard. Suppress stderr so "! Provider not found" noise doesn't appear
+  // when messaging was never configured. The suffix set is shared with the
+  // onboard rebuild path's pre-delete detach via
+  // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
+  // drift on which providers count as per-sandbox state.
+  for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
@@ -342,8 +300,7 @@ export function removeShieldsState(
     } catch (error) {
       // force: true already suppresses ENOENT; warn on real failures
       // (e.g. EPERM) so stale state doesn't silently survive.
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code !== "ENOENT") {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const message = error instanceof Error ? error.message : String(error);
         warn(
           `Failed to remove shields cleanup artifact '${filePath}': ${message}`,
@@ -496,6 +453,10 @@ export async function destroySandbox(
       opts?: Record<string, unknown>,
     ) => { status: number | null; stdout?: string; stderr?: string };
   };
+  const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
+    runOpenshell,
+    redact,
+  });
   const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -560,5 +521,8 @@ export async function destroySandbox(
       `  Sandbox '${sandboxName}' was already absent from the live gateway.`,
     );
   }
+  emitProviderDetachResidualHint(sandboxName, detachOutcome.failures, (m) =>
+    console.warn(`  ${YW}⚠${R}${m}`),
+  );
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }

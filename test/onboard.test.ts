@@ -7,6 +7,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import {
+  isValidInferenceInputsOverride,
+  maybePromptForInferenceInputCapability,
+  shouldPromptForInferenceInputCapability,
+} from "../dist/lib/onboard/inference-input-capability.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -94,6 +100,122 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard helpers", () => {
+  it("adds host proxy variables to sandbox startup env args", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    const noProxy = envArgs.find((entry) => entry.startsWith("NO_PROXY="));
+    expect(noProxy).toContain("corp.internal");
+    expect(noProxy).toContain("localhost");
+    expect(noProxy).toContain("127.0.0.1");
+    expect(noProxy).toContain("host.docker.internal");
+  });
+
+  it("does not add NO_PROXY-only values when no host proxy is configured", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
+  });
+
+  it("trims surrounding whitespace from proxy env values before forwarding", () => {
+    // A `HTTP_PROXY="  http://x:8888  "` from a sloppy shell rc must not
+    // flow through with surrounding whitespace — downstream consumers
+    // that don't re-trim would treat the value as malformed.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "  http://127.0.0.1:8888  ",
+      HTTPS_PROXY: "\thttp://127.0.0.1:8888\n",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    for (const entry of envArgs) {
+      expect(entry, "no forwarded entry should contain leading/trailing whitespace").toBe(
+        entry.trim(),
+      );
+    }
+  });
+
+  it("synthesizes both NO_PROXY and no_proxy in the sandbox so case-sensitive consumers stay covered", () => {
+    // `withLocalNoProxy` augments both NO_PROXY and no_proxy regardless of
+    // which one the user originally set. A user who only sets HTTP_PROXY
+    // (with no NO_PROXY at all) still gets both cases synthesized in the
+    // sandbox so case-sensitive consumers (e.g. some Python libs read
+    // `no_proxy` lowercase, Node fetch checks `NO_PROXY`) all honor the
+    // localhost/Docker-host carve-outs. Pinning the dual-key behavior so a
+    // future refactor of `withLocalNoProxy` doesn't silently drop one case.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy (lowercase) should also be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      expect(v).toContain("localhost");
+      expect(v).toContain("127.0.0.1");
+      expect(v).toContain("host.docker.internal");
+    }
+  });
+
+  it("seeds inference.local and host.containers.internal into the sandbox-create NO_PROXY/no_proxy", () => {
+    // Boundary pin: appendHostProxyEnvArgs() forwards env into `openshell
+    // sandbox create -- env ...`, and OpenShell consults the seeded
+    // NO_PROXY at sandbox-create time when deciding whether to chain its
+    // L7 proxy through the host HTTP_PROXY for a given hostname. Both
+    // `inference.local` (OpenShell-managed inference) and
+    // `host.containers.internal` (rootless container host alias) must be
+    // emitted here so the L7 proxy never tunnels them through the host
+    // proxy. The complementary runtime exclusion (nemoclaw-start.sh sets a
+    // narrower NO_PROXY without inference.local once sandbox boots) is
+    // asserted in test/service-env.test.ts.
+    const envArgs: string[] = [];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8118",
+    });
+
+    const upper = envArgs.find((e) => e.startsWith("NO_PROXY="));
+    const lower = envArgs.find((e) => e.startsWith("no_proxy="));
+    expect(upper, "NO_PROXY should be synthesized").toBeDefined();
+    expect(lower, "no_proxy should be synthesized").toBeDefined();
+    for (const v of [upper, lower]) {
+      const parts = (v ?? "").split("=")[1]?.split(",") ?? [];
+      expect(parts).toContain("inference.local");
+      expect(parts).toContain("host.containers.internal");
+    }
+  });
+
+  it("propagates NEMOCLAW_MINIMAL_BOOTSTRAP=1 from host into sandbox env (#2598)", () => {
+    const envArgs: string[] = [];
+    appendHostProxyEnvArgs(envArgs, { NEMOCLAW_MINIMAL_BOOTSTRAP: "1" });
+    expect(envArgs).toContain("NEMOCLAW_MINIMAL_BOOTSTRAP=1");
+  });
+
+  it("omits NEMOCLAW_MINIMAL_BOOTSTRAP when unset or not the literal '1' (#2598)", () => {
+    for (const value of [undefined, "", "0", "true", "yes"]) {
+      const envArgs: string[] = [];
+      const env: NodeJS.ProcessEnv = value === undefined ? {} : { NEMOCLAW_MINIMAL_BOOTSTRAP: value };
+      appendHostProxyEnvArgs(envArgs, env);
+      expect(envArgs.some((e) => e.startsWith("NEMOCLAW_MINIMAL_BOOTSTRAP="))).toBe(false);
+    }
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
@@ -215,6 +337,93 @@ startGateway(null).catch(() => {});
     assert.ok(
       gatewayLines.length >= 2,
       `expected "Deploying" and "Waiting" on separate lines in stdout:\n${result.stdout}`,
+    );
+  });
+
+  it("fast-fails gateway start before health polling when Docker is unreachable (#2347)", testTimeoutOptions(20_000), () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-docker-down-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "gateway-docker-down.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == "gateway --help" ]]; then
+  printf "Commands: start destroy\\n"
+  exit 0
+fi
+if [[ "$*" == *"gateway"*"start"* ]]; then
+  printf "Error: Failed to create Docker client.\\n"
+  printf "Socket not found: /var/run/docker.sock\\n"
+  exit 1
+fi
+if [[ "$*" == *"status"* || "$*" == *"gateway"*"info"* ]]; then
+  printf "HEALTH POLL REACHED\\n"
+  exit 0
+fi
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    const script = `
+const mod = require("module");
+const origLoad = mod._load;
+mod._load = function(req, parent, isMain) {
+  if (req === "p-retry") {
+    const pRetry = async (fn, opts) => {
+      try {
+        return await fn({ attemptNumber: 1, retriesLeft: 0 });
+      } catch (e) {
+        if (!(e instanceof pRetry.AbortError) && opts && opts.onFailedAttempt) {
+          opts.onFailedAttempt(Object.assign(e, { attemptNumber: 1, retriesLeft: 0 }));
+        }
+        throw e;
+      }
+    };
+    pRetry.AbortError = class AbortError extends Error {};
+    return pRetry;
+  }
+  return origLoad.call(this, req, parent, isMain);
+};
+Object.defineProperty(process, "platform", { value: "darwin" });
+Object.defineProperty(process, "arch", { value: "x64" });
+const { startGateway } = require(${onboardPath});
+startGateway(null).catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "5",
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 1, `unexpected exit code; stderr:\n${result.stderr}`);
+    assert.ok(
+      result.stderr.includes("Docker daemon is not running"),
+      `expected Docker recovery guidance in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("colima start"),
+      `expected macOS Docker start hint in stderr:\n${result.stderr}`,
+    );
+    assert.ok(
+      !result.stdout.includes("Waiting for gateway health"),
+      `health polling should not start after Docker-unreachable output:\n${result.stdout}`,
+    );
+    assert.ok(
+      !result.stdout.includes("HEALTH POLL REACHED"),
+      `gateway status/info probes should not run after Docker-unreachable output:\n${result.stdout}`,
     );
   });
 
@@ -342,6 +551,40 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_MODEL = previousModel;
       }
     }
+  });
+
+  it("prompts for input capability only on likely multimodal model names", () => {
+    expect(shouldPromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b")).toBe(
+      true,
+    );
+    expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
+    expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
+  });
+
+  it("accepts only supported inference input capability overrides", () => {
+    expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("image")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,image")).toBe(true);
+    expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,text")).toBe(false);
+    expect(isValidInferenceInputsOverride("image,image")).toBe(false);
+    expect(isValidInferenceInputsOverride("text, image")).toBe(false);
+    expect(isValidInferenceInputsOverride("audio")).toBe(false);
+  });
+
+  it("normalizes invalid inference input capability overrides when choosing text only", async () => {
+    const env = {
+      NEMOCLAW_INFERENCE_INPUTS: "audio",
+    } as NodeJS.ProcessEnv;
+
+    await maybePromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b", {
+      env,
+      isNonInteractive: () => false,
+      prompt: async () => "",
+    });
+
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text");
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
@@ -1289,7 +1532,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1322,7 +1565,7 @@ proxy.persistAndProbeOllamaProxy = async (token) => {
 const { setupInference } = require(${onboardPath});
 
 (async () => {
-  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   console.log(JSON.stringify({ commands, proxyCalls }));
 })().catch((error) => {
   console.error(error);
@@ -1428,7 +1671,7 @@ runner.runCapture = (command) => {
       "",
       "  Route: inference.local",
       "  Provider: ollama-local",
-      "  Model: qwen2.5:7b",
+      "  Model: qwen3.5:9b",
       "  Version: 1",
     ].join("\\n");
   }
@@ -1454,7 +1697,7 @@ const { setupInference } = require(${onboardPath});
 
 (async () => {
   try {
-    await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+    await setupInference("test-box", "qwen3.5:9b", "ollama-local");
   } catch (err) {
     if (!err || !err.__exit) {
       origErr("[TEST] outer error:", err && err.message);
@@ -2357,7 +2600,10 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
       assert.equal(payload.sandboxName, "my-assistant");
-      assert.deepEqual(payload.defaultCalls, ["my-assistant"]);
+      // createSandbox no longer marks the sandbox default — that is deferred to the
+      // finalization step so a cancel at policy presets can't leave an unconfigured
+      // sandbox as default (#4614).
+      assert.deepEqual(payload.defaultCalls, []);
       assert.ok(
         payload.registerCalls.some(
           (entry: Record<string, unknown>) =>
@@ -2465,7 +2711,7 @@ agentOnboard.createAgentSandbox = () => {
       "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
       "ARG NEMOCLAW_PROVIDER_KEY=custom",
       "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-      "ARG CHAT_UI_URL=http://127.0.0.1:8642",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
       "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
       "ARG NEMOCLAW_INFERENCE_API=openai-completions",
       "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
@@ -2499,7 +2745,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 8642 12345 running";
+  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2531,7 +2777,10 @@ const { createSandbox } = require(${onboardPath});
   const agent = {
     name: "hermes",
     displayName: "Hermes Agent",
-    forwardPort: 8642,
+    forwardPort: 18789,
+    forward_ports: [18789, 8642],
+    healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
+    dashboard: { kind: "ui", label: "Dashboard", path: "/", healthPath: "/api/status", auth: "session" },
     expectedVersion: "2026.4.23",
     policyAdditionsPath: null,
   };
@@ -2545,6 +2794,10 @@ const { createSandbox } = require(${onboardPath});
     [],
     null,
     agent,
+    null,
+    null,
+    null,
+    ["nous-web"],
   );
   console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
 })().catch((error) => {
@@ -2568,11 +2821,17 @@ const { createSandbox } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{
+      commands: CommandEntry[];
       logs: string[];
       warnings: string[];
       baseResolutionCalls: unknown[];
     }>(result.stdout);
     assert.equal(payload.baseResolutionCalls.length, 0);
+    const createCommand = payload.commands.find((entry) => entry.command.includes("sandbox create"));
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider hermes-sandbox-hermes-tool-gateway/);
+    assert.doesNotMatch(createCommand.command, /TOOL_GATEWAY_USER_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN=/);
     assert.ok(
       !payload.logs.some((line) => line.includes("Using sandbox base image")),
       "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",
@@ -2925,7 +3184,16 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const {
+      CHAT_UI_URL: _stripped,
+      HTTP_PROXY: _httpProxy,
+      HTTPS_PROXY: _httpsProxy,
+      NO_PROXY: _noProxy,
+      http_proxy: _lowerHttpProxy,
+      https_proxy: _lowerHttpsProxy,
+      no_proxy: _lowerNoProxy,
+      ...inheritedEnv
+    } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -2935,6 +3203,9 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_DASHBOARD_PORT: "19000",
+        HTTP_PROXY: "http://127.0.0.1:8888",
+        HTTPS_PROXY: "http://127.0.0.1:8888",
+        NO_PROXY: "corp.internal",
       },
     });
 
@@ -2955,6 +3226,26 @@ const { createSandbox } = require(${onboardPath});
     // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
     // overriding whatever value the Docker image had baked in.
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    // OpenClaw home/state/workspace dirs must be pinned in the sandbox env so
+    // `openclaw skills install` and `openclaw skills list` resolve the same
+    // paths. Without this, the upstream skill loader can fall back to a
+    // hardcoded DEFAULT_AGENT_WORKSPACE_DIR that drifts from the install path
+    // and hides workspace-installed skills from `skills list`.
+    assert.match(createCommand.command, /OPENCLAW_HOME=\/sandbox(?:\s|$)/);
+    assert.match(createCommand.command, /OPENCLAW_STATE_DIR=\/sandbox\/\.openclaw(?:\s|$)/);
+    assert.match(
+      createCommand.command,
+      /OPENCLAW_WORKSPACE_DIR=\/sandbox\/\.openclaw\/workspace(?:\s|$)/,
+    );
+    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+    assert.ok(noProxyMatch, `expected NO_PROXY in sandbox create command:\n${createCommand.command}`);
+    const noProxyEntries = noProxyMatch[1].split(",");
+    assert.ok(noProxyEntries.includes("corp.internal"));
+    assert.ok(noProxyEntries.includes("localhost"));
+    assert.ok(noProxyEntries.includes("127.0.0.1"));
+    assert.ok(noProxyEntries.includes("host.docker.internal"));
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(

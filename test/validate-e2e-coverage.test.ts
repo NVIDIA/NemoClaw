@@ -160,10 +160,23 @@ describe("nightly E2E workflow validation", () => {
   it("public installer E2Es install the resolved checkout ref", () => {
     const jobs = workflow.jobs as Record<string, unknown>;
     const expectedCheckoutRef = "${{ inputs.target_ref || github.ref }}";
+    const expectedTrustedWorkflowRef = "${{ github.ref }}";
     const expectedInstallRef = "${{ steps.public_install_ref.outputs.ref }}";
-    const publicInstallerJobs: Array<[string, string]> = [
-      ["cloud-onboard-e2e", "Run cloud onboard E2E test"],
-      ["openclaw-tui-chat-correlation-e2e", "Run OpenClaw TUI chat correlation E2E test"],
+    const publicInstallerJobs: Array<{
+      jobName: string;
+      stepName: string;
+      privilegedTrustedScript?: boolean;
+    }> = [
+      { jobName: "cloud-onboard-e2e", stepName: "Run cloud onboard E2E test" },
+      {
+        jobName: "openclaw-tui-chat-correlation-e2e",
+        stepName: "Run OpenClaw TUI chat correlation E2E test",
+      },
+      {
+        jobName: "issue-4434-tui-unreachable-inference-e2e",
+        stepName: "Run issue #4434 TUI unreachable inference E2E test",
+        privilegedTrustedScript: true,
+      },
     ];
     const invalid: string[] = [];
 
@@ -179,7 +192,7 @@ describe("nightly E2E workflow validation", () => {
       invalid.push("reusable runner missing checked-out ref exporter");
     }
 
-    for (const [jobName, stepName] of publicInstallerJobs) {
+    for (const { jobName, stepName, privilegedTrustedScript = false } of publicInstallerJobs) {
       const job = jobs[jobName] as Record<string, unknown> | undefined;
       const jobWith = job?.with as Record<string, unknown> | undefined;
 
@@ -205,18 +218,36 @@ describe("nightly E2E workflow validation", () => {
       }
 
       const checkoutWith = getCheckoutStep(job)?.with as Record<string, unknown> | undefined;
-      if (checkoutWith?.ref !== expectedCheckoutRef) {
+      const expectedJobCheckoutRef = privilegedTrustedScript
+        ? expectedTrustedWorkflowRef
+        : expectedCheckoutRef;
+      if (checkoutWith?.ref !== expectedJobCheckoutRef) {
         invalid.push(`${jobName} checkout.ref=${String(checkoutWith?.ref)}`);
       }
 
-      const resolver = getJobStep(job, "Resolve public install ref");
+      const resolver = getJobStep(
+        job,
+        privilegedTrustedScript ? "Resolve trusted public install ref" : "Resolve public install ref",
+      );
       if (!resolver) {
         invalid.push(`${jobName} missing resolved-ref step`);
       } else {
         if (resolver.id !== "public_install_ref") {
           invalid.push(`${jobName} resolved-ref id=${String(resolver.id)}`);
         }
-        if (typeof resolver.run !== "string" || !resolver.run.includes("git rev-parse HEAD")) {
+        const run = typeof resolver.run === "string" ? resolver.run : "";
+        if (privilegedTrustedScript) {
+          const env = resolver.env as Record<string, unknown> | undefined;
+          if (env?.TARGET_REF !== "${{ inputs.target_ref }}") {
+            invalid.push(`${jobName} resolved-ref TARGET_REF=${String(env?.TARGET_REF)}`);
+          }
+          if (!run.includes("trusted_head=\"$(git rev-parse HEAD)\"")) {
+            invalid.push(`${jobName} resolved-ref step does not derive trusted HEAD`);
+          }
+          if (!run.includes("git merge-base --is-ancestor")) {
+            invalid.push(`${jobName} resolved-ref step does not validate ref reachability`);
+          }
+        } else if (!run.includes("git rev-parse HEAD")) {
           invalid.push(`${jobName} resolved-ref step does not use git rev-parse HEAD`);
         }
       }
@@ -242,6 +273,66 @@ describe("nightly E2E workflow validation", () => {
         `through to the curl-install path; otherwise trusted dispatch can check out one ` +
         `commit but install another. ` +
         `Invalid jobs: ${invalid.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("messaging providers nightly can receive optional live message secrets", () => {
+    const expectedSecretNames = [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ];
+
+    const missing: string[] = [];
+    const reusableSecrets =
+      ((reusableRunner.on as Record<string, unknown> | undefined)?.workflow_call as
+        | Record<string, unknown>
+        | undefined) ?? {};
+    const reusableSecretDefs =
+      (reusableSecrets.secrets as Record<string, unknown> | undefined) ?? {};
+    const runnerJobs = (reusableRunner.jobs as Record<string, unknown> | undefined) ?? {};
+    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
+    const jobs = (workflow.jobs as Record<string, unknown> | undefined) ?? {};
+    const messagingJob = jobs["messaging-providers-e2e"] as
+      | Record<string, unknown>
+      | undefined;
+    if (!messagingJob) {
+      missing.push("nightly job messaging-providers-e2e");
+    }
+    const messagingSecrets =
+      (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
+    const messagingWith = (messagingJob?.with as Record<string, unknown> | undefined) ?? {};
+    const trustedRefExpression =
+      "${{ github.event_name != 'workflow_dispatch' || inputs.target_ref == '' }}";
+    if (messagingWith.messaging_live_secrets !== trustedRefExpression) {
+      missing.push("nightly messaging-providers-e2e with.messaging_live_secrets");
+    }
+
+    for (const name of expectedSecretNames) {
+      if (!reusableSecretDefs[name]) {
+        missing.push(`workflow_call.secrets.${name}`);
+      }
+      if (runStepEnv[name] !== `\${{ inputs.messaging_live_secrets && secrets.${name} || '' }}`) {
+        missing.push(`e2e-script Run E2E script env.${name}`);
+      }
+      if (
+        messagingSecrets[name] !==
+        `\${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.${name} || '' }}`
+      ) {
+        missing.push(`nightly messaging-providers-e2e secrets.${name}`);
+      }
+    }
+
+    expect(
+      missing,
+      `messaging-providers-e2e must pass optional live-message credentials and ` +
+        `targets through the reusable runner so Phase 6 can exercise ` +
+        `openclaw message send when repository secrets are configured. ` +
+        `Missing: ${missing.join(", ")}`,
     ).toEqual([]);
   });
 });

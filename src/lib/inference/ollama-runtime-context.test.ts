@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   applyOllamaRuntimeContextWindow,
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
   parseOllamaRuntimeContextLength,
   probeOllamaRuntimeModelStatus,
   resetOllamaRuntimeContextWindowAutoState,
@@ -104,6 +105,46 @@ describe("Ollama runtime context helpers", () => {
     expect(
       resolveOllamaRuntimeContextWindow("other:model", null, getOllamaHost, capture),
     ).toBeNull();
+  });
+
+  it("raises the auto-adopted context window to the agent floor when the daemon reports below it", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const messages: string[] = [];
+    const options = {
+      env,
+      logger: {
+        log: (message: string) => messages.push(message),
+        warn: (message: string) => messages.push(message),
+      },
+      runCaptureImpl: () =>
+        JSON.stringify({
+          models: [{ name: "llama3.2:3b", context_length: 4096, processor: "100% GPU" }],
+        }),
+    };
+
+    applyOllamaRuntimeContextWindow("llama3.2:3b", getOllamaHost, options);
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe(String(MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW));
+    expect(messages.some((m) => m.includes("Raising Ollama runtime context window"))).toBe(true);
+  });
+
+  it("preserves a daemon-reported context window above the agent floor", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const messages: string[] = [];
+    const options = {
+      env,
+      logger: {
+        log: (message: string) => messages.push(message),
+        warn: (message: string) => messages.push(message),
+      },
+      runCaptureImpl: () =>
+        JSON.stringify({
+          models: [{ name: "qwen3.5:9b", context_length: 32_768, processor: "100% GPU" }],
+        }),
+    };
+
+    applyOllamaRuntimeContextWindow("qwen3.5:9b", getOllamaHost, options);
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+    expect(messages.some((m) => m.includes("Raising Ollama runtime context window"))).toBe(false);
   });
 
   it("applies and clears only auto-detected context window state", () => {

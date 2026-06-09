@@ -43,6 +43,7 @@ export const ONBOARD_MACHINE_EVENT_TYPES = [
   "state.repair.started",
   "state.repair.completed",
   "state.repair.failed",
+  "state.result.skipped",
   "context.updated",
   "resume.conflict",
   "hook.started",

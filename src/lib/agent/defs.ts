@@ -6,9 +6,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ROOT } from "../runner";
 import { DASHBOARD_PORT } from "../core/ports";
+import { ROOT } from "../runner";
+import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -45,6 +45,8 @@ export interface AgentDashboard {
   kind: AgentDashboardKind;
   label: string;
   path: string;
+  healthPath: string;
+  auth: "url_token" | "session" | "none";
 }
 
 export interface AgentInference {
@@ -84,6 +86,7 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
@@ -259,6 +262,44 @@ function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] 
   return supported ? { supported } : {};
 }
 
+function readDashboard(record: ManifestRecord): AgentDashboard {
+  const d = readObject(record, "dashboard") ?? {};
+  const rawKind = d.kind;
+  if (rawKind !== undefined && rawKind !== "ui" && rawKind !== "api") {
+    throw new Error("Agent manifest field 'dashboard.kind' must be ui or api");
+  }
+  const kind: AgentDashboardKind = rawKind === "api" ? "api" : "ui";
+  const defaultLabel = kind === "api" ? "API" : "UI";
+  const normalizedLabel = typeof d.label === "string" ? d.label.trim() : "";
+
+  const normalizePath = (key: "path" | "health_path", fallback: string): string => {
+    const value = d[key];
+    if (value === undefined) return fallback;
+    if (typeof value !== "string" || !value.startsWith("/")) {
+      throw new Error(`Agent manifest field 'dashboard.${key}' must be an absolute path`);
+    }
+    return value.trim() || fallback;
+  };
+
+  const rawAuth = d.auth;
+  if (
+    rawAuth !== undefined &&
+    rawAuth !== "url_token" &&
+    rawAuth !== "session" &&
+    rawAuth !== "none"
+  ) {
+    throw new Error("Agent manifest field 'dashboard.auth' must be url_token, session, or none");
+  }
+
+  return {
+    kind,
+    label: normalizedLabel || defaultLabel,
+    path: normalizePath("path", "/"),
+    healthPath: normalizePath("health_path", "/health"),
+    auth: rawAuth ?? (kind === "api" ? "none" : "url_token"),
+  };
+}
+
 function readInference(record: ManifestRecord): AgentInference | undefined {
   const inference = readObject(record, "inference");
   if (!inference) return undefined;
@@ -332,6 +373,7 @@ export function loadAgent(name: string): AgentDefinition {
   const expectedVersion = readString(raw, "expected_version");
   const gatewayCommand = readString(raw, "gateway_command");
   const forwardPorts = readPortArray(raw, "forward_ports");
+  const dashboard = readDashboard(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
@@ -340,6 +382,7 @@ export function loadAgent(name: string): AgentDefinition {
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
+  const dashboardUi = readDashboardUi(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -382,17 +425,11 @@ export function loadAgent(name: string): AgentDefinition {
     },
 
     get dashboard(): AgentDashboard {
-      const d = readObject(raw, "dashboard") ?? {};
-      const kind: AgentDashboardKind = d.kind === "api" ? "api" : "ui";
-      const defaultLabel = kind === "api" ? "API" : "UI";
-      const normalizedLabel = typeof d.label === "string" ? d.label.trim() : "";
-      const rawPath = typeof d.path === "string" ? d.path.trim() : "";
-      const path = rawPath ? (rawPath.startsWith("/") ? rawPath : `/${rawPath}`) : "/";
-      return {
-        kind,
-        label: normalizedLabel || defaultLabel,
-        path,
-      };
+      return dashboard;
+    },
+
+    get dashboardUi(): AgentDashboardUi | null {
+      return dashboardUi;
     },
 
     get configPaths(): AgentConfigPaths {
