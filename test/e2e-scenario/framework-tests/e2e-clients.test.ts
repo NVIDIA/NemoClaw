@@ -106,6 +106,30 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("gateway client preserves caller-provided probe options", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const gateway = new GatewayClient(host);
+
+    await gateway.status({
+      artifactName: "custom-gateway-status",
+      env: { NEMOCLAW_TEST_VALUE: "1" },
+      inheritEnv: true,
+      timeoutMs: 123,
+    });
+
+    expect(runner.calls[0]).toEqual({
+      command: "nemoclaw",
+      args: ["gateway", "status"],
+      options: {
+        artifactName: "custom-gateway-status",
+        env: { NEMOCLAW_TEST_VALUE: "1" },
+        inheritEnv: true,
+        timeoutMs: 123,
+      },
+    });
+  });
+
   it("sandbox client builds OpenShell sandbox commands", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
@@ -117,6 +141,29 @@ describe("E2E fixture clients", () => {
       args: ["sandbox", "exec", "assistant", "--", "echo", "ok"],
       options: {
         artifactName: "sandbox-exec-assistant",
+      },
+    });
+  });
+
+  it("sandbox client preserves caller-provided probe options", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.status("assistant", {
+      artifactName: "custom-sandbox-status",
+      env: { NEMOCLAW_TEST_VALUE: "1" },
+      inheritEnv: true,
+      timeoutMs: 123,
+    });
+
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: ["sandbox", "status", "assistant"],
+      options: {
+        artifactName: "custom-sandbox-status",
+        env: { NEMOCLAW_TEST_VALUE: "1" },
+        inheritEnv: true,
+        timeoutMs: 123,
       },
     });
   });

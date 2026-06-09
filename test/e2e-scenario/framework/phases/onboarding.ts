@@ -58,9 +58,10 @@ export interface OnboardingExpectedFailure {
 export interface NemoClawInstance {
   onboarding: string;
   sandboxName: string;
-  agent: "openclaw";
-  provider: "nvidia";
-  providerEnv: "cloud";
+  agent: "openclaw" | "hermes";
+  provider: "nvidia" | "ollama";
+  providerEnv: "cloud" | "local";
+  platformOs?: "ubuntu" | "macos" | "windows";
   gatewayUrl: string;
   result: ShellProbeResult;
   expectedFailure?: OnboardingExpectedFailure;
