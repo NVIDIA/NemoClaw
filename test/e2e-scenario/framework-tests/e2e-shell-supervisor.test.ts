@@ -132,6 +132,25 @@ describe("framework/shell/supervisor", () => {
     expect(result.exitCode === null || result.exitCode !== 0).toBe(true);
   });
 
+  it("disarms the wall timer on abort so an external cancel cannot retroactively flip timedOut=true", async () => {
+    // timeoutMs is set just past the abort delay so a stale wall
+    // timer (if not cleared on abort) would fire before the child
+    // dies on SIGKILL and flip timedOut to true. The fix in
+    // onAbort() clears the wall timeout before terminate().
+    const controller = new AbortController();
+    const child = spawn("bash", ["-c", 'trap "" TERM; sleep 30 & wait'], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    setTimeout(() => controller.abort(), 50).unref();
+    const result = await superviseChild(child, {
+      timeoutMs: 100,
+      killGraceMs: 200,
+      signal: controller.signal,
+    });
+    expect(result.timedOut).toBe(false);
+  });
+
   it("surfaces spawn errors via spawnError instead of a numeric exit", async () => {
     const child = spawn("definitely-not-a-real-binary-xyz", [], {
       detached: true,

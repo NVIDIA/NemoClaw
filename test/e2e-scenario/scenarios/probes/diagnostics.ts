@@ -37,6 +37,7 @@ interface DiagnosticsEvidence {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  spawnError: string | null;
   elapsedMs: number;
   archivePath: string;
   archiveSize: number | null;
@@ -84,14 +85,14 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
       stderrTail = (stderrTail + chunk).slice(-1024);
     },
   });
-  let exitCode = supervised.exitCode;
+  const exitCode = supervised.exitCode;
   const signal = supervised.signal;
-  if (supervised.spawnError) {
-    // ENOENT or similar — nemoclaw is not on PATH. Surface as a
-    // distinct exit code so the operator can see it's an environment
-    // problem, not a real diagnostics failure.
-    stderrTail = (stderrTail + `spawn error: ${supervised.spawnError.message}`).slice(-1024);
-    exitCode = 127;
+  const spawnErrorMessage = supervised.spawnError?.message ?? null;
+  if (spawnErrorMessage) {
+    // ENOENT or similar — nemoclaw is not on PATH. Surface verbatim
+    // so the operator can see it's an environment problem, not a real
+    // diagnostics failure.
+    stderrTail = (stderrTail + `spawn error: ${spawnErrorMessage}`).slice(-1024);
   }
   const elapsedMs = Date.now() - startedAt;
 
@@ -107,6 +108,7 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
     exitCode,
     signal,
     timedOut: supervised.timedOut,
+    spawnError: spawnErrorMessage,
     elapsedMs,
     archivePath,
     archiveSize,
@@ -127,6 +129,16 @@ export const diagnosticsProbe: ProbeFn = async (ctx: ProbeContext): Promise<Prob
       status: "failed",
       classifier: "runner-infra",
       message: `diagnosticsProbe: nemoclaw debug --quick exceeded ${DIAGNOSTICS_TIMEOUT_MS / 1000}s`,
+    };
+  }
+  if (spawnErrorMessage) {
+    // The host CLI was not available. Classify as runner-infra so
+    // the orchestrator's retry policy can react to it as an
+    // environment problem rather than a deterministic probe failure.
+    return {
+      status: "failed",
+      classifier: "runner-infra",
+      message: `diagnosticsProbe: failed to spawn nemoclaw: ${spawnErrorMessage}`,
     };
   }
   if (exitCode !== 0) {

@@ -891,13 +891,15 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
       const logBody = fs.readFileSync(path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`), "utf8");
 
       expect(result.assertions[0].status).toBe("passed");
-      // Declared secret reaches the child verbatim.
-      expect(logBody).toContain("declared-secret-value-passes-through");
-      // It is NOT redacted in printenv output because nothing about
-      // the literal value matches a token-shape pattern. (Real
-      // secrets that match secret-patterns.ts WILL be redacted as a
-      // second line of defense; this synthetic value is intentionally
-      // shape-free to isolate the env-passthrough behavior.)
+      // Declared secret reaches the child verbatim (printenv would
+      // print MISSING otherwise), but the orchestrator scrubs the
+      // value at the I/O boundary before any byte reaches evidence:
+      // the explicit secretEnv values are passed to redactString
+      // alongside the canonical token-shape patterns, so secrets
+      // without a recognised shape still get sanitised.
+      expect(logBody).not.toContain("MISSING");
+      expect(logBody).not.toContain("declared-secret-value-passes-through");
+      expect(logBody).toContain("[REDACTED]");
     } finally {
       if (previous === undefined) delete process.env[declaredKey];
       else process.env[declaredKey] = previous;

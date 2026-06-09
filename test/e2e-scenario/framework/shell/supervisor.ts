@@ -104,6 +104,9 @@ export function superviseChild(child: ChildProcess, opts: SuperviseOptions): Pro
     }, opts.timeoutMs);
 
     const onAbort = (): void => {
+      // Disarm the wall timer first so a late firing cannot retroactively
+      // flag timedOut=true for what is in fact an external cancellation.
+      clearTimeout(timeout);
       terminate();
     };
     if (opts.signal) {

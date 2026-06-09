@@ -39,6 +39,7 @@ interface DocsCheckResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  spawnError: string | null;
   elapsedMs: number;
   stderrTail: string;
   stdoutTail: string;
@@ -78,9 +79,10 @@ async function runCheck(
   if (supervised.spawnError) {
     return {
       phase,
-      exitCode: 127,
+      exitCode: null,
       signal: null,
       timedOut: false,
+      spawnError: supervised.spawnError.message,
       elapsedMs: Date.now() - startedAt,
       stderrTail: `spawn error: ${supervised.spawnError.message}`,
       stdoutTail,
@@ -91,6 +93,7 @@ async function runCheck(
     exitCode: supervised.exitCode,
     signal: supervised.signal,
     timedOut: supervised.timedOut,
+    spawnError: null,
     elapsedMs: Date.now() - startedAt,
     stderrTail,
     stdoutTail,
@@ -141,6 +144,18 @@ export const docsValidationProbe: ProbeFn = async (ctx: ProbeContext): Promise<P
       status: "failed",
       classifier: "runner-infra",
       message: `docsValidationProbe: ${which} check timed out`,
+    };
+  }
+  // Spawn failures (missing bash, ENOENT, EPERM, ...) are environment
+  // problems, not docs drift — surface them with the same classifier
+  // as timeouts so the orchestrator's retry policy can react.
+  if (cliResult.spawnError || linksResult.spawnError) {
+    const which = cliResult.spawnError ? "cli-parity" : "links-local";
+    const reason = cliResult.spawnError ?? linksResult.spawnError;
+    return {
+      status: "failed",
+      classifier: "runner-infra",
+      message: `docsValidationProbe: ${which} check failed to spawn: ${reason}`,
     };
   }
   if (cliResult.exitCode !== 0) {

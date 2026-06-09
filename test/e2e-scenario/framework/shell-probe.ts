@@ -5,14 +5,10 @@ import { spawn } from "node:child_process";
 
 import type { ArtifactSink } from "./artifacts.ts";
 import { superviseChild } from "./shell/supervisor.ts";
-import {
-  type TrustedShellCommand,
-  type TrustedShellCommandInput,
-  trustedShellCommand,
-} from "./shell/trusted-command.ts";
+import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 
 /**
- * Fixture-flavored host shell probe.
+ * Fixture-flavoured host shell probe.
  *
  * The lifecycle boundary (detached process-group cleanup, SIGTERM ->
  * SIGKILL escalation, timeout, AbortSignal) is owned by
@@ -20,7 +16,7 @@ import {
  * and probe helpers. The trusted-command brand + NUL-byte guard live
  * in framework/shell/trusted-command.ts. This file layers the
  * fixture-specific policy on top: redaction at the canonical entry
- * point, artifact persistence, and explicit-env-by-default.
+ * point, artefact persistence, and explicit-env-by-default.
  */
 
 export interface ShellProbeRunOptions {

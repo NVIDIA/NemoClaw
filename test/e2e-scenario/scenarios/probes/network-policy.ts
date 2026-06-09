@@ -94,7 +94,7 @@ export const networkPolicyProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   };
   writeProbeEvidence(ctx, evidence);
 
-  if (result.signal === "SIGTERM") {
+  if (result.timedOut) {
     return {
       status: "failed",
       classifier: "gateway-transient",

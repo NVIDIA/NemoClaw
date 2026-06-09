@@ -105,7 +105,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
     writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
-      classifier: echoResult.signal === "SIGTERM" ? "gateway-transient" : undefined,
+      classifier: echoResult.timedOut ? "gateway-transient" : undefined,
       message: `injectionBlockedProbe: echo command failed (exit ${echoResult.exitCode}); stderr: ${echoResult.stderr.slice(-300)}`,
     };
   }

@@ -39,6 +39,10 @@ const TAIL_BYTES = 2048;
 export interface CmdResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+  /** True when the supervisor killed the child due to timeoutMs. The
+   *  delivered signal may be SIGKILL after escalation, so callers must
+   *  branch on this flag rather than on `signal === "SIGTERM"`. */
+  timedOut: boolean;
   stdout: string;
   stderr: string;
   elapsedMs: number;
@@ -127,6 +131,7 @@ async function spawnBash(
     return {
       exitCode: 127,
       signal: null,
+      timedOut: false,
       stdout,
       stderr: tail(stderr + `spawn error: ${supervised.spawnError.message}`),
       elapsedMs: Date.now() - startedAt,
@@ -135,6 +140,7 @@ async function spawnBash(
   return {
     exitCode: supervised.exitCode,
     signal: supervised.signal,
+    timedOut: supervised.timedOut,
     stdout,
     stderr,
     elapsedMs: Date.now() - startedAt,
@@ -162,6 +168,7 @@ export async function runSandboxCmd(
     return {
       exitCode: 1,
       signal: null,
+      timedOut: false,
       stdout: "",
       stderr: "runSandboxCmd: ProbeContext.sandboxName is null (E2E_SANDBOX_NAME unset in context.env)",
       elapsedMs: 0,
@@ -172,6 +179,7 @@ export async function runSandboxCmd(
     return {
       exitCode: 1,
       signal: null,
+      timedOut: false,
       stdout: "",
       stderr: `runSandboxCmd: wrapper not found at ${wrapperPath}`,
       elapsedMs: 0,
@@ -240,6 +248,7 @@ export async function runHostCmd(
     return {
       exitCode: 127,
       signal: null,
+      timedOut: false,
       stdout,
       stderr: tail(stderr + `spawn error: ${supervised.spawnError.message}`),
       elapsedMs: Date.now() - startedAt,
@@ -248,6 +257,7 @@ export async function runHostCmd(
   return {
     exitCode: supervised.exitCode,
     signal: supervised.signal,
+    timedOut: supervised.timedOut,
     stdout,
     stderr,
     elapsedMs: Date.now() - startedAt,

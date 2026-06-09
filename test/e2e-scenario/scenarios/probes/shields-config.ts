@@ -113,7 +113,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   );
   evidence.statusExitCode = statusResult.exitCode;
   evidence.statusStdoutTail = statusResult.stdout;
-  if (statusResult.signal === "SIGTERM") {
+  if (statusResult.timedOut) {
     writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
@@ -164,7 +164,7 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
-      classifier: statResult.signal === "SIGTERM" ? "gateway-transient" : undefined,
+      classifier: statResult.timedOut ? "gateway-transient" : undefined,
       message: `shieldsConfigProbe: stat of ${configPath} failed (exit ${statResult.exitCode}); stderr: ${statResult.stderr.slice(-300)}`,
     };
   }

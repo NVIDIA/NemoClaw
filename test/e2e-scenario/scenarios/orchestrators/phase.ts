@@ -33,6 +33,28 @@ registerBuiltinProbes();
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
 const DEFAULT_STEP_TIMEOUT_SECONDS = 300;
 
+/**
+ * Collect the actual secret values an action / step declared via
+ * `secretEnv` so redactString can scrub them verbatim from evidence.
+ * Canonical regex shapes catch most token forms, but per-test secret
+ * literals may not match any shape and would otherwise leak into the
+ * evidence log and stderr tail.
+ */
+function collectExplicitSecretValues(
+  env: NodeJS.ProcessEnv,
+  secretEnv: readonly string[] | undefined,
+): string[] {
+  if (!secretEnv || secretEnv.length === 0) return [];
+  const values: string[] = [];
+  for (const key of secretEnv) {
+    const value = env[key];
+    if (typeof value === "string" && value.length > 0) {
+      values.push(value);
+    }
+  }
+  return values;
+}
+
 interface StepAttemptOutcome {
   status: "passed" | "failed" | "skipped";
   classifier?: TransientClassifier;
@@ -180,7 +202,23 @@ export class PhaseOrchestrator {
       },
     });
 
-    const safeArgs = bashArgs.map((arg, idx) => validateShellToken(arg, `runAction bashArgs[${idx}]`));
+    let safeArgs: string[];
+    try {
+      safeArgs = bashArgs.map((arg, idx) => validateShellToken(arg, `runAction bashArgs[${idx}]`));
+    } catch (err) {
+      return {
+        id: action.id,
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        message: `phase action ${action.id} rejected at the trusted-command boundary: ${redactString(err instanceof Error ? err.message : String(err))}`,
+      };
+    }
+    // Explicit secret values declared via action.secretEnv must be
+    // scrubbed verbatim from evidence, not only when they happen to
+    // match a canonical regex shape. Gather the actual values the
+    // child sees so redactString redacts them as well.
+    const explicitSecretValues = collectExplicitSecretValues(env, action.secretEnv);
+    const redactAction = (text: string): string => redactString(text, explicitSecretValues);
     const child = spawn("bash", safeArgs, { env, cwd: REPO_ROOT, detached: true });
     const logStream = fs.createWriteStream(logPath);
     let stderrTail = "";
@@ -194,16 +232,17 @@ export class PhaseOrchestrator {
         logStream.once("error", () => res());
         logStream.end();
       });
-    // Every byte from the child passes through redactString before
+    // Every byte from the child passes through redactAction before
     // hitting the evidence log or the stderr tail; raw output never
-    // touches disk or PhaseActionResult.message.
+    // touches disk or PhaseActionResult.message. Explicit secretEnv
+    // values are sanitised alongside the canonical regex shapes.
     const supervised = await superviseChild(child, {
       timeoutMs: timeoutSeconds * 1_000,
       onStdout: (chunk) => {
-        logStream.write(redactString(chunk));
+        logStream.write(redactAction(chunk));
       },
       onStderr: (chunk) => {
-        const redacted = redactString(chunk);
+        const redacted = redactAction(chunk);
         logStream.write(redacted);
         stderrTail = (stderrTail + redacted).slice(-4096);
       },
@@ -217,7 +256,7 @@ export class PhaseOrchestrator {
         status: "failed",
         durationMs,
         evidence: logPath,
-        message: redactString(`phase action ${action.id} spawn error: ${supervised.spawnError.message}`),
+        message: redactAction(`phase action ${action.id} spawn error: ${supervised.spawnError.message}`),
       };
     }
     if (supervised.timedOut) {
@@ -426,7 +465,21 @@ export class PhaseOrchestrator {
     // signals to the negative pid so the whole group dies on timeout.
     // Without this, bash ignores SIGTERM until its current foreground
     // command (e.g. sleep) returns, and timeouts effectively don't work.
-    const safeArg = validateShellToken(scriptPath, "runShellStep scriptPath");
+    let safeArg: string;
+    try {
+      safeArg = validateShellToken(scriptPath, "runShellStep scriptPath");
+    } catch (err) {
+      return {
+        status: "failed",
+        classifier: "runner-infra",
+        message: `shell step ${step.id} rejected at the trusted-command boundary: ${redactString(err instanceof Error ? err.message : String(err))}`,
+      };
+    }
+    // Explicit secret values declared via step.secretEnv must be
+    // scrubbed verbatim from evidence, not only when they happen to
+    // match a canonical regex shape.
+    const explicitSecretValues = collectExplicitSecretValues(env, step.secretEnv);
+    const redactStep = (text: string): string => redactString(text, explicitSecretValues);
     const child = spawn("bash", [safeArg], { env, cwd: REPO_ROOT, detached: true });
     const logStream = fs.createWriteStream(logPath);
     let stderrTail = "";
@@ -446,14 +499,15 @@ export class PhaseOrchestrator {
       });
     // Redact at the I/O boundary; raw bytes from the child must not
     // reach the evidence log or the stderr tail that flows into
-    // step result.message.
+    // step result.message. Explicit secretEnv values are sanitised
+    // alongside the canonical regex shapes.
     const supervised = await superviseChild(child, {
       timeoutMs: timeoutSeconds * 1_000,
       onStdout: (chunk) => {
-        logStream.write(redactString(chunk));
+        logStream.write(redactStep(chunk));
       },
       onStderr: (chunk) => {
-        const redacted = redactString(chunk);
+        const redacted = redactStep(chunk);
         logStream.write(redacted);
         stderrTail = (stderrTail + redacted).slice(-4096);
       },
@@ -463,7 +517,7 @@ export class PhaseOrchestrator {
     if (supervised.spawnError) {
       return {
         status: "failed",
-        message: redactString(`shell step ${step.id} spawn error: ${supervised.spawnError.message}`),
+        message: redactStep(`shell step ${step.id} spawn error: ${supervised.spawnError.message}`),
         evidence: logPath,
       };
     }
