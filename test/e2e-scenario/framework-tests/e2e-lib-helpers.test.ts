@@ -69,6 +69,15 @@ describe("E2E shell helpers", () => {
       path.join(fakeBin, "nemoclaw"),
       `#!/usr/bin/env bash
 if [[ "\${1:-}" = "onboard" ]]; then
+  expected='onboard --non-interactive --yes --yes-i-accept-third-party-software'
+  if [[ "$*" != "\${expected}" ]]; then
+    echo "unexpected nemoclaw args: $*" >&2
+    exit 2
+  fi
+  if [[ "\${NEMOCLAW_AGENT:-}" != "openclaw" || "\${NEMOCLAW_PROVIDER:-}" != "cloud" || "\${NEMOCLAW_SANDBOX_NAME:-}" != "e2e-preserved" ]]; then
+    echo "unexpected nemoclaw env: agent=\${NEMOCLAW_AGENT:-unset} provider=\${NEMOCLAW_PROVIDER:-unset} sandbox=\${NEMOCLAW_SANDBOX_NAME:-unset}" >&2
+    exit 2
+  fi
   echo "NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
   echo "Docker is required before onboarding" >&2
   exit 42
@@ -119,6 +128,15 @@ exit 2
       path.join(fakeBin, "nemoclaw"),
       `#!/usr/bin/env bash
 if [[ "\${1:-}" = "onboard" ]]; then
+  expected='onboard --non-interactive --yes --yes-i-accept-third-party-software'
+  if [[ "$*" != "\${expected}" ]]; then
+    echo "unexpected nemoclaw args: $*" >&2
+    exit 2
+  fi
+  if [[ "\${NEMOCLAW_AGENT:-}" != "openclaw" || "\${NEMOCLAW_PROVIDER:-}" != "cloud" || "\${NEMOCLAW_SANDBOX_NAME:-}" != "e2e-preserved" ]]; then
+    echo "unexpected nemoclaw env: agent=\${NEMOCLAW_AGENT:-unset} provider=\${NEMOCLAW_PROVIDER:-unset} sandbox=\${NEMOCLAW_SANDBOX_NAME:-unset}" >&2
+    exit 2
+  fi
   echo "provider rejected NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
   exit 42
 fi

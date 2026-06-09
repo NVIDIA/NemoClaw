@@ -100,8 +100,10 @@ e2e_onboard_cloud_openclaw_no_docker() {
   e2e_context_path >/dev/null
   mkdir -p "${E2E_CONTEXT_DIR}"
 
-  local log shim_dir rc=0 redactor_rc=0 shim_dir_quoted run_path
+  local log sandbox_name shim_dir rc=0 redactor_rc=0 shim_dir_quoted run_path
   log="${E2E_CONTEXT_DIR}/negative-preflight.log"
+  e2e_context_require E2E_SANDBOX_NAME
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   shim_dir="$(mktemp -d -t e2e-no-docker-XXXXXX)"
   printf -v shim_dir_quoted "%q" "${shim_dir}"
   # shellcheck disable=SC2064
@@ -136,8 +138,8 @@ SHIM
     errexit_was_set=1
     set +e
   fi
-  PATH="${run_path}" \
-    nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
+  NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_AGENT=openclaw NEMOCLAW_PROVIDER=cloud PATH="${run_path}" \
+    nemoclaw onboard --non-interactive --yes --yes-i-accept-third-party-software \
     2>&1 | e2e_no_docker_write_redacted_preflight_log "${log}"
   local -a pipeline_status=("${PIPESTATUS[@]}")
   if [[ "${errexit_was_set}" -eq 1 ]]; then
