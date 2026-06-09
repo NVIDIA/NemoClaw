@@ -503,6 +503,10 @@ describe("runInferenceSet", () => {
       { ignoreError: true },
     );
     expect(config).toEqual({
+      _nemoclaw_upstream: {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      },
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",

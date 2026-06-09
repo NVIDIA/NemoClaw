@@ -29,6 +29,23 @@ const {
   privilegedSandboxExecArgv,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 
+// Mirror of agents/hermes/config/upstream-header.ts. Kept in lockstep because
+// src/ cannot import from agents/ under tsconfig.src.json rootDir, and the
+// Hermes agent build context (agents/hermes/Dockerfile) cannot reach src/.
+function buildHermesUpstreamHeader(config: Record<string, unknown>): string {
+  const upstream = config._nemoclaw_upstream;
+  if (!upstream || typeof upstream !== "object") return "";
+  const u = upstream as Record<string, unknown>;
+  const provider = typeof u.provider === "string" ? u.provider : "";
+  const model = typeof u.model === "string" ? u.model : "";
+  if (!provider && !model) return "";
+  const lines = ["# Managed by NemoClaw — Hermes configuration"];
+  if (provider) lines.push(`# Upstream provider: ${provider}`);
+  if (model) lines.push(`# Upstream model: ${model}`);
+  lines.push("# OpenShell rewrites model.base_url to the upstream endpoint at request time.");
+  return `${lines.join("\n")}\n`;
+}
+
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
 const { runOpenshellCommand, captureOpenshellCommand } = require("../adapters/openshell/client");
@@ -401,7 +418,12 @@ function writeSandboxConfig(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   try {
-    fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
+    const body = serializeConfig(config, target.format);
+    const header =
+      target.agentName === "hermes" && target.format === "yaml"
+        ? buildHermesUpstreamHeader(config as Record<string, unknown>)
+        : "";
+    fs.writeFileSync(tmpFile, `${header}${body}`, { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
     privilegedSandboxExec(
@@ -1022,26 +1044,26 @@ function confirmYesNo(prompt: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export {
-  DEFAULT_AGENT_CONFIG,
-  configGet,
-  configSet,
-  configRotateToken,
-  parseConfigGetArgs,
-  resolveAgentConfig,
-  readSandboxConfig,
-  writeSandboxConfig,
-  recomputeSandboxConfigHash,
   buildRecomputeSandboxConfigHashScript,
-  privilegedSandboxExecArgv,
-  extractDotpath,
-  setDotpath,
-  validateConfigDotpath,
-  findClobberingAncestor,
   classifyNewKeyGate,
-  validateUrlValue,
-  validateUrlValueWithDns,
-  rewriteConfigUrlsWithDnsPinning,
+  configGet,
+  configRotateToken,
+  configSet,
+  DEFAULT_AGENT_CONFIG,
+  extractDotpath,
+  findClobberingAncestor,
   formatConfigValueForLogs,
   parseConfig,
+  parseConfigGetArgs,
+  privilegedSandboxExecArgv,
+  readSandboxConfig,
   readStdin,
+  recomputeSandboxConfigHash,
+  resolveAgentConfig,
+  rewriteConfigUrlsWithDnsPinning,
+  setDotpath,
+  validateConfigDotpath,
+  validateUrlValue,
+  validateUrlValueWithDns,
+  writeSandboxConfig,
 };
