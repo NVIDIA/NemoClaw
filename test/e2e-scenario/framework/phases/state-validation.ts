@@ -113,8 +113,10 @@ export class StateValidationPhaseFixture {
         inheritEnv: true,
       });
     } catch {
-      // Missing or unavailable OpenShell is acceptable when asserting absence;
-      // the user-facing NemoClaw list result above remains the primary signal.
+      // Bridge tolerance for negative preflight states: `nemoclaw list` is the
+      // user-facing registry authority, while OpenShell may be absent before any
+      // sandbox setup happens. Once the fixture has a typed OpenShell
+      // availability probe, make this path fail closed.
     }
     if (openshellList) {
       results.push(openshellList);

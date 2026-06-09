@@ -37,15 +37,23 @@ function shellResult(exitCode: number, output = ""): ShellProbeResult {
 
 class FakeRunner implements CommandRunner {
   readonly calls: RunnerCall[] = [];
-  private readonly responses: ShellProbeResult[] = [];
+  private readonly responses: Array<ShellProbeResult | Error> = [];
 
   enqueue(response: ShellProbeResult): void {
     this.responses.push(response);
   }
 
+  enqueueError(error: Error): void {
+    this.responses.push(error);
+  }
+
   async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
-    return this.responses.shift() ?? shellResult(0);
+    const response = this.responses.shift();
+    if (response instanceof Error) {
+      throw response;
+    }
+    return response ?? shellResult(0);
   }
 }
 
@@ -160,6 +168,53 @@ describe("state-validation phase fixture", () => {
     await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
       /nemoclaw listed it/,
     );
+  });
+
+  it("fails a sandbox-absent probe if OpenShell lists the sandbox", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
+
+    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+      /OpenShell listed it/,
+    );
+  });
+
+  it("tolerates an unavailable OpenShell list after NemoClaw list reports no sandbox", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
+    runner.enqueueError(new Error("spawn openshell ENOENT"));
+
+    const result = await fixture(runner).from("preflight-failure-no-sandbox", instance());
+
+    const sandboxAbsent = result.probes.find((probe) => probe.id === "sandbox-absent");
+    expect(sandboxAbsent?.results).toHaveLength(1);
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["--version"],
+      ["gateway", "status"],
+      ["list"],
+      ["sandbox", "list"],
+    ]);
+  });
+
+  it("does not treat sandbox name substrings as present", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw-old\n"));
+    runner.enqueue(shellResult(0, "NAME\nold-e2e-ubuntu-repo-cloud-openclaw\n"));
+
+    const result = await fixture(runner).from("preflight-failure-no-sandbox", instance());
+
+    expect(result.probes.map((probe) => probe.id)).toEqual([
+      "cli-installed",
+      "gateway-absent",
+      "sandbox-absent",
+    ]);
   });
 
   it("requires an instance for sandbox probes", async () => {
