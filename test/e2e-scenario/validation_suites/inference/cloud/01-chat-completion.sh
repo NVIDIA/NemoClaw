@@ -19,7 +19,7 @@ echo "inference:chat-completion"
 e2e_context_require E2E_SANDBOX_NAME
 
 name="$(e2e_context_get E2E_SANDBOX_NAME)"
-payload='{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}'
+payload='{"model":"nvidia/nemotron-3-ultra-550b-a55b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}'
 # Orchestrator step cap is 60s; widen the wrapper cap to 50s so a hung
 # upstream surfaces with a clear diagnostic before SIGTERM. Inner curl
 # --max-time stays ~10s under the wrapper cap.

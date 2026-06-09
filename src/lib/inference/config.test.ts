@@ -26,8 +26,8 @@ import {
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
@@ -196,6 +196,12 @@ describe("inference selection config", () => {
   });
 
   it("falls back to provider defaults when model is omitted", () => {
+    expect(getProviderSelectionConfig("nvidia-prod")?.model).toBe(
+      "nvidia/nemotron-3-ultra-550b-a55b",
+    );
+    expect(getProviderSelectionConfig("nvidia-nim")?.model).toBe(
+      "nvidia/nemotron-3-ultra-550b-a55b",
+    );
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
@@ -217,7 +223,7 @@ describe("inference selection config", () => {
 
   it("builds a default OpenClaw primary model for non-ollama providers", () => {
     expect(getOpenClawPrimaryModel("nvidia-prod")).toBe(
-      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-super-120b-a12b`,
+      `${MANAGED_PROVIDER_ID}/nvidia/nemotron-3-ultra-550b-a55b`,
     );
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,

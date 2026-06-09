@@ -135,6 +135,8 @@ export function isValidSecretEnvKey(key: string): boolean {
 export interface BuildChildEnvOptions {
   /** Per-action / per-step declared secret-bearing env keys to pass through. */
   secretEnv?: readonly string[];
+  /** Additional non-secret env keys required by a framework-owned spawn helper. */
+  additionalAllowedEnv?: readonly string[];
   /** Framework-controlled overlay (E2E_CONTEXT_DIR, E2E_PHASE, E2E_*_ID). */
   frameworkOverlay: NodeJS.ProcessEnv;
 }
@@ -144,7 +146,8 @@ export interface BuildChildEnvOptions {
  * keeping only:
  *   1. keys in FRAMEWORK_ENV_ALLOWLIST
  *   2. keys starting with one of FRAMEWORK_ENV_PREFIXES
- *   3. keys explicitly declared in `opts.secretEnv` (validated shape)
+ *   3. non-secret keys explicitly declared in `opts.additionalAllowedEnv`
+ *   4. keys explicitly declared in `opts.secretEnv` (validated shape)
  * then layering `opts.frameworkOverlay` on top.
  *
  * Throws if a `secretEnv` entry doesn't match the secret-key shape;
@@ -165,6 +168,17 @@ export function buildChildEnv(
     if (FRAMEWORK_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
       out[key] = value;
       continue;
+    }
+  }
+  for (const key of opts.additionalAllowedEnv ?? []) {
+    if (isValidSecretEnvKey(key)) {
+      throw new Error(
+        `additionalAllowedEnv entry '${key}' looks secret-bearing; use secretEnv ` +
+          `so secret passthrough remains explicit.`,
+      );
+    }
+    if (base[key] !== undefined) {
+      out[key] = base[key];
     }
   }
   for (const key of opts.secretEnv ?? []) {
