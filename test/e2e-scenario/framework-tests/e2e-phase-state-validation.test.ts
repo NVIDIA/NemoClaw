@@ -86,7 +86,12 @@ describe("state-validation phase fixture", () => {
       {
         command: "nemoclaw",
         args: ["--version"],
-        options: { artifactName: "nemoclaw-version", inheritEnv: true },
+        options: {
+          artifactName: "nemoclaw-version",
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
+        },
       },
       {
         command: "nemoclaw",

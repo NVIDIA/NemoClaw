@@ -79,8 +79,7 @@ export class ScenarioRunner {
     // if the plan declared expectedFailure, evaluate the matcher and
     // append a synthetic phase result. Positive scenarios are
     // unaffected. Side-effect verification stays the responsibility of
-    // the runtime control group's required pending step (kept red
-    // until the probe lands); the matcher only judges phase + errorClass.
+    // the state-validation phase; the matcher only judges phase + errorClass.
     if (plan.expectedFailure) {
       const contractResult = evaluateNegativeContract(plan, results);
       const synthetic = negativeContractPhaseResult(contractResult);

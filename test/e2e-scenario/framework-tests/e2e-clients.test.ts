@@ -61,7 +61,12 @@ describe("E2E fixture clients", () => {
       {
         command: "./bin/nemoclaw.js",
         args: ["--version"],
-        options: { artifactName: "nemoclaw-version", inheritEnv: true },
+        options: {
+          artifactName: "nemoclaw-version",
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
+        },
       },
     ]);
   });
