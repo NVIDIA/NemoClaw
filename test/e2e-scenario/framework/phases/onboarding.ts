@@ -9,8 +9,8 @@ import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
-import { redactText } from "../secrets.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
+import { redactString } from "../../scenarios/orchestrators/redaction.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"];
@@ -104,6 +104,10 @@ function prependPath(pathEntry: string, currentPath?: string): string {
 
 function resultText(result: ShellProbeResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+function redactExplicitValues(text: string, values: string[]): string {
+  return values.reduce((redacted, value) => (value ? redacted.split(value).join("[REDACTED]") : redacted), text);
 }
 
 function legacyNegativePreflightLogPath(): string | undefined {
@@ -226,7 +230,7 @@ export class OnboardingPhaseFixture {
   }
 
   private redact(text: string, extraValues: string[] = []): string {
-    return this.secrets.redact?.(text, extraValues) ?? redactText(text, extraValues);
+    return this.secrets.redact?.(text, extraValues) ?? redactString(redactExplicitValues(text, extraValues));
   }
 
   private async writeNegativePreflightEvidence(result: ShellProbeResult, redactionValues: string[]): Promise<void> {

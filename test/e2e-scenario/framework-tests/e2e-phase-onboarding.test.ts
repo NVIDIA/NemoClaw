@@ -49,7 +49,11 @@ class FakeRunner implements CommandRunner {
 
   async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
-    return this.responses.shift() ?? shellResult(0);
+    const response = this.responses.shift();
+    if (!response) {
+      throw new Error(`FakeRunner response missing for command: ${command.command} ${command.args.join(" ")}`);
+    }
+    return response;
   }
 }
 
@@ -219,6 +223,7 @@ describe("onboarding phase fixture", () => {
 
     expect(cleanup.calls).toHaveLength(1);
     expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-cleanup");
+    runner.enqueue(shellResult(0, "destroyed\n"));
     await cleanup.calls[0]?.run();
     expect(runner.calls[1]).toMatchObject({
       command: "nemoclaw",

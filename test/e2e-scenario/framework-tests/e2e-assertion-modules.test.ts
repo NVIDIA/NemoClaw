@@ -64,6 +64,7 @@ describe("assertion modules", () => {
     const snapshot = assertionGroupForSuite("snapshot");
     const snapshotLifecycle = assertionGroupForSuite("snapshot-lifecycle");
 
+    expect(snapshot?.steps.map((step) => step.id)).toEqual(["runtime.snapshot.sandbox-listed"]);
     expect(snapshot?.steps.map((step) => step.implementation?.ref)).toEqual([
       "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh",
     ]);

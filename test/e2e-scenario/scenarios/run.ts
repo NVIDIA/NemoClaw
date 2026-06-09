@@ -175,15 +175,13 @@ async function main() {
 // A scenario fails iff:
 //   positive (no expectedFailure): any phase result failed.
 //   negative (expectedFailure declared): the synthetic
-//     negative-contract phase did not match, OR the runtime
-//     control group's required side-effect step did not pass.
+//     negative-contract phase did not match, OR state-validation
+//     caught a forbidden side effect.
 //
 // The matcher decides exit code for negatives so that a scenario
 // that failed for the right reason in the right phase is no longer
-// reported as red just because setup did not complete. Until the
-// forbidden-side-effect probe lands, the required pending step in
-// runtimeControlGroups keeps negatives visibly red on the side-effect
-// axis even when phase + errorClass match.
+// reported as red just because setup did not complete. Forbidden
+// side effects stay visible through the typed state-validation probes.
 function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
   if (!plan.expectedFailure) {
     return results.some((result) => result.status === "failed");
@@ -192,14 +190,7 @@ function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]):
   if (!contractPhase || contractPhase.status !== "passed") {
     return true;
   }
-  const runtime = results.find((result) => result.phase === "runtime");
-  const sideEffectStep = runtime?.assertions.find(
-    (assertion) => assertion.id === "runtime.expected-failure.no-side-effects",
-  );
-  if (!sideEffectStep || sideEffectStep.status !== "passed") {
-    return true;
-  }
-  return false;
+  return results.some((result) => result.phase === "state-validation" && result.status === "failed");
 }
 
 // Only execute when invoked directly as a script. Importing this module from

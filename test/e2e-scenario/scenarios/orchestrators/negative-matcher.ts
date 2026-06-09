@@ -20,13 +20,10 @@ import type {
 //   matcher's job. The matcher only inspects what actually happened.
 // - Forbidden-side-effect verification (did a sandbox actually get
 //   created when the scenario forbids it?) belongs to the
-//   `expectedFailureNoSideEffectsProbe` implementation registered as
-//   a probe step. Until that probe lands, the runtime control group
-//   keeps the negative scenario visibly red via a `required: true`
-//   pending step. The matcher reports the contract status for
-//   phase + errorClass independently of the side-effect probe, and
-//   exposes whether forbiddenSideEffects were declared so callers can
-//   integrate both signals.
+//   state-validation phase. The matcher reports the contract status
+//   for phase + errorClass independently from those post-condition
+//   probes so callers can combine the signals without confusing the
+//   originating failure with forbidden side effects.
 
 export type NegativeContractMatchOutcome =
   // Right phase, right errorClass match observed.
@@ -45,6 +42,9 @@ export interface NegativeContractObservation {
   failedActionMessage?: string;
   failedAssertionId?: string;
   failedAssertionMessage?: string;
+  handledActionId?: string;
+  handledAssertionId?: string;
+  handledMessage?: string;
 }
 
 export interface NegativeContractResult {
@@ -120,7 +120,10 @@ function findFirstObservedFailure(results: readonly PhaseResult[]): NegativeCont
       };
     }
     const failedAssertion = result.assertions.find(
-      (assertion) => assertion.status === "failed" && assertion.id !== SIDE_EFFECT_PROBE_STEP_ID,
+      (assertion) =>
+        assertion.status === "failed" &&
+        assertion.id !== SIDE_EFFECT_PROBE_STEP_ID &&
+        !STATE_VALIDATION_FORBIDDEN_PROBE_IDS.has(assertion.id),
     );
     if (failedAssertion) {
       return {
@@ -133,6 +136,24 @@ function findFirstObservedFailure(results: readonly PhaseResult[]): NegativeCont
   return undefined;
 }
 
+function normalizeClass(value: string): string {
+  return value.toLowerCase().replace(/[\s_-]+/g, "-");
+}
+
+function errorClassVariants(errorClass: string): string[] {
+  const normalized = normalizeClass(errorClass);
+  switch (normalized) {
+    case "docker-missing":
+      return [normalized, "no-docker"];
+    case "invalid-nvidia-api-key":
+      return [normalized, "invalid-nvidia-key", "invalid-key"];
+    case "gateway-port-conflict":
+      return [normalized, "port-conflict"];
+    default:
+      return [normalized];
+  }
+}
+
 function errorClassMatches(message: string | undefined, errorClass: string): boolean {
   if (!message) {
     return false;
@@ -143,8 +164,49 @@ function errorClassMatches(message: string | undefined, errorClass: string): boo
   // string or a normalized form where dashes/underscores/spaces are
   // interchangeable. This stays a pure string check so the matcher
   // can be fully tested in isolation.
-  const normalize = (value: string): string => value.toLowerCase().replace(/[\s_-]+/g, "-");
-  return normalize(message).includes(normalize(errorClass));
+  const normalizedMessage = normalizeClass(message);
+  return errorClassVariants(errorClass).some((variant) => normalizedMessage.includes(variant));
+}
+
+function findHandledExpectedFailure(
+  expected: ExpectedFailureContract,
+  expectedPhase: PhaseName,
+  results: readonly PhaseResult[],
+): NegativeContractObservation | undefined {
+  const phaseResult = results.find((result) => result.phase === expectedPhase);
+  if (!phaseResult || phaseResult.status !== "passed") {
+    return undefined;
+  }
+
+  const passedAssertion = phaseResult.assertions.find((assertion) => {
+    if (assertion.status !== "passed") return false;
+    const text = [assertion.id, assertion.message].filter(Boolean).join(" ");
+    return (
+      errorClassMatches(text, expected.errorClass) ||
+      (expected.phase === "preflight" && assertion.id === "onboarding.preflight.expected-failed")
+    );
+  });
+  if (passedAssertion) {
+    return {
+      failedPhase: expectedPhase,
+      handledAssertionId: passedAssertion.id,
+      handledMessage:
+        passedAssertion.message ?? `expected failure assertion passed: ${expected.errorClass}`,
+    };
+  }
+
+  const passedAction = phaseResult.actions.find((action) => {
+    if (action.status !== "passed") return false;
+    return errorClassMatches([action.id, action.message].filter(Boolean).join(" "), expected.errorClass);
+  });
+  if (passedAction) {
+    return {
+      failedPhase: expectedPhase,
+      handledActionId: passedAction.id,
+      handledMessage: passedAction.message ?? passedAction.id,
+    };
+  }
+  return undefined;
 }
 
 function describeObservation(observation: NegativeContractObservation): string {
@@ -158,7 +220,13 @@ function describeObservation(observation: NegativeContractObservation): string {
   if (observation.failedAssertionId) {
     parts.push(`assertion=${observation.failedAssertionId}`);
   }
-  const message = observation.failedActionMessage ?? observation.failedAssertionMessage;
+  if (observation.handledActionId) {
+    parts.push(`handledAction=${observation.handledActionId}`);
+  }
+  if (observation.handledAssertionId) {
+    parts.push(`handledAssertion=${observation.handledAssertionId}`);
+  }
+  const message = observation.failedActionMessage ?? observation.failedAssertionMessage ?? observation.handledMessage;
   if (message) {
     parts.push(`message="${message.slice(0, 240)}"`);
   }
@@ -173,7 +241,7 @@ export function evaluateNegativeContract(plan: RunPlan, results: readonly PhaseR
     );
   }
   const expectedPhase = resolveExpectedPhase(expected.phase);
-  const observation = findFirstObservedFailure(results);
+  const observation = findFirstObservedFailure(results) ?? findHandledExpectedFailure(expected, expectedPhase, results);
 
   if (!observation) {
     return {
@@ -195,7 +263,12 @@ export function evaluateNegativeContract(plan: RunPlan, results: readonly PhaseR
     };
   }
 
-  const observedMessage = observation.failedActionMessage ?? observation.failedAssertionMessage;
+  const observedMessage =
+    observation.failedActionMessage ??
+    observation.failedAssertionMessage ??
+    observation.handledMessage ??
+    observation.handledActionId ??
+    observation.handledAssertionId;
   if (!errorClassMatches(observedMessage, expected.errorClass)) {
     return {
       matched: false,

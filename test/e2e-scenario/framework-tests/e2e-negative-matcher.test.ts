@@ -127,6 +127,70 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
     expect(result.message).toMatch(/all phases passed/);
   });
 
+  it("matches when a passed expected-failure assertion handled the failure", () => {
+    const plan = planWithExpectedFailure({
+      phase: "preflight",
+      errorClass: "docker-missing",
+      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+    });
+    const results: PhaseResult[] = [
+      phaseResult("environment", { status: "passed" }),
+      {
+        phase: "onboarding",
+        status: "passed",
+        actions: [
+          {
+            id: "onboarding.profile.cloud-openclaw-no-docker",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        assertions: [
+          {
+            id: "onboarding.preflight.expected-failed",
+            status: "passed",
+            attempts: 1,
+            durationMs: 1,
+          },
+        ],
+      },
+      phaseResult("state-validation", { status: "passed" }),
+    ];
+
+    const result = evaluateNegativeContract(plan, results);
+    expect(result.matched).toBe(true);
+    expect(result.outcome).toBe("matched");
+    expect(result.observed).toMatchObject({
+      failedPhase: "onboarding",
+      handledAssertionId: "onboarding.preflight.expected-failed",
+    });
+  });
+
+  it("matches handled expected-failure actions using scenario error-class aliases", () => {
+    const plan = planWithExpectedFailure({
+      phase: "onboarding",
+      errorClass: "invalid-nvidia-api-key",
+    });
+    const results: PhaseResult[] = [
+      {
+        phase: "onboarding",
+        status: "passed",
+        actions: [
+          {
+            id: "onboarding.profile.cloud-openclaw-invalid-nvidia-key",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        assertions: [],
+      },
+    ];
+
+    const result = evaluateNegativeContract(plan, results);
+    expect(result.matched).toBe(true);
+    expect(result.observed.handledActionId).toBe("onboarding.profile.cloud-openclaw-invalid-nvidia-key");
+  });
+
   it("fails when the wrong phase failed", () => {
     const plan = planWithExpectedFailure({ phase: "onboarding", errorClass: "docker-missing" });
     const results: PhaseResult[] = [
@@ -352,21 +416,15 @@ describe("ScenarioRunner appends negative-contract phase", () => {
   });
 });
 
-describe("registry contract: every negative scenario opts into the side-effect probe", () => {
-  it("scenario.expectedFailure implies the runtime no-side-effects required pending step", () => {
+describe("registry contract: negative scenarios use typed state-validation side-effect probes", () => {
+  it("scenario.expectedFailure does not inject the legacy runtime no-side-effects pending step", () => {
     const negatives = listScenarios().filter((scenario) => scenario.expectedFailure);
     expect(negatives.length).toBeGreaterThan(0);
     for (const scenario of negatives) {
-      const runtimeGroups = scenario.assertionGroups.filter((group) => group.phase === "runtime");
-      const hasProbeStep = runtimeGroups.some((group) =>
-        group.steps.some(
-          (step) =>
-            step.id === "runtime.expected-failure.no-side-effects" &&
-            step.implementation?.kind === "pending" &&
-            step.required === true,
-        ),
+      const hasLegacyPendingStep = scenario.assertionGroups.some((group) =>
+        group.steps.some((step) => step.id === "runtime.expected-failure.no-side-effects"),
       );
-      expect(hasProbeStep, `scenario ${scenario.id} must include the required side-effect pending step`).toBe(true);
+      expect(hasLegacyPendingStep, `scenario ${scenario.id} must rely on state-validation, not the legacy pending step`).toBe(false);
     }
   });
 });
