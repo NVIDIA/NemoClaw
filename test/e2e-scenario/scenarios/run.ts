@@ -8,7 +8,7 @@ import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.
 import { ScenarioRunner } from "./orchestrators/runner.ts";
 import { listScenarios, requireScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
-import { liveScenarioSupport, type LiveScenarioSupport } from "./runtime-support.ts";
+import { type LiveScenarioSupport, liveScenarioSupport } from "./runtime-support.ts";
 import type { PhaseResult, ScenarioDefinition } from "./types.ts";
 
 interface Args {
@@ -45,7 +45,13 @@ export interface LiveScenarioMatrixEntry extends ScenarioMatrixEntry {
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { list: false, emitMatrix: false, emitLiveMatrix: false, planOnly: false, scenarios: [] };
+  const args: Args = {
+    list: false,
+    emitMatrix: false,
+    emitLiveMatrix: false,
+    planOnly: false,
+    scenarios: [],
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
@@ -121,7 +127,10 @@ export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
   });
 }
 
-function liveMatrixEntry(scenario: ScenarioDefinition, support: LiveScenarioSupport): LiveScenarioMatrixEntry {
+function liveMatrixEntry(
+  scenario: ScenarioDefinition,
+  support: LiveScenarioSupport,
+): LiveScenarioMatrixEntry {
   const { runner } = resolveRunnerForScenario(scenario);
   return {
     id: scenario.id,
@@ -141,9 +150,10 @@ function liveMatrixEntry(scenario: ScenarioDefinition, support: LiveScenarioSupp
 }
 
 export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
-  const scenarios = ids.length > 0
-    ? requireScenarios(ids)
-    : listScenarios().filter((scenario) => liveScenarioSupport(scenario).supported);
+  const scenarios =
+    ids.length > 0
+      ? requireScenarios(ids)
+      : listScenarios().filter((scenario) => liveScenarioSupport(scenario).supported);
   return scenarios.map((scenario) => liveMatrixEntry(scenario, liveScenarioSupport(scenario)));
 }
 

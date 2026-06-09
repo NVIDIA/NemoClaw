@@ -5,11 +5,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-
-import { buildLiveScenarioMatrix, buildScenarioMatrix } from "../scenarios/run.ts";
-import { listScenarios } from "../scenarios/registry.ts";
-import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 import { scenario } from "../scenarios/builder.ts";
+import { listScenarios } from "../scenarios/registry.ts";
+import { buildLiveScenarioMatrix, buildScenarioMatrix } from "../scenarios/run.ts";
+import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SCENARIOS = path.join(REPO_ROOT, "test/e2e-scenario/scenarios/run.ts");
@@ -130,7 +129,9 @@ describe("typed scenario matrix", () => {
   });
 
   it("builds the default live Vitest matrix from fixture-supported scenarios only", () => {
-    expect(buildLiveScenarioMatrix().map((entry) => entry.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
+    expect(buildLiveScenarioMatrix().map((entry) => entry.id)).toEqual([
+      "ubuntu-repo-cloud-openclaw",
+    ]);
     expect(buildLiveScenarioMatrix()[0]).toMatchObject({
       id: "ubuntu-repo-cloud-openclaw",
       runner: "ubuntu-latest",

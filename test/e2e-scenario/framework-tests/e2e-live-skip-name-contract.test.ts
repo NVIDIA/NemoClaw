@@ -23,19 +23,23 @@ describe("live registry-scenarios skip-name contract", () => {
     }
   });
 
-  it("matches the workflow's exact `-t \"^${SCENARIO_ID}$\"` regex for every scenario", () => {
+  it('matches the workflow\'s exact `-t "^${SCENARIO_ID}$"` regex for every scenario', () => {
     for (const scenario of listScenarios()) {
       const name = liveScenarioTestName(scenario);
       const filter = new RegExp(`^${scenario.id}$`);
-      expect(filter.test(name), `workflow filter must match registered name for ${scenario.id}`).toBe(true);
+      expect(
+        filter.test(name),
+        `workflow filter must match registered name for ${scenario.id}`,
+      ).toBe(true);
     }
   });
 
   it("matches an explicit unsupported selection through the workflow filter", () => {
-    const unsupported = listScenarios().find(
-      (entry) => entry.id === "ubuntu-repo-cloud-hermes",
-    );
-    expect(unsupported, "ubuntu-repo-cloud-hermes must remain a canonical unsupported example").toBeTruthy();
+    const unsupported = listScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-hermes");
+    expect(
+      unsupported,
+      "ubuntu-repo-cloud-hermes must remain a canonical unsupported example",
+    ).toBeTruthy();
     const support = liveScenarioSupport(unsupported!);
     expect(support.supported).toBe(false);
 
@@ -47,9 +51,7 @@ describe("live registry-scenarios skip-name contract", () => {
   });
 
   it("registers the canonical supported scenario under its bare id", () => {
-    const supported = listScenarios().find(
-      (entry) => entry.id === "ubuntu-repo-cloud-openclaw",
-    );
+    const supported = listScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
     expect(supported).toBeTruthy();
     expect(liveScenarioSupport(supported!).supported).toBe(true);
     expect(liveScenarioTestName(supported!)).toBe("ubuntu-repo-cloud-openclaw");

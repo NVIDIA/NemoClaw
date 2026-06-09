@@ -6,13 +6,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-
-import { listScenarios } from "../scenarios/registry.ts";
-import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 import {
   validateE2eScenariosWorkflowBoundary,
   validateE2eVitestScenariosWorkflowBoundary,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
+import { listScenarios } from "../scenarios/registry.ts";
+import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
