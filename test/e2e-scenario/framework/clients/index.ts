@@ -9,5 +9,5 @@ export {
   trustedProviderEndpoint,
   type TrustedProviderEndpoint,
 } from "./provider.ts";
-export { SandboxClient } from "./sandbox.ts";
+export { SandboxClient, validateSandboxName } from "./sandbox.ts";
 export { StateClient } from "./state.ts";
