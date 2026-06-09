@@ -169,6 +169,7 @@ export class OnboardingPhaseFixture {
     }
     const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
     const shimDir = await mkdtemp(join(tmpdir(), "e2e-no-docker-"));
     const shimPath = join(shimDir, "docker");
     try {

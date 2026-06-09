@@ -275,7 +275,8 @@ describe("onboarding phase fixture", () => {
     });
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
     expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
-    expect(cleanup.calls).toEqual([]);
+    expect(cleanup.calls).toHaveLength(1);
+    expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-no-docker");
   });
 
   it("publishes redacted legacy preflight evidence for the no-Docker negative path", async () => {
@@ -363,7 +364,12 @@ describe("onboarding phase fixture", () => {
   it("fails the no-Docker path when onboarding unexpectedly succeeds", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      cleanup,
+    );
 
     await expect(
       onboard.from(
@@ -372,8 +378,22 @@ describe("onboarding phase fixture", () => {
           onboarding: "cloud-openclaw-no-docker",
           docker: { id: "docker-missing", expectation: "missing", available: false },
         }),
+        { sandboxName: "e2e-no-docker-success" },
       ),
     ).rejects.toThrow(/unexpectedly succeeded/);
+
+    expect(cleanup.calls).toHaveLength(1);
+    expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-no-docker-success");
+    runner.enqueue(shellResult(0, "destroyed\n"));
+    await cleanup.calls[0]?.run();
+    expect(runner.calls[1]).toMatchObject({
+      command: "nemoclaw",
+      args: ["e2e-no-docker-success", "destroy", "--yes"],
+      options: {
+        artifactName: "cleanup-destroy-e2e-no-docker-success",
+        timeoutMs: 900_000,
+      },
+    });
   });
 
   it("rejects unrelated no-Docker onboarding failures", async () => {
