@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
 import { artifactLabel, assertExitZero, type CommandRunner } from "./command.ts";
@@ -19,6 +20,10 @@ export class HostCliClient {
     this.runner = runner;
     this.cliPath = options.cliPath ?? process.env.NEMOCLAW_CLI_BIN ?? "nemoclaw";
     this.cwd = options.cwd;
+  }
+
+  get commandPath(): string {
+    return this.cliPath;
   }
 
   command(command: string, args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
@@ -44,7 +49,10 @@ export class HostCliClient {
   }
 
   async expectNemoclawAvailable(): Promise<ShellProbeResult> {
-    const result = await this.nemoclaw(["--version"], { artifactName: "nemoclaw-version" });
+    const result = await this.nemoclaw(["--version"], {
+      artifactName: "nemoclaw-version",
+      env: buildAvailabilityProbeEnv(),
+    });
     assertExitZero(result, "nemoclaw --version");
     return result;
   }
