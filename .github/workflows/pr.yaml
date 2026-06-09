@@ -148,8 +148,36 @@ jobs:
             .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
+      - name: Detect trusted installer integration action
+        id: trusted-installer-integration
+        shell: bash
+        run: |
+          if [ -f .trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run installer integration tests
+        if: ${{ steps.trusted-installer-integration.outputs.available == 'true' }}
         uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+
+      - name: Setup Node.js for installer integration
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install installer integration dependencies
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: npm install --ignore-scripts
+
+      - name: Run installer integration tests (bootstrap)
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: CI=true npx vitest run --project installer-integration
 
   cli-test-shards:
     needs: changes

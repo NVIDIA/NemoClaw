@@ -45,6 +45,18 @@ jobs:
       - name: Run build and type checks
         uses: ./.github/actions/ci-build-typecheck
 
+  installer-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run installer integration tests
+        uses: ./.github/actions/ci-installer-integration
+
   cli-test-shards:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -122,6 +134,7 @@ jobs:
     needs:
       - static-checks
       - build-typecheck
+      - installer-integration
       - cli-tests
       - plugin-tests
       - test-e2e-ollama-proxy
@@ -133,6 +146,7 @@ jobs:
         env:
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
@@ -150,6 +164,7 @@ jobs:
 
           require_success "static-checks" "$STATIC_RESULT"
           require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+          require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
           require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
