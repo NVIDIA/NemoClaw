@@ -485,9 +485,9 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
-ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 ARG NEMOCLAW_PROVIDER_KEY=inference
-ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-ultra-550b-a55b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1

@@ -36,7 +36,7 @@ e2e_onboard() {
       e2e_onboard_cloud_openclaw_no_docker
       ;;
     cloud-openclaw-custom-policies)
-      E2E_ONBOARDING_MODEL="${E2E_ONBOARDING_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
+      E2E_ONBOARDING_MODEL="${E2E_ONBOARDING_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}"
       E2E_ONBOARDING_POLICY_PRESETS="${E2E_ONBOARDING_POLICY_PRESETS:-npm,pypi}"
       e2e_context_set E2E_ONBOARDING_MODEL "${E2E_ONBOARDING_MODEL}"
       e2e_context_set E2E_ONBOARDING_POLICY_PRESETS "${E2E_ONBOARDING_POLICY_PRESETS}"
