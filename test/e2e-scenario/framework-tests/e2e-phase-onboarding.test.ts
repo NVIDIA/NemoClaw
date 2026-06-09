@@ -182,6 +182,21 @@ describe("onboarding phase fixture", () => {
     ).rejects.toThrow(/requires an available Docker runtime/);
   });
 
+  it("rejects invalid sandbox names before cloud OpenClaw side effects", async () => {
+    const runner = new FakeRunner();
+    const cleanup = new FakeCleanup();
+    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets, cleanup);
+
+    await expect(onboard.from(ready(), { sandboxName: "bad name" })).rejects.toThrow(
+      /sandbox name is invalid for fixture client/,
+    );
+
+    expect(secrets.requiredCalls).toEqual([]);
+    expect(runner.calls).toEqual([]);
+    expect(cleanup.calls).toEqual([]);
+  });
+
   it("registers sandbox cleanup after successful cloud OpenClaw onboarding", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
@@ -221,7 +236,7 @@ describe("onboarding phase fixture", () => {
       ready({
         runtime: "docker-missing",
         onboarding: "cloud-openclaw-no-docker",
-        docker: { id: "docker-missing", expectation: "missing", available: false },
+        docker: { id: "docker-missing", expectation: "missing", available: true },
       }),
       { sandboxName: "e2e-no-docker" },
     );
@@ -253,6 +268,16 @@ describe("onboarding phase fixture", () => {
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
     expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
     expect(cleanup.calls).toEqual([]);
+  });
+
+  it("requires the docker-missing runtime expectation for the no-Docker negative path", async () => {
+    const runner = new FakeRunner();
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+
+    await expect(onboard.from(ready({ onboarding: "cloud-openclaw-no-docker" }))).rejects.toThrow(
+      /requires the docker-missing runtime expectation/,
+    );
+    expect(runner.calls).toEqual([]);
   });
 
   it("does not add an empty PATH segment when the no-Docker base env has no PATH", async () => {

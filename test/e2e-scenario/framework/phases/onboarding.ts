@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
+import { validateSandboxName } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
@@ -63,6 +64,12 @@ export interface NemoClawInstance {
 
 function defaultSandboxName(onboarding: string): string {
   return `e2e-${artifactLabel(onboarding)}`;
+}
+
+function sandboxNameFromOptions(onboarding: string, options: OnboardingOptions): string {
+  const sandboxName = options.sandboxName ?? defaultSandboxName(onboarding);
+  validateSandboxName(sandboxName);
+  return sandboxName;
 }
 
 function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -125,7 +132,7 @@ export class OnboardingPhaseFixture {
     if (!environment.docker.available) {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
-    const sandboxName = options.sandboxName ?? defaultSandboxName(environment.onboarding);
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");
     this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
@@ -147,11 +154,11 @@ export class OnboardingPhaseFixture {
   }
 
   async cloudOpenClawNoDocker(environment: EnvironmentReady, options: OnboardingOptions = {}): Promise<NemoClawInstance> {
-    if (environment.docker.available) {
-      throw new Error("cloud-openclaw-no-docker onboarding requires Docker to be unavailable.");
+    if (environment.docker.expectation !== "missing") {
+      throw new Error("cloud-openclaw-no-docker onboarding requires the docker-missing runtime expectation.");
     }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
     const apiKey = this.secrets.required("NVIDIA_API_KEY");
-    const sandboxName = options.sandboxName ?? defaultSandboxName(environment.onboarding);
     const shimDir = await mkdtemp(join(tmpdir(), "e2e-no-docker-"));
     const shimPath = join(shimDir, "docker");
     try {
