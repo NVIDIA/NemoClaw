@@ -764,9 +764,9 @@ async function persistManifestChannelDisabledPlan(
 async function persistManifestChannelRemovePlan(
   sandboxName: string,
   channelId: string,
-): Promise<void> {
+): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry) return;
+  if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
   const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
@@ -776,7 +776,8 @@ async function persistManifestChannelRemovePlan(
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
   });
-  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+  if (!plan) return !entry.messaging?.plan;
+  return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 }
 
 function buildCredentialAvailability(channelIds: readonly string[]): Record<string, boolean> {
@@ -867,6 +868,26 @@ function hydrateAddChannelEnvFromSession(sandboxName: string, channelId: string)
 
 function persistManifestAddState(sandboxName: string, manifest: ChannelManifest): void {
   if (manifest.id === "wechat") persistWechatConfigFromEnv(sandboxName);
+}
+
+function persistManifestAddPlan(sandboxName: string, plan: SandboxMessagingPlan): boolean {
+  return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+}
+
+function printMessagingPlanPersistenceFailure(
+  sandboxName: string,
+  channelName: string,
+  action: "add" | "remove",
+): void {
+  console.error(
+    `  ${YW}⚠${R} Could not persist the messaging plan for '${sandboxName}' after channel ${action}.`,
+  );
+  console.error(
+    "  Earlier gateway or policy side effects may already have run, but durable messaging.plan was not saved.",
+  );
+  console.error(
+    `    Re-run '${CLI_NAME} ${sandboxName} channels ${action} ${channelName}' after verifying the sandbox still exists in the registry.`,
+  );
 }
 
 function persistWechatConfigFromEnv(sandboxName: string): void {
@@ -973,7 +994,11 @@ export async function addSandboxChannel(
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     persistManifestAddState(sandboxName, manifest);
-    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+    if (!persistManifestAddPlan(sandboxName, plan)) {
+      removeChannelPresetIfPresent(sandboxName, canonical);
+      printMessagingPlanPersistenceFailure(sandboxName, canonical, "add");
+      process.exit(1);
+    }
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
     if (help) console.log(`  ${help}`);
@@ -1011,7 +1036,6 @@ export async function addSandboxChannel(
   // wrote credentials.json; with env-only persistence, exiting before
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
-  console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
@@ -1022,7 +1046,16 @@ export async function addSandboxChannel(
   }
 
   persistManifestAddState(sandboxName, manifest);
-  MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+  if (!persistManifestAddPlan(sandboxName, plan)) {
+    removeChannelPresetIfPresent(sandboxName, canonical);
+    await rollbackChannelAdd(sandboxName, channelDef, canonical, {
+      wasAlreadyEnabled,
+      priorCreds,
+    });
+    printMessagingPlanPersistenceFailure(sandboxName, canonical, "add");
+    process.exit(1);
+  }
+  console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
@@ -1321,14 +1354,17 @@ export async function removeSandboxChannel(
   }
 
   await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
+  removeChannelPresetIfPresent(sandboxName, canonical);
+  if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
+    printMessagingPlanPersistenceFailure(sandboxName, canonical, "remove");
+    process.exit(1);
+  }
+
   if (tokenKeys.length > 0) {
     console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
   } else {
     console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
   }
-
-  removeChannelPresetIfPresent(sandboxName, canonical);
-  await persistManifestChannelRemovePlan(sandboxName, canonical);
 
   // Token-based channels: best-effort tidy of any leftover dir. Token
   // revocation already prevents the bot from authenticating, so a

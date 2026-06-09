@@ -44,8 +44,12 @@ const policy = D("policy/index.js");
 const { hashCredential } = D("security/credential-hash.js") as {
   hashCredential: (v: string) => string | null;
 };
-const { addSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
+const { addSandboxChannel, removeSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
   addSandboxChannel: (
+    name: string,
+    options?: { channel?: string; dryRun?: boolean; force?: boolean },
+  ) => Promise<void>;
+  removeSandboxChannel: (
     name: string,
     options?: { channel?: string; dryRun?: boolean; force?: boolean },
   ) => Promise<void>;
@@ -61,6 +65,8 @@ function makePlanEntry(
   channelId: "telegram" | "slack" | "discord" | "wechat" | "whatsapp",
   bindings: Array<{ providerEnvKey: string; credentialHash?: string }>,
 ): SandboxEntry {
+  const authMode =
+    channelId === "wechat" ? "host-qr" : channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste";
   return {
     name,
     messaging: {
@@ -74,7 +80,7 @@ function makePlanEntry(
           {
             channelId,
             displayName: channelId,
-            authMode: "token-paste",
+            authMode,
             active: true,
             selected: true,
             configured: true,
@@ -84,16 +90,9 @@ function makePlanEntry(
           },
         ],
         disabledChannels: [],
-        credentialBindings: bindings.map((b) => ({
-          channelId,
-          credentialId: b.providerEnvKey.toLowerCase(),
-          sourceInput: b.providerEnvKey.toLowerCase(),
-          providerName: `${name}-${channelId}-bridge`,
-          providerEnvKey: b.providerEnvKey,
-          placeholder: `openshell:resolve:env:${b.providerEnvKey}`,
-          credentialAvailable: true,
-          ...(b.credentialHash ? { credentialHash: b.credentialHash } : {}),
-        })),
+        credentialBindings: bindings.map((b) =>
+          makeCredentialBinding(name, channelId, b.providerEnvKey, b.credentialHash),
+        ),
         networkPolicy: { presets: [], entries: [] },
         agentRender: [],
         buildSteps: [],
@@ -102,6 +101,66 @@ function makePlanEntry(
       },
     },
   } as unknown as SandboxEntry;
+}
+
+function makeCredentialBinding(
+  sandboxName: string,
+  channelId: "telegram" | "slack" | "discord" | "wechat" | "whatsapp",
+  providerEnvKey: string,
+  credentialHash?: string,
+) {
+  const byEnvKey: Record<
+    string,
+    {
+      readonly credentialId: string;
+      readonly sourceInput: string;
+      readonly providerName: string;
+      readonly placeholder: string;
+    }
+  > = {
+    TELEGRAM_BOT_TOKEN: {
+      credentialId: "telegramBotToken",
+      sourceInput: "botToken",
+      providerName: `${sandboxName}-telegram-bridge`,
+      placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    },
+    DISCORD_BOT_TOKEN: {
+      credentialId: "discordBotToken",
+      sourceInput: "botToken",
+      providerName: `${sandboxName}-discord-bridge`,
+      placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+    },
+    WECHAT_BOT_TOKEN: {
+      credentialId: "wechatBotToken",
+      sourceInput: "botToken",
+      providerName: `${sandboxName}-wechat-bridge`,
+      placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+    },
+    SLACK_BOT_TOKEN: {
+      credentialId: "slackBotToken",
+      sourceInput: "botToken",
+      providerName: `${sandboxName}-slack-bridge`,
+      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    },
+    SLACK_APP_TOKEN: {
+      credentialId: "slackAppToken",
+      sourceInput: "appToken",
+      providerName: `${sandboxName}-slack-app`,
+      placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+  };
+  const spec = byEnvKey[providerEnvKey];
+  if (!spec) throw new Error(`Unsupported test credential env key: ${providerEnvKey}`);
+  return {
+    channelId,
+    credentialId: spec.credentialId,
+    sourceInput: spec.sourceInput,
+    providerName: spec.providerName,
+    providerEnvKey,
+    placeholder: spec.placeholder,
+    credentialAvailable: true,
+    ...(credentialHash ? { credentialHash } : {}),
+  };
 }
 
 let spies: MockInstance[];
@@ -487,6 +546,43 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(promptMock).not.toHaveBeenCalled();
   });
 
+  it("in-sandbox-qr whatsapp add exits before success when messaging plan persistence fails", async () => {
+    arrangeRegistry({ current: { name: "alpha" }, others: [] });
+    updateSandboxMock.mockReturnValue(false);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(addSandboxChannel("alpha", { channel: "whatsapp" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("Could not persist the messaging plan");
+    expect(text).not.toContain("Enabled whatsapp channel");
+    expect(text).not.toContain("Change queued");
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
+  it("token-backed add rolls back and exits before rebuild prompt when messaging plan persistence fails", async () => {
+    arrangeRegistry({ current: { name: "alpha" }, others: [] });
+    getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
+    updateSandboxMock.mockReturnValue(false);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(addSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("Rolling back 'telegram' bridge registration");
+    expect(text).toContain("Could not persist the messaging plan");
+    expect(text).not.toContain("Registered telegram bridge");
+    expect(text).not.toContain("Change queued");
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(promptMock).not.toHaveBeenCalled();
+  });
+
   it("non-interactive add aborts when the conflict check throws", async () => {
     arrangeRegistry({ current: { name: "alpha" }, others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
@@ -591,5 +687,27 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).not.toContain(slackBot);
     expect(text).not.toContain(slackApp);
     expect(upsertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("remove exits before success and rebuild prompt when messaging plan persistence fails", async () => {
+    arrangeRegistry({
+      current: makePlanEntry("alpha", "telegram", [
+        { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: TELEGRAM_HASH },
+      ]),
+      others: [],
+    });
+    updateSandboxMock.mockReturnValue(false);
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(removeSandboxChannel("alpha", { channel: "telegram" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("Could not persist the messaging plan");
+    expect(text).not.toContain("Removed telegram bridge");
+    expect(text).not.toContain("Change queued");
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(promptMock).not.toHaveBeenCalled();
   });
 });
