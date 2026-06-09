@@ -88,7 +88,9 @@ describe("gated E2E Vitest projects", () => {
   });
 
   it("sets the branch-validation sentinel in the reusable workflow Vitest step", () => {
-    const workflow = readYaml<BranchValidationWorkflow>(".github/workflows/e2e-branch-validation.yaml");
+    const workflow = readYaml<BranchValidationWorkflow>(
+      ".github/workflows/e2e-branch-validation.yaml",
+    );
     const runStep = workflow.jobs?.["e2e-branch-validation"]?.steps?.find(
       (step) => step.name === "Run ephemeral Brev E2E",
     );

@@ -103,25 +103,16 @@ describe("resources-cmd", () => {
     const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
     const args = ["sandbox", "create"];
 
-    const applied = appendResourceFlags(
-      args,
-      { cpu: "4", memory: "2Gi" },
-      openshell,
-    );
+    const applied = appendResourceFlags(args, { cpu: "4", memory: "2Gi" }, openshell);
 
     expect(applied).toBe(true);
-    expect(args).toEqual([
-      "sandbox",
-      "create",
-      "--cpu",
-      "4",
-      "--memory",
-      "2Gi",
-    ]);
+    expect(args).toEqual(["sandbox", "create", "--cpu", "4", "--memory", "2Gi"]);
   });
 
   it("does not use old request/limit resource flags", () => {
-    const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu-request --cpu-limit --memory-request --memory-limit'\n");
+    const openshell = makeExecutable(
+      "#!/usr/bin/env sh\necho '--cpu-request --cpu-limit --memory-request --memory-limit'\n",
+    );
     const args = ["sandbox", "create"];
 
     expect(appendResourceFlags(args, { cpu: "4", memory: "2Gi" }, openshell)).toBe(false);
@@ -132,13 +123,7 @@ describe("resources-cmd", () => {
     const openshell = makeExecutable("#!/usr/bin/env sh\necho 'usage: openshell sandbox create'\n");
     const args = ["sandbox", "create"];
 
-    expect(
-      appendResourceFlags(
-        args,
-        { cpu: "25%", memory: "25%" },
-        openshell,
-      ),
-    ).toBe(false);
+    expect(appendResourceFlags(args, { cpu: "25%", memory: "25%" }, openshell)).toBe(false);
     expect(args).toEqual(["sandbox", "create"]);
   });
 
@@ -146,13 +131,7 @@ describe("resources-cmd", () => {
     const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
     const args = ["sandbox", "create"];
 
-    expect(
-      appendResourceFlags(
-        args,
-        { cpu: "bogus%", memory: "25%" },
-        openshell,
-      ),
-    ).toBe(false);
+    expect(appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toBe(false);
     expect(args).toEqual(["sandbox", "create"]);
   });
 });

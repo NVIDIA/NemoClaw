@@ -25,9 +25,9 @@ describe("OpenShell gateway drift preflight", () => {
   });
 
   it("parses OpenShell cluster image versions", () => {
-    expect(
-      parseGatewayClusterImageVersion("ghcr.io/nvidia/openshell/cluster:0.0.36"),
-    ).toBe("0.0.36");
+    expect(parseGatewayClusterImageVersion("ghcr.io/nvidia/openshell/cluster:0.0.36")).toBe(
+      "0.0.36",
+    );
     expect(parseGatewayClusterImageVersion("example.com/other/image:0.0.36")).toBeNull();
   });
 
@@ -92,20 +92,17 @@ describe("OpenShell gateway drift preflight", () => {
         }
         return {
           status: 0,
-          output:
-            "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
         };
       }),
-      vi
-        .spyOn(docker, "dockerContainerInspectFormat")
-        .mockImplementation((rawFormat: unknown) => {
-          const format = String(rawFormat);
-          if (format === "{{.State.Running}}") return "true";
-          if (format === "{{json .NetworkSettings.Ports}}") {
-            return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
-          }
-          return "ghcr.io/nvidia/openshell/cluster:0.0.36";
-        }),
+      vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
+        const format = String(rawFormat);
+        if (format === "{{.State.Running}}") return "true";
+        if (format === "{{json .NetworkSettings.Ports}}") {
+          return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
+        }
+        return "ghcr.io/nvidia/openshell/cluster:0.0.36";
+      }),
     );
 
     expect(
@@ -134,20 +131,17 @@ describe("OpenShell gateway drift preflight", () => {
         }
         return {
           status: 0,
-          output:
-            "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:18081",
+          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:18081",
         };
       }),
-      vi
-        .spyOn(docker, "dockerContainerInspectFormat")
-        .mockImplementation((rawFormat: unknown) => {
-          const format = String(rawFormat);
-          if (format === "{{.State.Running}}") return "true";
-          if (format === "{{json .NetworkSettings.Ports}}") {
-            return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
-          }
-          return "ghcr.io/nvidia/openshell/cluster:0.0.36";
-        }),
+      vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
+        const format = String(rawFormat);
+        if (format === "{{.State.Running}}") return "true";
+        if (format === "{{json .NetworkSettings.Ports}}") {
+          return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
+        }
+        return "ghcr.io/nvidia/openshell/cluster:0.0.36";
+      }),
     );
 
     expect(

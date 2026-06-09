@@ -98,7 +98,12 @@ export async function ensureResumeProviderReady(
     return { forceInferenceSetup: false, credentialEnv: credentialEnv ?? null };
   }
 
-  const resolvedCredentialEnv = getResumeProviderCredentialEnv(provider, config, credentialEnv, deps);
+  const resolvedCredentialEnv = getResumeProviderCredentialEnv(
+    provider,
+    config,
+    credentialEnv,
+    deps,
+  );
   const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv);
   const providerLabel = config?.label || deps.getProviderLabel(provider) || provider;
   const helpUrl = config?.helpUrl || null;

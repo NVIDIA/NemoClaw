@@ -180,7 +180,9 @@ export class TraceCollector {
     const endNs = nowNs();
     span.end_time_unix_nano = endNs.toString();
     span.duration_ms = durationMs(internal._startNs ?? BigInt(span.start_time_unix_nano), endNs);
-    span.status = message ? { code: status, message: redactFull(message).slice(0, 200) } : { code: status };
+    span.status = message
+      ? { code: status, message: redactFull(message).slice(0, 200) }
+      : { code: status };
     const index = this.spanStack.lastIndexOf(span);
     if (index >= 0) this.spanStack.splice(index, 1);
     delete internal._startNs;
@@ -225,7 +227,7 @@ export class TraceCollector {
               "host.type": os.type(),
               "os.platform": process.platform,
               "process.pid": process.pid,
-              "ci": process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true",
+              ci: process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true",
             }),
           },
           scope_spans: [

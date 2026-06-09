@@ -4,10 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import { dockerInfoFormat as defaultDockerInfoFormat } from "../adapters/docker";
-import type {
-  Arm64WslDockerDesktopGpuProver,
-  DockerGpuProofResult,
-} from "../inference/gpu-trust";
+import type { Arm64WslDockerDesktopGpuProver, DockerGpuProofResult } from "../inference/gpu-trust";
 
 const WSL_DOCKER_DESKTOP_DETECTION_TIMEOUT_MS = 30_000;
 // This prover only ever runs on ARM64 (see `createArm64WslDockerDesktopGpuProver`),
@@ -29,9 +26,7 @@ export const WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND =
 // onboarding from hanging if Docker Desktop GPU passthrough stalls.
 const WSL_DOCKER_DESKTOP_GPU_PROOF_DEFAULT_TIMEOUT_MS = 180_000;
 
-export function wslDockerDesktopGpuProofTimeoutMs(
-  env: NodeJS.ProcessEnv = process.env,
-): number {
+export function wslDockerDesktopGpuProofTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : WSL_DOCKER_DESKTOP_GPU_PROOF_DEFAULT_TIMEOUT_MS;
 }
@@ -202,9 +197,7 @@ export function createArm64WslDockerDesktopGpuProver(
   const log = deps.log ?? ((message: string) => console.log(message));
   const detectStatus = deps.detectWslDockerDesktopStatus ?? detectWslDockerDesktopStatus;
   const runProof = deps.runProof ?? runWslDockerDesktopGpuProof;
-  return function proveArm64WslDockerDesktopGpu(
-    gpuNames: string[],
-  ): DockerGpuProofResult | null {
+  return function proveArm64WslDockerDesktopGpu(gpuNames: string[]): DockerGpuProofResult | null {
     const platform = deps.platform ?? process.platform;
     const arch = deps.arch ?? process.arch;
     if (platform !== "linux" || arch !== "arm64") return null;
@@ -214,19 +207,30 @@ export function createArm64WslDockerDesktopGpuProver(
       `  Running bounded Docker Desktop WSL GPU proof for ${names} (may pull a CUDA sample image)...`,
     );
     log(`    ${WSL_DOCKER_DESKTOP_GPU_PROOF_COMMAND}`);
-    const result = runProof(wslDockerDesktopGpuProofArgv(), wslDockerDesktopGpuProofTimeoutMs(deps.env));
+    const result = runProof(
+      wslDockerDesktopGpuProofArgv(),
+      wslDockerDesktopGpuProofTimeoutMs(deps.env),
+    );
     if (result.passed) {
       log("  ✓ Docker Desktop WSL GPU proof passed; trusting the reported GPU.");
     } else if (result.timedOut) {
       log("  ✗ Docker Desktop WSL GPU proof timed out; treating GPU as unproven (CPU fallback).");
-      log("    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.");
+      log(
+        "    Rerun with --no-gpu to skip GPU passthrough, or raise NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS.",
+      );
     } else if (isExecFormatErrorDiagnostic(result.diagnostic)) {
       // The proof binary's architecture did not match the host. This is an image
       // problem, not a GPU problem, so call it out explicitly rather than letting
       // the host fall back to CPU as if no GPU were present (#4565).
-      log("  ✗ Docker Desktop WSL GPU proof could not run: CUDA sample image architecture does not");
-      log("    match this host (exec format error). This is a proof-image issue, not a missing GPU.");
-      log("    Rerun with --no-gpu to skip GPU passthrough, or report this so the proof image can be fixed.");
+      log(
+        "  ✗ Docker Desktop WSL GPU proof could not run: CUDA sample image architecture does not",
+      );
+      log(
+        "    match this host (exec format error). This is a proof-image issue, not a missing GPU.",
+      );
+      log(
+        "    Rerun with --no-gpu to skip GPU passthrough, or report this so the proof image can be fixed.",
+      );
     } else {
       log("  ✗ Docker Desktop WSL GPU proof failed; treating GPU as unproven (CPU fallback).");
       log("    Rerun with --no-gpu to skip GPU passthrough.");

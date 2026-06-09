@@ -9,12 +9,7 @@ import path from "node:path";
 
 import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
-const BOOTSTRAP_WINDOWS = path.join(
-  import.meta.dirname,
-  "..",
-  "scripts",
-  "bootstrap-windows.ps1",
-);
+const BOOTSTRAP_WINDOWS = path.join(import.meta.dirname, "..", "scripts", "bootstrap-windows.ps1");
 const POWERSHELL_EXEC_TIMEOUT_MS = execTimeout(20_000);
 const POWERSHELL_TEST_TIMEOUT = testTimeoutOptions(
   Math.max(30_000, POWERSHELL_EXEC_TIMEOUT_MS + 5_000),
@@ -96,8 +91,10 @@ $script:events | ConvertTo-Json -Compress
     expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "minimize", "foreground"]);
   });
 
-  itPowerShell("restarts Docker Desktop when it was already running before settings changed", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "restarts Docker Desktop when it was already running before settings changed",
+    () => {
+      const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -119,14 +116,17 @@ Start-DockerDesktop
 $script:events | ConvertTo-Json -Compress
 `);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
-    expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "restart"]);
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "[]");
+      expect(parsed).toEqual(["start-Docker Desktop.exe", "wait-ready", "restart"]);
+    },
+  );
 
-  itPowerShell("installs missing Ubuntu 24.04 through first-run setup before Docker integration", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "installs missing Ubuntu 24.04 through first-run setup before Docker integration",
+    () => {
+      const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -164,23 +164,30 @@ Ensure-UbuntuWsl
 } | ConvertTo-Json -Compress
 `);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.installDistroAtHandoff).toBe(false);
-    expect(parsed.startProcessCalls).toHaveLength(1);
-    expect(parsed.startProcessCalls[0][0]).toBe("powershell.exe");
-    expect(parsed.startProcessCalls[0][1]).toContain("--install -d 'Ubuntu-24.04'");
-    expect(parsed.startProcessCalls[0][1]).not.toContain("--no-launch");
-    expect(parsed.nativeCalls).not.toContainEqual(["wsl.exe", "--set-default Ubuntu-24.04"]);
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
-    expect(parsed.nativeCalls).toContainEqual(["Stop-WslDistroForDockerIntegration", "Ubuntu-24.04"]);
-    expect(parsed.nativeCalls).toContainEqual(["Ensure-WslDockerCliConfigDirectory", "Ubuntu-24.04"]);
-    expect(parsed.statusMessages).toContain(
-      "WSL distro registered: Ubuntu-24.04",
-    );
-    expect(parsed.statusMessages).toContain("Ubuntu-24.04 first-run user is registered (UID 1000).");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.installDistroAtHandoff).toBe(false);
+      expect(parsed.startProcessCalls).toHaveLength(1);
+      expect(parsed.startProcessCalls[0][0]).toBe("powershell.exe");
+      expect(parsed.startProcessCalls[0][1]).toContain("--install -d 'Ubuntu-24.04'");
+      expect(parsed.startProcessCalls[0][1]).not.toContain("--no-launch");
+      expect(parsed.nativeCalls).not.toContainEqual(["wsl.exe", "--set-default Ubuntu-24.04"]);
+      expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
+      expect(parsed.nativeCalls).toContainEqual([
+        "Stop-WslDistroForDockerIntegration",
+        "Ubuntu-24.04",
+      ]);
+      expect(parsed.nativeCalls).toContainEqual([
+        "Ensure-WslDockerCliConfigDirectory",
+        "Ubuntu-24.04",
+      ]);
+      expect(parsed.statusMessages).toContain("WSL distro registered: Ubuntu-24.04");
+      expect(parsed.statusMessages).toContain(
+        "Ubuntu-24.04 first-run user is registered (UID 1000).",
+      );
+    },
+  );
 
   itPowerShell("verifies WSL startup even when Docker Desktop install is disabled", () => {
     const result = runPowerShellHarness(`
@@ -374,8 +381,10 @@ $result | ConvertTo-Json -Compress
     expect(parsed.backupCount).toBe(1);
   });
 
-  itPowerShell("creates Docker Desktop WSL integration settings when the settings file is missing", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "creates Docker Desktop WSL integration settings when the settings file is missing",
+    () => {
+      const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -396,13 +405,14 @@ $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
 } | ConvertTo-Json -Compress
 `);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.settingsExists).toBe(true);
-    expect(parsed.wslEngineEnabled).toBe(true);
-    expect(parsed.enableIntegrationWithDefaultWslDistro).toBe(false);
-    expect(parsed.integratedWslDistros).toContain("Ubuntu-24.04");
-    expect(parsed.backupCount).toBe(0);
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.settingsExists).toBe(true);
+      expect(parsed.wslEngineEnabled).toBe(true);
+      expect(parsed.enableIntegrationWithDefaultWslDistro).toBe(false);
+      expect(parsed.integratedWslDistros).toContain("Ubuntu-24.04");
+      expect(parsed.backupCount).toBe(0);
+    },
+  );
 });

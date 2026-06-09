@@ -51,11 +51,7 @@ const SHARED_PYTHON_STUB_BY_MODE = [
 ].join("\n");
 
 describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
-  function runGuard(opts: {
-    guard: string;
-    pythonExit: 0 | 1;
-    validatorExists: boolean;
-  }) {
+  function runGuard(opts: { guard: string; pythonExit: 0 | 1; validatorExists: boolean }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-guard-"));
     const stubsDir = path.join(tmp, "bin");
     const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
@@ -78,10 +74,7 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     writeStub(stubsDir, "sleep", "exit 0");
 
     const scriptPath = path.join(tmp, "guard.sh");
-    const validatorPath = path.join(
-      validatorRoot,
-      "validate-hermes-env-secret-boundary.py",
-    );
+    const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
     const guardWithStubs = opts.guard
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
       .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath);
@@ -129,8 +122,12 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("SECRET_BOUNDARY_REFUSED");
     expect(result.stdout).not.toContain("REACHED_LAUNCH");
-    const gatewayKills = result.pkillCalls.filter((line) => line.includes("[h]ermes") && line.includes("gateway"));
-    const dashboardKills = result.pkillCalls.filter((line) => line.includes("[h]ermes") && line.includes("dashboard"));
+    const gatewayKills = result.pkillCalls.filter(
+      (line) => line.includes("[h]ermes") && line.includes("gateway"),
+    );
+    const dashboardKills = result.pkillCalls.filter(
+      (line) => line.includes("[h]ermes") && line.includes("dashboard"),
+    );
     expect(gatewayKills.length).toBeGreaterThanOrEqual(2);
     expect(dashboardKills.length).toBeGreaterThanOrEqual(2);
     expect(result.recoveryLog).toContain("[SECURITY]");
@@ -237,7 +234,11 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     const scriptPath = path.join(opts.tmp, "recovery.sh");
     fs.writeFileSync(
       scriptPath,
-      ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(opts.stubsDir)}:/usr/bin:/bin`, stubbed].join("\n"),
+      [
+        "#!/usr/bin/env bash",
+        `export PATH=${JSON.stringify(opts.stubsDir)}:/usr/bin:/bin`,
+        stubbed,
+      ].join("\n"),
       { mode: 0o700 },
     );
     return spawnSync("bash", [scriptPath], {
@@ -394,7 +395,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
             const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
             expect(recoveryScript).not.toBeNull();
             const stubbed = recoveryScript!
-              .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"))
+              .replace(
+                new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"),
+                path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+              )
               .replace(/\/tmp\/gateway-recovery\.log/g, harness.recoveryLogPath)
               .replace(/\/tmp\/nemoclaw-proxy-env\.sh/g, proxyEnvFile)
               .replace(/\/tmp\/gateway\.log/g, harness.gatewayLogPath)
@@ -405,7 +409,13 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
             const scriptPath = path.join(harness.tmp, "recovery.sh");
             fs.writeFileSync(
               scriptPath,
-              ["#!/usr/bin/env bash", `export PATH=${JSON.stringify(harness.stubsDir)}:/usr/bin:/bin`, "export STUB_ENVFILE_EXIT=0", "export STUB_RUNTIMEENV_EXIT=1", stubbed].join("\n"),
+              [
+                "#!/usr/bin/env bash",
+                `export PATH=${JSON.stringify(harness.stubsDir)}:/usr/bin:/bin`,
+                "export STUB_ENVFILE_EXIT=0",
+                "export STUB_RUNTIMEENV_EXIT=1",
+                stubbed,
+              ].join("\n"),
               { mode: 0o700 },
             );
             return scriptPath;

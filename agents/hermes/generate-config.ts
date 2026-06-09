@@ -43,9 +43,7 @@ function main(): void {
     settings.messaging.discordGuilds,
     settings.messaging.wechatConfig,
     settings.messaging.slackConfig,
-    settings.managedToolGateways.brokerEnabled
-      ? settings.managedToolGateways.presets
-      : [],
+    settings.managedToolGateways.brokerEnabled ? settings.managedToolGateways.presets : [],
   );
   const written = writeHermesConfigFiles(config, envLines);
 

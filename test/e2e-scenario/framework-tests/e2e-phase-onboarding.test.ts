@@ -10,7 +10,11 @@ import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
 import type { EnvironmentReady } from "../framework/phases/index.ts";
-import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../framework/shell-probe.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../framework/shell-probe.ts";
 
 interface RunnerCall {
   command: string;
@@ -47,11 +51,16 @@ class FakeRunner implements CommandRunner {
     this.responses.push(response);
   }
 
-  async run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult> {
+  async run(
+    command: TrustedShellCommand,
+    options?: ShellProbeRunOptions,
+  ): Promise<ShellProbeResult> {
     this.calls.push({ command: command.command, args: [...command.args], options });
     const response = this.responses.shift();
     if (!response) {
-      throw new Error(`FakeRunner response missing for command: ${command.command} ${command.args.join(" ")}`);
+      throw new Error(
+        `FakeRunner response missing for command: ${command.command} ${command.args.join(" ")}`,
+      );
     }
     return response;
   }
@@ -78,7 +87,9 @@ class FakeSecrets implements OnboardingSecrets {
   }
 
   redact(text: string, extraValues: string[] = []): string {
-    const values = [...Object.values(this.values), ...extraValues].filter((value): value is string => Boolean(value));
+    const values = [...Object.values(this.values), ...extraValues].filter(
+      (value): value is string => Boolean(value),
+    );
     return values.reduce((redacted, value) => redacted.split(value).join("[REDACTED]"), text);
   }
 }
@@ -141,9 +152,14 @@ describe("onboarding phase fixture", () => {
   it("fails cloud OpenClaw onboarding on non-zero exit", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(42, "provider rejected credential"));
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
 
-    await expect(onboard.from(ready())).rejects.toThrow(/cloud-openclaw onboarding failed: provider rejected/);
+    await expect(onboard.from(ready())).rejects.toThrow(
+      /cloud-openclaw onboarding failed: provider rejected/,
+    );
   });
 
   it("keeps sandbox cleanup registered when cloud OpenClaw onboarding fails", async () => {
@@ -178,12 +194,17 @@ describe("onboarding phase fixture", () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
 
-    await expect(onboard.from(ready())).rejects.toThrow(/missing required E2E secret: NVIDIA_API_KEY/);
+    await expect(onboard.from(ready())).rejects.toThrow(
+      /missing required E2E secret: NVIDIA_API_KEY/,
+    );
     expect(runner.calls).toEqual([]);
   });
 
   it("requires Docker for cloud OpenClaw onboarding", async () => {
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(new FakeRunner()), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(new FakeRunner()),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
 
     await expect(
       onboard.from(
@@ -342,7 +363,10 @@ describe("onboarding phase fixture", () => {
 
   it("requires the docker-missing runtime expectation for the no-Docker negative path", async () => {
     const runner = new FakeRunner();
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
 
     await expect(onboard.from(ready({ onboarding: "cloud-openclaw-no-docker" }))).rejects.toThrow(
       /requires the docker-missing runtime expectation/,
@@ -426,7 +450,10 @@ describe("onboarding phase fixture", () => {
   it("rejects unrelated no-Docker onboarding failures", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(9, "provider rejected credential"));
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+    );
 
     await expect(
       onboard.from(
@@ -440,7 +467,10 @@ describe("onboarding phase fixture", () => {
   });
 
   it("rejects unsupported onboarding profiles", async () => {
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(new FakeRunner()), new FakeSecrets());
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(new FakeRunner()),
+      new FakeSecrets(),
+    );
 
     await expect(onboard.from(ready({ onboarding: "cloud-hermes" }))).rejects.toThrow(
       /Unsupported onboarding profile 'cloud-hermes'/,

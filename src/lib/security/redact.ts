@@ -85,9 +85,10 @@ export function writeRedactedResult(
 
 const FULL_REDACT_PATTERNS: [RegExp, string][] = [
   [/(NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi, "$1=<REDACTED>"],
-  ...TOKEN_PREFIX_PATTERNS.map(
-    (p): [RegExp, string] => [new RegExp(p.source, p.flags), "<REDACTED>"],
-  ),
+  ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
+    new RegExp(p.source, p.flags),
+    "<REDACTED>",
+  ]),
   [/(Bearer )\S+/gi, "$1<REDACTED>"],
   [/\/bot[^/\s]+\//g, "/bot<REDACTED>/"],
 ];

@@ -91,7 +91,10 @@ function expectedStateFromContext(env: Readonly<Record<string, string>>): Shield
 
 export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<ProbeOutcome> => {
   if (!ctx.sandboxName) {
-    return { status: "failed", message: "shieldsConfigProbe: E2E_SANDBOX_NAME missing in context.env" };
+    return {
+      status: "failed",
+      message: "shieldsConfigProbe: E2E_SANDBOX_NAME missing in context.env",
+    };
   }
 
   const evidence: ShieldsEvidence = {
@@ -106,11 +109,9 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
   };
 
   // --- Step 1: nemoclaw <sandbox> shields status ---
-  const statusResult = await runHostCmd(
-    "nemoclaw",
-    [ctx.sandboxName, "shields", "status"],
-    { timeoutMs: SHIELDS_STATUS_TIMEOUT_MS },
-  );
+  const statusResult = await runHostCmd("nemoclaw", [ctx.sandboxName, "shields", "status"], {
+    timeoutMs: SHIELDS_STATUS_TIMEOUT_MS,
+  });
   evidence.statusExitCode = statusResult.exitCode;
   evidence.statusStdoutTail = statusResult.stdout;
   if (statusResult.signal === "SIGTERM") {
@@ -155,11 +156,9 @@ export const shieldsConfigProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     };
   }
   evidence.configPath = configPath;
-  const statResult = await runSandboxCmd(
-    ctx,
-    ["stat", "-c", "%a %U:%G", configPath],
-    { perCallSeconds: SANDBOX_STAT_PER_CALL_SECONDS },
-  );
+  const statResult = await runSandboxCmd(ctx, ["stat", "-c", "%a %U:%G", configPath], {
+    perCallSeconds: SANDBOX_STAT_PER_CALL_SECONDS,
+  });
   if (statResult.exitCode !== 0) {
     writeProbeEvidence(ctx, evidence);
     return {

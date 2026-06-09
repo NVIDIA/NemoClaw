@@ -14,16 +14,14 @@ export function planBuildSteps(
 ): SandboxMessagingBuildStepPlan[] {
   return manifest.hooks.flatMap((hook) => {
     if (hook.agents && !hook.agents.includes(agent)) return [];
-    return (hook.outputs ?? [])
-      .filter(isBuildStepOutput)
-      .map((output) => ({
-        channelId: manifest.id,
-        kind: output.kind,
-        hookId: hook.id,
-        handler: hook.handler,
-        outputId: output.id,
-        required: output.required === true,
-      }));
+    return (hook.outputs ?? []).filter(isBuildStepOutput).map((output) => ({
+      channelId: manifest.id,
+      kind: output.kind,
+      hookId: hook.id,
+      handler: hook.handler,
+      outputId: output.id,
+      required: output.required === true,
+    }));
   });
 }
 

@@ -111,9 +111,7 @@ function resolveContext(input: AccessFailureInput): PolicyContext {
   return buildPolicyContext(input.sandboxName, options);
 }
 
-export function classifyAccessFailure(
-  input: AccessFailureInput,
-): AccessFailureClassification {
+export function classifyAccessFailure(input: AccessFailureInput): AccessFailureClassification {
   if (input.capability && input.capability.supported === false) {
     const reason = input.capability.reason ?? "capability is not offered for this sandbox";
     return {
@@ -163,8 +161,7 @@ export function classifyAccessFailure(
         return {
           kind: "unknown",
           reason: `Host '${input.host}' is allowed by preset '${matched.name}' and the OpenShell gateway confirmed enforcement, so the network-block code (${code}) is an upstream connectivity failure rather than a policy block.${note}`,
-          nextStep:
-            "Inspect the upstream error and retry once the underlying condition clears.",
+          nextStep: "Inspect the upstream error and retry once the underlying condition clears.",
           matchedPreset: matched.name,
           confidence: "high",
         };

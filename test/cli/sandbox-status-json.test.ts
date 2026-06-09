@@ -11,9 +11,7 @@ import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
 describe("CLI sandbox status JSON output", () => {
   it("sandbox status --json emits structured per-sandbox report", () => {
-    const home = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"),
-    );
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"));
     const localBin = path.join(home, "bin");
     const sandboxName = `alpha-${process.pid}-${Date.now()}`;
     fs.mkdirSync(localBin, { recursive: true });
@@ -126,9 +124,7 @@ describe("CLI sandbox status JSON output", () => {
   });
 
   it("sandbox status --json surfaces rpcIssue and exits 1 on protobuf mismatch", () => {
-    const home = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-rpc-"),
-    );
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-rpc-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home, "alpha");
@@ -280,11 +276,9 @@ describe("CLI sandbox status JSON output", () => {
       openshellDriver: "docker",
     });
 
-    fs.writeFileSync(
-      path.join(localBin, "docker"),
-      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
-      { mode: 0o755 },
-    );
+    fs.writeFileSync(path.join(localBin, "docker"), ["#!/usr/bin/env bash", "exit 1"].join("\n"), {
+      mode: 0o755,
+    });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [

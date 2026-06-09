@@ -23,8 +23,12 @@ function runScenarioCli(args: string[]) {
 
 describe("deterministic scenario registry", () => {
   it("should reject duplicate scenario IDs", () => {
-    const first = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml").build();
-    const second = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml").build();
+    const first = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .build();
+    const second = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml")
+      .build();
 
     expect(() => buildScenarioRegistry([first, second])).toThrow(/duplicate-id/);
   });

@@ -150,7 +150,6 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
-
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;
   internalPort: number;
@@ -180,7 +179,7 @@ export function buildHermesDashboardProcessRecoveryScript(
     "[ -f ~/.bashrc ] && . ~/.bashrc;",
     "export HERMES_HOME=/sandbox/.hermes;",
     buildHermesEnvFileBoundaryGuard(),
-    'if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;',
+    "if [ -r /tmp/nemoclaw-proxy-env.sh ]; then . /tmp/nemoclaw-proxy-env.sh; fi;",
     buildHermesRuntimeEnvBoundaryGuard(),
     'AGENT_BIN=/usr/local/bin/hermes; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v hermes)"; fi;',
     'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
@@ -251,7 +250,9 @@ export function buildRecoveryScript(
   const hermesHome = isHermes ? "export HERMES_HOME=/sandbox/.hermes; " : "";
   const hermesLaunchEnv = isHermes ? `env ${hermesGatewayEnvPrefix()} ` : "";
   const launchCommand = usesValidatedBinary
-    ? gatewayLaunchCommand(`${hermesLaunchEnv}"$AGENT_BIN" gateway run${isHermes ? "" : ` --port ${port}`}`)
+    ? gatewayLaunchCommand(
+        `${hermesLaunchEnv}"$AGENT_BIN" gateway run${isHermes ? "" : ` --port ${port}`}`,
+      )
     : gatewayLaunchCommand(
         `${hermesLaunchEnv}${configuredGatewayCommand}${isHermes ? "" : ` --port ${port}`}`,
       );

@@ -28,7 +28,12 @@ export type DashboardAccessEntry = {
 const CONTROL_UI_PORT = DASHBOARD_PORT;
 
 function defaultChatUiUrl(options: DashboardAccessOptions = {}): string {
-  return options.chatUiUrl || options.env?.CHAT_UI_URL || process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
+  return (
+    options.chatUiUrl ||
+    options.env?.CHAT_UI_URL ||
+    process.env.CHAT_UI_URL ||
+    `http://127.0.0.1:${CONTROL_UI_PORT}`
+  );
 }
 
 export function getWslHostAddress(options: DashboardAccessOptions = {}): string | null {
@@ -108,12 +113,18 @@ export function getDashboardForwardStartCommand(
   )}`;
 }
 
-export function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
+export function buildAuthenticatedDashboardUrl(
+  baseUrl: string,
+  token: string | null = null,
+): string {
   if (!token) return baseUrl;
   return `${baseUrl}#token=${encodeURIComponent(token)}`;
 }
 
-export function dashboardUrlForDisplay(url: string, redact: (value: string) => string = (value) => value): string {
+export function dashboardUrlForDisplay(
+  url: string,
+  redact: (value: string) => string = (value) => value,
+): string {
   return redact(url.replace(/#token=[^\s'"]*$/i, ""));
 }
 
@@ -123,7 +134,7 @@ export function getDashboardAccessInfo(
 ): DashboardAccessEntry[] {
   const token = Object.prototype.hasOwnProperty.call(options, "token")
     ? options.token
-    : options.fetchGatewayAuthToken?.(sandboxName) ?? null;
+    : (options.fetchGatewayAuthToken?.(sandboxName) ?? null);
   const chatUiUrl = defaultChatUiUrl(options);
   const chain = buildDashboardChain(chatUiUrl, options);
   const dashboardAccess = buildControlUiUrls(token ?? null, chain.port, chain.accessUrl).map(
@@ -135,7 +146,10 @@ export function getDashboardAccessInfo(
 
   const wslHostAddress = getWslHostAddress(options);
   if (wslHostAddress) {
-    const wslUrl = buildAuthenticatedDashboardUrl(`http://${wslHostAddress}:${chain.port}/`, token ?? null);
+    const wslUrl = buildAuthenticatedDashboardUrl(
+      `http://${wslHostAddress}:${chain.port}/`,
+      token ?? null,
+    );
     const existing = dashboardAccess.find((access) => access.url === wslUrl);
     if (existing) {
       existing.label = "WSL fallback";

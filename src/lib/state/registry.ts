@@ -207,10 +207,7 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      if (
-        !isErrnoException(error) ||
-        error.code !== "EEXIST"
-      ) {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
       let lockStat: fs.Stats;
@@ -229,8 +226,7 @@ export function acquireLock(): void {
         ownerPid = null;
       }
       const ownerAlive = ownerPid !== null ? isProcessAlive(ownerPid) : false;
-      const processStartMs =
-        ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
+      const processStartMs = ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
       const decision = classifyExistingLock({
         ownerPid,
         ownerAlive,
@@ -274,20 +270,14 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }

@@ -5,10 +5,7 @@ import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "../../adapters/openshell/runtime";
+import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -20,10 +17,7 @@ import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { SandboxGatewayState } from "./gateway-state";
-import {
-  getReconciledSandboxGatewayState,
-  getSandboxGatewayStateForStatus,
-} from "./gateway-state";
+import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import {
   getSandboxStatusPreflight,
@@ -110,9 +104,7 @@ export interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
 }
 
-type ReconcileSandboxGatewayState = (
-  sandboxName: string,
-) => Promise<SandboxGatewayState>;
+type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 
 interface CollectSandboxStatusSnapshotDeps {
   probeProviderHealthImpl?: ProbeProviderHealth;
@@ -210,9 +202,7 @@ export async function getSandboxStatusReport(
   // progress to stdout via console.log (step(), gateway-start streaming).
   // Redirect any such writes to stderr while the report is built so stdout
   // carries only the JSON document.
-  return withStdoutRedirectedToStderr(() =>
-    buildSandboxStatusReport(sandboxName, deps),
-  );
+  return withStdoutRedirectedToStderr(() => buildSandboxStatusReport(sandboxName, deps));
 }
 
 async function buildSandboxStatusReport(
@@ -225,14 +215,10 @@ async function buildSandboxStatusReport(
     deps,
   });
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase =
-    lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
-  const sandboxGpuEnabled = sb
-    ? (sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true))
-    : false;
+  const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")

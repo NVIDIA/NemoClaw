@@ -15,9 +15,10 @@ import {
 
 type Capture = { url: string; init?: { method?: string; headers?: Record<string, string> } };
 
-function makeFetch(
-  responder: (req: Capture) => { ok: boolean; status: number; body: string },
-): { fetch: FetchLike; calls: Capture[] } {
+function makeFetch(responder: (req: Capture) => { ok: boolean; status: number; body: string }): {
+  fetch: FetchLike;
+  calls: Capture[];
+} {
   const calls: Capture[] = [];
   const fetch: FetchLike = async (url, init) => {
     const capture = { url, init };
@@ -50,7 +51,10 @@ describe("fetchWechatQrSession", () => {
     const { fetch, calls } = makeFetch(() => ({
       ok: true,
       status: 200,
-      body: JSON.stringify({ qrcode: "qrcode-cookie", qrcode_img_content: "https://example.com/qr" }),
+      body: JSON.stringify({
+        qrcode: "qrcode-cookie",
+        qrcode_img_content: "https://example.com/qr",
+      }),
     }));
 
     const session = await fetchWechatQrSession({ fetch });

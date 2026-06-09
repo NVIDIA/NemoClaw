@@ -26,10 +26,7 @@ vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDIN_IS_TTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-const ORIGINAL_STDIN_SET_RAW_MODE = Object.getOwnPropertyDescriptor(
-  process.stdin,
-  "setRawMode",
-);
+const ORIGINAL_STDIN_SET_RAW_MODE = Object.getOwnPropertyDescriptor(process.stdin, "setRawMode");
 const ORIGINAL_STDERR_IS_TTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
 
 function mockLineModeAnswer(answer: string): { questions: string[] } {

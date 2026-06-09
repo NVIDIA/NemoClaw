@@ -122,7 +122,8 @@ function runSystemctlUser(
     return { ok: false, reason: result.error.message };
   }
   if (result.status !== 0) {
-    const detail = text(result.stderr).trim() || text(result.stdout).trim() || `exit ${String(result.status)}`;
+    const detail =
+      text(result.stderr).trim() || text(result.stdout).trim() || `exit ${String(result.status)}`;
     return { ok: false, reason: detail };
   }
   return { ok: true, stdout: text(result.stdout) };
@@ -285,7 +286,8 @@ export async function startPackageManagedDockerDriverGateway({
   clearDockerDriverGatewayRuntimeFiles,
   exitOnFailure,
   gatewayName,
-  hasOpenShellGatewayUserService: hasOpenShellGatewayUserServiceImpl = hasOpenShellGatewayUserService,
+  hasOpenShellGatewayUserService:
+    hasOpenShellGatewayUserServiceImpl = hasOpenShellGatewayUserService,
   healthPollCount,
   healthPollInterval,
   isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
@@ -294,7 +296,8 @@ export async function startPackageManagedDockerDriverGateway({
   sleepSeconds: sleepSecondsImpl = sleepSeconds,
   prepareOpenShellGatewayUserServiceEnv,
   skipSandboxBridgeReachability,
-  startOpenShellGatewayUserService: startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
+  startOpenShellGatewayUserService:
+    startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
   if (!hasOpenShellGatewayUserServiceImpl()) return false;
@@ -306,7 +309,9 @@ export async function startPackageManagedDockerDriverGateway({
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.fallbackAllowed) {
-      console.warn(`  OpenShell gateway user service is unavailable${detail}; using standalone fallback.`);
+      console.warn(
+        `  OpenShell gateway user service is unavailable${detail}; using standalone fallback.`,
+      );
       return false;
     }
     const message = `OpenShell gateway user service failed to start${detail}.`;

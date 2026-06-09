@@ -62,7 +62,8 @@ function transitionMachine(session: Session, state: OnboardMachineState): void {
     version: session.machine.version,
     state,
     stateEnteredAt: "2026-05-27T00:00:00.000Z",
-    revision: session.machine.state === state ? session.machine.revision : session.machine.revision + 1,
+    revision:
+      session.machine.state === state ? session.machine.revision : session.machine.revision + 1,
   };
 }
 
@@ -197,9 +198,15 @@ describe("OnboardRuntimeBoundary", () => {
       createRuntime: harness.createRuntime,
     });
 
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
 
     expect(harness.events.map((event) => event.type)).toEqual([
       "state.exited",
@@ -228,7 +235,9 @@ describe("OnboardRuntimeBoundary", () => {
       createRuntime: harness.createRuntime,
     });
 
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
 
     expect(harness.events).toHaveLength(1);
     expect(harness.events[0]).toMatchObject({
@@ -307,18 +316,31 @@ describe("OnboardRuntimeBoundary", () => {
     );
 
     await boundary.startRecordedStep("provider_selection");
-    await boundary.recordStepComplete("provider_selection", { provider: "bad", model: "bad-model" });
+    await boundary.recordStepComplete("provider_selection", {
+      provider: "bad",
+      model: "bad-model",
+    });
     await boundary.startRecordedStep("inference", { provider: "bad", model: "bad-model" });
     const retryResult = retryTo("provider_selection", {
-      metadata: { state: "inference", provider: "bad", model: "bad-model", reason: "selection_retry" },
+      metadata: {
+        state: "inference",
+        provider: "bad",
+        model: "bad-model",
+        reason: "selection_retry",
+      },
     });
     await boundary.startRecordedStep("provider_selection");
-    await boundary.recordStepComplete("provider_selection", { provider: "nvidia", model: "nemotron" });
+    await boundary.recordStepComplete("provider_selection", {
+      provider: "nvidia",
+      model: "nemotron",
+    });
     await boundary.startRecordedStep("inference", { provider: "nvidia", model: "nemotron" });
     await boundary.recordStepComplete("inference", { provider: "nvidia", model: "nemotron" });
     await boundary.recordStateResultsWithStepCompatibility([
       retryResult,
-      advanceTo("sandbox", { metadata: { state: "inference", provider: "nvidia", model: "nemotron" } }),
+      advanceTo("sandbox", {
+        metadata: { state: "inference", provider: "nvidia", model: "nemotron" },
+      }),
     ]);
 
     await boundary.startRecordedStep("sandbox");

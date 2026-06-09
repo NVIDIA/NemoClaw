@@ -7,8 +7,7 @@ import type {
   MessagingTemplateString,
 } from "../../manifest";
 
-const CREDENTIAL_PLACEHOLDER_PATTERN =
-  /\{\{\s*credential\.([A-Za-z0-9_-]+)\.placeholder\s*\}\}/g;
+const CREDENTIAL_PLACEHOLDER_PATTERN = /\{\{\s*credential\.([A-Za-z0-9_-]+)\.placeholder\s*\}\}/g;
 const TEMPLATE_REFERENCE_PATTERN = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 export function resolveSandboxNameTemplate(
@@ -44,17 +43,13 @@ export function resolveCredentialTemplatesInLines(
   return lines.map((line) => resolveCredentialTemplatesInString(line, credentials));
 }
 
-export function collectTemplateReferencesInValue(
-  value: MessagingSerializableValue,
-): string[] {
+export function collectTemplateReferencesInValue(value: MessagingSerializableValue): string[] {
   if (typeof value === "string") return collectTemplateReferencesInString(value);
   if (Array.isArray(value)) {
     return unique(value.flatMap((entry) => collectTemplateReferencesInValue(entry)));
   }
   if (value && typeof value === "object") {
-    return unique(
-      Object.values(value).flatMap((entry) => collectTemplateReferencesInValue(entry)),
-    );
+    return unique(Object.values(value).flatMap((entry) => collectTemplateReferencesInValue(entry)));
   }
   return [];
 }
@@ -79,7 +74,9 @@ function collectTemplateReferencesInString(value: MessagingTemplateString): stri
   return unique(
     [...value.matchAll(TEMPLATE_REFERENCE_PATTERN)]
       .map((match) => match[1]?.trim())
-      .filter((reference): reference is string => typeof reference === "string" && reference.length > 0),
+      .filter(
+        (reference): reference is string => typeof reference === "string" && reference.length > 0,
+      ),
   );
 }
 

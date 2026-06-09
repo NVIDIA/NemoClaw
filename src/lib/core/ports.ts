@@ -15,15 +15,11 @@ export function parsePort(envVar: string, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
   const trimmed = String(raw).trim();
   if (!/^\d+$/.test(trimmed)) {
-    throw new Error(
-      `Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`,
-    );
+    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
   }
   const parsed = Number(trimmed);
   if (parsed < 1024 || parsed > 65535) {
-    throw new Error(
-      `Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`,
-    );
+    throw new Error(`Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`);
   }
   return parsed;
 }

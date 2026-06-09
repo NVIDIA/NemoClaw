@@ -39,7 +39,7 @@ export type RunnerWorkflow = {
       inputs?: Record<string, { default?: unknown }>;
     };
   };
-  "true"?: {
+  true?: {
     workflow_call?: {
       inputs?: Record<string, { default?: unknown }>;
     };

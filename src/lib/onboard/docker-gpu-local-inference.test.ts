@@ -110,12 +110,16 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
   it("is a no-op when the GPU patch does not apply (no sandbox GPU)", async () => {
     const env = { ...HOST_NETWORK_ENV };
     expect(
-      await enforceDockerGpuPatchPreserveNetwork("ollama-local", { sandboxGpuEnabled: false }, {
-        dockerDriverGateway: true,
-        platform: "linux",
-        env,
-        reverifyBridgeReachability: vi.fn(),
-      }),
+      await enforceDockerGpuPatchPreserveNetwork(
+        "ollama-local",
+        { sandboxGpuEnabled: false },
+        {
+          dockerDriverGateway: true,
+          platform: "linux",
+          env,
+          reverifyBridgeReachability: vi.fn(),
+        },
+      ),
     ).toBe(false);
     expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
   });
@@ -243,7 +247,10 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
       GPU_CONFIG,
       "ollama-local",
       gpuPatchOptions({
-        deps: { execInSandbox: execEmitting("", { status: 1, stderr: "exec denied" }), sleep: vi.fn() },
+        deps: {
+          execInSandbox: execEmitting("", { status: 1, stderr: "exec denied" }),
+          sleep: vi.fn(),
+        },
       }),
     );
     expect(result.status).toBe("failed");
@@ -309,7 +316,11 @@ describe("verifyGpuSandboxAfterReady", () => {
     });
     const logError = vi.fn();
     expect(() =>
-      verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", baseOptions({ verifyGpuOrExit, logError })),
+      verifyGpuSandboxAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        baseOptions({ verifyGpuOrExit, logError }),
+      ),
     ).toThrow(proofError);
     expect(logError).not.toHaveBeenCalled();
   });
