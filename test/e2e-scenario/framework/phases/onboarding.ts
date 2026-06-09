@@ -22,6 +22,15 @@ const DOCKER_MISSING_PATTERNS = [
   /Docker is required before onboarding/i,
   /could not talk to the Docker daemon/i,
 ];
+const MISSING_SANDBOX_DELETE_PATTERNS = [
+  /\bNotFound\b/i,
+  /\bNot Found\b/i,
+  /sandbox not found/i,
+  /sandbox .* not found/i,
+  /sandbox .* not present/i,
+  /sandbox does not exist/i,
+  /no such sandbox/i,
+];
 
 export interface OnboardingSecrets {
   required(name: string): string;
@@ -89,6 +98,11 @@ function hasDockerMissingSignature(result: ShellProbeResult): boolean {
   return DOCKER_MISSING_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function hasMissingSandboxDeleteSignature(result: ShellProbeResult): boolean {
+  const text = resultText(result);
+  return MISSING_SANDBOX_DELETE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export class OnboardingPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -111,8 +125,9 @@ export class OnboardingPhaseFixture {
     if (!environment.docker.available) {
       throw new Error("cloud-openclaw onboarding requires an available Docker runtime.");
     }
-    const apiKey = this.secrets.required("NVIDIA_API_KEY");
     const sandboxName = options.sandboxName ?? defaultSandboxName(environment.onboarding);
+    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
     const result = await this.host.nemoclaw(ONBOARD_ARGS, {
       artifactName: "onboard-cloud-openclaw",
       env: commandEnv(sandboxName, { NVIDIA_API_KEY: apiKey }),
@@ -120,7 +135,6 @@ export class OnboardingPhaseFixture {
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
     assertExitZero(result, "cloud-openclaw onboarding");
-    this.registerSandboxCleanup(sandboxName);
     return {
       onboarding: environment.onboarding,
       sandboxName,
@@ -185,7 +199,9 @@ export class OnboardingPhaseFixture {
         env: buildAvailabilityProbeEnv(),
         timeoutMs: DEFAULT_TIMEOUT_MS,
       });
-      assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+      if (result.exitCode !== 0 && !hasMissingSandboxDeleteSignature(result)) {
+        assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+      }
     });
   }
 }

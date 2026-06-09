@@ -134,6 +134,34 @@ describe("onboarding phase fixture", () => {
     await expect(onboard.from(ready())).rejects.toThrow(/cloud-openclaw onboarding failed: provider rejected/);
   });
 
+  it("keeps sandbox cleanup registered when cloud OpenClaw onboarding fails", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(42, "provider rejected credential"));
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+      cleanup,
+    );
+
+    await expect(onboard.from(ready(), { sandboxName: "e2e-partial-onboard" })).rejects.toThrow(
+      /cloud-openclaw onboarding failed: provider rejected/,
+    );
+
+    expect(cleanup.calls).toHaveLength(1);
+    expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-partial-onboard");
+    runner.enqueue(shellResult(1, "Error: sandbox e2e-partial-onboard not found"));
+    await cleanup.calls[0]?.run();
+    expect(runner.calls[1]).toMatchObject({
+      command: "nemoclaw",
+      args: ["e2e-partial-onboard", "destroy", "--yes"],
+      options: {
+        artifactName: "cleanup-destroy-e2e-partial-onboard",
+        timeoutMs: 900_000,
+      },
+    });
+  });
+
   it("requires NVIDIA_API_KEY before spawning cloud OpenClaw onboarding", async () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
