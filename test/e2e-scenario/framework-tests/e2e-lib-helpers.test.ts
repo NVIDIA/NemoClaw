@@ -111,6 +111,52 @@ exit 2
     }
   });
 
+  it("no_docker_onboarding_worker_should_fail_on_unrelated_onboarding_errors", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-unrelated-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [[ "\${1:-}" = "onboard" ]]; then
+  echo "provider rejected NVIDIA_API_KEY=\${NVIDIA_API_KEY:-unset}" >&2
+  exit 42
+fi
+echo "unexpected nemoclaw invocation: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=ubuntu-no-docker-preflight-negative\nE2E_SANDBOX_NAME=e2e-preserved\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        test/e2e-scenario/nemoclaw_scenarios/dispatch-action.sh e2e_onboard cloud-openclaw-no-docker "${ONBOARD_DIR}/dispatch.sh"
+      `,
+        {
+          E2E_ACTION_ID: "onboarding.profile.cloud-openclaw-no-docker",
+          E2E_CONTEXT_DIR: tmp,
+          E2E_PHASE: "onboarding",
+          NVIDIA_API_KEY: "secret-token",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          TMPDIR: tmp,
+        },
+      );
+      expect(r.status).toBe(42);
+      expect(`${r.stdout}\n${r.stderr}`).toContain("failed without Docker-missing preflight signature");
+      const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
+      expect(logBody).toContain("provider rejected");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).not.toContain("secret-token");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_policy_credentials_helper_should_load_with_context_library", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
     try {

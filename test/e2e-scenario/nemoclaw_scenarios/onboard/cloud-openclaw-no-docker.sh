@@ -74,6 +74,14 @@ with open(target, "w", encoding="utf-8") as handle:
   mv "${redacted}" "${redacted_log}"
 }
 
+e2e_no_docker_has_missing_signature() {
+  local log="$1"
+  [[ -f "${log}" ]] || return 1
+  grep -Eiq \
+    'Cannot connect to the Docker daemon|Is the docker daemon running\??|docker daemon is not running|docker[- ]missing|Docker is required before onboarding|could not talk to the Docker daemon' \
+    "${log}"
+}
+
 e2e_onboard_cloud_openclaw_no_docker() {
   e2e_env_apply_noninteractive
   # The TS runner already seeded context.env. Resolve the directory and
@@ -81,7 +89,7 @@ e2e_onboard_cloud_openclaw_no_docker() {
   e2e_context_path >/dev/null
   mkdir -p "${E2E_CONTEXT_DIR}"
 
-  local log shim_dir rc=0 redactor_rc=0 shim_dir_quoted
+  local log shim_dir rc=0 redactor_rc=0 shim_dir_quoted run_path
   log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   shim_dir="$(mktemp -d -t e2e-no-docker-XXXXXX)"
   printf -v shim_dir_quoted "%q" "${shim_dir}"
@@ -107,12 +115,17 @@ SHIM
   echo "negative-preflight: log_file=${log}"
   echo "negative-preflight: invoking nemoclaw onboard --non-interactive (expected to fail at preflight)"
 
+  run_path="${shim_dir}"
+  if [[ -n "${PATH:-}" ]]; then
+    run_path="${shim_dir}:${PATH}"
+  fi
+
   local errexit_was_set=0
   if [[ $- == *e* ]]; then
     errexit_was_set=1
     set +e
   fi
-  PATH="${shim_dir}:${PATH}" \
+  PATH="${run_path}" \
     nemoclaw onboard --non-interactive --yes-i-accept-third-party-software \
     2>&1 | e2e_no_docker_write_redacted_preflight_log "${log}"
   local -a pipeline_status=("${PIPESTATUS[@]}")
@@ -138,6 +151,11 @@ SHIM
   if [[ "${rc}" -eq 0 ]]; then
     echo "negative-preflight: ERROR: nemoclaw onboard unexpectedly exited 0; preflight should have failed when docker is unreachable" >&2
     return 1
+  fi
+
+  if ! e2e_no_docker_has_missing_signature "${log}"; then
+    echo "negative-preflight: ERROR: nemoclaw onboard failed without Docker-missing preflight signature" >&2
+    return "${rc}"
   fi
 
   return 0
