@@ -1,33 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerCapture, dockerRun } from "../adapters/docker";
-import {
-  getLocalProviderHealthEndpoint,
-  getLocalProviderLabel,
-  getLocalProviderValidationBaseUrl,
-  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-} from "../inference/local";
+import { getLocalProviderLabel } from "../inference/local";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   DOCKER_GPU_PATCH_NETWORK_ENV,
   type DockerGpuPatchMode,
-  findOpenShellDockerSandboxContainerIds,
   getDockerGpuPatchNetworkMode,
-  parseDockerInspectJson,
   printDockerGpuProofFailure,
   shouldApplyDockerGpuPatch,
 } from "./docker-gpu-patch";
+import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
   LOCAL_INFERENCE_PROVIDERS,
 }: { LOCAL_INFERENCE_PROVIDERS: string[] } = require("./providers");
 
-const DOCKER_GPU_INFERENCE_VERIFY_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS = 5;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS = 10;
 const DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS = 3;
 const DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS = 2;
+
+// The OpenShell inference route OpenClaw's LLM client actually uses inside the
+// sandbox. It is served by the OpenShell L7 proxy/router and routes to the
+// configured provider backend — the same hostname the agent talks to (see
+// verify-deployment.ts:verifyInferenceRoute). Probing it from the sandbox
+// runtime exercises the exact path the agent uses, not a host-only shortcut.
+const SANDBOX_RUNTIME_INFERENCE_ENDPOINT = "https://inference.local/v1/models";
 
 type DockerGpuLocalInferenceConfig = {
   sandboxGpuEnabled: boolean;
@@ -45,10 +44,14 @@ type DockerGpuLocalInferenceOptions = {
   log?: (message: string) => void;
 };
 
+function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
+  return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
+}
+
 /**
- * True only on the Linux Docker-driver GPU patch path with
- * `NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host`, i.e. when the recreated sandbox
- * uses host networking and local inference is wired to the direct loopback URL.
+ * True on the Linux Docker-driver GPU patch path with
+ * `NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host`, i.e. when the recreated sandbox was
+ * requested with host networking.
  */
 export function shouldUseDockerGpuPatchHostNetwork(
   config: DockerGpuLocalInferenceConfig,
@@ -63,308 +66,285 @@ export function shouldUseDockerGpuPatchHostNetwork(
   );
 }
 
-export function configureLocalInferenceForDockerGpuHostNetwork(
-  config: DockerGpuLocalInferenceConfig,
-  options: DockerGpuLocalInferenceOptions & { note: (message: string) => void },
-): void {
-  const env = options.env ?? process.env;
-  if (!shouldUseDockerGpuPatchHostNetwork(config, options)) return;
-  if (!env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) {
-    env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = "http://127.0.0.1";
-    options.note(
-      "  Docker-driver GPU patch will use host networking; local inference providers will use sandbox loopback.",
-    );
-    return;
-  }
-  options.note(
-    `  Docker-driver GPU patch will use host networking; local inference providers will use ${LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV}.`,
-  );
-}
-
-export function dockerGpuPatchHostNetworkInferenceBaseUrl(
-  config: DockerGpuLocalInferenceConfig,
+/**
+ * The OpenShell Docker-driver sandbox runs the agent in its own (isolated)
+ * network namespace — see `detectSandboxFallbackDns` in docker-gpu-patch.ts —
+ * so `127.0.0.1` inside the agent runtime is the sandbox's own loopback, not
+ * the host's, even when the recreated outer container is `--network host`. The
+ * opt-in host-network GPU mode (`NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host`) was
+ * only ever meant to let OpenClaw reach a host-loopback inference server
+ * directly, but that loopback is unreachable from the sandbox namespace: the
+ * agent fails at runtime with `ECONNREFUSED` ("LLM request failed: network
+ * connection error") while a `docker exec` probe — running in the container's
+ * main namespace, which IS the host under `--network host` — falsely succeeds.
+ * That mismatch is the reopened-#4509 false positive.
+ *
+ * Host networking is also unnecessary for GPU device access (that comes from
+ * the GPU mode flags — `--gpus`/CDI/NVIDIA runtime — independent of the
+ * container network mode). So downgrade the recreate to the OpenShell-managed
+ * bridge network (`preserve`), where local inference routes through the
+ * reachable `inference.local` path the sandbox namespace can use.
+ *
+ * Scoped to LOCAL inference providers — that is the only case the host-network
+ * opt-in was meant to serve, and the only one this breaks. Non-local (cloud /
+ * routed / custom) GPU sandboxes keep their requested network mode untouched.
+ * Runs at sandbox build time, after the provider is resolved and before the GPU
+ * container recreate reads the network mode.
+ *
+ * When a downgrade is applied, also re-runs the sandbox bridge reachability
+ * probe (with UFW auto-fix): gateway startup skipped it on the assumption that
+ * the sandbox would be on host networking, but the sandbox is now committed to
+ * the OpenShell bridge, so a default-deny firewall must fail fast / self-heal
+ * before the build rather than surface as a late, opaque failure.
+ *
+ * Returns true when a downgrade was applied.
+ */
+export async function enforceDockerGpuPatchPreserveNetwork(
   provider: string | null | undefined,
-  options: DockerGpuLocalInferenceOptions,
-): string | null {
-  if (!shouldUseDockerGpuPatchHostNetwork(config, options)) return null;
-  if (!provider || !LOCAL_INFERENCE_PROVIDERS.includes(provider)) return null;
-  const baseUrl = getLocalProviderValidationBaseUrl(provider);
-  if (baseUrl) {
-    options.log?.(
-      `  Docker-driver GPU host networking: OpenClaw local inference will use direct sandbox URL ${baseUrl}.`,
-    );
-  }
-  return baseUrl;
+  config: DockerGpuLocalInferenceConfig,
+  options: DockerGpuLocalInferenceOptions & {
+    reverifyBridgeReachability?: () => void | Promise<void>;
+  },
+): Promise<boolean> {
+  if (!isLocalInferenceProvider(provider)) return false;
+  if (!shouldUseDockerGpuPatchHostNetwork(config, options)) return false;
+  const env = options.env ?? process.env;
+  env[DOCKER_GPU_PATCH_NETWORK_ENV] = "preserve";
+  options.log?.(
+    "  Docker-driver GPU patch keeps OpenShell bridge networking for local inference: the host " +
+      "loopback is not reachable from the sandbox network namespace, so OpenClaw routes through " +
+      "the OpenShell-managed inference path (host networking is not needed for GPU device access).",
+  );
+  await (options.reverifyBridgeReachability ?? defaultReverifyBridgeReachability)();
+  return true;
 }
 
-type DockerRunResult = {
-  status?: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-};
+/** Re-run the sandbox→gateway bridge reachability probe (with UFW auto-fix). */
+function defaultReverifyBridgeReachability(): Promise<void> {
+  const { verifySandboxBridgeGatewayReachableOrExit } =
+    require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
+  return verifySandboxBridgeGatewayReachableOrExit(true, { skip: false });
+}
 
-export type DockerGpuHostNetworkInferenceVerifyDeps = {
-  findContainerIds?: (sandboxName: string) => string[];
-  dockerCapture?: (args: readonly string[], opts?: Record<string, unknown>) => string;
-  dockerRun?: (args: readonly string[], opts?: Record<string, unknown>) => DockerRunResult;
+export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
+
+export type DockerGpuSandboxInferenceVerifyDeps = {
+  execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
   sleep?: (seconds: number) => void;
 };
 
-export type DockerGpuHostNetworkInferenceVerification =
+export type DockerGpuSandboxInferenceVerification =
   | { status: "skipped"; reason: string }
-  | { status: "ok"; provider: string; containerId: string; networkMode: string; endpoint: string }
+  | { status: "ok"; provider: string; endpoint: string; httpCode: string }
   | {
       status: "failed";
-      kind: "container-not-found" | "network-mode" | "probe";
+      kind: "exec" | "unreachable";
       provider: string;
+      endpoint: string;
       message: string;
-      containerId: string | null;
-      networkMode: string | null;
-      endpoint: string | null;
       detail: string | null;
       recovery: string[];
     };
 
-/** Flatten a docker run result's stderr/stdout into a single trimmed string. */
-function resultText(result: DockerRunResult | null | undefined): string {
-  if (!result) return "";
-  return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
+/** The runtime inference route to probe for a provider (local providers only). */
+export function getSandboxRuntimeInferenceEndpoint(provider: string | null | undefined): string | null {
+  return isLocalInferenceProvider(provider) ? SANDBOX_RUNTIME_INFERENCE_ENDPOINT : null;
 }
+
+type RuntimeProbeOutcome =
+  | { kind: "ok"; httpCode: string }
+  | { kind: "no-curl" }
+  | { kind: "exec-failed"; detail: string }
+  | { kind: "unreachable"; detail: string };
 
 /**
- * Inspect a container and return its `HostConfig.NetworkMode`, or `null` when
- * the inspect output is empty or unparseable.
+ * Probe the inference route from the actual OpenClaw runtime context via
+ * `openshell sandbox exec` — the sandbox's own network namespace, the context
+ * the agent's LLM client runs in — rather than `docker exec` against the
+ * recreated container, whose main namespace is the host's under `--network
+ * host` and therefore masked the #4509 failure.
+ *
+ * A single script proves the exec path works (it emits a sentinel), reports a
+ * genuinely missing `curl` separately from an exec failure, and otherwise hits
+ * `inference.local` exactly as OpenClaw does (through the sandbox proxy). This
+ * mirrors verify-deployment.ts:verifyInferenceRoute: any HTTP status means the
+ * route resolves and responds; `000` means DNS failure or connection refused —
+ * the reopened-#4509 symptom.
  */
-function inspectContainerNetworkMode(
-  containerId: string,
-  dockerCaptureFn: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["dockerCapture"]>,
-): string | null {
-  try {
-    const output = dockerCaptureFn(["inspect", "--type", "container", containerId], {
-      ignoreError: true,
-      timeout: DOCKER_GPU_INFERENCE_VERIFY_TIMEOUT_MS,
-    });
-    if (!output || !output.trim()) return null;
-    const inspect = parseDockerInspectJson(output);
-    const mode = String(inspect.HostConfig?.NetworkMode || "").trim();
-    return mode || null;
-  } catch {
-    return null;
-  }
-}
-
-/** Returns true when `curl` is on PATH inside the container (probe tooling). */
-function containerHasCurl(
-  containerId: string,
-  dockerRunFn: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["dockerRun"]>,
-): boolean {
-  try {
-    const result = dockerRunFn(
-      ["exec", containerId, "sh", "-lc", "command -v curl >/dev/null 2>&1"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: DOCKER_GPU_INFERENCE_VERIFY_TIMEOUT_MS,
-      },
-    );
-    return Number(result?.status ?? 1) === 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Probe the direct loopback inference endpoint from inside the container with
- * bounded retries. Returns `{ ok: true }` on the first 2xx, otherwise `ok:
- * false` with the last failure detail.
- */
-function probeContainerInferenceEndpoint(
-  containerId: string,
+function probeSandboxRuntimeInference(
+  sandboxName: string,
   endpoint: string,
   deps: {
-    dockerRun: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["dockerRun"]>;
-    sleep: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["sleep"]>;
+    execInSandbox: NonNullable<DockerGpuSandboxInferenceVerifyDeps["execInSandbox"]>;
+    sleep: NonNullable<DockerGpuSandboxInferenceVerifyDeps["sleep"]>;
   },
-): { ok: boolean; detail: string | null } {
-  let detail: string | null = null;
+): RuntimeProbeOutcome {
+  // Single-quote the endpoint (POSIX-escaping any embedded quotes) so it can
+  // never break out of the curl argument. It is a constant today, but the
+  // signature accepts any string — keep the shell construction injection-safe.
+  const safeEndpoint = `'${endpoint.replace(/'/g, "'\\''")}'`;
+  const script =
+    `if ! command -v curl >/dev/null 2>&1; then echo NO_CURL; exit 0; fi; ` +
+    `code=$(curl -so /dev/null -w '%{http_code}' ` +
+    `--connect-timeout ${DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS} ` +
+    `--max-time ${DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS} ${safeEndpoint} 2>/dev/null || echo 000); ` +
+    `echo "HTTP_$code"`;
+  let last: RuntimeProbeOutcome = {
+    kind: "exec-failed",
+    detail: "openshell sandbox exec did not run (sandbox unreachable or exec timed out)",
+  };
   for (let attempt = 1; attempt <= DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS; attempt++) {
-    try {
-      // Run curl from inside the recreated host-network container so the probe
-      // exercises the exact loopback path OpenClaw will use (127.0.0.1 ->
-      // host loopback under --network host). Inherit the container's own proxy
-      // env so NO_PROXY/loopback handling matches the agent runtime.
-      const result = deps.dockerRun(
-        [
-          "exec",
-          containerId,
-          "curl",
-          "-sf",
-          "--connect-timeout",
-          String(DOCKER_GPU_INFERENCE_PROBE_CONNECT_TIMEOUT_SECS),
-          "--max-time",
-          String(DOCKER_GPU_INFERENCE_PROBE_MAX_TIME_SECS),
-          "-o",
-          "/dev/null",
-          endpoint,
-        ],
-        {
-          ignoreError: true,
-          suppressOutput: true,
-          timeout: DOCKER_GPU_INFERENCE_VERIFY_TIMEOUT_MS,
-        },
-      );
-      if (Number(result?.status ?? 1) === 0) return { ok: true, detail: null };
-      detail = resultText(result) || "docker exec curl exited non-zero";
-    } catch (error) {
-      detail = error instanceof Error ? error.message : String(error);
+    const result = deps.execInSandbox(sandboxName, script);
+    if (result === null) {
+      last = {
+        kind: "exec-failed",
+        detail: "openshell sandbox exec did not run (sandbox unreachable or exec timed out)",
+      };
+    } else {
+      const out = (result.stdout || "").trim();
+      if (out === "NO_CURL") return { kind: "no-curl" };
+      const match = out.match(/HTTP_(\d{3})/);
+      if (match) {
+        const httpCode = match[1];
+        // This gate is the #4509 runtime proof, so only a 2xx — the model list
+        // actually returned through the proxy with injected auth — counts as
+        // success. `000` is the reported failure (DNS / connection refused). A
+        // 4xx (wrong provider route, or auth the proxy failed to inject) or 5xx
+        // (local Ollama/vLLM backend down) means OpenClaw's real request would
+        // fail too, so do NOT report it as reachable.
+        if (/^2\d\d$/.test(httpCode)) return { kind: "ok", httpCode };
+        last = {
+          kind: "unreachable",
+          detail:
+            httpCode === "000"
+              ? `${endpoint} returned HTTP 000 (DNS failure or connection refused)`
+              : `${endpoint} returned HTTP ${httpCode} (inference route reached but not usable — provider route/auth misconfigured or the local backend is failing)`,
+        };
+      } else {
+        // The exec ran but produced no sentinel — the sandbox runtime exec
+        // path itself is broken (e.g. sandbox in Error, exec denied). Treat as
+        // an exec failure, NOT a missing-curl soft-skip, so we never declare
+        // success without actually exercising the runtime (#4509 review).
+        const noise = (out || result.stderr || "").slice(0, 160);
+        last = { kind: "exec-failed", detail: `unexpected sandbox exec output: ${noise}` };
+      }
     }
     if (attempt < DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS) {
       deps.sleep(DOCKER_GPU_INFERENCE_PROBE_RETRY_DELAY_SECS);
     }
   }
-  return { ok: false, detail };
+  return last;
 }
 
 /**
- * Post-recreate reachability gate for Docker-driver GPU host-network local
- * inference (#4509). After the GPU patch recreates the sandbox container with
- * `--network host` and OpenClaw is wired to the direct `127.0.0.1` provider
- * URL, prove the real container can actually reach that endpoint before
- * onboarding declares success — otherwise the failure only surfaces later as
- * an opaque `ECONNREFUSED` during an agent prompt.
+ * Post-ready local-inference reachability gate for the Docker-driver GPU path
+ * (#4509). After the sandbox reaches Ready, prove the OpenClaw agent runtime
+ * can actually reach the local inference route — from inside the sandbox's own
+ * network namespace, the context the agent's LLM client uses — before
+ * onboarding declares success. Otherwise an unreachable provider only surfaces
+ * later as an opaque `ECONNREFUSED` / "LLM request failed: network connection
+ * error" during the first agent prompt.
  *
- * Self-gates: returns `skipped` unless the host-network GPU patch is active
- * for a local inference provider.
+ * Self-gates: returns `skipped` unless the GPU Docker-driver patch is active
+ * for a local inference provider. Soft-skips (with a warning) only when the
+ * sandbox image genuinely lacks `curl` — OpenClaw's HTTP client does not need
+ * it, so a missing probe tool must not block an otherwise usable sandbox.
  */
-export function verifyDockerGpuHostNetworkLocalInference(
+export function verifyDockerGpuSandboxLocalInference(
   config: DockerGpuLocalInferenceConfig,
   provider: string | null | undefined,
   options: DockerGpuLocalInferenceOptions & {
     sandboxName: string;
-    deps?: DockerGpuHostNetworkInferenceVerifyDeps;
+    deps?: DockerGpuSandboxInferenceVerifyDeps;
   },
-): DockerGpuHostNetworkInferenceVerification {
-  if (!shouldUseDockerGpuPatchHostNetwork(config, options)) {
-    return { status: "skipped", reason: "not-host-network-gpu" };
+): DockerGpuSandboxInferenceVerification {
+  if (
+    !shouldApplyDockerGpuPatch(config, {
+      dockerDriverGateway: options.dockerDriverGateway,
+      env: options.env,
+      platform: options.platform,
+    })
+  ) {
+    return { status: "skipped", reason: "not-docker-gpu-patch" };
   }
-  if (!provider || !LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+  if (!isLocalInferenceProvider(provider)) {
     return { status: "skipped", reason: "not-local-provider" };
   }
-  const endpoint = getLocalProviderHealthEndpoint(provider);
+  const endpoint = getSandboxRuntimeInferenceEndpoint(provider);
   if (!endpoint) {
-    return { status: "skipped", reason: "no-health-endpoint" };
+    return { status: "skipped", reason: "no-runtime-endpoint" };
   }
 
   const deps = options.deps ?? {};
-  const findContainerIds =
-    deps.findContainerIds ?? ((name: string) => findOpenShellDockerSandboxContainerIds(name));
-  const dockerCaptureFn = deps.dockerCapture ?? dockerCapture;
-  const dockerRunFn = deps.dockerRun ?? dockerRun;
+  const execInSandbox = deps.execInSandbox ?? executeSandboxCommandForVerification;
   const sleep =
     deps.sleep ??
     ((seconds: number) => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
     });
 
-  const containerId = findContainerIds(options.sandboxName)[0];
-  if (!containerId) {
-    return {
-      status: "failed",
-      kind: "container-not-found",
-      provider,
-      message: `Could not find the recreated OpenShell Docker container for sandbox '${options.sandboxName}'.`,
-      containerId: null,
-      networkMode: null,
-      endpoint,
-      detail: null,
-      recovery: [
-        "Confirm the sandbox container is running:  openshell sandbox list",
-        "Re-run onboarding; the Docker GPU container recreate may not have completed.",
-      ],
-    };
-  }
+  const outcome = probeSandboxRuntimeInference(options.sandboxName, endpoint, {
+    execInSandbox,
+    sleep,
+  });
 
-  const networkMode = inspectContainerNetworkMode(containerId, dockerCaptureFn);
-  if (networkMode !== "host") {
-    return {
-      status: "failed",
-      kind: "network-mode",
-      provider,
-      message:
-        `Docker-driver GPU host networking was requested (${DOCKER_GPU_PATCH_NETWORK_ENV}=host) but the ` +
-        `recreated sandbox container is on network mode '${networkMode ?? "unknown"}'. OpenClaw is wired ` +
-        `to ${endpoint}, which is only reachable under --network host.`,
-      containerId,
-      networkMode: networkMode ?? null,
-      endpoint,
-      detail: null,
-      recovery: [
-        "The GPU patch only switches to --network host when it can rewrite OPENSHELL_ENDPOINT",
-        "  from host.openshell.internal to 127.0.0.1; check the recreate logs above.",
-        `Re-run with ${DOCKER_GPU_PATCH_NETWORK_ENV}=host, or omit it to use the proxy inference path.`,
-      ],
-    };
+  if (outcome.kind === "ok") {
+    return { status: "ok", provider, endpoint, httpCode: outcome.httpCode };
   }
-
-  // Minimal/custom images (e.g. some --from-dockerfile bases) may not ship
-  // curl. A missing probe tool must not be reported as an unreachable
-  // endpoint — that would turn a tooling gap into a false onboarding failure.
-  // Soft-skip with a visible warning instead, preserving prior behavior where
-  // there was no gate at all (#4509 review follow-up).
-  if (!containerHasCurl(containerId, dockerRunFn)) {
-    // Always surface this skip: it is the operator's only explanation for why
-    // the reachability proof did not run. Fall back to console.warn when no
-    // logger is wired so the warning is never silently dropped.
+  if (outcome.kind === "no-curl") {
+    // Minimal/custom images (e.g. some `--from-dockerfile` bases) may not ship
+    // curl. Soft-skip with a visible warning rather than fail onboarding; fall
+    // back to console.warn so the skip reason is never silently dropped.
     const warn = options.log ?? ((message: string) => console.warn(message));
     warn(
-      `  ⚠ Skipping host-network local inference reachability check: curl is not available in ${containerId}.`,
+      `  ⚠ Skipping GPU sandbox local inference reachability check: curl is not available in the sandbox (${options.sandboxName}).`,
     );
     return { status: "skipped", reason: "probe-tool-unavailable" };
   }
 
-  const probe = probeContainerInferenceEndpoint(containerId, endpoint, {
-    dockerRun: dockerRunFn,
-    sleep,
-  });
-  if (!probe.ok) {
-    return {
-      status: "failed",
-      kind: "probe",
-      provider,
-      message: `The recreated host-network sandbox container could not reach the local inference endpoint ${endpoint}.`,
-      containerId,
-      networkMode,
-      endpoint,
-      detail: probe.detail,
-      recovery: [
-        `Confirm the provider is listening on the host loopback:  curl ${endpoint}`,
-        "Ensure Ollama/vLLM binds 127.0.0.1 directly (not only a container bridge address).",
-        "Check that HTTP_PROXY/NO_PROXY inside the sandbox do not intercept the loopback request.",
-        "Set NEMOCLAW_DOCKER_GPU_PATCH=0 to skip the GPU container recreate and use the proxy path.",
-      ],
-    };
-  }
-
-  return { status: "ok", provider, containerId, networkMode, endpoint };
+  const recovery =
+    outcome.kind === "exec-failed"
+      ? [
+          "Confirm the sandbox is running and reachable:  openshell sandbox list",
+          "Re-run onboarding; the sandbox runtime exec path did not respond.",
+        ]
+      : [
+          "Ensure Ollama/vLLM is running and the OpenShell inference route is configured.",
+          "Check the sandbox can reach inference.local (proxy/router up):",
+          `  openshell sandbox exec -n ${options.sandboxName} -- curl -sS ${endpoint}`,
+          "If a host firewall (e.g. UFW) blocks the Docker bridge, allow it so the sandbox",
+          "  can reach the gateway/proxy, then re-run onboarding.",
+          "Do not force NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host for local inference — the host",
+          "  loopback is not reachable from the sandbox's isolated network namespace.",
+        ];
+  return {
+    status: "failed",
+    kind: outcome.kind === "exec-failed" ? "exec" : "unreachable",
+    provider,
+    endpoint,
+    message:
+      outcome.kind === "exec-failed"
+        ? "The GPU sandbox runtime exec path did not respond, so local inference reachability could not be proven."
+        : `The GPU sandbox runtime could not reach the local inference route ${endpoint} (the context OpenClaw's LLM client uses).`,
+    detail: outcome.detail,
+    recovery,
+  };
 }
 
 /**
- * Print a failed host-network inference verification result as actionable
- * operator output: the message, provider, container, network mode, endpoint,
- * truncated detail, and recovery hints. Defaults to `console.error`.
+ * Print a failed sandbox-runtime inference verification result as actionable
+ * operator output. Defaults to `console.error`.
  */
-export function printDockerGpuHostNetworkInferenceVerificationFailure(
-  verification: Extract<DockerGpuHostNetworkInferenceVerification, { status: "failed" }>,
+export function printDockerGpuSandboxInferenceVerificationFailure(
+  verification: Extract<DockerGpuSandboxInferenceVerification, { status: "failed" }>,
   log: (message: string) => void = (message) => console.error(message),
 ): void {
   const providerLabel = getLocalProviderLabel(verification.provider) ?? verification.provider;
   log("");
-  log("  Local inference reachability check failed for the GPU host-network sandbox.");
+  log("  Local inference reachability check failed for the GPU sandbox runtime.");
   log(`  ${verification.message}`);
   log(`  provider=${providerLabel}`);
-  if (verification.containerId) log(`  container=${verification.containerId}`);
-  if (verification.networkMode) log(`  network_mode=${verification.networkMode}`);
-  if (verification.endpoint) log(`  endpoint=${verification.endpoint}`);
+  log(`  endpoint=${verification.endpoint}`);
   if (verification.detail) log(`  detail=${verification.detail.slice(0, 300)}`);
   log("  Recovery:");
   for (const line of verification.recovery) log(`    ${line}`);
@@ -384,15 +364,16 @@ export type GpuSandboxAfterReadyOptions = {
   platform?: NodeJS.Platform;
   log?: (message: string) => void;
   logError?: (message: string) => void;
-  deps?: DockerGpuHostNetworkInferenceVerifyDeps;
+  deps?: DockerGpuSandboxInferenceVerifyDeps;
 };
 
 /**
  * Post-readiness GPU sandbox verification orchestrator (kept out of the
  * ~12k-line onboard.ts entrypoint per the codebase-growth guardrail). Runs the
- * direct GPU proof, then — only when the Docker GPU patch recreated the
- * container — gates on host-network local inference reachability (#4509). Exits
- * the process with actionable output if either proof fails.
+ * direct GPU proof, then — only when the Docker GPU patch is active for a local
+ * inference provider — gates on local inference reachability from the sandbox
+ * runtime (#4509). Exits the process with actionable output if either proof
+ * fails.
  */
 export function verifyGpuSandboxAfterReady(
   config: DockerGpuLocalInferenceConfig,
@@ -419,9 +400,9 @@ export function verifyGpuSandboxAfterReady(
   }
 
   // When NEMOCLAW_DOCKER_GPU_PATCH=0, useDockerGpuPatch is false and there is no
-  // recreated container to probe, so skip the host-network inference gate.
+  // GPU-patched sandbox to gate, so skip the local inference reachability gate.
   if (!options.useDockerGpuPatch) return;
-  const verification = verifyDockerGpuHostNetworkLocalInference(config, provider, {
+  const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
     sandboxName: options.sandboxName,
     dockerDriverGateway: options.dockerDriverGateway,
     env: options.env,
@@ -431,12 +412,14 @@ export function verifyGpuSandboxAfterReady(
   });
   const log = options.log ?? console.log;
   if (verification.status === "ok") {
-    log(`  ✓ GPU host-network local inference reachable from sandbox: ${verification.endpoint}`);
+    log(
+      `  ✓ GPU sandbox runtime reached local inference: ${verification.endpoint} (HTTP ${verification.httpCode})`,
+    );
   } else if (verification.status === "failed") {
     // Route failure diagnostics through the caller-provided error sink so
     // wrappers / structured log collectors still see them; defaults to
     // console.error (onboard's stderr error channel).
-    printDockerGpuHostNetworkInferenceVerificationFailure(
+    printDockerGpuSandboxInferenceVerificationFailure(
       verification,
       options.logError ?? ((message) => console.error(message)),
     );
