@@ -2221,6 +2221,45 @@ PROXYEOF
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
+# #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
+# shell, outside any NemoClaw wrapper command) tightens the mutable OpenClaw
+# config tree back to single-user 700/600 — even when it exits nonzero (e.g. it
+# hits EACCES on a root-locked shell init file). That blocks the gateway UID,
+# a member of the sandbox group, from persisting config writes. Restore the
+# setgid + group-writable contract (2770 dir / 660 config) after every openclaw
+# invocation routed through this guard, regardless of exit code. Best-effort and
+# idempotent: it skips when shields are up (config dir owned by root) so the lock
+# is never weakened, and is a no-op when the contract already holds. The
+# baseline re-lock stays a root-only startup concern (this runs as the sandbox
+# user), so it is intentionally not attempted here. Kept in sync with the
+# entrypoint's normalize_mutable_config_perms.
+_nemoclaw_restore_mutable_config_perms() {
+  local _nemoclaw_oc_dir _nemoclaw_oc_owner _nemoclaw_oc_dir_mode _nemoclaw_oc_file_mode _nemoclaw_oc_hash_mode
+  _nemoclaw_oc_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
+  [ -d "$_nemoclaw_oc_dir" ] || return 0
+  _nemoclaw_oc_owner="$(stat -c '%U' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Su' "$_nemoclaw_oc_dir" 2>/dev/null || echo unknown)"
+  # Shields up — config is intentionally root-locked; never weaken it.
+  [ "$_nemoclaw_oc_owner" = "root" ] && return 0
+  _nemoclaw_oc_dir_mode="$(stat -c '%a' "$_nemoclaw_oc_dir" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir" 2>/dev/null || echo '')"
+  _nemoclaw_oc_file_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/openclaw.json" 2>/dev/null || echo '')"
+  _nemoclaw_oc_hash_mode="$(stat -c '%a' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || stat -f '%Lp' "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || echo '')"
+  # Fast path: contract already intact (2770 dir, 660 config + hash when present).
+  # Check .config-hash too so a doctor run that tightened only it is still fixed.
+  if [ "$_nemoclaw_oc_dir_mode" = "2770" ] &&
+    { [ "$_nemoclaw_oc_file_mode" = "660" ] || [ -z "$_nemoclaw_oc_file_mode" ]; } &&
+    { [ "$_nemoclaw_oc_hash_mode" = "660" ] || [ -z "$_nemoclaw_oc_hash_mode" ]; }; then
+    return 0
+  fi
+  chmod -R g+rwX,o-rwx "$_nemoclaw_oc_dir" 2>/dev/null || true
+  find "$_nemoclaw_oc_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
+  chmod 2770 "$_nemoclaw_oc_dir" 2>/dev/null || true
+  chmod 660 "$_nemoclaw_oc_dir/openclaw.json" "$_nemoclaw_oc_dir/.config-hash" 2>/dev/null || true
+  # Keep the recovery baseline out of the group-writable contract — it is a
+  # read-only trust anchor (root:sandbox 0440 when root re-locks it). The
+  # recursive chmod above would otherwise loosen it to group-writable in
+  # rootless mode, where the root-only re-lock is skipped (#4538).
+  chmod g-w "$_nemoclaw_oc_dir/openclaw.json.nemoclaw-baseline" 2>/dev/null || true
+}
 openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
@@ -2479,7 +2518,19 @@ PYAPPROVEAFTER
       done
       ;;
   esac
+  # #4538: re-assert the mutable config perm contract after any openclaw run
+  # (notably `doctor --fix`), even on a nonzero exit, then preserve its status.
+  # Drop errexit around the call (mirroring the devices-approve branch above) so
+  # a nonzero openclaw exit cannot abort the guard before the restore runs — the
+  # nonzero-exit case is the exact #4538 scenario.
+  local _nemoclaw_oc_errexit=0
+  case $- in *e*) _nemoclaw_oc_errexit=1 ;; esac
+  set +e
   command openclaw "$@"
+  local _nemoclaw_oc_status=$?
+  _nemoclaw_restore_mutable_config_perms
+  [ "$_nemoclaw_oc_errexit" = "1" ] && set -e
+  return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
 GUARDENVEOF
