@@ -21,7 +21,9 @@ export interface LiveOnboardFlowSliceOptions<Context> {
 }
 
 function asResultArray(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  return Array.isArray(result) ? (result as readonly OnboardStateResult[]) : [result as OnboardStateResult];
+  return Array.isArray(result)
+    ? (result as readonly OnboardStateResult[])
+    : [result as OnboardStateResult];
 }
 
 /**
