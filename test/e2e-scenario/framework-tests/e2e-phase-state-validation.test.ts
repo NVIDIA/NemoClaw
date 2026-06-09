@@ -199,7 +199,7 @@ describe("state-validation phase fixture", () => {
         "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",
-        "-fsS",
+        "-sS",
         "-o",
         "/dev/null",
         "-w",

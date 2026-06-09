@@ -140,7 +140,7 @@ export class StateValidationPhaseFixture {
         instance.sandboxName,
         [
           "curl",
-          "-fsS",
+          "-sS",
           "-o",
           "/dev/null",
           "-w",
