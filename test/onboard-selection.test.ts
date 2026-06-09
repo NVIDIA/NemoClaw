@@ -449,7 +449,7 @@ const { setupNim } = require(${onboardPath});
     expect(result.stdout.trim()).not.toBe("");
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3-ultra-550b-a55b");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.promptCalls, 2);
     assert.match(payload.messages[0], /Choose \[/);
@@ -4042,7 +4042,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3-ultra-550b-a55b");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Endpoint URL is required for Other OpenAI-compatible endpoint."),

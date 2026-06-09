@@ -19,7 +19,7 @@ spec:
     policyTier: custom
     messaging: []
     features:
-      model: nvidia/nemotron-3-super-120b-a12b
+      model: nvidia/nemotron-3-ultra-550b-a55b
       policyPresets:
         - npm
         - pypi
