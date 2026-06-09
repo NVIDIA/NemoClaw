@@ -86,7 +86,7 @@ jobs:
       # This prevents a future PR from modifying advisor code and executing
       # arbitrary Node in a job that holds API keys and a write-scoped token.
       - name: Checkout trusted advisor code (main)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: NVIDIA/NemoClaw
           ref: main
@@ -98,7 +98,7 @@ jobs:
       # via `git diff` / `fs.readFileSync` from inside the trusted scripts.
       - name: Checkout PR workspace (read-only data)
         if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr-workdir
@@ -112,7 +112,7 @@ jobs:
       # it as code.
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           path: pr-workdir
           fetch-depth: 0
@@ -173,17 +173,24 @@ jobs:
             --schema "$ADVISOR_DIR/tools/e2e-advisor/schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
-      - name: Run deterministic scenario E2E advisor
+      - name: Run scenario E2E advisor
         id: scenario-analysis
         continue-on-error: true
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          E2E_SCENARIO_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
+          # Reuse the shared E2E advisor secret. The scenario advisor is a
+          # separate prompt/agent but uses the same model and credential.
+          E2E_ADVISOR_API_KEY: ${{ secrets.PI_E2E_ADVISOR_API_KEY }}
+          # Optional local-provider-compatible fallback for future upstream/external-advisor use.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
           node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/scenarios.mts" \
             --base "$BASE_REF" \
             --head "$HEAD_REF" \
+            --schema "$ADVISOR_DIR/tools/e2e-advisor/scenarios-schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
       - name: Publish job summary

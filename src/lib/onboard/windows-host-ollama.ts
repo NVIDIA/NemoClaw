@@ -55,12 +55,9 @@ function probeInstalledPath(): string {
   // lookup (#3949).
   const processPath = powershell(GET_PROCESS_OLLAMA_PATH);
   if (processPath.length > 0) return processPath;
-  // Some WSL-launched PowerShell sessions can see the Windows ollama PID
-  // but cannot read the Path property. Only after observing the live
-  // daemon, fall back to fixed installer locations so the restart path
-  // still has an explicit executable to launch.
-  const pid = powershell(GET_PROCESS_OLLAMA_ID);
-  if (!pid) return "";
+  // Silent installs often land in fixed locations without updating PATH or
+  // leaving a running daemon to probe. Check those paths even when no PID is
+  // visible so WSL onboarding offers Start instead of Install (#4066).
   return powershell(GET_KNOWN_OLLAMA_INSTALL_PATH);
 }
 
@@ -78,6 +75,8 @@ export function detectWindowsHostOllama(): WindowsHostOllamaState {
     return { installed: false, installedPath: "", loopbackOnly: false };
   }
   const installedPath = probeInstalledPath();
+  // `installed` reflects binary presence on disk, not a live daemon. Onboard
+  // still gates Start/Restart on reachability and loopback binding (#3949).
   const installed = installedPath.length > 0;
   const loopbackOnly = installed ? probeLoopbackOnly() : false;
   return { installed, installedPath, loopbackOnly };

@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-inference-inference-options-001",
+    "question": "I'm choosing an inference option during onboarding. Help me compare hosted providers, local servers, and compatible endpoints so I can select a model path that fits my privacy, cost, and reliability needs.",
+    "expected_skill": "nemoclaw-user-configure-inference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user compare hosted providers, local servers, and compatible endpoints and gives enough concrete guidance, decision criteria, verification steps, or risk framing to select a model path that fits my privacy, cost, and reliability needs.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

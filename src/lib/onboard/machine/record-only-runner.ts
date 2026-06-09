@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { StepMutationOptions } from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
+import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import { OnboardRuntimeBoundary, type OnboardRuntimeBoundaryOptions } from "../runtime-boundary";
 import {
-  runOnboardMachine,
   type OnboardMachineRunnerOptions,
   type OnboardMachineRunnerResult,
+  runOnboardMachine,
 } from "./runner";
 
 export type RecordOnlyOnboardRuntimeBoundaryOptions = Omit<
@@ -16,20 +17,44 @@ export type RecordOnlyOnboardRuntimeBoundaryOptions = Omit<
   stepMutationOptions?: Omit<StepMutationOptions, "updateMachine">;
 };
 
+export type RecordOnlyStepRecorders = Pick<
+  ReturnType<OnboardRuntimeBoundary["recorders"]>,
+  "startRecordedStep" | "recordStepComplete" | "recordStepSkipped" | "recordStepFailed"
+>;
+
+export interface RecordOnlyOnboardRuntimeBoundary {
+  getRuntime: OnboardRuntimeBoundary["getRuntime"];
+  recordOnboardStarted(resumed: boolean): Promise<Session>;
+  recorders(): RecordOnlyStepRecorders;
+}
+
 export interface RecordOnlyOnboardMachineRunnerOptions<Context>
   extends Omit<OnboardMachineRunnerOptions<Context>, "runtime"> {
-  boundary: OnboardRuntimeBoundary;
+  boundary: RecordOnlyOnboardRuntimeBoundary;
   resumed?: boolean;
   emitLifecycleEvent?: boolean;
 }
 
 export function createRecordOnlyOnboardRuntimeBoundary(
   options: RecordOnlyOnboardRuntimeBoundaryOptions,
-): OnboardRuntimeBoundary {
-  return new OnboardRuntimeBoundary({
+): RecordOnlyOnboardRuntimeBoundary {
+  const boundary = new OnboardRuntimeBoundary({
     ...options,
     stepMutationOptions: { ...options.stepMutationOptions, updateMachine: false },
   });
+  return {
+    getRuntime: boundary.getRuntime.bind(boundary),
+    recordOnboardStarted: boundary.recordOnboardStarted.bind(boundary),
+    recorders: () => {
+      const recorders = boundary.recorders();
+      return {
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStepFailed: recorders.recordStepFailed,
+      };
+    },
+  };
 }
 
 /**

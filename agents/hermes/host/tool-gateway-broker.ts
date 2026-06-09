@@ -9,11 +9,11 @@
  *
  * Hermes managed tools need a Nous subscription credential, but the sandbox
  * must not own raw Nous OAuth state. NemoClaw stores the refresh credential in
- * OpenShell provider storage, gives the sandbox only an opaque per-sandbox
- * broker token, and keeps the raw refresh token in this host process after
- * OAuth onboarding. The broker refreshes on the host with x-nous-refresh-token,
- * injects a short-lived access token upstream, and persists only a refresh-token
- * hash so rotated refresh tokens can update OpenShell without writing raw
+ * OpenShell provider storage, gives the sandbox only an OpenShell resolver
+ * placeholder, and keeps the raw refresh token in this host process after OAuth
+ * onboarding. The broker refreshes on the host with x-nous-refresh-token,
+ * injects a short-lived access token upstream, and persists only credential
+ * hashes so rotated refresh tokens can update OpenShell without writing raw
  * OAuth/API secrets to ~/.nemoclaw.
  */
 
@@ -170,6 +170,14 @@ function findStateByBrokerToken(brokerToken) {
       return loaded;
     }
   }
+  return null;
+}
+
+function findCredentialState(token) {
+  const brokerMatch = findStateByBrokerToken(token);
+  if (brokerMatch) return { loaded: brokerMatch, kind: "broker" };
+  const refreshMatch = findStateByRefreshToken(token);
+  if (refreshMatch) return { loaded: refreshMatch, kind: "refresh" };
   return null;
 }
 
@@ -504,8 +512,8 @@ function isAbortError(err) {
 }
 
 async function handleProxy(req, res, route) {
-  const brokerToken = extractRefreshToken(req);
-  if (!brokerToken) {
+  const presentedToken = extractRefreshToken(req);
+  if (!presentedToken) {
     sendText(
       res,
       401,
@@ -514,8 +522,8 @@ async function handleProxy(req, res, route) {
     return;
   }
 
-  const loaded = findStateByBrokerToken(brokerToken) || findStateByRefreshToken(brokerToken);
-  if (!loaded) {
+  const credentialState = findCredentialState(presentedToken);
+  if (!credentialState) {
     sendText(
       res,
       401,
@@ -523,9 +531,9 @@ async function handleProxy(req, res, route) {
     );
     return;
   }
-  const refreshToken = loaded.state.broker_token_sha256
-    ? resolveRuntimeRefreshToken(loaded)
-    : brokerToken;
+  const { loaded } = credentialState;
+  const refreshToken =
+    credentialState.kind === "refresh" ? presentedToken : resolveRuntimeRefreshToken(loaded);
   if (!refreshToken) {
     sendText(
       res,

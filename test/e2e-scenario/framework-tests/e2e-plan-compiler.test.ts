@@ -25,7 +25,7 @@ function runScenarioCli(args: string[], env: Record<string, string> = {}) {
 }
 
 describe("plan compiler", () => {
-  it("test_should_emit_machine_and_human_plan_artifacts_under_context_dir", () => {
+  it("should emit machine and human plan artifacts under context dir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-plan-"));
     try {
       const result = runScenarioCli(["--scenarios", "ubuntu-repo-cloud-openclaw", "--plan-only"], {
@@ -45,7 +45,7 @@ describe("plan compiler", () => {
     }
   });
 
-  it("test_should_include_expanded_assertion_steps_by_phase", () => {
+  it("should include expanded assertion steps by phase", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
     const onboarding = plan.phases.find((phase) => phase.name === "onboarding");
     const runtime = plan.phases.find((phase) => phase.name === "runtime");
@@ -57,7 +57,7 @@ describe("plan compiler", () => {
     );
   });
 
-  it("test_should_show_timeout_and_retry_policy_in_plan", () => {
+  it("should show timeout and retry policy in plan", () => {
     const summary = runScenarioCli(["--scenarios", "ubuntu-repo-cloud-openclaw", "--plan-only"]);
 
     expect(summary.status, summary.stderr).toBe(0);
@@ -65,7 +65,7 @@ describe("plan compiler", () => {
     expect(summary.stdout).toContain("retry=2 on gateway-transient");
   });
 
-  it("test_should_reject_incompatible_manifest_scenario_combination", () => {
+  it("should reject incompatible manifest scenario combination", () => {
     const badScenario: ScenarioDefinition = {
       id: "bad-platform",
       manifestPath: "test/e2e-scenario/manifests/openclaw-nvidia-macos.yaml",
@@ -84,7 +84,7 @@ describe("plan compiler", () => {
     expect(() => compileRunPlans([badScenario])).toThrow(/incompatible.*platform|platform.*incompatible/i);
   });
 
-  it("test_should_reject_suite_filter", () => {
+  it("should reject suite filter", () => {
     const result = runScenarioCli(["--scenarios", "ubuntu-repo-cloud-openclaw", "--plan-only"], {
       E2E_SUITE_FILTER: "smoke",
     });
@@ -93,7 +93,7 @@ describe("plan compiler", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/E2E_SUITE_FILTER|scenario builders/i);
   });
 
-  it("plan_only_should_work_for_every_canonical_scenario_id", () => {
+  it("plan only should work for every canonical scenario ID", () => {
     const ids = listScenarios().map((scenario) => scenario.id);
     const plans = compileRunPlans(ids);
 

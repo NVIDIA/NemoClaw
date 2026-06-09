@@ -213,6 +213,132 @@ setup_scenarios:
     - credentials
     - onboarding-state
     - baseline-onboarding
+  ubuntu-repo-openai-compatible-openclaw:
+    alias_for_plan: ubuntu-repo-docker__openai-compatible-openclaw
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: openai-compatible-openclaw
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-brave:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-brave
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-brave
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-telegram:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-telegram
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-telegram
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-telegram
+  ubuntu-repo-cloud-openclaw-discord:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-discord
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-discord
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-cloud-openclaw-slack:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-slack
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-slack
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-cloud-hermes-discord:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes-discord
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-hermes-discord
+    expected_state: cloud-hermes-ready
+    suites:
+    - smoke
+    - messaging-discord
+  ubuntu-repo-cloud-hermes-slack:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes-slack
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-hermes-slack
+    expected_state: cloud-hermes-ready
+    suites:
+    - smoke
+    - messaging-slack
+  ubuntu-repo-cloud-openclaw-resume:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-resume-after-interrupt
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-repair:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-repair-existing-config
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-repair-existing-config
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-double-same-provider:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-double-same-provider
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-double-same-provider
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-double-provider-switch:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-double-provider-switch
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-double-provider-switch
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+  ubuntu-repo-cloud-openclaw-token-rotation:
+    alias_for_plan: ubuntu-repo-docker__cloud-nvidia-openclaw-token-rotation
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-nvidia-openclaw-token-rotation
+    expected_state: cloud-openclaw-ready
+    suites:
+    - smoke
+    - messaging-token-rotation
   ubuntu-invalid-nvidia-key-negative:
     dimensions:
       platform: ubuntu-local

@@ -697,7 +697,7 @@ export function buildSystemPrompt(): string {
     "Trusted security review skill from main checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
-    "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
+    "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Consider writing more tests for'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
     "7. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
     "8. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
@@ -752,7 +752,7 @@ Use the trusted security review skill embedded in the system prompt. For each se
       name: "acceptance-correctness-tests",
       prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
 
-Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. When tests are advisable, make each suggested test name the concrete behavior or risk to cover. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
 
 Acceptance/correctness/source-of-truth context gathered by trusted code:
 ${fencedBlock(validationContext, "json")}
@@ -995,6 +995,7 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   appendFindings(lines, "Needs attention", blockers);
   appendFindings(lines, "Worth checking", warnings);
   appendFindings(lines, "Nice ideas", suggestions);
+  appendTestingFollowups(lines, result);
   lines.push("## What looks good");
   if (result.positives.length === 0) {
     lines.push("- _No positives were identified by the advisor._");
@@ -1038,6 +1039,39 @@ export function renderDetailedReview(result: ReviewAdvisorResult): string {
   }
   lines.push("");
   return `${lines.join("\n")}\n`;
+}
+
+function appendTestingFollowups(lines: string[], result: ReviewAdvisorResult): void {
+  const followups = collectTestingFollowups(result);
+  if (followups.length === 0) return;
+  lines.push("## Consider writing more tests for");
+  for (const followup of followups) lines.push(`- ${followup}`);
+  lines.push("");
+}
+
+function collectTestingFollowups(result: ReviewAdvisorResult): string[] {
+  const followups: string[] = [];
+  if (result.testDepth.verdict !== "unit_sufficient") {
+    for (const suggestion of result.testDepth.suggestedTests.slice(0, 5)) {
+      followups.push(`**${testDepthLabel(result.testDepth.verdict)}** — ${suggestion}. ${result.testDepth.rationale}`);
+    }
+  }
+  for (const finding of result.findings.filter((item) => item.category === "tests").slice(0, 5)) {
+    followups.push(`**${finding.title}** — ${finding.recommendation}`);
+  }
+  for (const clause of result.acceptanceCoverage.filter((item) => item.status !== "met").slice(0, 5)) {
+    followups.push(`**Acceptance clause:** ${clause.clause} — add test evidence or identify existing coverage. ${clause.evidence}`);
+  }
+  for (const review of result.sourceOfTruthReview.filter((item) => item.status === "missing" || item.status === "needs_followup").slice(0, 5)) {
+    followups.push(`**${review.surface}** — ${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence}`);
+  }
+  return [...new Set(followups)].slice(0, 8);
+}
+
+function testDepthLabel(verdict: TestDepthVerdict): string {
+  if (verdict === "runtime_validation_recommended") return "Runtime validation";
+  if (verdict === "mocks_recommended") return "Mocked behavioral coverage";
+  return "Test coverage";
 }
 
 function appendFindings(lines: string[], heading: string, findings: Finding[]): void {

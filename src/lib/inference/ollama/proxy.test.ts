@@ -66,12 +66,12 @@ describe("promptOllamaModel installed-model fit filter", () => {
       totalMemoryMB: 131_072,
       availableMemoryMB: 12_000,
     });
-    expect(result).toBe("qwen2.5:7b");
+    expect(result).toBe("qwen3.5:9b");
   });
 
   it("keeps a fitting installed model as the default", async () => {
     const setup = loadProxyWithMocks({
-      installed: ["qwen2.5:7b", "qwen3.6:35b"],
+      installed: ["qwen3.5:9b", "qwen3.6:35b"],
       promptValues: [""],
     });
     active = setup;
@@ -80,8 +80,8 @@ describe("promptOllamaModel installed-model fit filter", () => {
       totalMemoryMB: 131_072,
       availableMemoryMB: 12_000,
     });
-    // Only qwen2.5:7b fits; the menu offers only it, Enter selects it.
-    expect(result).toBe("qwen2.5:7b");
+    // Only qwen3.5:9b fits; the menu offers only it, Enter selects it.
+    expect(result).toBe("qwen3.5:9b");
   });
 
   it("respects unknown installed tags (not in the registry) even when nothing else fits", async () => {
@@ -96,5 +96,47 @@ describe("promptOllamaModel installed-model fit filter", () => {
       availableMemoryMB: 12_000,
     });
     expect(result).toBe("my-custom:model");
+  });
+
+  it("drops excludeModels entries from the installed-fitting menu so a repeat probe-fail does not loop", async () => {
+    // Caller (selectAndValidateOllamaModel) records `nemotron-3-nano:30b` as a
+    // probe-fail and excludes it. Without this filter, pressing Enter on the
+    // installed-fitting list would re-select the broken model and dead-loop.
+    const setup = loadProxyWithMocks({
+      installed: ["nemotron-3-nano:30b", "qwen3.5:9b"],
+      promptValues: [""],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 131_072,
+      },
+      { excludeModels: new Set(["nemotron-3-nano:30b"]) },
+    );
+    expect(result).toBe("qwen3.5:9b");
+  });
+
+  it("falls back to bootstrap options and never re-offers excluded entries", async () => {
+    const setup = loadProxyWithMocks({
+      installed: ["nemotron-3-nano:30b"],
+      // Pick the first menu entry explicitly. With nemotron-3-nano:30b
+      // excluded, the bootstrap fall-back menu lists [qwen3.5:9b, qwen3.6:35b]
+      // smallest-first; option 1 must resolve to qwen3.5:9b, never the
+      // excluded tag.
+      promptValues: ["1"],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 131_072,
+      },
+      { excludeModels: new Set(["nemotron-3-nano:30b"]) },
+    );
+    expect(result).toBe("qwen3.5:9b");
+    expect(result).not.toBe("nemotron-3-nano:30b");
   });
 });

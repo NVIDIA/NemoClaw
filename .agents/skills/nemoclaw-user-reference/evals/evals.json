@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-reference-architecture-001",
+    "question": "I'm using the architecture reference. Help me verify implementation and operations details so I can make changes or debug behavior from the right mental model.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user verify implementation and operations details and gives enough concrete guidance, decision criteria, verification steps, or risk framing to make changes or debug behavior from the right mental model.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

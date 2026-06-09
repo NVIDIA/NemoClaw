@@ -15,6 +15,16 @@ function isPackageInfo(value: PackageInfo | null): value is { version: string } 
   return typeof value?.version === "string";
 }
 
+function gitEnvForRoot(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_") && value !== undefined) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
 export interface VersionOptions {
   /** Override the repo root directory. */
   rootDir?: string;
@@ -35,6 +45,7 @@ export function getVersion(opts: VersionOptions = {}): string {
     const raw = execFileSync("git", ["describe", "--tags", "--match", "v*"], {
       cwd: root,
       encoding: "utf-8",
+      env: gitEnvForRoot(),
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     if (raw) return raw.replace(/^v/, "");

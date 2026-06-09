@@ -9,12 +9,103 @@ import path from "node:path";
 
 import { describe, it } from "vitest";
 
+import { createCustomBuildContextFilter } from "../dist/lib/onboard/custom-build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+
+describe("custom Dockerfile build context filter", () => {
+  it("preserves existing behavior when .dockerignore is missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-context-filter-"));
+    try {
+      const filter = createCustomBuildContextFilter(tmpDir);
+
+      assert.equal(filter(tmpDir), true, "context root should be traversable");
+      assert.equal(filter(path.join(tmpDir, "Dockerfile")), true);
+      assert.equal(filter(path.join(tmpDir, "src", "app.js")), true);
+      assert.equal(filter(path.join(tmpDir, "node_modules", "pkg", "index.js")), false);
+      assert.equal(filter(path.join(tmpDir, ".ssh", "id_ed25519")), false);
+      assert.equal(filter(path.join(tmpDir, "service-account-prod.json")), false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("applies .dockerignore excludes, comments, blanks, and negation ordering", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-context-filter-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, ".dockerignore"),
+        [
+          "# ignored comment",
+          "",
+          "logs/",
+          "*.tmp",
+          "!keep.tmp",
+          "build/*.cache",
+          "!build/keep.cache",
+        ].join("\n"),
+      );
+
+      const filter = createCustomBuildContextFilter(tmpDir);
+
+      assert.equal(filter(path.join(tmpDir, "logs")), false);
+      assert.equal(filter(path.join(tmpDir, "logs", "app.log")), false);
+      assert.equal(filter(path.join(tmpDir, "nested", "logs", "app.log")), false);
+      assert.equal(filter(path.join(tmpDir, "drop.tmp")), false);
+      assert.equal(filter(path.join(tmpDir, "nested", "drop.tmp")), false);
+      assert.equal(filter(path.join(tmpDir, "keep.tmp")), true);
+      assert.equal(filter(path.join(tmpDir, "build", "drop.cache")), false);
+      assert.equal(filter(path.join(tmpDir, "build", "keep.cache")), true);
+      assert.equal(filter(path.join(tmpDir, "src", "app.js")), true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats leading slash patterns like equivalent unrooted dockerignore patterns", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-context-filter-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, ".dockerignore"),
+        ["/root-only.log", "/root-cache/"].join("\n"),
+      );
+
+      const filter = createCustomBuildContextFilter(tmpDir);
+
+      assert.equal(filter(path.join(tmpDir, "root-only.log")), false);
+      assert.equal(filter(path.join(tmpDir, "nested", "root-only.log")), false);
+      assert.equal(filter(path.join(tmpDir, "root-cache")), false);
+      assert.equal(filter(path.join(tmpDir, "root-cache", "data.bin")), false);
+      assert.equal(filter(path.join(tmpDir, "nested", "root-cache", "data.bin")), false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps NemoClaw secret exclusions stronger than .dockerignore negation", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-context-filter-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, ".dockerignore"),
+        ["*", "!Dockerfile", "!secrets/token.txt", "!.env.local", "!model.pem"].join("\n"),
+      );
+
+      const filter = createCustomBuildContextFilter(tmpDir);
+
+      assert.equal(filter(path.join(tmpDir, "Dockerfile")), true);
+      assert.equal(filter(path.join(tmpDir, "ordinary.txt")), false);
+      assert.equal(filter(path.join(tmpDir, "secrets", "token.txt")), false);
+      assert.equal(filter(path.join(tmpDir, ".env.local")), false);
+      assert.equal(filter(path.join(tmpDir, "model.pem")), false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("onboard custom Dockerfile", () => {
   it("uses the custom Dockerfile parent directory as build context when --from is given", testTimeoutOptions(60_000), async () => {
@@ -48,6 +139,23 @@ describe("onboard custom Dockerfile", () => {
     );
     fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
     fs.writeFileSync(path.join(customBuildDir, "large.bin"), "small file with large mocked stat");
+    fs.mkdirSync(path.join(customBuildDir, "ignored-by-dockerignore"), { recursive: true });
+    fs.writeFileSync(
+      path.join(customBuildDir, "ignored-by-dockerignore", "ignored.txt"),
+      "skip me via .dockerignore",
+    );
+    fs.writeFileSync(path.join(customBuildDir, "ignored.log"), "skip me via glob");
+    fs.writeFileSync(path.join(customBuildDir, "keep.log"), "keep me via negation");
+    fs.writeFileSync(
+      path.join(customBuildDir, ".dockerignore"),
+      [
+        "ignored-by-dockerignore/",
+        "*.log",
+        "!keep.log",
+        // NemoClaw's secret denylist must still win over .dockerignore negation.
+        "!secrets/token.txt",
+      ].join("\n"),
+    );
     fs.mkdirSync(path.join(customBuildDir, "node_modules", "pkg"), { recursive: true });
     fs.writeFileSync(path.join(customBuildDir, "node_modules", "pkg", "ignored.txt"), "skip me");
     fs.mkdirSync(path.join(customBuildDir, ".ssh"), { recursive: true });
@@ -85,6 +193,7 @@ const path = require("node:path");
 const commands = [];
 let hasExtraFileAtSpawn = false;
 let stagedIgnoredFilesAtSpawn = null;
+let stagedDockerignoreFilesAtSpawn = null;
 const largeFilePath = ${JSON.stringify(path.join(customBuildDir, "large.bin"))};
 const originalStatSync = fs.statSync;
 fs.statSync = (target, ...rest) => {
@@ -139,6 +248,12 @@ childProcess.spawn = (...args) => {
       pem: fs.existsSync(path.join(stagedDir, "model.pem")),
       credentialsJson: fs.existsSync(path.join(stagedDir, "credentials.json")),
     };
+    stagedDockerignoreFilesAtSpawn = {
+      ignoredDir: fs.existsSync(path.join(stagedDir, "ignored-by-dockerignore")),
+      ignoredLog: fs.existsSync(path.join(stagedDir, "ignored.log")),
+      keepLog: fs.existsSync(path.join(stagedDir, "keep.log")),
+      negatedSecret: fs.existsSync(path.join(stagedDir, "secrets", "token.txt")),
+    };
   }
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
@@ -152,7 +267,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   const sandboxName = await createSandbox(null, "gpt-5.4", "openai-api", null, "my-assistant", null, null, ${customDockerfilePath});
-  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn }));
+  console.log(JSON.stringify({ sandboxName, hasExtraFile: hasExtraFileAtSpawn, stagedIgnoredFiles: stagedIgnoredFilesAtSpawn, stagedDockerignoreFiles: stagedDockerignoreFilesAtSpawn }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -199,6 +314,12 @@ const { createSandbox } = require(${onboardPath});
       npmrc: false,
       pem: false,
       credentialsJson: false,
+    });
+    assert.deepEqual(payload.stagedDockerignoreFiles, {
+      ignoredDir: false,
+      ignoredLog: false,
+      keepLog: true,
+      negatedSecret: false,
     });
   });
 
