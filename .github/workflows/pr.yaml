@@ -92,6 +92,7 @@ jobs:
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
       - name: Run static checks
@@ -120,10 +121,72 @@ jobs:
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
       - name: Run build and type checks
         uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
+
+  installer-integration:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Detect trusted installer integration action
+        id: trusted-installer-integration
+        shell: bash
+        run: |
+          if [ -f .trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run installer integration tests
+        if: ${{ steps.trusted-installer-integration.outputs.available == 'true' }}
+        uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+
+      - name: Setup Node.js for installer integration
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install installer integration dependencies
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          cd nemoclaw && npm install --ignore-scripts
+
+      - name: Build installer integration artifacts
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: |
+          npm run build:cli
+          cd nemoclaw && npm run build
+
+      - name: Run installer integration tests (bootstrap)
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: CI=true npx vitest run --project installer-integration
 
   cli-test-shards:
     needs: changes
@@ -152,6 +215,7 @@ jobs:
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
       - name: Run CLI coverage shard
@@ -194,6 +258,7 @@ jobs:
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
       - name: Merge CLI coverage
@@ -224,6 +289,7 @@ jobs:
             .github/actions/ci-cli-coverage-shard
             .github/actions/ci-cli-coverage-merge
             .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
       - name: Run plugin coverage
@@ -253,6 +319,7 @@ jobs:
       - docs-only-checks
       - static-checks
       - build-typecheck
+      - installer-integration
       - cli-tests
       - plugin-tests
       - test-e2e-ollama-proxy
@@ -267,6 +334,7 @@ jobs:
           DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
@@ -300,6 +368,7 @@ jobs:
             allow_success_or_skipped "docs-only-checks" "$DOCS_ONLY_RESULT"
             require_success "static-checks" "$STATIC_RESULT"
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
             require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
@@ -307,6 +376,7 @@ jobs:
             require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
             allow_success_or_skipped "static-checks" "$STATIC_RESULT"
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
             allow_success_or_skipped "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
