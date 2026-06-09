@@ -55,14 +55,33 @@ export function waitUntil(
   return false;
 }
 
+// One-shot TCP reachability probe, evaluated in a short-lived Node subprocess.
+// The port is passed as argv (process.argv[1]) rather than interpolated into the
+// script, so it can never be treated as code. Exit 0 = connected, 1 = refused or
+// timed out.
+const TCP_PROBE_SCRIPT =
+  "const p=Number(process.argv[1]);" +
+  "const s=require('node:net').connect({host:'127.0.0.1',port:p}," +
+  "()=>{s.destroy();process.exit(0);});" +
+  "s.on('error',()=>process.exit(1));" +
+  "s.setTimeout(1000,()=>{s.destroy();process.exit(1);});";
+
 /**
  * Synchronously wait for a TCP port to become reachable on localhost.
+ *
+ * Probes by connecting from a short-lived Node subprocess instead of shelling
+ * out to `nc`, which is absent on many hosts (minimal Linux distros, Windows).
+ * A missing `nc` previously made every probe fail silently, surfacing as a
+ * misleading "did not become ready within timeout". See #4974.
  */
 export function waitForPort(port: number, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
   return waitUntil(() => {
     try {
-      const result = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
+      const result = spawnSync(process.execPath, ["-e", TCP_PROBE_SCRIPT, String(port)], {
+        stdio: "ignore",
+        timeout: 2000,
+      });
       return result.status === 0;
     } catch {
       return false;
