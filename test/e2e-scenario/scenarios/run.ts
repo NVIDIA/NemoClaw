@@ -52,7 +52,10 @@ function parseArgs(argv: string[]): Args {
       if (!value) {
         throw new Error("--scenarios requires a comma-separated value");
       }
-      args.scenarios = value.split(",").map((id) => id.trim()).filter(Boolean);
+      args.scenarios = value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
       i += 1;
       continue;
     }
@@ -125,7 +128,9 @@ async function main() {
   }
 
   if (process.env.E2E_SUITE_FILTER) {
-    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
+    throw new Error(
+      "E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.",
+    );
   }
 
   const plans = compileRunPlans(args.scenarios);
@@ -200,7 +205,9 @@ export function planFailed(plan: import("./types.ts").RunPlan, results: PhaseRes
   if (!contractPhase || contractPhase.status !== "passed") {
     return true;
   }
-  const requiredSideEffectProbes = (plan.expectedFailure.forbiddenSideEffects ?? []).map(forbiddenSideEffectProbeId);
+  const requiredSideEffectProbes = (plan.expectedFailure.forbiddenSideEffects ?? []).map(
+    forbiddenSideEffectProbeId,
+  );
   if (requiredSideEffectProbes.length === 0) {
     return false;
   }
@@ -209,7 +216,9 @@ export function planFailed(plan: import("./types.ts").RunPlan, results: PhaseRes
     return true;
   }
   const passedActionIds = new Set(
-    stateValidation.actions.filter((action) => action.status === "passed").map((action) => action.id),
+    stateValidation.actions
+      .filter((action) => action.status === "passed")
+      .map((action) => action.id),
   );
   return requiredSideEffectProbes.some((id) => !passedActionIds.has(id));
 }

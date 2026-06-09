@@ -3,22 +3,14 @@
 
 import * as agentRuntime from "../../agent/runtime";
 import * as registry from "../../state/registry";
-import type {
-  SandboxCommandResult,
-  SandboxForwardHealth,
-} from "./process-recovery";
+import type { SandboxCommandResult, SandboxForwardHealth } from "./process-recovery";
 
 type RecoveryConfigReader = (
   sandboxName: string,
 ) => agentRuntime.HermesDashboardRecoveryConfig | null;
 
 function isValidPort(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 1024 &&
-    value <= 65535
-  );
+  return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
 }
 
 export function getHermesDashboardRecoveryConfig(

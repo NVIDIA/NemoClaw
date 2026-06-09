@@ -50,9 +50,13 @@ export function printSandboxListFailureWithRecoveryContext(
   console.error("  Failed to query running sandboxes from OpenShell.");
   if (recoveryResult.recoveryAttempted) {
     if (recoveryResult.recoverySucceeded) {
-      console.error("  The NemoClaw OpenShell gateway was recovered, but the sandbox query still failed.");
+      console.error(
+        "  The NemoClaw OpenShell gateway was recovered, but the sandbox query still failed.",
+      );
     } else {
-      console.error("  NemoClaw tried to recover its OpenShell gateway, but recovery did not complete.");
+      console.error(
+        "  NemoClaw tried to recover its OpenShell gateway, but recovery did not complete.",
+      );
     }
   }
   console.error("  Ensure OpenShell is running: openshell status");

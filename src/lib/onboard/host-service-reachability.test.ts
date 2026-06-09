@@ -21,9 +21,10 @@ import {
   probeHostServiceSandboxReachability,
 } from "./host-service-reachability";
 
-function makeNetwork(
-  partial: { subnet?: string; gatewayIp?: string } = {},
-): { subnet?: string; gatewayIp?: string } {
+function makeNetwork(partial: { subnet?: string; gatewayIp?: string } = {}): {
+  subnet?: string;
+  gatewayIp?: string;
+} {
   return { subnet: "172.18.0.0/16", gatewayIp: "172.18.0.1", ...partial };
 }
 

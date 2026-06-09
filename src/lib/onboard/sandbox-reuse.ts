@@ -20,7 +20,9 @@ export interface SandboxReuseHelpers {
 export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseHelpers {
   function getSandboxReuseState(sandboxName: string | null): string {
     if (!sandboxName) return "missing";
-    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], { ignoreError: true });
+    const getOutput = deps.runCaptureOpenshell(["sandbox", "get", sandboxName], {
+      ignoreError: true,
+    });
     const listOutput = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
     return deps.getSandboxStateFromOutputs(sandboxName, getOutput, listOutput);
   }

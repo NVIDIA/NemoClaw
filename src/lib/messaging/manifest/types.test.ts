@@ -3,17 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import type {
-  ChannelManifest,
-  SandboxMessagingPlan,
-} from "../index";
+import type { ChannelManifest, SandboxMessagingPlan } from "../index";
 
 type FunctionLike = (...args: never[]) => unknown;
 
 type FunctionFieldKey<T> = {
-  [Key in keyof T]-?: Extract<NonNullable<T[Key]>, FunctionLike> extends never
-    ? never
-    : Key;
+  [Key in keyof T]-?: Extract<NonNullable<T[Key]>, FunctionLike> extends never ? never : Key;
 }[keyof T];
 
 type AssertNever<T extends never> = T;
@@ -277,7 +272,9 @@ function findFunctionPaths(value: unknown, prefix = "$"): string[] {
     return value.flatMap((entry, index) => findFunctionPaths(entry, `${prefix}[${index}]`));
   }
   if (value && typeof value === "object") {
-    return Object.entries(value).flatMap(([key, entry]) => findFunctionPaths(entry, `${prefix}.${key}`));
+    return Object.entries(value).flatMap(([key, entry]) =>
+      findFunctionPaths(entry, `${prefix}.${key}`),
+    );
   }
   return [];
 }

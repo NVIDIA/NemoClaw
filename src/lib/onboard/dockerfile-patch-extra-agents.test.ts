@@ -24,9 +24,7 @@ const BASE_DOCKERFILE = [
 const tmpRoots: string[] = [];
 
 function dockerfileWith(content: string): string {
-  const dir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-extra-agents-"),
-  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-extra-agents-"));
   tmpRoots.push(dir);
   const file = path.join(dir, "Dockerfile");
   fs.writeFileSync(file, content, "utf-8");
@@ -89,16 +87,11 @@ describe("patchStagedDockerfile :: NEMOCLAW_EXTRA_AGENTS_JSON", () => {
     const encoded = extraAgentsArg(dockerfilePath);
     assert.ok(encoded, "expected extra agents build arg");
     assert.notEqual(encoded, "W10=", "expected default to be rewritten");
-    assert.deepEqual(
-      JSON.parse(Buffer.from(encoded, "base64").toString("utf8")),
-      extras,
-    );
+    assert.deepEqual(JSON.parse(Buffer.from(encoded, "base64").toString("utf8")), extras);
   });
 
   it("leaves the empty default when NEMOCLAW_EXTRA_AGENTS_JSON is unset or whitespace-only", () => {
-    for (const [index, value] of (
-      [undefined, "", "   "] as Array<string | undefined>
-    ).entries()) {
+    for (const [index, value] of ([undefined, "", "   "] as Array<string | undefined>).entries()) {
       const dockerfilePath = dockerfileWith(BASE_DOCKERFILE);
       withExtraAgentsEnv(value, () =>
         patchStagedDockerfile(

@@ -29,10 +29,7 @@ const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
-const HERMES_POLICY_PATH = new URL(
-  "../agents/hermes/policy-additions.yaml",
-  import.meta.url,
-);
+const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -220,9 +217,7 @@ describe("Model Router pool config", () => {
     expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
       "openai/nvidia/nemotron-3-nano-30b-a3b",
     );
-    expect(modelsByName.get("nemotron-3-super")).toBe(
-      "openai/nvidia/nemotron-3-super-120b-a12b",
-    );
+    expect(modelsByName.get("nemotron-3-super")).toBe("openai/nvidia/nemotron-3-super-120b-a12b");
     for (const litellmModel of modelsByName.values()) {
       expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
       expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");

@@ -149,9 +149,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       expect(state.credential_env).toBe("OPENAI_API_KEY");
       expect(state.inference_base_url).toBe("https://staging.nous.example/v1");
       expect(fetchCalls.some((call) => call.auth === "Bearer access-2")).toBe(true);
-      expect(
-        providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1"),
-      ).toBe(true);
+      expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1")).toBe(true);
       expect(
         providerCalls.some((call) =>
           call.args.includes("OPENAI_BASE_URL=https://staging.nous.example/v1"),
@@ -172,10 +170,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       process.env.HOME = tmp;
       const brokerCalls: Array<{ sandboxName?: string; refreshToken?: string }> = [];
       const auth = loadAuthWithBrokerStub({
-        registerHermesToolGatewayRefreshProvider: (
-          sandboxName: string,
-          refreshToken: string,
-        ) => {
+        registerHermesToolGatewayRefreshProvider: (sandboxName: string, refreshToken: string) => {
           brokerCalls.push({ sandboxName, refreshToken });
           return { providerName: `${sandboxName}-hermes-tool-gateway`, brokerToken: "broker-3" };
         },

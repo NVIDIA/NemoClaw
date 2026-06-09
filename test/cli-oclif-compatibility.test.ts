@@ -357,7 +357,6 @@ describe("oclif compatibility dispatch", () => {
     }
   });
 
-
   it("uses the alias binary name in native oclif help", () => {
     const result = spawnSync(
       process.execPath,

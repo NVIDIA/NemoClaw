@@ -52,9 +52,7 @@ export function createConfigPromptHook(
       if (output.kind !== "config") continue;
       const field = resolveConfigPromptField(context.channelId, output, options);
       if (!field) {
-        throw new Error(
-          `No config-prompt field registered for ${context.channelId}.${output.id}`,
-        );
+        throw new Error(`No config-prompt field registered for ${context.channelId}.${output.id}`);
       }
       if (field.promptWhenInput && !hasInputValue(availableInputs, field.promptWhenInput)) {
         continue;
@@ -112,8 +110,7 @@ export function resolveManifestConfigPromptField(
   output: ChannelHookOutputSpec,
 ): ConfigPromptField | null {
   const input = manifest.inputs.find(
-    (entry): entry is ChannelConfigInputSpec =>
-      entry.kind === "config" && entry.id === output.id,
+    (entry): entry is ChannelConfigInputSpec => entry.kind === "config" && entry.id === output.id,
   );
   if (!input?.envKey || !input.prompt) return null;
   return {
@@ -173,9 +170,7 @@ async function promptConfigInputValue(
 }
 
 async function missingConfigPrompt(): Promise<string> {
-  throw new Error(
-    "Config-prompt hook requires an injected prompt implementation in phase 1.",
-  );
+  throw new Error("Config-prompt hook requires an injected prompt implementation in phase 1.");
 }
 
 function normalizeConfigValue(field: ConfigPromptField, value: unknown): string | null {

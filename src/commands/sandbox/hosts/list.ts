@@ -4,7 +4,10 @@
 import { listSandboxHostAliases } from "../../../lib/actions/sandbox/host-aliases";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { hostAliasSandboxArgs, isHostAliasFailure } from "../../../lib/sandbox/hosts-command-support";
+import {
+  hostAliasSandboxArgs,
+  isHostAliasFailure,
+} from "../../../lib/sandbox/hosts-command-support";
 
 export default class HostsListCommand extends NemoClawCommand {
   static id = "sandbox:hosts:list";
@@ -14,8 +17,7 @@ export default class HostsListCommand extends NemoClawCommand {
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox hosts list alpha"];
   static args = hostAliasSandboxArgs;
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(HostsListCommand);

@@ -149,7 +149,7 @@ describe("buildGatewayLogScanScript", () => {
     // only the segment since the last launch reaches grep.
     const script = buildGatewayLogScanScript("/tmp/gateway.log");
     expect(script).toContain("(launched|respawning)");
-    expect(script).toContain("buf=\"\"");
+    expect(script).toContain('buf=""');
     expect(script).toContain("grep -iwoE 'telegram|discord|slack|whatsapp|wechat|openclaw-weixin'");
     expect(script).not.toContain("tail -n");
     expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
@@ -315,7 +315,9 @@ describe("probeChannelRuntimeStatus", () => {
     const config = JSON.stringify({
       channels: {
         telegram: {
-          accounts: { default: { enabled: true, botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" } },
+          accounts: {
+            default: { enabled: true, botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+          },
         },
       },
     });
@@ -440,8 +442,9 @@ describe("compareChannelSets", () => {
   });
 
   it("sorts the missing/unexpected outputs", () => {
-    expect(
-      compareChannelSets(["telegram", "slack", "discord"], ["whatsapp"]),
-    ).toEqual({ missing: ["discord", "slack", "telegram"], unexpected: ["whatsapp"] });
+    expect(compareChannelSets(["telegram", "slack", "discord"], ["whatsapp"])).toEqual({
+      missing: ["discord", "slack", "telegram"],
+      unexpected: ["whatsapp"],
+    });
   });
 });

@@ -94,8 +94,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   wechat: {
     envKey: "WECHAT_BOT_TOKEN",
     description: "WeChat (personal) bot messaging",
-    help:
-      "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+    help: "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
     label: "WeChat Bot Token",
     userIdEnvKey: "WECHAT_ALLOWED_IDS",
     userIdHelp:

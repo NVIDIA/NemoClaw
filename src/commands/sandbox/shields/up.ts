@@ -14,8 +14,7 @@ export default class ShieldsUpCommand extends NemoClawCommand {
   static description = "Restore sandbox shields from the saved snapshot.";
   static usage = ["<name>"];
   static args = { sandboxName: sandboxNameArg };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsUpCommand);

@@ -60,9 +60,7 @@ export interface HostServiceReachabilityOptions {
   usesHostGatewayRouteImpl?: () => boolean;
 }
 
-function parseNetworkIpamConfig(
-  raw: string,
-): { subnet?: string; gatewayIp?: string } | undefined {
+function parseNetworkIpamConfig(raw: string): { subnet?: string; gatewayIp?: string } | undefined {
   const text = raw.trim();
   if (!text || text === "<no value>") return undefined;
   let parsed: unknown;
@@ -121,12 +119,7 @@ function defaultRunImpl(args: readonly string[], timeoutMs: number): ProbeRunRes
 }
 
 function outputTail(value: unknown): string | undefined {
-  const raw =
-    Buffer.isBuffer(value)
-      ? value.toString("utf8")
-      : value == null
-        ? ""
-        : String(value);
+  const raw = Buffer.isBuffer(value) ? value.toString("utf8") : value == null ? "" : String(value);
   const text = raw.trim();
   return text ? text.slice(-400) : undefined;
 }
@@ -141,9 +134,7 @@ export async function probeHostServiceSandboxReachability(
   opts: HostServiceReachabilityOptions,
 ): Promise<HostServiceReachabilityResult> {
   const networkName =
-    opts.networkName ??
-    process.env.OPENSHELL_DOCKER_NETWORK_NAME ??
-    DEFAULT_PROBE_NETWORK;
+    opts.networkName ?? process.env.OPENSHELL_DOCKER_NETWORK_NAME ?? DEFAULT_PROBE_NETWORK;
   const port = opts.port;
   const timeoutSec = opts.timeoutSec ?? PROBE_TIMEOUT_SEC;
   const probeImage = opts.probeImage ?? PROBE_IMAGE;

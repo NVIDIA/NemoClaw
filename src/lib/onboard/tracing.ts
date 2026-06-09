@@ -21,7 +21,11 @@ export interface OnboardTraceHandle {
 }
 
 export function isTruthyTraceEnv(value: unknown): boolean {
-  return TRACE_TRUTHY_VALUES.has(String(value ?? "").trim().toLowerCase());
+  return TRACE_TRUTHY_VALUES.has(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 function hasTracePath(value: unknown): boolean {

@@ -30,7 +30,10 @@ describe("findEnvVarReads", () => {
       "const { NEMOCLAW_FOO, NEMOCLAW_BAR: bar, PATH: NEMOCLAW_NOT_REAL } = process.env;",
       ["NEMOCLAW_BAR", "NEMOCLAW_FOO"],
     ],
-    ["const x = process.env.NEMOCLAW_FOO ?? process.env.NEMOCLAW_BAR;", ["NEMOCLAW_BAR", "NEMOCLAW_FOO"]],
+    [
+      "const x = process.env.NEMOCLAW_FOO ?? process.env.NEMOCLAW_BAR;",
+      ["NEMOCLAW_BAR", "NEMOCLAW_FOO"],
+    ],
   ])("extracts %s", (code, expected) => {
     expect([...findEnvVarReads(code)].sort()).toEqual(expected);
   });

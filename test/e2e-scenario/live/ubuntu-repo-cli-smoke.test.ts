@@ -16,7 +16,10 @@ test("ubuntu repo cli smoke", async ({ artifacts, host }) => {
     boundary: "repo-local-cli",
   });
 
-  expect(fs.existsSync(CLI_DIST_ENTRYPOINT), "run `npm run build:cli` before live repo CLI scenarios").toBe(true);
+  expect(
+    fs.existsSync(CLI_DIST_ENTRYPOINT),
+    "run `npm run build:cli` before live repo CLI scenarios",
+  ).toBe(true);
 
   const result = await host.command(process.execPath, ["bin/nemoclaw.js", "--version"], {
     artifactName: "repo-cli-version",

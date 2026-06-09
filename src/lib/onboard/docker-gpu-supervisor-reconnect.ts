@@ -62,14 +62,8 @@ type DockerRunResult = {
   stderr?: string | Buffer | null;
 };
 
-type RunOpenshellFn = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => DockerRunResult;
-type RunCaptureOpenshellFn = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => string;
+type RunOpenshellFn = (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
+type RunCaptureOpenshellFn = (args: string[], opts?: Record<string, unknown>) => string;
 
 export type DockerGpuSupervisorReconnectDeps = {
   runOpenshell?: RunOpenshellFn;
@@ -129,10 +123,11 @@ export function waitForOpenShellSupervisorReconnect(
       : Math.max(1, Math.trunc(deps.errorPhaseDebouncePolls));
   let consecutiveErrorPolls = 0;
   while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-    );
+    const result = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
     if (isZeroStatus(result)) return true;
     if (
       deps.runCaptureOpenshell &&

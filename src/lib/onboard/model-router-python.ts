@@ -182,7 +182,8 @@ function probeCandidate(
       // fall through — handled below
     }
   }
-  const version = Array.isArray(parsed.version) && parsed.version.length === 3 ? parsed.version : null;
+  const version =
+    Array.isArray(parsed.version) && parsed.version.length === 3 ? parsed.version : null;
   if (probeResult.exit !== 0 || !version) {
     const detail =
       parsed.error ||
@@ -267,7 +268,8 @@ function defaultProbe(executable: string): { exit: number; stdout: string; stder
   });
   const stdout = result.stdout ?? "";
   const stderr = result.stderr ?? "";
-  const spawnError = result.error instanceof Error ? `${result.error.name}: ${result.error.message}` : "";
+  const spawnError =
+    result.error instanceof Error ? `${result.error.name}: ${result.error.message}` : "";
   return {
     exit: result.status ?? -1,
     stdout,

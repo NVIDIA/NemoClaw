@@ -145,7 +145,9 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
     console.error("");
     console.error("  ✗ Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU.");
     console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
-    console.error("    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:");
+    console.error(
+      "    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:",
+    );
     console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
     console.error("      sudo systemctl restart docker");
     console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
@@ -252,7 +254,9 @@ export function createDirectSandboxGpuVerifier(
         }
         const statusText = String(result.status || 1);
         const diagnosticSuffix = diagnostic ? `: ${diagnostic}` : "";
-        throw new Error(`GPU proof failed: ${proof.label} (status ${statusText})${diagnosticSuffix}`);
+        throw new Error(
+          `GPU proof failed: ${proof.label} (status ${statusText})${diagnosticSuffix}`,
+        );
       }
       // Optional proof failure is non-fatal but is no longer swallowed: a
       // CUDA-usability proof that reached the driver and failed marks the GPU
@@ -276,12 +280,12 @@ export function createDirectSandboxGpuVerifier(
       const lines =
         resolvedPlatform === "jetson"
           ? jetsonGpuProofRemediationLines()
-          : sandboxGpuRemediationLines({ wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps) });
+          : sandboxGpuRemediationLines({
+              wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
+            });
       for (const line of lines) console.warn(`    ${line}`);
     } else {
-      console.warn(
-        "  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).",
-      );
+      console.warn("  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).");
     }
     return {
       status,
