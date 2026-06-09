@@ -12,19 +12,21 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 . "${LIB_DIR}/env.sh"
 # shellcheck source=../../../runtime/lib/context.sh
 . "${LIB_DIR}/context.sh"
+# shellcheck source=../../sandbox-exec.sh
+. "${SCRIPT_DIR}/../../sandbox-exec.sh"
 
 echo "inference:chat-completion"
 e2e_context_require E2E_SANDBOX_NAME
 
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would POST a chat completion to inference.local from inside the sandbox"
-  exit 0
-fi
-
 name="$(e2e_context_get E2E_SANDBOX_NAME)"
 payload='{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}'
-response="$(openshell sandbox exec --name "${name}" -- curl -fsS --max-time 60 -H 'Content-Type: application/json' \
-  -d "${payload}" "https://inference.local/v1/chat/completions")"
+# Orchestrator step cap is 60s; widen the wrapper cap to 50s so a hung
+# upstream surfaces with a clear diagnostic before SIGTERM. Inner curl
+# --max-time stays ~10s under the wrapper cap.
+# shellcheck disable=SC2034 # consumed by e2e_sandbox_exec via env
+E2E_SANDBOX_EXEC_TIMEOUT_SECONDS=50 \
+  response="$(e2e_sandbox_exec "${name}" -- curl -fsS --max-time 40 -H 'Content-Type: application/json' \
+    -d "${payload}" "https://inference.local/v1/chat/completions")"
 # CodeRabbit review item #12: substring expansion instead of `| head`
 # avoids SIGPIPE-driven false failures under `set -o pipefail`.
 printf '%s\n' "${response:0:1024}"

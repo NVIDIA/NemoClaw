@@ -61,7 +61,7 @@ function listPresets(): PresetInfo[] {
     .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
       const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
+      const descMatch = content.match(/^\s*description:\s*"?([^\n"]*)"?$/m);
       return {
         file: f,
         name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
@@ -221,11 +221,12 @@ function getPresetValidationWarning(presetName: string): string | null {
       'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
       "curl is intentionally not in the preset binary allowlist. Avoid plain",
       "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
-      "redirect body, which looks the same as a blocked request. Use an",
-      "observable status probe instead:",
-      "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com",
-      "Before approval, expect 000 or a local policy denial; after approval,",
-      "expect an HTTP status such as 301 or 200.",
+      "redirect body, which looks the same as a blocked request. Use a",
+      "body-visible API probe instead:",
+      "curl -sS --max-time 10 -w '\\n%{http_code}\\n' https://api.atlassian.com/oauth/token/accessible-resources",
+      "Before approval, expect 000 or a local policy denial. After explicitly",
+      "approving curl for api.atlassian.com, expect Atlassian's 401 JSON",
+      "response, which proves curl reached the service without Jira credentials.",
     ].join("\n  ");
   }
 
@@ -784,6 +785,12 @@ function applyPresetContent(
   }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
+  if (rawPolicy.trim() && !currentPolicy) {
+    console.error(
+      `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
+    );
+    return false;
+  }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const endpoints = getPresetEndpoints(presetContent);
@@ -833,6 +840,20 @@ function applyPresetContent(
       }
       registry.updateSandbox(sandboxName, { policies: pols });
     }
+  } else if (options.custom) {
+    // The preset reached the gateway, but sandbox `sandboxName` has no local
+    // registry entry, so it cannot be recorded under `customPolicies`. Custom
+    // presets are surfaced only from the registry (both `listCustomPresets`
+    // and `getGatewayPresets` read `registry.getCustomPolicies`), so an
+    // unrecorded custom preset never appears in `policy-list` or `status`.
+    // Report the gap instead of exiting 0 as if the preset were fully applied. (#4510)
+    console.error(
+      `  Warning: '${presetName}' was applied to the gateway but could not be ` +
+        `recorded locally because sandbox '${sandboxName}' is not in the ` +
+        `registry, so it will not appear in policy-list or status. Recover or ` +
+        `re-onboard the sandbox, then re-apply.`,
+    );
+    return false;
   }
 
   return true;
@@ -882,6 +903,12 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   let merged = parseCurrentPolicy(rawPolicy);
+  if (rawPolicy.trim() && !merged) {
+    console.error(
+      `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
+    );
+    return false;
+  }
   const endpointLogs: string[][] = [];
 
   for (const presetName of uniquePresetNames) {
@@ -1283,6 +1310,7 @@ export {
   listSetupPolicyPresets,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
+  parsePresetPolicyKeys,
   parseCurrentPolicy,
   buildPolicySetCommand,
   buildPolicyGetCommand,

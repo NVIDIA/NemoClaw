@@ -9,6 +9,8 @@ _E2E_GW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../runtime/lib" && pwd)
 . "${_E2E_GW_LIB_DIR}/env.sh"
 # shellcheck source=../../runtime/lib/context.sh
 . "${_E2E_GW_LIB_DIR}/context.sh"
+# shellcheck source=../sandbox-exec.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/sandbox-exec.sh"
 
 # e2e_gateway_assert_healthy [url]
 # Defaults to E2E_GATEWAY_URL from context; returns non-zero with a clear
@@ -23,10 +25,6 @@ e2e_gateway_assert_healthy() {
     return 2
   fi
   e2e_env_trace "gateway:check" "${url}"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] gateway check ${url} (skipped)"
-    return 0
-  fi
   # Prefer /health if available, otherwise just hit the base URL.
   local http_code
   http_code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 5 "${url%/}/health" 2>/dev/null || echo 000)"
@@ -41,7 +39,9 @@ e2e_gateway_assert_healthy() {
     local sandbox_name
     sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
     if [[ -n "${sandbox_name}" ]] && command -v openshell >/dev/null 2>&1; then
-      http_code="$(openshell sandbox exec -n "${sandbox_name}" -- curl -fsS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:18789/health 2>/dev/null || echo 000)"
+      # Wrapper applies a per-call timeout so a wedged ssh handshake here
+      # cannot consume the orchestrator's whole step budget.
+      http_code="$(E2E_SANDBOX_EXEC_TIMEOUT_SECONDS=15 e2e_sandbox_exec "${sandbox_name}" -- curl -fsS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:18789/health 2>/dev/null || echo 000)"
       if [[ "${http_code}" == "200" || "${http_code}" == "401" ]]; then
         return 0
       fi

@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { environmentBaseline } from "./environment.ts";
 import type { AssertionGroup, AssertionStep, PhaseName, ScenarioDefinition } from "../types.ts";
 
 type Reliability = AssertionStep["reliability"];
@@ -25,22 +24,27 @@ function shellStep(input: ShellStepInput): AssertionStep {
   };
 }
 
-function probeStep(id: string, phase: PhaseName, ref: string, reliability?: Reliability): AssertionStep {
+interface ProbeStepOptions {
+  reliability?: Reliability;
+  // When true, an unregistered probe fails the phase (and the run)
+  // instead of skipping. Use for security-sensitive probes the run
+  // is not safe without.
+  required?: boolean;
+}
+
+function probeStep(
+  id: string,
+  phase: PhaseName,
+  ref: string,
+  options: ProbeStepOptions = {},
+): AssertionStep {
   return {
     id,
     phase,
     implementation: { kind: "probe", ref },
     evidencePath: `.e2e/assertions/${id}.json`,
-    reliability,
-  };
-}
-
-function pendingStep(id: string, phase: PhaseName, ref: string): AssertionStep {
-  return {
-    id,
-    phase,
-    implementation: { kind: "pending", ref },
-    evidencePath: `.e2e/assertions/${id}.json`,
+    reliability: options.reliability,
+    required: options.required,
   };
 }
 
@@ -109,6 +113,10 @@ const smokeSteps = [
   }),
   shellStep({ id: "runtime.smoke.sandbox-listed", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh" }),
   shellStep({ id: "runtime.smoke.sandbox-shell", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/03-sandbox-shell.sh", reliability: { timeoutSeconds: 30 } }),
+];
+
+const snapshotSteps = [
+  shellStep({ id: "runtime.snapshot.sandbox-listed", phase: "runtime", ref: "test/e2e-scenario/validation_suites/smoke/02-sandbox-listed.sh" }),
 ];
 
 const cloudInferenceSteps = [
@@ -180,16 +188,6 @@ const ollamaProxySteps = [
   }),
 ];
 
-export const runtimeControlGroups: AssertionGroup[] = [
-  {
-    id: "runtime.expected-failure.no-side-effects",
-    phase: "runtime",
-    description: "Negative scenario runtime check ensuring forbidden side effects did not occur.",
-    migrationStatus: "complete",
-    steps: [pendingStep("runtime.expected-failure.no-side-effects", "runtime", "expectedFailureNoSideEffectsProbe")],
-  },
-];
-
 export const validationSuiteGroups: AssertionGroup[] = [
   suiteGroup("smoke", smokeSteps),
   suiteGroup("gateway-health", [smokeSteps[1]]),
@@ -219,9 +217,19 @@ export const validationSuiteGroups: AssertionGroup[] = [
   ]),
   suiteGroup("credentials", credentialsSteps),
   suiteGroup("security-credentials", credentialsSteps),
-  suiteGroup("security-shields", [probeStep("security.shields.config", "runtime", "shieldsConfigProbe")]),
-  suiteGroup("security-policy", [probeStep("security.policy.enforced", "runtime", "networkPolicyProbe")]),
-  suiteGroup("security-injection", [probeStep("security.injection.blocked", "runtime", "injectionBlockedProbe")]),
+  // Security-sensitive probes MUST fail closed until the probe
+  // registry lands. A skipped shields/policy/injection check would
+  // produce fake-green for the exact suites these scenarios exist to
+  // protect.
+  suiteGroup("security-shields", [
+    probeStep("security.shields.config", "runtime", "shieldsConfigProbe", { required: true }),
+  ]),
+  suiteGroup("security-policy", [
+    probeStep("security.policy.enforced", "runtime", "networkPolicyProbe", { required: true }),
+  ]),
+  suiteGroup("security-injection", [
+    probeStep("security.injection.blocked", "runtime", "injectionBlockedProbe", { required: true }),
+  ]),
   suiteGroup("messaging-telegram", [
     shellStep({ id: "messaging.telegram.injection-safety", phase: "runtime", ref: "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
     shellStep({ id: "messaging.telegram.injection-payload-classes", phase: "runtime", ref: "test/e2e-scenario/validation_suites/messaging/telegram/01-telegram-injection-payload-classes.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["external-tunnel"] } } }),
@@ -237,7 +245,7 @@ export const validationSuiteGroups: AssertionGroup[] = [
     shellStep({ id: "lifecycle.sandbox.list-and-status", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/00-list-and-status.sh" }),
     shellStep({ id: "lifecycle.sandbox.logs-and-exec", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/operations/01-logs-and-exec.sh" }),
   ]),
-  suiteGroup("snapshot", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
+  suiteGroup("snapshot", snapshotSteps),
   suiteGroup("snapshot-lifecycle", [shellStep({ id: "lifecycle.snapshot.create-list-restore", phase: "runtime", ref: "test/e2e-scenario/validation_suites/sandbox/snapshot/00-create-list-restore.sh" })]),
   suiteGroup("rebuild", [
     shellStep({ id: "lifecycle.rebuild.state-preserved", phase: "runtime", ref: "test/e2e-scenario/validation_suites/rebuild_upgrade/00-state-preserved.sh", reliability: { timeoutSeconds: 120, retry: { attempts: 2, on: ["runner-infra"] } } }),
@@ -250,11 +258,14 @@ export const validationSuiteGroups: AssertionGroup[] = [
   ]),
   suiteGroup("diagnostics", [probeStep("diagnostics.bundle", "runtime", "diagnosticsProbe")]),
   suiteGroup("docs-validation", [probeStep("docs.validation", "runtime", "docsValidationProbe")]),
-  suiteGroup("hermes-specific", [shellStep({ id: "runtime.hermes.health", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/00-hermes-health.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["gateway-transient"] } } })]),
+  suiteGroup("hermes-specific", [
+    shellStep({ id: "runtime.hermes.health", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/00-hermes-health.sh", reliability: { timeoutSeconds: 30, retry: { attempts: 2, on: ["gateway-transient"] } } }),
+    shellStep({ id: "runtime.hermes.history-writable", phase: "runtime", ref: "test/e2e-scenario/validation_suites/hermes/01-history-writable.sh", reliability: { timeoutSeconds: 90, retry: { attempts: 2, on: ["gateway-transient"] } } }),
+  ]),
 ];
 
 export const assertionRegistry = {
-  groups: [environmentBaseline(), ...onboardingAssertionGroups, ...runtimeControlGroups, ...validationSuiteGroups],
+  groups: [...onboardingAssertionGroups, ...validationSuiteGroups],
 };
 
 export function assertionGroupForSuite(suiteId: string): AssertionGroup | undefined {
@@ -282,8 +293,15 @@ function supplementalSuiteIdsForScenario(scenario: ScenarioDefinition): string[]
       "sandbox-lifecycle",
       "sandbox-operations",
       "snapshot",
-      "rebuild",
-      "upgrade",
+      // 'rebuild' and 'upgrade' are intentionally NOT supplemental
+      // here. Those suites assert post-rebuild state (marker survival,
+      // version upgrade, post-rebuild inference) and require a real
+      // `nemoclaw rebuild` to have run first. The dedicated
+      // `ubuntu-rebuild-openclaw` scenario opts into them by declaring
+      // a `rebuild-current-version` lifecycle profile that performs
+      // the rebuild before the runtime phase. Including them on this
+      // scenario produced fake-failures (no rebuild ran, so nothing
+      // could be preserved) and obscured the real coverage gap.
       "diagnostics",
       "docs-validation",
     );
@@ -349,12 +367,14 @@ export function assertionGroupsForScenario(scenario: ScenarioDefinition): Assert
     return group;
   });
 
+  // Environment phase work is performed by typed PhaseAction entries
+  // (context.emit + install.<id>) emitted from compiler.phaseActions(),
+  // not by assertion groups. No environment-phase assertion group is
+  // included in scenario plans.
   const groups: (AssertionGroup | undefined)[] = [
-    environmentBaseline(),
     ...onboardingGroups,
     ...suiteGroups,
     ...supplementalGroups,
-    scenario.expectedFailure ? runtimeControlGroups[0] : undefined,
   ];
   return uniqueGroups(groups.filter((entry): entry is AssertionGroup => Boolean(entry)));
 }

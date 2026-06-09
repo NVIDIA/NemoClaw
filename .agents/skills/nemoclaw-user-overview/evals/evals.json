@@ -1,0 +1,11 @@
+[
+  {
+    "id": "docs-index-001",
+    "question": "I'm first arriving at the NemoClaw docs. Help me understand what NemoClaw helps me run and why it exists so I can decide whether it is worth installing before I spend time on setup.",
+    "expected_skill": "nemoclaw-user-overview",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what NemoClaw helps me run and why it exists and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether it is worth installing before I spend time on setup.",
+    "expected_behavior": [
+      "Uses the expected_skill and does not make up answers if it cannot find the answer from the skill."
+    ]
+  }
+]

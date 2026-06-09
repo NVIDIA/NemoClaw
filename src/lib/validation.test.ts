@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
-  classifyValidationFailure,
   classifyApplyFailure,
   classifySandboxCreateFailure,
-  validateNvidiaApiKeyValue,
-  isSafeModelId,
+  classifyValidationFailure,
   isNvcfFunctionNotFoundForAccount,
+  isSafeModelId,
   nvcfFunctionNotFoundMessage,
-  shouldSkipResponsesProbe,
+  planSandboxCreateRecovery,
   shouldForceCompletionsApi,
+  shouldSkipResponsesProbe,
+  validateNvidiaApiKeyValue,
 } from "../../dist/lib/validation";
 
 describe("classifyValidationFailure", () => {
@@ -257,6 +258,66 @@ describe("classifySandboxCreateFailure", () => {
     const output = "Created sandbox: test-sandbox\nError: handshake verification failed";
     const result = classifySandboxCreateFailure(output);
     expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects the misleading image-tar upload 404 from the upload-tar phrase (#3266)", () => {
+    const result = classifySandboxCreateFailure("Error: failed to upload image tar into container");
+    expect(result.kind).toBe("image_upload_container_missing");
+  });
+
+  it("detects the misleading image-tar upload 404 from the reported aarch64 output shape (#3266)", () => {
+    const output = [
+      "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
+      "Docker responded with status code 404: the container does not exist",
+      'no container with name or ID "openshell-cluster-nemoclaw" found',
+    ].join("\n");
+    const result = classifySandboxCreateFailure(output);
+    expect(result.kind).toBe("image_upload_container_missing");
+  });
+
+  it("does NOT classify an unrelated 404 as image_upload_container_missing (#3266 regression guard)", () => {
+    // A generic 404 with no upload-tar phrase and no gateway container name
+    // must not be mistaken for the ARM64 upload failure.
+    expect(
+      classifySandboxCreateFailure("Docker responded with status code 404: the container does not exist").kind,
+    ).toBe("unknown");
+    expect(
+      classifySandboxCreateFailure("HTTP 404: model not found").kind,
+    ).toBe("unknown");
+  });
+});
+
+describe("planSandboxCreateRecovery", () => {
+  const uploadFailure = {
+    kind: "image_upload_container_missing" as const,
+    uploadedToGateway: false,
+  };
+
+  it("offers the image-ref workaround on Linux ARM64 (#3266)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "linux", arch: "arm64" })).toEqual({
+      arm64ImageRefWorkaround: true,
+    });
+  });
+
+  it("does not offer the ARM64 workaround on x86_64 Linux (preserve x86_64 path)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "linux", arch: "x64" })).toEqual({
+      arm64ImageRefWorkaround: false,
+    });
+  });
+
+  it("does not offer the ARM64 workaround on macOS ARM64 (Linux-only signature)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "darwin", arch: "arm64" })).toEqual({
+      arm64ImageRefWorkaround: false,
+    });
+  });
+
+  it("does not offer the workaround for unrelated failure kinds even on Linux ARM64", () => {
+    expect(
+      planSandboxCreateRecovery(
+        { kind: "image_transfer_timeout", uploadedToGateway: false },
+        { platform: "linux", arch: "arm64" },
+      ),
+    ).toEqual({ arm64ImageRefWorkaround: false });
   });
 });
 

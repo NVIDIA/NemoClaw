@@ -4,28 +4,28 @@
 title: "Install OpenClaw Plugins"
 sidebar-title: "Install OpenClaw Plugins"
 description: "How to install OpenClaw plugins in a NemoClaw-managed sandbox today."
-description-agent: "Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox. Use when users ask how to install, build, or configure OpenClaw plugins under NemoClaw."
-keywords: ["nemoclaw plugins", "openclaw plugins", "install openclaw plugin", "nemoclaw onboard from dockerfile"]
+description-agent: "Explains the difference between OpenClaw plugins and agent skills, and shows the current Dockerfile-based workflow for baking a plugin into a NemoClaw sandbox, including `.dockerignore` handling for custom build contexts. Use when users ask how to install, build, or configure OpenClaw plugins under NemoClaw."
+keywords: ["nemoclaw plugins", "openclaw plugins", "install openclaw plugin", "nemoclaw onboard from dockerfile", "nemoclaw dockerignore"]
 content:
   type: "how_to"
 skill:
   priority: 20
 ---
-OpenClaw plugins extend the OpenClaw runtime with hooks, services, tools, or
-provider integrations. They are different from NemoClaw-managed agent skills:
+OpenClaw plugins extend the OpenClaw runtime with hooks, services, tools, or provider integrations.
+They are different from NemoClaw-managed agent skills:
 
 - **Plugins** are code packages loaded by OpenClaw.
 - **Skills** are `SKILL.md` directories that teach an agent how to perform a task.
 - **Policy presets** are network-egress rules that control what sandboxed code can reach.
 
-Today, the supported NemoClaw path for OpenClaw plugins is to bake the plugin
-into a custom sandbox image and onboard from that Dockerfile.
+The supported NemoClaw path for OpenClaw plugins is to bake the plugin into a custom sandbox image and onboard from that Dockerfile.
 
 ## Prepare a Build Directory
 
 Put the Dockerfile and everything it needs to `COPY` in one directory.
-`nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as
-the Docker build context.
+`nemoclaw onboard --from <Dockerfile>` uses the Dockerfile's parent directory as the Docker build context.
+Add a `.dockerignore` next to the Dockerfile to exclude local caches, generated artifacts, model files, or other paths that are not needed by the image build.
+NemoClaw still applies its own secret-safety exclusions for credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` negates them.
 
 ```text
 my-plugin-sandbox/
@@ -37,8 +37,7 @@ my-plugin-sandbox/
 
 ## Example Dockerfile
 
-Use the custom image to copy the plugin into the OpenClaw extensions directory
-and let OpenClaw refresh its config before NemoClaw starts the sandbox.
+Use the custom image to copy the plugin into the OpenClaw extensions directory and let OpenClaw refresh its config before NemoClaw starts the sandbox.
 
 ```dockerfile
 ARG SANDBOX_BASE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
@@ -55,48 +54,38 @@ RUN mkdir -p /sandbox/.openclaw/extensions \
 WORKDIR /opt/nemoclaw
 ```
 
-If the plugin needs configuration in `openclaw.json`, apply it after
-`openclaw doctor --fix` so the base config exists first.
+If the plugin needs configuration in `openclaw.json`, apply it after `openclaw doctor --fix` so the base config exists first.
 
 ## Create the Sandbox
 
 Point `nemoclaw onboard --from` at the Dockerfile in the build directory.
 
-```console
-$ nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
+```bash
+nemoclaw onboard --from ./my-plugin-sandbox/Dockerfile
 ```
 
-If you need a second sandbox alongside an existing one, use a dedicated build
-directory and rerun onboarding with the sandbox name and ports you intend to
-use.
+If you need a second sandbox alongside an existing one, use a dedicated build directory and rerun onboarding with the sandbox name and ports you intend to use.
 
 ## Network Access
 
-Plugins still run inside the sandbox policy boundary. If a plugin needs network
-egress, add or update a policy preset for the required hostnames and binaries
-before rebuilding the sandbox.
+Plugins still run inside the sandbox policy boundary.
+If a plugin needs network egress, add or update a policy preset for the required hostnames and binaries before rebuilding the sandbox.
 
-For example, see [Network Policies](/reference/network-policies) for
-policy concepts and [Customize Network Policy](/network-policy/customize-network-policy)
-for custom preset workflows.
+For policy concepts, refer to [Network Policies](../reference/network-policies).
+For custom preset workflows, refer to [Customize Network Policy](../network-policy/customize-network-policy).
 
 ## Common Mistakes
 
-These are the most common places where plugin installation gets mixed up with
-other NemoClaw extension paths.
+These are the most common places where plugin installation gets mixed up with other NemoClaw extension paths.
 
-- Do not use `nemoclaw <sandbox> skill install` for OpenClaw plugins. That
-  command only installs `SKILL.md` agent skills.
-- Do not put a Dockerfile in a broad directory such as `/tmp` unless you intend
-  to send that whole directory as the Docker build context.
+- Do not use `nemoclaw <sandbox> skill install` for OpenClaw plugins. That command only installs `SKILL.md` agent skills.
+- Do not put a Dockerfile in a broad directory such as `/tmp` unless you intend to send that whole directory as the Docker build context.
+- Do not rely on `.dockerignore` to include credential-like paths; NemoClaw excludes those from staged custom build contexts for safety.
 - Keep plugin dependencies in the build stage or plugin directory; avoid copying
   unrelated host files into the sandbox image.
 
 ## Next Steps
 
-- Review [Sandbox Hardening](/deployment/sandbox-hardening) before adding plugin code to a
-  shared or long-lived sandbox.
-- Review [Network Policies](/reference/network-policies) to plan plugin
-  egress rules.
-- Follow [Customize Network Policy](/network-policy/customize-network-policy)
-  if the plugin needs a custom preset.
+- Review [Sandbox Hardening](sandbox-hardening) before adding plugin code to a shared or long-lived sandbox.
+- Review [Network Policies](../reference/network-policies) to plan plugin egress rules.
+- Follow [Customize Network Policy](../network-policy/customize-network-policy) if the plugin needs a custom preset.

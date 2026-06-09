@@ -27,7 +27,11 @@ const mocks = vi.hoisted(() => {
     shieldsDown: vi.fn(),
     shieldsStatus: vi.fn(),
     shieldsUp: vi.fn(),
+    showSandboxLogs: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
+    addSandboxHostAlias: vi.fn(),
+    listSandboxHostAliases: vi.fn(),
+    removeSandboxHostAlias: vi.fn(),
     SandboxConfigError,
   };
 });
@@ -48,9 +52,19 @@ vi.mock("../../lib/actions/sandbox/status", () => ({
   showSandboxStatus: mocks.showSandboxStatus,
 }));
 
+vi.mock("../../lib/actions/sandbox/logs", () => ({
+  showSandboxLogs: mocks.showSandboxLogs,
+}));
+
 vi.mock("../../lib/actions/sandbox/policy-channel", () => ({
   listSandboxChannels: mocks.listSandboxChannels,
   listSandboxPolicies: mocks.listSandboxPolicies,
+}));
+
+vi.mock("../../lib/actions/sandbox/host-aliases", () => ({
+  addSandboxHostAlias: mocks.addSandboxHostAlias,
+  listSandboxHostAliases: mocks.listSandboxHostAliases,
+  removeSandboxHostAlias: mocks.removeSandboxHostAlias,
 }));
 
 vi.mock("../../lib/sandbox/config", () => ({
@@ -73,6 +87,10 @@ import SandboxConfigGetCommand from "./config/get";
 import DestroyCliCommand from "./destroy";
 import SandboxDoctorCliCommand from "./doctor";
 import SandboxChannelsListCommand from "./channels/list";
+import HostsAddCommand from "./hosts/add";
+import HostsListCommand from "./hosts/list";
+import HostsRemoveCommand from "./hosts/remove";
+import SandboxLogsCommand from "./logs";
 import SandboxPolicyListCommand from "./policy/list";
 import RebuildCliCommand from "./rebuild";
 import SandboxStatusCommand from "./status";
@@ -142,11 +160,55 @@ describe("sandbox oclif command adapters", () => {
     await SandboxPolicyListCommand.run(["alpha"], rootDir);
     await SandboxChannelsListCommand.run(["alpha"], rootDir);
     await SandboxConfigGetCommand.run(["alpha", "--key", "model", "--format", "yaml"], rootDir);
+    await SandboxLogsCommand.run(["alpha", "--tail", "25", "--since", "5m"], rootDir);
 
     expect(mocks.showSandboxStatus).toHaveBeenCalledWith("alpha");
     expect(mocks.listSandboxPolicies).toHaveBeenCalledWith("alpha");
     expect(mocks.listSandboxChannels).toHaveBeenCalledWith("alpha");
     expect(mocks.configGet).toHaveBeenCalledWith("alpha", { key: "model", format: "yaml" });
+    expect(mocks.showSandboxLogs).toHaveBeenCalledWith("alpha", {
+      follow: false,
+      lines: "25",
+      since: "5m",
+    });
+  });
+
+  it("keeps sandbox inspection usage metadata on native oclif commands", () => {
+    const usage = (command: { usage?: string[] }) => command.usage?.join(" ") ?? "";
+
+    expect(ConnectCliCommand.id).toBe("sandbox:connect");
+    expect(usage(ConnectCliCommand)).toContain("<name> [--probe-only]");
+    expect(SandboxStatusCommand.id).toBe("sandbox:status");
+    expect(usage(SandboxStatusCommand)).toContain("<name> [--json]");
+    expect(SandboxDoctorCliCommand.id).toBe("sandbox:doctor");
+    expect(usage(SandboxDoctorCliCommand)).toContain("<name> [--json] [--fix]");
+    expect(SandboxLogsCommand.id).toBe("sandbox:logs");
+    expect(usage(SandboxLogsCommand)).toContain("[--follow]");
+    expect(usage(SandboxLogsCommand)).toContain("[--tail <lines>|-n <lines>]");
+    expect(DestroyCliCommand.id).toBe("sandbox:destroy");
+    expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
+    expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
+    expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
+    expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
+    expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
+    expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");
+    expect(usage(SandboxConfigGetCommand)).toContain("[--format json|yaml]");
+    expect(HostsAddCommand.id).toBe("sandbox:hosts:add");
+    expect(usage(HostsAddCommand)).toContain("<name> <hostname> <ip> [--dry-run]");
+    expect(HostsListCommand.id).toBe("sandbox:hosts:list");
+    expect(HostsRemoveCommand.id).toBe("sandbox:hosts:remove");
+  });
+
+  it("rejects invalid diagnostic parser-owned flags before dispatch", async () => {
+    await expect(SandboxConfigGetCommand.run(["alpha", "--format", "xml"], rootDir)).rejects.toThrow(
+      /format|json|yaml/i,
+    );
+    await expect(SandboxDoctorCliCommand.run(["alpha", "--bogus"], rootDir)).rejects.toThrow(
+      /bogus/i,
+    );
+
+    expect(mocks.configGet).not.toHaveBeenCalled();
+    expect(mocks.runSandboxDoctor).not.toHaveBeenCalled();
   });
 
   it("maps config action failures to oclif exit codes", async () => {
@@ -185,5 +247,51 @@ describe("sandbox oclif command adapters", () => {
     });
     expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha");
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
+  });
+
+  it("keeps doctor --json stdout clean while diagnostics recovery prints progress", async () => {
+    const report = {
+      schemaVersion: 1,
+      sandbox: "alpha",
+      status: "ok",
+      failed: 0,
+      warnings: 0,
+      checks: [],
+    };
+    mocks.runSandboxDoctor.mockImplementationOnce(async () => {
+      process.stdout.write("  Starting OpenShell gateway\n");
+      return report;
+    });
+
+    const out: string[] = [];
+    const err: string[] = [];
+    const origOut = process.stdout.write;
+    const origErr = process.stderr.write;
+    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      out.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+      err.push(typeof chunk === "string" ? chunk : String(chunk));
+      const cb = rest.find((arg) => typeof arg === "function") as undefined | (() => void);
+      if (cb) cb();
+      return true;
+    }) as typeof process.stderr.write;
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await SandboxDoctorCliCommand.run(["alpha", "--json"], rootDir);
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+
+    const stdout = out.join("");
+    expect(stdout).not.toContain("Starting OpenShell gateway");
+    expect(stdout).toBe("");
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual(report);
+    expect(err.join("")).toContain("Starting OpenShell gateway");
   });
 });
