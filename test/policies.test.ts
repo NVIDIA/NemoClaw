@@ -1074,8 +1074,7 @@ exit 1
         });
         expect(result).toBe(false);
         expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
-        expect(logs.join("\n")).not.toContain("Widening sandbox egress");
-        expect(logs.join("\n")).not.toContain("Applied preset:");
+        expect(logs.join("\n")).not.toMatch(/Widening sandbox egress|Applied preset:/);
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();
