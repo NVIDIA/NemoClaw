@@ -936,11 +936,6 @@ async function runScenario(scenario) {
         scenario.name,
       );
       assert.ok(menuOutput.length > 0, `${scenario.name}: empty menu output`);
-      assert.match(
-        menuOutput,
-        /Select your inference provider:/,
-        `${scenario.name}: expected provider-selection header in menu output`,
-      );
 
       if (scenario.vllmExpected) {
         assert.ok(

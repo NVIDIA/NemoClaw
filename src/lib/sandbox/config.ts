@@ -28,23 +28,9 @@ const { isPrivateHostname, isPrivateIp } = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
-
-// Mirror of agents/hermes/config/upstream-header.ts. Kept in lockstep because
-// src/ cannot import from agents/ under tsconfig.src.json rootDir, and the
-// Hermes agent build context (agents/hermes/Dockerfile) cannot reach src/.
-function buildHermesUpstreamHeader(config: Record<string, unknown>): string {
-  const upstream = config._nemoclaw_upstream;
-  if (!upstream || typeof upstream !== "object") return "";
-  const u = upstream as Record<string, unknown>;
-  const provider = typeof u.provider === "string" ? u.provider : "";
-  const model = typeof u.model === "string" ? u.model : "";
-  if (!provider && !model) return "";
-  const lines = ["# Managed by NemoClaw — Hermes configuration"];
-  if (provider) lines.push(`# Upstream provider: ${provider}`);
-  if (model) lines.push(`# Upstream model: ${model}`);
-  lines.push("# OpenShell rewrites model.base_url to the upstream endpoint at request time.");
-  return `${lines.join("\n")}\n`;
-}
+const {
+  buildHermesUpstreamHeader,
+}: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;

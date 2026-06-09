@@ -64,7 +64,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   if (apiMode) modelConfig.api_mode = apiMode;
 
   const upstream: Record<string, unknown> = {
-    provider: settings.providerKey,
+    provider: settings.upstreamProvider,
     model: settings.model,
   };
 
