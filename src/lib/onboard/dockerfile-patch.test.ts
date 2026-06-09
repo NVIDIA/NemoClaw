@@ -277,8 +277,13 @@ describe("dockerfile patch helpers", () => {
     patchStagedDockerfile(dockerfilePath, "custom-model", "https://chat.example", "build-1");
 
     const patched = fs.readFileSync(dockerfilePath, "utf-8");
-    expect(patched).toMatch(/^ARG NEMOCLAW_UPSTREAM_PROVIDER=.+$/m);
-    expect(patched).not.toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=old");
+    const providerKey = patched.match(/^ARG NEMOCLAW_PROVIDER_KEY=(.+)$/m)?.[1];
+    const upstreamProvider = patched.match(/^ARG NEMOCLAW_UPSTREAM_PROVIDER=(.+)$/m)?.[1];
+    expect(providerKey).toBeDefined();
+    expect(upstreamProvider).toBeDefined();
+    // When no provider is supplied, the upstream arg must mirror the managed
+    // route key exactly so the Hermes annotation never silently drifts.
+    expect(upstreamProvider).toBe(providerKey);
   });
 
   it("can override the sandbox inference base URL for Docker GPU host networking", () => {
