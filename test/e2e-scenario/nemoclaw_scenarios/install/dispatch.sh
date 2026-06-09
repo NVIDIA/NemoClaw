@@ -4,7 +4,7 @@
 #
 # Install dispatcher. Routes by install-method / profile id to one of four
 # split helpers (repo-current.sh, public-curl.sh, ollama.sh,
-# launchable.sh). Honors E2E_DRY_RUN.
+# launchable.sh).
 #
 # Accepts both legacy install-method names (repo-checkout,
 # curl-install-script) and the new profile-centric names used by

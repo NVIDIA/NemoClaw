@@ -1,18 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
-  parseFrontmatter,
-  resolveSkillPaths,
   collectFiles,
+  parseFrontmatter,
   postInstall,
-  validateRelativePath,
+  resolveSkillPaths,
   shellQuote,
+  validateRelativePath,
+  verifyInstall,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -71,9 +72,14 @@ describe("parseFrontmatter", () => {
   });
 
   it("rejects names with invalid characters", () => {
-    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("invalid characters");
+    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("is invalid");
+  });
+
+  it("rejects dot and double-dot as skill names in frontmatter", () => {
+    expect(() => parseFrontmatter("---\nname: .\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ..\n---\n")).toThrow("is invalid");
   });
 });
 
@@ -194,6 +200,7 @@ describe("resolveSkillPaths", () => {
   it("returns OpenClaw defaults when agent is null", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -209,6 +216,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -224,6 +232,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "demo-skill");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -237,6 +246,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "test-skill");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -267,5 +277,93 @@ describe("postInstall", () => {
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
+  });
+
+  it("mirrors the uploaded skill into the OpenClaw home dir so the agent loads it", () => {
+    // Regression for #4819: on sandboxes whose agent $HOME differs from the
+    // OpenClaw state dir, `skills list` shows the upload dir while the agent
+    // loads skills from $HOME/.openclaw/skills. Install must populate that
+    // mirror — symmetric with `skill remove`, which deletes it.
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-"));
+    const commands: string[] = [];
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
+      const paths = resolveSkillPaths(null, "report-writer");
+      postInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, skillDir, {
+        sshExecImpl: (_ctx, command) => {
+          commands.push(command);
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+      // A command must copy the upload dir into the home mirror dir.
+      const mirrorCmd = commands.find(
+        (c) => c.includes(paths.uploadDir) && c.includes('"$HOME/.openclaw/skills/report-writer"'),
+      );
+      expect(mirrorCmd, "postInstall should mirror the skill into $HOME/.openclaw/skills").toBeDefined();
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when the OpenClaw home mirror cannot be created", () => {
+    const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-fail-"));
+    try {
+      writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
+      const paths = resolveSkillPaths(null, "report-writer");
+      const result = postInstall(
+        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+        paths,
+        skillDir,
+        {
+          sshExecImpl: (_ctx, command) => ({
+            // Fail only the mirror command; session refresh still succeeds.
+            status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
+            stdout: "",
+            stderr: "",
+          }),
+        },
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.messages.some((m) => m.startsWith("Warning:") && m.includes("mirror"))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(skillDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("verifyInstall", () => {
+  it("requires SKILL.md in the OpenClaw home mirror, not only the upload dir (#4819)", () => {
+    // The agent loads skills from the home mirror, so an install whose mirror
+    // copy failed must NOT verify as installed — otherwise the CLI reports
+    // success while the skill stays invisible to the agent.
+    const paths = resolveSkillPaths(null, "report-writer");
+    const commands: string[] = [];
+    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "EXISTS", stderr: "" };
+      },
+    });
+
+    expect(ok).toBe(true);
+    // The verification command must cover the home mirror SKILL.md.
+    expect(commands.some((c) => c.includes('"$HOME/.openclaw/skills/report-writer/SKILL.md"'))).toBe(
+      true,
+    );
+  });
+
+  it("returns false when the upload dir has SKILL.md but the home mirror does not", () => {
+    const paths = resolveSkillPaths(null, "report-writer");
+    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+      // A combined `test -f A && test -f B` shell command fails (non-zero,
+      // no EXISTS) when the mirror file is absent.
+      sshExecImpl: () => ({ status: 1, stdout: "", stderr: "" }),
+    });
+
+    expect(ok).toBe(false);
   });
 });

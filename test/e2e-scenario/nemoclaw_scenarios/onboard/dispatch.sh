@@ -14,6 +14,8 @@ _E2E_ONBOARD_RUNTIME_LIB="$(cd "${_E2E_ONBOARD_DIR}/../../runtime/lib" && pwd)"
 . "${_E2E_ONBOARD_RUNTIME_LIB}/context.sh"
 # shellcheck source=cloud-openclaw.sh
 . "${_E2E_ONBOARD_DIR}/cloud-openclaw.sh"
+# shellcheck source=cloud-openclaw-no-docker.sh
+. "${_E2E_ONBOARD_DIR}/cloud-openclaw-no-docker.sh"
 # shellcheck source=cloud-hermes.sh
 . "${_E2E_ONBOARD_DIR}/cloud-hermes.sh"
 # shellcheck source=local-ollama-openclaw.sh
@@ -26,13 +28,12 @@ e2e_onboard() {
     return 2
   fi
   e2e_env_trace "onboard:${profile}"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] onboard profile=${profile} (skipped)"
-    return 0
-  fi
   case "${profile}" in
     cloud-openclaw)
       e2e_onboard_cloud_openclaw
+      ;;
+    cloud-openclaw-no-docker)
+      e2e_onboard_cloud_openclaw_no_docker
       ;;
     cloud-openclaw-custom-policies)
       E2E_ONBOARDING_MODEL="${E2E_ONBOARDING_MODEL:-nvidia/nemotron-3-super-120b-a12b}"

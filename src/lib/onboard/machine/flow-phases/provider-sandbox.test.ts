@@ -62,13 +62,16 @@ describe("provider/sandbox flow phases", () => {
   });
 
   it("maps sandbox context updates and branch result", async () => {
+    const branchResult = branchTo("openclaw", {
+      metadata: { sandboxName: "my-assistant", state: "sandbox" },
+    });
     const phase = createSandboxPhase(async () => ({
       context: {
         sandboxName: "my-assistant",
         selectedMessagingChannels: ["telegram"],
         webSearchSupported: true,
       },
-      result: branchTo("openclaw"),
+      result: branchResult,
     }));
 
     const result = await phase.run(context());
@@ -79,6 +82,6 @@ describe("provider/sandbox flow phases", () => {
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,
     });
-    expect(result.result).toMatchObject({ next: "openclaw", transitionKind: "branch" });
+    expect(result.result).toEqual(branchResult);
   });
 });

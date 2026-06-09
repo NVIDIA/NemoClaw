@@ -26,6 +26,7 @@ export const SANDBOX_ROUTE_OVERRIDES: Record<string, readonly string[]> = {
   "sandbox:hosts:list": ["hosts-list"],
   "sandbox:hosts:remove": ["hosts-remove"],
   "sandbox:policy:add": ["policy-add"],
+  "sandbox:policy:explain": ["policy-explain"],
   "sandbox:policy:list": ["policy-list"],
   "sandbox:policy:remove": ["policy-remove"],
 };

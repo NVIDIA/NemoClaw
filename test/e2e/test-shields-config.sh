@@ -10,6 +10,7 @@
 #   Phase 3: shields up — verify config becomes immutable
 #   Phase 4: config get — read-only inspection
 #   Phase 5: shields status — shows UP
+#   Phase 5b: Content-seal drift detection (chmod-write-chmod tamper)
 #   Phase 6: shields down — verify config returns to writable
 #   Phase 7: shields status — shows DOWN
 #   Phase 8: Audit trail completeness
@@ -311,6 +312,126 @@ if echo "$STATUS_OUTPUT" | grep -q "Shields: UP"; then
   pass "shields status reports UP"
 else
   fail "shields status should show UP: ${STATUS_OUTPUT}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 5b: content-seal drift detection — host-root chmod-write-chmod
+# ══════════════════════════════════════════════════════════════════
+# Verifies the SHA-256 content seal: a host-root tamper that rewrites a
+# locked file and restores 444 root:root afterwards leaves mode/owner
+# clean but produces a new content hash. `shields status` must flag this
+# as drift, and `shields up` must refuse to launder the tampered
+# baseline into a fresh seal.
+section "Phase 5b: content-seal drift detection"
+
+CTR=$(docker ps --filter "name=openshell-${SANDBOX_NAME}" -q | head -n1)
+if [ -z "$CTR" ]; then
+  fail "Could not find sandbox container for ${SANDBOX_NAME}"
+else
+  # Use a byte-preserving temp file for backup/restore. Bash command
+  # substitution `$(...)` strips trailing newlines, which would change
+  # the file's SHA-256 between backup and restore and create false
+  # drift after the post-restore status check. The temp file is cleaned
+  # up at the end of the phase — do not install an EXIT trap here
+  # because `sandbox-teardown.sh` already owns the EXIT trap and a bare
+  # `trap '...' EXIT` would clobber the sandbox cleanup.
+  ORIG_CONTENT_FILE=$(mktemp -t nemoclaw-shields-orig.XXXXXX)
+  if ! docker exec -u 0 "$CTR" cat "$CONFIG_PATH" >"$ORIG_CONTENT_FILE" 2>/dev/null; then
+    fail "Could not read original ${CONFIG_PATH} content as host root"
+  elif [ ! -s "$ORIG_CONTENT_FILE" ]; then
+    fail "Original ${CONFIG_PATH} read returned an empty file"
+  else
+    # When shields-up applied `chattr +i`, `chmod 644` alone would EPERM
+    # and the tamper would no-op — masking the seal check. Drop the
+    # immutable bit best-effort before the tamper, then restore it after
+    # so the post-tamper file is indistinguishable from the locked
+    # baseline by `stat`/`lsattr` alone. Track whether `+i` was applied
+    # via `lsattr -d` so we only re-apply when it was set before.
+    LSATTR_BEFORE=$(docker exec -u 0 "$CTR" lsattr -d "$CONFIG_PATH" 2>/dev/null | awk '{print $1}' || true)
+    HAD_IMMUTABLE_BIT=false
+    if echo "$LSATTR_BEFORE" | grep -q "i"; then
+      HAD_IMMUTABLE_BIT=true
+    fi
+    docker exec -u 0 "$CTR" sh -c \
+      "chattr -i ${CONFIG_PATH} 2>/dev/null || true; \
+       chmod 644 ${CONFIG_PATH} && printf ' ' >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      >/dev/null 2>&1
+    TAMPER_EXIT=$?
+    if [ "$HAD_IMMUTABLE_BIT" = "true" ]; then
+      docker exec -u 0 "$CTR" chattr +i "$CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
+    if [ "$TAMPER_EXIT" = "0" ]; then
+      pass "Tamper command executed (chmod-write-chmod) without error"
+    else
+      fail "Tamper command failed (exit ${TAMPER_EXIT}); cannot validate drift detection"
+    fi
+    PERMS_AFTER_TAMPER=$(docker exec "$CTR" stat -c '%a %U:%G' "$CONFIG_PATH" 2>/dev/null || true)
+    info "Config perms after chmod-write-chmod tamper: ${PERMS_AFTER_TAMPER}"
+    if [ "$PERMS_AFTER_TAMPER" = "444 root:root" ]; then
+      pass "Tamper restored 444 root:root (mode/owner alone cannot detect drift)"
+    else
+      fail "Expected tamper to leave 444 root:root, got: ${PERMS_AFTER_TAMPER}"
+    fi
+
+    # The script runs with `set -uo pipefail` (no -e), so `$?` after a
+    # command substitution gives that command's exit code without
+    # aborting the script. Toggling `set -e` here would interact badly
+    # with the `fail()` helper, whose `((FAIL++))` returns a non-zero
+    # exit when FAIL is 0 and would abort under -e.
+    STATUS_TAMPER_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+    STATUS_TAMPER_EXIT=$?
+    echo "$STATUS_TAMPER_OUTPUT"
+    if [ "$STATUS_TAMPER_EXIT" = "2" ]; then
+      pass "shields status exits 2 on content drift"
+    else
+      fail "shields status should exit 2 on content drift, got ${STATUS_TAMPER_EXIT}"
+    fi
+    if echo "$STATUS_TAMPER_OUTPUT" | grep -q "UP (DRIFTED"; then
+      pass "shields status surfaces DRIFTED on content drift"
+    else
+      fail "shields status should surface DRIFTED line on content drift"
+    fi
+    if echo "$STATUS_TAMPER_OUTPUT" | grep -q "content drifted"; then
+      pass "shields status names the drifted file"
+    else
+      fail "shields status should name the drifted file"
+    fi
+
+    REUP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
+    REUP_EXIT=$?
+    echo "$REUP_OUTPUT"
+    if [ "$REUP_EXIT" != "0" ]; then
+      pass "shields up refuses to re-seal a tampered baseline (exit ${REUP_EXIT})"
+    else
+      fail "shields up should refuse to re-seal a tampered baseline"
+    fi
+    if echo "$REUP_OUTPUT" | grep -q "Refusing to re-seal"; then
+      pass "shields up surfaces the refuse-to-re-seal message"
+    else
+      fail "shields up should surface the refuse-to-re-seal message"
+    fi
+
+    # Restore the original content as host root so the rest of the suite
+    # can continue against a clean lock. Drop the immutable bit (if any)
+    # before the write and re-apply it after so the file ends in the
+    # same chattr posture it started in. `docker exec -i` keeps stdin
+    # open and we stream the backup file straight in — no command
+    # substitution that would strip trailing newlines.
+    docker exec -i -u 0 "$CTR" sh -c \
+      "chattr -i ${CONFIG_PATH} 2>/dev/null || true; \
+       chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      <"$ORIG_CONTENT_FILE" >/dev/null 2>&1
+    if [ "$HAD_IMMUTABLE_BIT" = "true" ]; then
+      docker exec -u 0 "$CTR" chattr +i "$CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
+    POST_RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1 || true)
+    if echo "$POST_RESTORE_OUTPUT" | grep -q "Shields: UP (lockdown active)"; then
+      pass "shields status clean after content restore"
+    else
+      fail "shields status should report clean UP after content restore: ${POST_RESTORE_OUTPUT}"
+    fi
+  fi
+  rm -f "$ORIG_CONTENT_FILE"
 fi
 
 # ══════════════════════════════════════════════════════════════════

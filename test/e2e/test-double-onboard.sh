@@ -729,16 +729,89 @@ else
   fail "Stale sandbox status exited $status_exit (expected 1)"
 fi
 
-if grep -q "Removed stale local registry entry" <<<"$status_output"; then
-  pass "Stale registry entry was reconciled during status"
+if grep -q "No local registry entry was removed" <<<"$status_output"; then
+  pass "Stale sandbox status emitted non-destructive guidance (#4578)"
 else
-  fail "Stale registry reconciliation message missing"
+  fail "Stale sandbox status did not emit non-destructive guidance (#4578)"
+fi
+
+# #4497: neither status nor connect may delete the stale local entry — the
+# metadata is what `rebuild` / `onboard --recreate-sandbox` need to recover.
+if grep -q "Removed stale local registry entry" <<<"$status_output"; then
+  fail "status removed the local registry entry (must be preserved, #4497)"
+else
+  pass "status preserved the stale registry entry"
 fi
 
 if registry_has "$SANDBOX_A"; then
-  fail "Registry still contains '$SANDBOX_A' after status reconciliation"
+  pass "Registry still contains '$SANDBOX_A' after status"
 else
-  pass "Registry entry for '$SANDBOX_A' removed after status reconciliation"
+  fail "Registry entry for '$SANDBOX_A' was removed by status (must be preserved, #4497)"
+fi
+
+# Bound every Phase 5 recovery probe so a reintroduced prompt or hang fails the
+# job fast instead of stalling to the phase timeout. Mirrors the probe-only
+# connect in Phase 4.
+RECOVERY_PROBE_TIMEOUT_SECONDS="${NEMOCLAW_E2E_RECOVERY_PROBE_TIMEOUT_SECONDS:-180}"
+
+# A routine `connect` against the same stale entry must also preserve it.
+CONNECT_LOG="$(mktemp)"
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" connect >"$CONNECT_LOG" 2>&1
+connect_exit=$?
+connect_output="$(cat "$CONNECT_LOG")"
+rm -f "$CONNECT_LOG"
+
+if [ "$connect_exit" -eq 1 ]; then
+  pass "Stale sandbox connect exited 1"
+else
+  fail "Stale sandbox connect exited $connect_exit (expected 1)"
+fi
+
+if grep -q "Removed stale local registry entry" <<<"$connect_output"; then
+  fail "connect removed the local registry entry (must be preserved, #4497)"
+else
+  pass "connect preserved the stale registry entry"
+fi
+
+if registry_has "$SANDBOX_A"; then
+  pass "Registry still contains '$SANDBOX_A' after connect (#4497)"
+else
+  fail "connect removed '$SANDBOX_A' from the registry (must be preserved, #4497)"
+fi
+
+# The preserved entry must still be locatable by the recovery command the
+# status hint recommends: rebuild must get past the dispatcher and into its
+# own flow rather than failing with "does not exist".
+REBUILD_LOG="$(mktemp)"
+rebuild_exit=0
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
+rebuild_output="$(cat "$REBUILD_LOG")"
+rm -f "$REBUILD_LOG"
+
+# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass: a
+# killed process produces output without "does not exist", so guard the exit
+# code before the content assertion.
+if [ "$rebuild_exit" -eq 124 ]; then
+  fail "rebuild probe timed out after ${RECOVERY_PROBE_TIMEOUT_SECONDS}s (possible prompt regression, #4497)"
+elif grep -q "does not exist" <<<"$rebuild_output"; then
+  fail "rebuild could not locate the preserved sandbox '$SANDBOX_A' (#4497)"
+else
+  pass "rebuild located the preserved sandbox '$SANDBOX_A' (#4497)"
+fi
+
+# #4497: the explicit `destroy` command is the intended way to purge a stale
+# entry now that routine status/connect no longer delete it. Purge it here,
+# while the gateway is still healthy, so the preserved entry does not leak into
+# Phase 7 cleanup (which runs against a stopped gateway and cannot remove it).
+run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
+  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" destroy --yes 2>/dev/null || true
+openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
+if registry_has "$SANDBOX_A"; then
+  fail "destroy did not purge the stale '$SANDBOX_A' registry entry (#4497)"
+else
+  pass "destroy purged the stale '$SANDBOX_A' registry entry (#4497)"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -800,12 +873,10 @@ stop_gateway_runtime
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 openshell gateway destroy -g "$ALT_GATEWAY_NAME" 2>/dev/null || true
 
-# Force registry reconciliation: when the gateway is in a degraded state
-# (stopped in Phase 6), `nemoclaw destroy` may delete the sandbox from
-# OpenShell but fail to clean its own registry entry. Running `status` for
-# each sandbox triggers the stale-entry reconciliation path.
-run_nemoclaw "$SANDBOX_A" status 2>/dev/null || true
-run_nemoclaw "$SANDBOX_B" status 2>/dev/null || true
+# `status` and `connect` intentionally preserve stale registry entries (#4497),
+# so final cleanup relies on the explicit `destroy --yes` calls above. Do not
+# run a post-destroy status probe here: it can restart the gateway without
+# removing registry state.
 
 if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
   fail "Sandbox '$SANDBOX_A' still exists after cleanup"

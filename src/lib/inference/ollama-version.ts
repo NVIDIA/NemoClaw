@@ -8,6 +8,7 @@
  */
 
 const { runCapture } = require("../runner");
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
 
 export type OllamaVersionRunCapture = (
@@ -49,12 +50,14 @@ export function getRunningOllamaDaemonVersion(
   const out = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "2",
-      "--max-time",
-      "5",
-      endpoint,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "5",
+        endpoint,
+      ]),
     ],
     { ignoreError: true },
   );
