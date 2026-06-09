@@ -333,6 +333,17 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
+      "legacyScript": "test/e2e/test-jetson-nvmap-gpu.sh",
+      "domain": "platform",
+      "ownerIssue": "#4354",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Jetson Orin /dev/nvmap CUDA usability + status reporter-workflow E2E for #4231; Jetson-gated. Classify coverage and deletion evidence in the owning migration issue before deleting."
+    },
+    {
       "legacyScript": "test/e2e/test-hermes-discord-e2e.sh",
       "domain": "messaging",
       "ownerIssue": "#4351",
