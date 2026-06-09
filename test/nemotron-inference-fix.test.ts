@@ -269,6 +269,11 @@ async function main() {
       model: 'other-model',
       messages: [{ role: 'user', content: 'ping' }],
     }, { 'content-type': 'application/json' });
+    // #4851: Ultra 550B injection over the real fetch/undici path
+    await postJson(url, {
+      model: 'nvidia/nemotron-3-ultra-550b-a55b',
+      messages: [{ role: 'user', content: 'Create a file and run it.' }],
+    }, { 'content-type': 'application/json', 'content-length': '999' });
     console.log(JSON.stringify(records));
   } finally {
     await close();
@@ -286,7 +291,7 @@ main().catch((err) => {
     });
     expect(result.status, result.stderr).toBe(0);
     const records = JSON.parse(result.stdout.trim());
-    expect(records).toHaveLength(3);
+    expect(records).toHaveLength(4);
 
     const deepSeekBody = JSON.parse(records[0].body);
     expect(deepSeekBody.chat_template_kwargs).toEqual({ thinking: false });
@@ -300,6 +305,18 @@ main().catch((err) => {
 
     const otherBody = JSON.parse(records[2].body);
     expect(otherBody.chat_template_kwargs).toBeUndefined();
+
+    // #4851: Ultra 550B injection takes the fetch/undici path too, system
+    // message is prepended and Content-Length is refreshed for the larger body
+    const ultraBody = JSON.parse(records[3].body);
+    expect(ultraBody.messages[0].role).toBe("system");
+    expect(ultraBody.messages[0].content).toMatch(/do not have tools/i);
+    expect(ultraBody.messages[1]).toEqual({
+      role: "user",
+      content: "Create a file and run it.",
+    });
+    expect(records[3].headers["content-length"]).toBe(String(Buffer.byteLength(records[3].body)));
+    expect(records[3].headers["content-length"]).not.toBe("999");
   });
 
   it("preload injects a tool-less system prompt for Ultra 550B without overriding caller intent (#4851)", () => {
@@ -364,6 +381,28 @@ send(JSON.stringify({
     { role: 'user', content: 'hi again' },
   ],
 }));
+// case 5: Ultra 550B with non-execution tools only (toolSearch, web fetch) —
+// expect INJECTION because these tools can't write files or run commands,
+// matching the practical end-user config from #4851's repro
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [
+    { type: 'function', function: { name: 'tool_search', parameters: {} } },
+    { type: 'function', function: { name: 'web_fetch', parameters: {} } },
+    { type: 'function', function: { name: 'tool_describe', parameters: {} } },
+  ],
+}));
+// case 6: Ultra 550B with mixed tools (search + bash_execute) — expect NO
+// injection because execution-capable tool is present
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [
+    { type: 'function', function: { name: 'tool_search', parameters: {} } },
+    { type: 'function', function: { name: 'bash_execute', parameters: {} } },
+  ],
+}));
 console.log(JSON.stringify(records));
 `;
 
@@ -373,7 +412,7 @@ console.log(JSON.stringify(records));
     });
     expect(result.status, result.stderr).toBe(0);
     const records = JSON.parse(result.stdout.trim());
-    expect(records).toHaveLength(5);
+    expect(records).toHaveLength(7);
 
     // case 0: system message injected at position 0
     const ultraBare = JSON.parse(records[0].writes.join(""));
@@ -391,10 +430,10 @@ console.log(JSON.stringify(records));
     expect(ultraWithSystem.messages).toHaveLength(2);
     expect(ultraWithSystem.messages[0].content).toBe("You are pirate-themed.");
 
-    // case 2: tools present, no injection
-    const ultraWithTools = JSON.parse(records[2].writes.join(""));
-    expect(ultraWithTools.messages).toHaveLength(1);
-    expect(ultraWithTools.messages[0].role).toBe("user");
+    // case 2: execution-capable tool (exec) present, no injection
+    const ultraWithExecTool = JSON.parse(records[2].writes.join(""));
+    expect(ultraWithExecTool.messages).toHaveLength(1);
+    expect(ultraWithExecTool.messages[0].role).toBe("user");
 
     // case 3: non-matching Nemotron model, no injection
     const superModel = JSON.parse(records[3].writes.join(""));
@@ -406,5 +445,19 @@ console.log(JSON.stringify(records));
     expect(ultraMidSystem.messages).toHaveLength(4);
     expect(ultraMidSystem.messages[0].role).toBe("user");
     expect(ultraMidSystem.messages[2].role).toBe("system");
+
+    // case 5: non-execution tools only (toolSearch + web fetch) — injection
+    // STILL fires because these tools can't satisfy the user's exec request.
+    // This is the practical end-user config from #4851's repro.
+    const ultraWithSearchTools = JSON.parse(records[5].writes.join(""));
+    expect(ultraWithSearchTools.messages[0].role).toBe("system");
+    expect(ultraWithSearchTools.messages[0].content).toMatch(/do not have tools/i);
+    expect(ultraWithSearchTools.tools).toHaveLength(3);
+
+    // case 6: mixed tools (search + bash_execute) — no injection because
+    // an execution-capable tool is present
+    const ultraWithMixedTools = JSON.parse(records[6].writes.join(""));
+    expect(ultraWithMixedTools.messages).toHaveLength(1);
+    expect(ultraWithMixedTools.messages[0].role).toBe("user");
   });
 });
