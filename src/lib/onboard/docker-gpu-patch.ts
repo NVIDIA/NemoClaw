@@ -247,7 +247,9 @@ export type DockerContainerInspect = {
   } | null;
 };
 
-function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
+function depsWithDefaults(
+  deps: DockerGpuPatchDeps,
+): Required<
   Pick<
     DockerGpuPatchDeps,
     | "dockerCapture"
@@ -300,7 +302,9 @@ function timestampForPath(now: Date): string {
 }
 
 function dockerContainerName(inspect: DockerContainerInspect): string {
-  const raw = String(inspect.Name || "").replace(/^\/+/, "").trim();
+  const raw = String(inspect.Name || "")
+    .replace(/^\/+/, "")
+    .trim();
   if (!raw) throw new Error("Docker inspect output did not include a container name.");
   return raw;
 }
@@ -327,7 +331,9 @@ function replaceEnvValue(entry: string, key: string, value: string | null | unde
   return `${key}=${value}`;
 }
 
-function openshellSandboxCommandEnvValue(command: readonly string[] | null | undefined): string | null {
+function openshellSandboxCommandEnvValue(
+  command: readonly string[] | null | undefined,
+): string | null {
   const parts = (command || []).map((part) => String(part)).filter((part) => part.length > 0);
   return parts.length > 0 ? parts.join(" ") : null;
 }
@@ -367,7 +373,11 @@ function normalizeGpuDeviceForDocker(device: string | null | undefined): string 
 
 function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
   const dockerDevice = normalizeGpuDeviceForDocker(device);
-  if (String(device || "").trim().startsWith("nvidia.com/gpu=")) {
+  if (
+    String(device || "")
+      .trim()
+      .startsWith("nvidia.com/gpu=")
+  ) {
     return String(device).trim();
   }
   return `nvidia.com/gpu=${dockerDevice || "all"}`;
@@ -416,7 +426,10 @@ export function buildDockerGpuModeCandidates(
   if (options.backend === "jetson") {
     return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
   }
-  const candidates = [buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device)];
+  const candidates = [
+    buildDockerGpuMode("gpus", device),
+    buildDockerGpuMode("nvidia-runtime", device),
+  ];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
   return candidates;
 }
@@ -492,7 +505,9 @@ export function detectSandboxFallbackDns(
 export function getDockerGpuPatchNetworkMode(
   env: Record<string, string | undefined> = process.env,
 ): "host" | "preserve" {
-  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
+  const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "")
+    .trim()
+    .toLowerCase();
   if (networkOverride === "host") return "host";
   if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
   return "preserve";
@@ -675,7 +690,10 @@ export function findOpenShellDockerSandboxContainerIds(
     .filter(Boolean);
 }
 
-function inspectDockerContainer(containerId: string, deps: DockerGpuPatchDeps): DockerContainerInspect {
+function inspectDockerContainer(
+  containerId: string,
+  deps: DockerGpuPatchDeps,
+): DockerContainerInspect {
   const d = depsWithDefaults(deps);
   const output = d.dockerCapture(["inspect", "--type", "container", containerId], {
     ignoreError: true,
@@ -684,7 +702,10 @@ function inspectDockerContainer(containerId: string, deps: DockerGpuPatchDeps): 
   return parseDockerInspectJson(output);
 }
 
-function sameContainerId(left: string | null | undefined, right: string | null | undefined): boolean {
+function sameContainerId(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
   if (!left || !right) return false;
   return left.startsWith(right) || right.startsWith(left);
 }
@@ -936,7 +957,9 @@ export function recreateOpenShellDockerSandboxWithGpu(
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
     if (!isZeroStatus(renameResult)) {
-      throw new Error(`Could not move original sandbox container aside: ${resultText(renameResult)}`);
+      throw new Error(
+        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
+      );
     }
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
@@ -1231,11 +1254,7 @@ export function formatDockerInspectNetworkSummary(
   return lines.join("\n");
 }
 
-const SANDBOX_FAILURE_PHASE_TOKENS = new Set([
-  "Error",
-  "Failed",
-  "CrashLoopBackOff",
-]);
+const SANDBOX_FAILURE_PHASE_TOKENS = new Set(["Error", "Failed", "CrashLoopBackOff"]);
 
 const SANDBOX_LIVE_PHASE_TOKENS = new Set(["Ready", "Running"]);
 
@@ -1360,10 +1379,10 @@ export function captureDockerGpuPatchSandboxSnapshot(
   if (target) {
     const capture = deps.dockerCapture ?? dockerCapture;
     try {
-      const stateJson = capture(
-        ["inspect", "--format", "{{json .State}}", target],
-        { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-      );
+      const stateJson = capture(["inspect", "--format", "{{json .State}}", target], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
       patchedContainerState = parseDockerContainerState(stateJson);
     } catch {
       /* best effort */
@@ -1377,7 +1396,8 @@ function describePatchedContainerState(state: DockerContainerState | null): stri
   if (!state) return [];
   const lines: string[] = [];
   if (state.Status) lines.push(`patched_container_status=${state.Status}`);
-  if (typeof state.ExitCode === "number") lines.push(`patched_container_exit_code=${state.ExitCode}`);
+  if (typeof state.ExitCode === "number")
+    lines.push(`patched_container_exit_code=${state.ExitCode}`);
   if (state.OOMKilled) lines.push("patched_container_oom_killed=true");
   if (state.Error) lines.push(`patched_container_error=${state.Error}`);
   if (state.Health?.Status) lines.push(`patched_container_health=${state.Health.Status}`);
@@ -1464,9 +1484,7 @@ export function classifyDockerGpuPatchFailure(
 
   if (options.proofError) {
     const proofText =
-      options.proofError instanceof Error
-        ? options.proofError.message
-        : String(options.proofError);
+      options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
   return { kind, headline, summaryLines: lines };
@@ -1570,7 +1588,9 @@ export function collectDockerGpuPatchDiagnostics(
     discoveredContainerIds = [];
   }
   const containerTargets = uniqueStrings([
-    ...(context ? [context.oldContainerId, context.newContainerId, context.backupContainerName] : []),
+    ...(context
+      ? [context.oldContainerId, context.newContainerId, context.backupContainerName]
+      : []),
     ...discoveredContainerIds,
   ]);
   if (containerTargets.length > 0) {

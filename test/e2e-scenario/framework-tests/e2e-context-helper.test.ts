@@ -84,5 +84,4 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 });

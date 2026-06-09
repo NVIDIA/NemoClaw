@@ -310,7 +310,11 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
       return;
     } catch (error) {
       lastError = commandErrorOutput(error);
-      if (/Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(lastError)) {
+      if (
+        /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(
+          lastError,
+        )
+      ) {
         dnsFailures += 1;
       } else {
         dnsFailures = 0;
@@ -568,13 +572,9 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
  */
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
-  console.log(
-    `[${elapsed()}] Creating ${instanceKind} instance via launchable...`,
-  );
+  console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
   console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-  console.log(
-    `[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`,
-  );
+  console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
       console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
@@ -683,13 +683,7 @@ function createBrevInstance(elapsed: () => string): void {
       );
       execFileSync(
         "brev",
-        [
-          "create",
-          requireInstanceName(),
-          "--startup-script",
-          `@${setupScriptPath}`,
-          "--detached",
-        ],
+        ["create", requireInstanceName(), "--startup-script", `@${setupScriptPath}`, "--detached"],
         {
           encoding: "utf-8",
           input: cpuCandidates,
@@ -1067,7 +1061,6 @@ describe("Brev GPU runtime setup", () => {
       `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
     );
   });
-
 });
 
 describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {

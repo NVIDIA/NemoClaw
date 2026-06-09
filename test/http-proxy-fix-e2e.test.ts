@@ -35,7 +35,9 @@ const PROXY_HOST = "10.200.0.1";
 
 // Cert setup at module load (not inside beforeAll) so the result is
 // visible to `it.skipIf` at definition time.
-function trySetupCert(): { ok: true; key: Buffer; cert: Buffer; dir: string } | { ok: false; reason: string } {
+function trySetupCert():
+  | { ok: true; key: Buffer; cert: Buffer; dir: string }
+  | { ok: false; reason: string } {
   try {
     execSync("openssl version", { stdio: "pipe" });
   } catch (err) {
@@ -99,7 +101,11 @@ function loadWrapper() {
   require(FIX_PATH);
 }
 
-function startMock(): Promise<{ port: number; close: () => Promise<void>; received: CapturedRequest[] }> {
+function startMock(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+  received: CapturedRequest[];
+}> {
   return new Promise((resolve, reject) => {
     const received: CapturedRequest[] = [];
     const server = https.createServer({ key, cert }, (req, res) => {

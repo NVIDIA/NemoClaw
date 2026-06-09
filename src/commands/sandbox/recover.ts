@@ -17,8 +17,7 @@ export default class RecoverCliCommand extends NemoClawCommand {
   static args = {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(RecoverCliCommand);

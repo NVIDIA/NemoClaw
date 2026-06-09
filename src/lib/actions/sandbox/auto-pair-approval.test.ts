@@ -70,9 +70,7 @@ describe("wrapSandboxShellScript (#4616)", () => {
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
   it("approves allowlisted upgrades, skips unknown clients, and reports the count", () => {
-    if (
-      spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0
-    ) {
+    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       // No python3 — the in-sandbox script can't run; skip the behavioural check.
       return;
     }

@@ -59,7 +59,14 @@ function phaseResult(
     phase,
     status: opts.status ?? "passed",
     actions: opts.failedActionId
-      ? [{ id: opts.failedActionId, status: "failed", durationMs: 1, message: opts.failedActionMessage }]
+      ? [
+          {
+            id: opts.failedActionId,
+            status: "failed",
+            durationMs: 1,
+            message: opts.failedActionMessage,
+          },
+        ]
       : [],
     assertions: opts.failedAssertionId
       ? [
@@ -206,7 +213,10 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
   });
 
   it("throws if invoked for a plan without expectedFailure", () => {
-    const plan: RunPlan = { ...planWithExpectedFailure({ phase: "onboarding", errorClass: "x" }), expectedFailure: undefined };
+    const plan: RunPlan = {
+      ...planWithExpectedFailure({ phase: "onboarding", errorClass: "x" }),
+      expectedFailure: undefined,
+    };
     expect(() => evaluateNegativeContract(plan, [])).toThrow(/no expectedFailure declared/);
   });
 
@@ -232,10 +242,7 @@ describe("ScenarioRunner appends negative-contract phase", () => {
   it("invokes matcher and appends a passing synthetic phase when contract matched", async () => {
     const ctx = freshCtx();
     try {
-      const fakePhase = (
-        phase: PhaseName,
-        outcome: PhaseResult,
-      ) => ({
+      const fakePhase = (phase: PhaseName, outcome: PhaseResult) => ({
         run: async (
           _ctx: RunContext,
           _runPhase: RunPlanPhase,
@@ -244,7 +251,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
       });
 
       const runner = new ScenarioRunner({
-        environment: fakePhase("environment", { phase: "environment", status: "passed", actions: [], assertions: [] }),
+        environment: fakePhase("environment", {
+          phase: "environment",
+          status: "passed",
+          actions: [],
+          assertions: [],
+        }),
         onboarding: fakePhase("onboarding", {
           phase: "onboarding",
           status: "failed",
@@ -258,7 +270,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
           ],
           assertions: [],
         }),
-        runtime: fakePhase("runtime", { phase: "runtime", status: "passed", actions: [], assertions: [] }),
+        runtime: fakePhase("runtime", {
+          phase: "runtime",
+          status: "passed",
+          actions: [],
+          assertions: [],
+        }),
       });
 
       const plan = planWithExpectedFailure({ phase: "preflight", errorClass: "docker-missing" });
@@ -300,7 +317,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
           ],
           assertions: [],
         }),
-        onboarding: fakePhase({ phase: "onboarding", status: "skipped", actions: [], assertions: [] }),
+        onboarding: fakePhase({
+          phase: "onboarding",
+          status: "skipped",
+          actions: [],
+          assertions: [],
+        }),
         runtime: fakePhase({ phase: "runtime", status: "skipped", actions: [], assertions: [] }),
       });
 
@@ -366,7 +388,10 @@ describe("registry contract: every negative scenario opts into the side-effect p
             step.required === true,
         ),
       );
-      expect(hasProbeStep, `scenario ${scenario.id} must include the required side-effect pending step`).toBe(true);
+      expect(
+        hasProbeStep,
+        `scenario ${scenario.id} must include the required side-effect pending step`,
+      ).toBe(true);
     }
   });
 });

@@ -874,7 +874,6 @@ describe("planHostRemediation", () => {
 
     expect(actions.some((action: { id: string }) => action.id === "install_openshell")).toBe(true);
   });
-
 });
 
 describe("ensureSwap", () => {
@@ -1048,7 +1047,8 @@ describe("probeContainerDns", () => {
     // The output is some docker-side message unrelated to DNS, so we
     // must not abort onboarding with the systemd-resolved remediation.
     const result = probeContainerDns({
-      outputOverride: "docker: random unrelated diagnostic output that mentions nothing DNS related\n",
+      outputOverride:
+        "docker: random unrelated diagnostic output that mentions nothing DNS related\n",
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("error");
@@ -1313,7 +1313,7 @@ describe("probeContainerDns", () => {
       "x$(whoami)",
       "x|whoami",
       "x\nwhoami",
-      "x \"; rm -rf /\"",
+      'x "; rm -rf /"',
     ];
     for (const probeName of injections) {
       expect(() => probeContainerDns({ probeName })).toThrow(/probeName must be a plain DNS name/);
@@ -1324,7 +1324,8 @@ describe("probeContainerDns", () => {
     expect(() =>
       probeContainerDns({
         probeName: "nemoclaw-dns-probe-abc123.invalid",
-        runCaptureImpl: () => "Server:\t1.1.1.1\nAddress:\t1.1.1.1:53\n** server can't find x: NXDOMAIN\n",
+        runCaptureImpl: () =>
+          "Server:\t1.1.1.1\nAddress:\t1.1.1.1:53\n** server can't find x: NXDOMAIN\n",
       }),
     ).not.toThrow();
   });

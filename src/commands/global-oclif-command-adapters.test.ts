@@ -109,7 +109,9 @@ describe("global oclif command adapters", () => {
     await ListCommand.run([], rootDir);
 
     expect(mocks.buildListCommandDeps).toHaveBeenCalledWith();
-    expect(mocks.getSandboxInventory).toHaveBeenCalledWith({ getLiveInference: expect.any(Function) });
+    expect(mocks.getSandboxInventory).toHaveBeenCalledWith({
+      getLiveInference: expect.any(Function),
+    });
     expect(mocks.renderSandboxInventoryText).toHaveBeenCalledWith(
       { sandboxes: [] },
       expect.any(Function),
@@ -242,7 +244,10 @@ describe("global oclif command adapters", () => {
   });
 
   it("maps inference get JSON output into oclif JSON handling", async () => {
-    mocks.runInferenceGet.mockResolvedValueOnce({ provider: "nvidia-prod", model: "nvidia/model-a" });
+    mocks.runInferenceGet.mockResolvedValueOnce({
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+    });
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await InferenceGetCommand.run(["--json"], rootDir);
@@ -269,7 +274,10 @@ describe("global oclif command adapters", () => {
       expect(error).toHaveBeenCalledWith("route missing");
 
       await expect(
-        InferenceSetCommand.run(["--provider", "nvidia-prod", "--model", "nvidia/model-a"], rootDir),
+        InferenceSetCommand.run(
+          ["--provider", "nvidia-prod", "--model", "nvidia/model-a"],
+          rootDir,
+        ),
       ).resolves.toBeUndefined();
       expect(process.exitCode).toBe(4);
       expect(error).toHaveBeenCalledWith("route rejected");

@@ -28,7 +28,10 @@ export interface AgentSetupStateOptions<Agent> {
     recordStepSkipped(stepName: string): Promise<Session>;
     isOpenclawReady(sandboxName: string): boolean;
     skippedStepMessage(stepName: string, detail?: string | null): void;
-    recordStateSkipped(state: "openclaw", metadata?: Record<string, unknown> | null): Promise<Session>;
+    recordStateSkipped(
+      state: "openclaw",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
     startRecordedStep(
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string },

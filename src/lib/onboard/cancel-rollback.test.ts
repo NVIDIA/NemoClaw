@@ -45,7 +45,9 @@ describe("createSandboxCancelRollback", () => {
     expect(calls.deleteContainer.mock.invocationCallOrder[0]).toBeLessThan(
       calls.removeFromRegistry.mock.invocationCallOrder[0],
     );
-    expect(calls.log).toHaveBeenCalledWith(expect.stringContaining("removed incomplete sandbox 'new-sb'"));
+    expect(calls.log).toHaveBeenCalledWith(
+      expect.stringContaining("removed incomplete sandbox 'new-sb'"),
+    );
   });
 
   it("still unregisters and prints manual cleanup when container delete fails", () => {
@@ -57,8 +59,12 @@ describe("createSandboxCancelRollback", () => {
     rollback.runIfArmed();
 
     expect(calls.removeFromRegistry).toHaveBeenCalledWith("new-sb");
-    expect(calls.log).toHaveBeenCalledWith(expect.stringContaining("unregistered incomplete sandbox 'new-sb'"));
-    expect(calls.log).toHaveBeenCalledWith(expect.stringContaining('openshell sandbox delete "new-sb"'));
+    expect(calls.log).toHaveBeenCalledWith(
+      expect.stringContaining("unregistered incomplete sandbox 'new-sb'"),
+    );
+    expect(calls.log).toHaveBeenCalledWith(
+      expect.stringContaining('openshell sandbox delete "new-sb"'),
+    );
   });
 
   it("does NOT roll back on a non-cancel exit (armed but not cancelled)", () => {
@@ -157,7 +163,9 @@ describe("installSandboxCancelRollback", () => {
     rollback.markCancelled();
     exitHandlers[0]();
 
-    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "new-sb"], { ignoreError: true });
+    expect(runOpenshell).toHaveBeenCalledWith(["sandbox", "delete", "new-sb"], {
+      ignoreError: true,
+    });
     expect(removeSandbox).toHaveBeenCalledWith("new-sb");
   });
 

@@ -242,9 +242,11 @@ require(${JSON.stringify(CLI_PATH)});
       fs.mkdirSync(binDir, { recursive: true });
       fs.writeFileSync(
         path.join(binDir, "docker"),
-        ["#!/usr/bin/env bash", 'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi', "exit 0"].join(
-          "\n",
-        ),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+          "exit 0",
+        ].join("\n"),
         { mode: 0o755 },
       );
       try {

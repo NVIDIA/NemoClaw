@@ -10,7 +10,11 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LINT_BIN = path.join(REPO_ROOT, "scripts/e2e/lint-conventions.ts");
 
-function runTsx(scriptPath: string, args: string[] = [], env: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runTsx(
+  scriptPath: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tsx = path.join(REPO_ROOT, "node_modules/.bin/tsx");
   return spawnSync(tsx, [scriptPath, ...args], {
     env: { ...process.env, ...env },
@@ -52,7 +56,7 @@ describe("Phase 1.G convention lint", () => {
   });
 
   it("lint_should_flag_step_that_reexports_noninteractive_env", () => {
-    writeStep(tmp, "00-bad.sh", 'export DEBIAN_FRONTEND=noninteractive\necho hi');
+    writeStep(tmp, "00-bad.sh", "export DEBIAN_FRONTEND=noninteractive\necho hi");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-bad\.sh/);
@@ -60,7 +64,7 @@ describe("Phase 1.G convention lint", () => {
   });
 
   it("lint_should_flag_step_that_registers_own_trap", () => {
-    writeStep(tmp, "00-trap.sh", 'trap cleanup EXIT');
+    writeStep(tmp, "00-trap.sh", "trap cleanup EXIT");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-trap\.sh/);
@@ -76,7 +80,7 @@ describe("Phase 1.G convention lint", () => {
   });
 
   it("lint_should_flag_step_writing_to_tmp_log_path", () => {
-    writeStep(tmp, "00-tmplog.sh", 'echo hi > /tmp/foo.log');
+    writeStep(tmp, "00-tmplog.sh", "echo hi > /tmp/foo.log");
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status).not.toBe(0);
     expect(r.stdout + r.stderr).toMatch(/00-tmplog\.sh/);
@@ -95,7 +99,6 @@ describe("Phase 1.G convention lint", () => {
     const r = runTsx(LINT_BIN, ["--root", tmp]);
     expect(r.status, r.stdout + r.stderr).toBe(0);
   });
-
 
   it("lint_should_pass_on_current_repo_state", () => {
     const r = runTsx(LINT_BIN);

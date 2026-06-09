@@ -19,10 +19,7 @@ type ConfigureWebSearchOutcome = {
   errors: string[];
 };
 
-function setupBraveCurlShim(
-  fakeBin: string,
-  spec: { status: string; body: string },
-): void {
+function setupBraveCurlShim(fakeBin: string, spec: { status: string; body: string }): void {
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -41,11 +38,11 @@ printf '%s' '${spec.status}'
   );
 }
 
-function runConfigureWebSearch(spec: {
-  status: string;
-  body: string;
-  apiKey: string;
-}): { exitCode: number; payload: ConfigureWebSearchOutcome; stderr: string } {
+function runConfigureWebSearch(spec: { status: string; body: string; apiKey: string }): {
+  exitCode: number;
+  payload: ConfigureWebSearchOutcome;
+  stderr: string;
+} {
   const repoRoot = path.join(import.meta.dirname, "..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-"));
   const fakeBin = path.join(tmpDir, "bin");
@@ -321,7 +318,9 @@ const { loadAgent } = require(${agentDefsPath});
     const scriptPath = path.join(tmpDir, "configure-web-search-saved.js");
     const outputPath = path.join(tmpDir, "outcome.json");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     setupBraveCurlShim(fakeBin, { status: "200", body: '{"web":{"results":[]}}' });
     fs.writeFileSync(
       scriptPath,
@@ -385,13 +384,9 @@ const { configureWebSearch } = require(${onboardPath});
     expect(payload.result).toBeNull();
     expect(payload.errors).toEqual([]);
     expect(
-      payload.warnings.some((line) =>
-        line.includes("Brave Search API key validation failed"),
-      ),
+      payload.warnings.some((line) => line.includes("Brave Search API key validation failed")),
     ).toBe(true);
-    expect(
-      payload.warnings.some((line) => line.includes("nemoclaw config web-search")),
-    ).toBe(true);
+    expect(payload.warnings.some((line) => line.includes("nemoclaw config web-search"))).toBe(true);
   });
 
   it("enables Brave Web Search when validation succeeds", () => {
@@ -423,9 +418,7 @@ describe("configureWebSearch (interactive)", () => {
       payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
     ).toHaveLength(2);
     expect(
-      payload.prompts.some(
-        (entry) => /Brave Search API key: /.test(entry.message) && entry.secret,
-      ),
+      payload.prompts.some((entry) => /Brave Search API key: /.test(entry.message) && entry.secret),
     ).toBe(true);
   });
 

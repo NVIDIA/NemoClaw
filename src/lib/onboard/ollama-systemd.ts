@@ -14,9 +14,7 @@ const {
   findReachableOllamaHost,
   resetOllamaHostCache,
 }: typeof import("../inference/local") = require("../inference/local");
-const {
-  detectNvidiaPlatform,
-}: typeof import("../inference/nim") = require("../inference/nim");
+const { detectNvidiaPlatform }: typeof import("../inference/nim") = require("../inference/nim");
 
 const OLLAMA_SYSTEMD_OVERRIDE_PATH = "/etc/systemd/system/ollama.service.d/override.conf";
 const NON_INTERACTIVE_SUDO_MODE_ENV = "NEMOCLAW_NON_INTERACTIVE_SUDO_MODE";
@@ -76,7 +74,9 @@ function hasOllamaCudaV13Library(): boolean {
   });
 }
 
-function resolveOllamaLibraryOverride(options: OllamaLoopbackSystemdOverrideOptions): string | null {
+function resolveOllamaLibraryOverride(
+  options: OllamaLoopbackSystemdOverrideOptions,
+): string | null {
   const platform = (options.detectNvidiaPlatformImpl ?? detectNvidiaPlatform)();
   if (platform !== "spark") return null;
   const hasCudaV13 = (options.hasOllamaCudaV13LibraryImpl ?? hasOllamaCudaV13Library)();
@@ -127,7 +127,9 @@ export function ensureOllamaLoopbackSystemdOverride(
         `  Non-interactive sudo could not read the existing drop-in. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt to allow a sudo password prompt when a terminal is available.`,
       );
     }
-    console.error("  Refusing to continue because preserving existing Ollama settings is required.");
+    console.error(
+      "  Refusing to continue because preserving existing Ollama settings is required.",
+    );
     process.exit(1);
   }
   const existingDropIn = String(existingDropInResult.stdout || "");
@@ -160,10 +162,10 @@ export function ensureOllamaLoopbackSystemdOverride(
       "done",
       "exit 1",
     );
-    const overrideResult = runShell(
-      overrideCommands.join("\n"),
-      { ignoreError: true, timeout: 45_000 },
-    );
+    const overrideResult = runShell(overrideCommands.join("\n"), {
+      ignoreError: true,
+      timeout: 45_000,
+    });
     if (overrideResult.error || overrideResult.status !== 0) {
       overrideFailed = true;
     }
@@ -255,14 +257,16 @@ export function mergeOllamaLoopbackSystemdOverride(
   const lines = existingDropIn.trimEnd().length > 0 ? existingDropIn.trimEnd().split(/\r?\n/) : [];
   const serviceStart = lines.findIndex((line) => /^\s*\[Service\]\s*(?:[#;].*)?$/.test(line));
   if (serviceStart === -1) {
-    return [
-      ...lines,
-      ...(lines.length > 0 ? [""] : []),
-      "[Service]",
-      desiredLine,
-      desiredContextLine,
-      ...(desiredLibraryLine ? [desiredLibraryLine] : []),
-    ].join("\n") + "\n";
+    return (
+      [
+        ...lines,
+        ...(lines.length > 0 ? [""] : []),
+        "[Service]",
+        desiredLine,
+        desiredContextLine,
+        ...(desiredLibraryLine ? [desiredLibraryLine] : []),
+      ].join("\n") + "\n"
+    );
   }
 
   let serviceEnd = lines.length;

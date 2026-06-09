@@ -34,7 +34,11 @@ export function resolveInstallerVersion(input: {
   const refVersion = installerVersionFromRef(ref, input.defaultVersion);
   if (refVersion) return refVersion;
 
-  for (const candidate of [input.gitDescribeVersion, input.stampedVersion, input.packageJsonVersion]) {
+  for (const candidate of [
+    input.gitDescribeVersion,
+    input.stampedVersion,
+    input.packageJsonVersion,
+  ]) {
     const version = candidate?.trim().replace(/^v/, "");
     if (version) return version;
   }

@@ -173,7 +173,8 @@ export async function runSandboxCmd(
       exitCode: 1,
       signal: null,
       stdout: "",
-      stderr: "runSandboxCmd: ProbeContext.sandboxName is null (E2E_SANDBOX_NAME unset in context.env)",
+      stderr:
+        "runSandboxCmd: ProbeContext.sandboxName is null (E2E_SANDBOX_NAME unset in context.env)",
       elapsedMs: 0,
     };
   }

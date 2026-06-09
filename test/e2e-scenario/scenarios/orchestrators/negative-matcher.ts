@@ -97,7 +97,9 @@ function isOwnPhaseResult(phase: PhaseResult["phase"]): phase is PhaseName {
   );
 }
 
-function findFirstObservedFailure(results: readonly PhaseResult[]): NegativeContractObservation | undefined {
+function findFirstObservedFailure(
+  results: readonly PhaseResult[],
+): NegativeContractObservation | undefined {
   for (const result of results) {
     if (!isOwnPhaseResult(result.phase)) {
       continue;
@@ -165,7 +167,10 @@ function describeObservation(observation: NegativeContractObservation): string {
   return parts.length > 0 ? parts.join(" ") : "no failure observed";
 }
 
-export function evaluateNegativeContract(plan: RunPlan, results: readonly PhaseResult[]): NegativeContractResult {
+export function evaluateNegativeContract(
+  plan: RunPlan,
+  results: readonly PhaseResult[],
+): NegativeContractResult {
   const expected = plan.expectedFailure;
   if (!expected) {
     throw new Error(

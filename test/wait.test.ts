@@ -3,11 +3,7 @@
 
 import assert from "node:assert";
 import { afterEach, describe, it } from "vitest";
-import {
-  buildLoopbackProbeEnv,
-  sleepMs,
-  sleepSeconds,
-} from "../src/lib/core/wait.js";
+import { buildLoopbackProbeEnv, sleepMs, sleepSeconds } from "../src/lib/core/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {

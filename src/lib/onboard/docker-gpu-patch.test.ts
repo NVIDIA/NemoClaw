@@ -27,10 +27,7 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
 import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
-import {
-  getSandboxFailurePhase,
-  isSandboxReady,
-} from "../../../dist/lib/state/gateway";
+import { getSandboxFailurePhase, isSandboxReady } from "../../../dist/lib/state/gateway";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -301,10 +298,7 @@ describe("docker-gpu-patch", () => {
 
   it("maps default and explicit GPU devices to Docker --gpus values", () => {
     expect(buildDockerGpuMode("gpus").args).toEqual(["--gpus", "all"]);
-    expect(buildDockerGpuMode("gpus", "nvidia.com/gpu=0").args).toEqual([
-      "--gpus",
-      "device=0",
-    ]);
+    expect(buildDockerGpuMode("gpus", "nvidia.com/gpu=0").args).toEqual(["--gpus", "device=0"]);
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
   });
 
@@ -432,9 +426,11 @@ describe("docker-gpu-patch", () => {
     expect(buildDockerGpuModeCandidates("all", { cdiAvailable: false }).map((m) => m.kind)).toEqual(
       ["gpus", "nvidia-runtime"],
     );
-    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual(
-      ["gpus", "nvidia-runtime", "cdi"],
-    );
+    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual([
+      "gpus",
+      "nvidia-runtime",
+      "cdi",
+    ]);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-cdi-"));
     try {
@@ -459,9 +455,7 @@ describe("docker-gpu-patch", () => {
     // should mirror Docker's behavior and surface cdi as available so the
     // candidate list keeps `cdi` for fallback after `--gpus all` trips the
     // AMD-CDI bug.
-    const readDir = vi.fn((dirPath: string) =>
-      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
-    );
+    const readDir = vi.fn((dirPath: string) => (dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null));
     const readFile = vi.fn((filePath: string) =>
       filePath === "/etc/cdi/nvidia.yaml"
         ? "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n"
@@ -503,12 +497,8 @@ describe("docker-gpu-patch", () => {
   });
 
   it("does not re-scan a directory that docker info already reported", () => {
-    const readDir = vi.fn((dirPath: string) =>
-      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
-    );
-    const readFile = vi.fn(() =>
-      "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n",
-    );
+    const readDir = vi.fn((dirPath: string) => (dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null));
+    const readFile = vi.fn(() => "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n");
     dockerReportsNvidiaCdiDevices({
       dockerCapture: vi.fn(() => JSON.stringify(["/etc/cdi"])),
       readDir,
@@ -809,8 +799,9 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("detects terminal failure phases in `openshell sandbox list` output", () => {
     const errorList = "my-sandbox   Error   2s ago";
     expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
-    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox"))
-      .toBe("CrashLoopBackOff");
+    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox")).toBe(
+      "CrashLoopBackOff",
+    );
     expect(getSandboxFailurePhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe("Failed");
 
     expect(getSandboxFailurePhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBeNull();
@@ -819,10 +810,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   });
 
   it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
-    const outputs = [
-      "my-sandbox   Provisioning   1s ago",
-      "my-sandbox   Error          3s ago",
-    ];
+    const outputs = ["my-sandbox   Provisioning   1s ago", "my-sandbox   Error          3s ago"];
     let i = 0;
     const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
     const sleep = vi.fn();
@@ -856,14 +844,9 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     // fast-fail intent is preserved when the operator opts out of the
     // debounce.
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
-    const listOutputs = [
-      "alpha   Provisioning   1s ago",
-      "alpha   Error          3s ago",
-    ];
+    const listOutputs = ["alpha   Provisioning   1s ago", "alpha   Error          3s ago"];
     let i = 0;
-    const runCaptureOpenshell = vi.fn(
-      () => listOutputs[Math.min(i++, listOutputs.length - 1)],
-    );
+    const runCaptureOpenshell = vi.fn(() => listOutputs[Math.min(i++, listOutputs.length - 1)]);
     const sleep = vi.fn();
 
     const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
@@ -1133,9 +1116,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       // helper level (printDockerGpuPatchFailureAndExit must not pass
       // `dockerCapture: undefined`). Here we just confirm collect() invokes
       // the supplied dockerCapture for ps/inspect.
-      expect(
-        dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps"),
-      ).toBe(true);
+      expect(dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps")).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1165,9 +1146,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(snapshot.patchedContainerState).toBeNull();
     // The `--format '{{json .State}}'` invocation should not have happened.
     expect(
-      dockerCapture.mock.calls.some(
-        ([args]) => args[0] === "inspect" && args[1] === "--format",
-      ),
+      dockerCapture.mock.calls.some(([args]) => args[0] === "inspect" && args[1] === "--format"),
     ).toBe(false);
   });
 

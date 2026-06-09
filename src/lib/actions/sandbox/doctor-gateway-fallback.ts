@@ -33,10 +33,9 @@ function probeLocalGatewayProcess(): LocalGatewayProbe {
       !pgrepUnavailable && processCheck.status === 0 && processCheck.stdout.trim().length > 0,
     portListening:
       !ssUnavailable && portCheck.status === 0 && portCheck.stdout.includes(`:${GATEWAY_PORT}`),
-    unavailableTools: [
-      pgrepUnavailable ? "pgrep" : null,
-      ssUnavailable ? "ss" : null,
-    ].filter((tool): tool is string => tool !== null),
+    unavailableTools: [pgrepUnavailable ? "pgrep" : null, ssUnavailable ? "ss" : null].filter(
+      (tool): tool is string => tool !== null,
+    ),
   };
 }
 

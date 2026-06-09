@@ -19,7 +19,9 @@ const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "resolve.js"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
-const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
+const CREDENTIALS_PATH = JSON.stringify(
+  path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"),
+);
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
 const SELECT_FROM_LIST_ITEMS = [
@@ -328,11 +330,7 @@ describe("policies", () => {
           { allow: { method: "POST", path: "/v1/traces/**" } },
         ],
       });
-      expect(endpoints[0].allowed_ips).toEqual([
-        "10.0.0.0/8",
-        "172.16.0.0/12",
-        "192.168.0.0/16",
-      ]);
+      expect(endpoints[0].allowed_ips).toEqual(["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]);
 
       const binaries: Array<{ path: string }> =
         parsed?.network_policies?.["openclaw-diagnostics-otel-local"]?.binaries ?? [];
@@ -565,8 +563,12 @@ exit 1
         expect(markerIndex).toBeGreaterThanOrEqual(0);
         const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
         expect(payload.result).toBe(true);
-        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(1);
-        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(1);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(
+          1,
+        );
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(
+          1,
+        );
         expect(payload.policy).toContain("npm_yarn:");
         expect(payload.policy).toContain("pypi:");
         expect(payload.registry.policies).toEqual(["npm", "pypi"]);
@@ -926,9 +928,7 @@ exit 1
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
-      const resolveSpy = vi
-        .spyOn(resolveOpenshellModule, "resolveOpenshell")
-        .mockReturnValue(null);
+      const resolveSpy = vi.spyOn(resolveOpenshellModule, "resolveOpenshell").mockReturnValue(null);
       const errors: string[] = [];
       const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
         errors.push(args.map((a) => String(a)).join(" "));
@@ -989,9 +989,7 @@ exit 1
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
-      const resolveSpy = vi
-        .spyOn(resolveOpenshellModule, "resolveOpenshell")
-        .mockReturnValue(null);
+      const resolveSpy = vi.spyOn(resolveOpenshellModule, "resolveOpenshell").mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1745,16 +1743,14 @@ exit 1
             Boolean(rule?.method && rule?.path),
           );
       const sortRules = (rules: Array<{ method: string; path: string }>) =>
-        [...rules].sort((a, b) =>
-          `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`),
-        );
+        [...rules].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
 
       const nousRules = rulesFor("nous_research", "nousresearch.com");
       expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
       expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
-      expect(
-        nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method)),
-      ).toEqual([]);
+      expect(nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method))).toEqual(
+        [],
+      );
 
       const discordMutationRules = sortRules(
         rulesFor("discord", "discord.com").filter((rule) =>
@@ -1849,9 +1845,11 @@ exit 1
         : [];
       const policyFiles = [
         path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-        ...policies.listPresets().map((preset) =>
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
-        ),
+        ...policies
+          .listPresets()
+          .map((preset) =>
+            path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
+          ),
         ...agentPolicyFiles,
       ];
 
@@ -1908,7 +1906,10 @@ exit 1
           .flatMap((policy) => policy.endpoints ?? [])
           .map((endpoint) => endpoint.host)
           .filter((host): host is string => typeof host === "string");
-        expect(hosts.filter((host) => claudeHosts.has(host)), relativePath).toEqual([]);
+        expect(
+          hosts.filter((host) => claudeHosts.has(host)),
+          relativePath,
+        ).toEqual([]);
       }
 
       const preset = parseRepoYaml("nemoclaw-blueprint/policies/presets/claude-code.yaml") as {
@@ -1992,9 +1993,9 @@ exit 1
       const parsed = parsePresetYaml("wechat");
       const endpoints = parsed.network_policies?.wechat_bridge?.endpoints ?? [];
       for (const host of ["ilinkai.weixin.qq.com", "ilinkai.wechat.com"]) {
-        const endpoint = endpoints.find((candidate: { host?: string }) => candidate.host === host) as
-          | { rules?: Array<{ allow?: { method?: string } }> }
-          | undefined;
+        const endpoint = endpoints.find(
+          (candidate: { host?: string }) => candidate.host === host,
+        ) as { rules?: Array<{ allow?: { method?: string } }> } | undefined;
         expect(endpoint).toEqual(
           expect.objectContaining({
             host,
@@ -2034,9 +2035,7 @@ exit 1
         | undefined;
 
       const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
-      expect(binaries).toEqual(
-        expect.arrayContaining(["/usr/bin/curl", "/usr/local/bin/curl"]),
-      );
+      expect(binaries).toEqual(expect.arrayContaining(["/usr/bin/curl", "/usr/local/bin/curl"]));
 
       for (const endpoint of pypiPolicy?.endpoints ?? []) {
         expect(endpoint.access).toBeUndefined();
@@ -2475,7 +2474,10 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       tmpDirs.push(dir);
       const file = path.join(dir, "huge.yaml");
       const padding = "# ".repeat(5_500_000);
-      fs.writeFileSync(file, `preset:\n  name: huge\nnetwork_policies:\n  r:\n    name: r\n${padding}`);
+      fs.writeFileSync(
+        file,
+        `preset:\n  name: huge\nnetwork_policies:\n  r:\n    name: r\n${padding}`,
+      );
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         expect(policies.loadPresetFromFile(file)).toBe(null);
@@ -2495,9 +2497,9 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       try {
         expect(policies.loadPresetFromFile(linkPath)).toBe(null);
         const msgs = errSpy.mock.calls.map((c) => c[0]);
-        expect(msgs.some((m) => typeof m === "string" && m.includes("must not be a symbolic link"))).toBe(
-          true,
-        );
+        expect(
+          msgs.some((m) => typeof m === "string" && m.includes("must not be a symbolic link")),
+        ).toBe(true);
       } finally {
         errSpy.mockRestore();
       }

@@ -471,11 +471,9 @@ describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    fs.writeFileSync(
-      legacyFile,
-      JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }),
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(legacyFile, JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }), {
+      mode: 0o600,
+    });
 
     const credentials = await importCredentialsModule(home);
     expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
@@ -681,12 +679,12 @@ prompt('secret: ', { secret: true })
     await expect(
       credentials.readCredentialPrompt("secret: ", async () => "  back \r\n"),
     ).resolves.toEqual({ kind: "back" });
-    await expect(
-      credentials.readCredentialPrompt("secret: ", async () => "QUIT"),
-    ).resolves.toEqual({ kind: "exit" });
-    await expect(
-      credentials.readCredentialPrompt("secret: ", async () => "?"),
-    ).resolves.toEqual({ kind: "help" });
+    await expect(credentials.readCredentialPrompt("secret: ", async () => "QUIT")).resolves.toEqual(
+      { kind: "exit" },
+    );
+    await expect(credentials.readCredentialPrompt("secret: ", async () => "?")).resolves.toEqual({
+      kind: "help",
+    });
     await expect(
       credentials.readCredentialPrompt("secret: ", async () => " help "),
     ).resolves.toEqual({ kind: "help" });

@@ -59,10 +59,7 @@ describe("shields timer authorization", () => {
     fs.rmSync(tmpHome, { recursive: true, force: true });
   });
 
-  function invokeTimerAndCaptureExit(
-    runRestoreTimer: (args: any) => void,
-    args: unknown,
-  ): number {
+  function invokeTimerAndCaptureExit(runRestoreTimer: (args: any) => void, args: unknown): number {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: any) => {
       throw new Error(`process.exit:${String(code ?? 0)}`);
     });
@@ -245,10 +242,8 @@ describe("shields timer authorization", () => {
     );
 
     const sealedHashes = {
-      [configPath]:
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      [sensitiveHashPath]:
-        "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      [configPath]: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      [sensitiveHashPath]: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
     };
 
     const lockMock = vi.fn(() => ({
@@ -337,7 +332,11 @@ describe("shields timer authorization", () => {
 
     const exitCode = invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
     const updatedState = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-    const auditEntries = fs.readFileSync(auditFile, "utf-8").trim().split("\n").map((line) => JSON.parse(line));
+    const auditEntries = fs
+      .readFileSync(auditFile, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
 
     expect(exitCode).toBe(1);
     expect(runMock).toHaveBeenCalledTimes(1);

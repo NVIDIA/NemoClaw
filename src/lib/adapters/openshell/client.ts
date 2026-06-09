@@ -143,9 +143,7 @@ export function runOpenshellCommand(
     return handleSpawnError(binary, args, result.error, opts);
   }
   if (result.status !== 0 && !opts.ignoreError) {
-    (opts.errorLine ?? console.error)(
-      `  OpenShell command failed (exit ${result.status})`,
-    );
+    (opts.errorLine ?? console.error)(`  OpenShell command failed (exit ${result.status})`);
     return (opts.exit ?? ((code) => process.exit(code)))(result.status || 1);
   }
   return result;
@@ -233,11 +231,7 @@ export function captureOpenshellCommandAsync(
 
     const buildOutput = () => `${stdout}${shouldIncludeStderr(opts) ? stderr : ""}`.trim();
 
-    const settle = (
-      status: number | null,
-      signal: NodeJS.Signals | null,
-      error?: Error,
-    ) => {
+    const settle = (status: number | null, signal: NodeJS.Signals | null, error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimers();

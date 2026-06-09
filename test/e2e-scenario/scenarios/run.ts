@@ -52,7 +52,10 @@ function parseArgs(argv: string[]): Args {
       if (!value) {
         throw new Error("--scenarios requires a comma-separated value");
       }
-      args.scenarios = value.split(",").map((id) => id.trim()).filter(Boolean);
+      args.scenarios = value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
       i += 1;
       continue;
     }
@@ -125,7 +128,9 @@ async function main() {
   }
 
   if (process.env.E2E_SUITE_FILTER) {
-    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
+    throw new Error(
+      "E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.",
+    );
   }
 
   const plans = compileRunPlans(args.scenarios);

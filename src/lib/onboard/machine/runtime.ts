@@ -25,7 +25,11 @@ export interface OnboardRuntimeDeps {
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
   markStepStarted(stepName: string, options?: StepMutationOptions): Session;
-  markStepComplete(stepName: string, updates?: SessionUpdates, options?: StepMutationOptions): Session;
+  markStepComplete(
+    stepName: string,
+    updates?: SessionUpdates,
+    options?: StepMutationOptions,
+  ): Session;
   markStepCompleteRecordOnly(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
@@ -40,7 +44,10 @@ export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
-function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+function safeResumeConflictValue(
+  conflict: ResumeConfigConflict,
+  value: string | null,
+): string | null {
   if (conflict.field === "fromDockerfile" && value) return "<path>";
   return value;
 }
@@ -108,7 +115,9 @@ export class OnboardRuntime {
     return this.ensureSession();
   }
 
-  async start(options: { resumed?: boolean; metadata?: Record<string, unknown> | null } = {}): Promise<Session> {
+  async start(
+    options: { resumed?: boolean; metadata?: Record<string, unknown> | null } = {},
+  ): Promise<Session> {
     const session = this.ensureSession();
     this.emit(options.resumed === true ? "onboard.resumed" : "onboard.started", session, {
       state: session.machine.state,
@@ -117,10 +126,7 @@ export class OnboardRuntime {
     return session;
   }
 
-  async markStepStarted(
-    stepName: string,
-    options: StepMutationOptions = {},
-  ): Promise<Session> {
+  async markStepStarted(stepName: string, options: StepMutationOptions = {}): Promise<Session> {
     return this.deps.markStepStarted(stepName, options);
   }
 
@@ -132,7 +138,10 @@ export class OnboardRuntime {
     return this.deps.markStepComplete(stepName, updates, options);
   }
 
-  async markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
+  async markStepCompleteRecordOnly(
+    stepName: string,
+    updates: SessionUpdates = {},
+  ): Promise<Session> {
     return this.deps.markStepCompleteRecordOnly(stepName, updates);
   }
 
@@ -148,7 +157,10 @@ export class OnboardRuntime {
     return this.deps.markStepFailed(stepName, message, options);
   }
 
-  async markStepFailedRecordOnly(stepName: string, message: string | null = null): Promise<Session> {
+  async markStepFailedRecordOnly(
+    stepName: string,
+    message: string | null = null,
+  ): Promise<Session> {
     return this.deps.markStepFailedRecordOnly(stepName, message);
   }
 

@@ -65,11 +65,9 @@ describe("public route/display separation", () => {
       kind: "publicUsageError",
       lines: [],
     });
-    expectNative(
-      dispatch.translatePublicSandboxArgv("alpha", "status", []),
-      "sandbox:status",
-      ["alpha"],
-    );
+    expectNative(dispatch.translatePublicSandboxArgv("alpha", "status", []), "sandbox:status", [
+      "alpha",
+    ]);
     expect(dispatch.translatePublicSandboxArgv("alpha", "renamed-status", [])).toEqual({
       kind: "unknownPublicAction",
       action: "renamed-status",
@@ -107,14 +105,26 @@ describe("translatePublicGlobalArgv", () => {
       "inference:set",
       ["--provider", "nvidia-prod"],
     );
-    expectNative(translatePublicGlobalArgv("inference", ["get", "--json"]), "inference:get", ["--json"]);
+    expectNative(translatePublicGlobalArgv("inference", ["get", "--json"]), "inference:get", [
+      "--json",
+    ]);
     expectNative(translatePublicGlobalArgv("--version", []), "root:version", []);
     expectNative(translatePublicGlobalArgv("version", []), "root:version", []);
   });
 
   it("translates global parent help and errors to native oclif argv", () => {
-    expectNative(translatePublicGlobalArgv("credentials", []), "credentials", ["--help"], ["credentials", "--help"]);
-    expectNative(translatePublicGlobalArgv("tunnel", ["help"]), "tunnel", ["--help"], ["tunnel", "--help"]);
+    expectNative(
+      translatePublicGlobalArgv("credentials", []),
+      "credentials",
+      ["--help"],
+      ["credentials", "--help"],
+    );
+    expectNative(
+      translatePublicGlobalArgv("tunnel", ["help"]),
+      "tunnel",
+      ["--help"],
+      ["tunnel", "--help"],
+    );
     expectNative(
       translatePublicGlobalArgv("inference", ["bogus"]),
       "inference:bogus",
@@ -128,11 +138,10 @@ describe("translatePublicGlobalArgv", () => {
 describe("translatePublicSandboxArgv", () => {
   it("translates simple legacy sandbox actions to native oclif argv", () => {
     expectNative(translatePublicSandboxArgv("alpha", "status", []), "sandbox:status", ["alpha"]);
-    expectNative(
-      translatePublicSandboxArgv("alpha", "doctor", ["--json"]),
-      "sandbox:doctor",
-      ["alpha", "--json"],
-    );
+    expectNative(translatePublicSandboxArgv("alpha", "doctor", ["--json"]), "sandbox:doctor", [
+      "alpha",
+      "--json",
+    ]);
     expectNative(
       translatePublicSandboxArgv("alpha", "dashboard-url", ["--quiet"]),
       "sandbox:dashboard-url",
@@ -154,11 +163,10 @@ describe("translatePublicSandboxArgv", () => {
   });
 
   it("translates sandbox help to native oclif argv", () => {
-    expectNative(
-      translatePublicSandboxArgv("alpha", "status", ["--help"]),
-      "sandbox:status",
-      ["alpha", "--help"],
-    );
+    expectNative(translatePublicSandboxArgv("alpha", "status", ["--help"]), "sandbox:status", [
+      "alpha",
+      "--help",
+    ]);
     expectNative(
       translatePublicSandboxArgv("alpha", "config", ["--help"]),
       "sandbox:config",
@@ -201,7 +209,9 @@ describe("translatePublicSandboxArgv", () => {
   });
 
   it("translates nested sandbox subcommands and defaults", () => {
-    expectNative(translatePublicSandboxArgv("alpha", "channels", []), "sandbox:channels:list", ["alpha"]);
+    expectNative(translatePublicSandboxArgv("alpha", "channels", []), "sandbox:channels:list", [
+      "alpha",
+    ]);
     expectNative(
       translatePublicSandboxArgv("alpha", "channels", ["add", "slack"]),
       "sandbox:channels:add",
@@ -260,16 +270,13 @@ describe("translatePublicSandboxArgv", () => {
     // sandbox:sessions is a non-strict passthrough; empty and flag-leading
     // actionArgs both belong to the parent, not to a fabricated
     // `sandbox:sessions:<flag>` dispatch that oclif cannot resolve.
-    expectNative(
-      translatePublicSandboxArgv("alpha", "sessions", []),
-      "sandbox:sessions",
-      ["alpha"],
-    );
-    expectNative(
-      translatePublicSandboxArgv("alpha", "sessions", ["--json"]),
-      "sandbox:sessions",
-      ["alpha", "--json"],
-    );
+    expectNative(translatePublicSandboxArgv("alpha", "sessions", []), "sandbox:sessions", [
+      "alpha",
+    ]);
+    expectNative(translatePublicSandboxArgv("alpha", "sessions", ["--json"]), "sandbox:sessions", [
+      "alpha",
+      "--json",
+    ]);
     expectNative(
       translatePublicSandboxArgv("alpha", "sessions", ["--all-agents"]),
       "sandbox:sessions",
@@ -310,16 +317,11 @@ describe("translatePublicSandboxArgv", () => {
     // the translator must dispatch to the registered parent command id rather
     // than synthesising a `sandbox:agents:--<flag>` subcommand that oclif
     // cannot resolve.
-    expectNative(
-      translatePublicSandboxArgv("alpha", "agents", []),
-      "sandbox:agents",
-      ["alpha"],
-    );
-    expectNative(
-      translatePublicSandboxArgv("alpha", "agents", ["--json"]),
-      "sandbox:agents",
-      ["alpha", "--json"],
-    );
+    expectNative(translatePublicSandboxArgv("alpha", "agents", []), "sandbox:agents", ["alpha"]);
+    expectNative(translatePublicSandboxArgv("alpha", "agents", ["--json"]), "sandbox:agents", [
+      "alpha",
+      "--json",
+    ]);
   });
 
   it("routes agents help tokens to parent help", () => {

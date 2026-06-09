@@ -35,17 +35,18 @@ function runEntryGuard(opts: {
   // or exits 22 on failure. Real curl is never invoked.
   const curlStub = path.join(tmp, "curl");
   const stagedContent = opts.curlOutputContent ?? "#!/usr/bin/env bash\necho staged\n";
-  const curlBody = opts.curlSucceeds === false
-    ? `#!/usr/bin/env bash\nexit 22\n`
-    : `#!/usr/bin/env bash\n` +
-      `out=""\n` +
-      `while [ $# -gt 0 ]; do\n` +
-      `  if [ "$1" = "-o" ]; then out="$2"; shift 2; continue; fi\n` +
-      `  shift\n` +
-      `done\n` +
-      `if [ -n "$out" ]; then\n` +
-      `  printf '%b' ${JSON.stringify(stagedContent)} > "$out"\n` +
-      `fi\nexit 0\n`;
+  const curlBody =
+    opts.curlSucceeds === false
+      ? `#!/usr/bin/env bash\nexit 22\n`
+      : `#!/usr/bin/env bash\n` +
+        `out=""\n` +
+        `while [ $# -gt 0 ]; do\n` +
+        `  if [ "$1" = "-o" ]; then out="$2"; shift 2; continue; fi\n` +
+        `  shift\n` +
+        `done\n` +
+        `if [ -n "$out" ]; then\n` +
+        `  printf '%b' ${JSON.stringify(stagedContent)} > "$out"\n` +
+        `fi\nexit 0\n`;
   fs.writeFileSync(curlStub, curlBody, { mode: 0o755 });
 
   const envInject = Object.entries(opts.envOverrides ?? {})
@@ -58,9 +59,8 @@ function runEntryGuard(opts: {
   // snippet checks a regular variable (_test_bash_source) instead and the
   // production install.sh uses BASH_SOURCE[0]. They are read at the same
   // point in execution, so the substitution is faithful.
-  const bashSourceExpr = opts.bashSourceOverride !== undefined
-    ? JSON.stringify(opts.bashSourceOverride)
-    : "";
+  const bashSourceExpr =
+    opts.bashSourceOverride !== undefined ? JSON.stringify(opts.bashSourceOverride) : "";
 
   const snippet = `
     set +e
@@ -98,7 +98,10 @@ function runEntryGuard(opts: {
   });
 
   const execIntent = fs.existsSync(execLog)
-    ? fs.readFileSync(execLog, "utf-8").split("\n").filter((line) => line.length > 0)
+    ? fs
+        .readFileSync(execLog, "utf-8")
+        .split("\n")
+        .filter((line) => line.length > 0)
     : [];
   const stagedCopyPath = path.join(tmp, "staged-copy.sh");
   const stagedFileContent = fs.existsSync(stagedCopyPath)
@@ -106,7 +109,13 @@ function runEntryGuard(opts: {
     : null;
   // If fallthrough flag exists, the script reached the "exit guard skipped" branch.
   if (fs.existsSync(fallthrough) && execIntent.length === 0) {
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr, execIntent: [], stagedFileContent: null };
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      execIntent: [],
+      stagedFileContent: null,
+    };
   }
   return {
     status: result.status,

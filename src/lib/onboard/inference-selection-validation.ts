@@ -3,10 +3,20 @@
 
 import { getCredential } from "../credentials/store";
 
-const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } = require("../inference/onboard-probes") as {
-  probeAnthropicEndpoint(endpointUrl: string, model: string, apiKey: string | null | undefined): any;
-  probeOpenAiLikeEndpoint(endpointUrl: string, model: string, apiKey: string | null | undefined, options?: Record<string, unknown>): any;
-};
+const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
+  require("../inference/onboard-probes") as {
+    probeAnthropicEndpoint(
+      endpointUrl: string,
+      model: string,
+      apiKey: string | null | undefined,
+    ): any;
+    probeOpenAiLikeEndpoint(
+      endpointUrl: string,
+      model: string,
+      apiKey: string | null | undefined,
+      options?: Record<string, unknown>,
+    ): any;
+  };
 
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
@@ -163,7 +173,9 @@ export function createInferenceSelectionValidationHelpers(
       if (probe.note) {
         console.log(`  ℹ ${probe.note}`);
       } else {
-        console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
+        console.log(
+          `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
+        );
       }
       return { ok: true, api: probe.api ?? "openai-completions" };
     }

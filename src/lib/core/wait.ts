@@ -60,14 +60,18 @@ export function waitUntil(
  */
 export function waitForPort(port: number, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
-  return waitUntil(() => {
-    try {
-      const result = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
-      return result.status === 0;
-    } catch {
-      return false;
-    }
-  }, timeoutSeconds, 200);
+  return waitUntil(
+    () => {
+      try {
+        const result = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
+        return result.status === 0;
+      } catch {
+        return false;
+      }
+    },
+    timeoutSeconds,
+    200,
+  );
 }
 
 /**
@@ -76,16 +80,20 @@ export function waitForPort(port: number, timeoutSeconds = 5): boolean {
 export function waitForHttp(url: string, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
   const env = buildLoopbackProbeEnv();
-  return waitUntil(() => {
-    try {
-      const result = spawnSync(
-        "curl",
-        buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
-        { stdio: "ignore", env },
-      );
-      return result.status === 0;
-    } catch {
-      return false;
-    }
-  }, timeoutSeconds, 200);
+  return waitUntil(
+    () => {
+      try {
+        const result = spawnSync(
+          "curl",
+          buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "1", "--max-time", "1", url]),
+          { stdio: "ignore", env },
+        );
+        return result.status === 0;
+      } catch {
+        return false;
+      }
+    },
+    timeoutSeconds,
+    200,
+  );
 }

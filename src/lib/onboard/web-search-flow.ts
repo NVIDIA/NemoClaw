@@ -10,7 +10,11 @@ import { BRAVE_API_KEY_ENV } from "../inference/web-search";
 import { ROOT } from "../runner";
 import { classifyValidationFailure } from "../validation";
 import { getTransportRecoveryMessage } from "../validation-recovery";
-import { BACK_TO_SELECTION, type BackToSelection, isBackToSelection } from "./credential-navigation";
+import {
+  BACK_TO_SELECTION,
+  type BackToSelection,
+  isBackToSelection,
+} from "./credential-navigation";
 import { exitOnboardFromPrompt, isAffirmativeAnswer } from "./prompt-helpers";
 import type { ValidationFailureLike } from "./types";
 import { agentSupportsWebSearch } from "./web-search-support";
@@ -30,7 +34,9 @@ export interface WebSearchFlowHelpers {
   validateBraveSearchApiKey(apiKey: string): CurlProbeResult;
   promptBraveSearchRecovery(validation: ValidationFailureLike): Promise<"retry" | "skip">;
   promptBraveSearchApiKey(): Promise<string | BackToSelection>;
-  ensureValidatedBraveSearchCredential(nonInteractive?: boolean): Promise<string | BackToSelection | null>;
+  ensureValidatedBraveSearchCredential(
+    nonInteractive?: boolean,
+  ): Promise<string | BackToSelection | null>;
   configureWebSearch(
     existingConfig?: WebSearchConfig | null,
     agent?: AgentDefinition | null,
@@ -75,7 +81,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       console.log("  Brave Search validation did not succeed.");
     }
 
-    const answer = (await deps.prompt("  Type 'retry', 'skip', or 'exit' [retry]: ")).trim().toLowerCase();
+    const answer = (await deps.prompt("  Type 'retry', 'skip', or 'exit' [retry]: "))
+      .trim()
+      .toLowerCase();
     if (answer === "skip") return "skip";
     if (answer === "exit" || answer === "quit") {
       exitOnboardFromPrompt();
@@ -170,7 +178,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     dockerfilePathOverride: string | null = null,
   ): Promise<WebSearchConfig | null> {
     if (!agentSupportsWebSearch(agent, dockerfilePathOverride, ROOT)) {
-      deps.note(`  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`);
+      deps.note(
+        `  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`,
+      );
       return null;
     }
 
@@ -180,7 +190,8 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
 
     if (deps.isNonInteractive()) {
       const braveApiKey =
-        getCredential(BRAVE_API_KEY_ENV) || normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
+        getCredential(BRAVE_API_KEY_ENV) ||
+        normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
       if (!braveApiKey) {
         return null;
       }

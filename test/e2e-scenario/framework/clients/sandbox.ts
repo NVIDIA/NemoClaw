@@ -41,7 +41,11 @@ export class SandboxClient {
     return this.openshell(["sandbox", "status", name], { artifactName: `sandbox-status-${name}` });
   }
 
-  exec(name: string, command: string[], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  exec(
+    name: string,
+    command: string[],
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     validateSandboxName(name);
     return this.openshell(["sandbox", "exec", name, "--", ...command], {
       artifactName: `sandbox-exec-${name}`,

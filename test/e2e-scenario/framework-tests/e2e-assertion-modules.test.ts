@@ -31,16 +31,26 @@ function loadYaml(filePath: string): AnyRecord {
 
 function allPlannedAssertionGroupIds(): Set<string> {
   return new Set(
-    listScenarios().flatMap((scenario) => assertionGroupsForScenario(scenario).map((group) => group.id)),
+    listScenarios().flatMap((scenario) =>
+      assertionGroupsForScenario(scenario).map((group) => group.id),
+    ),
   );
 }
 
 describe("assertion modules", () => {
   it("test_should_define_onboarding_assertions_in_modules", () => {
-    const onboardingGroups = assertionRegistry.groups.filter((group) => group.phase === "onboarding");
-    const stepIds = new Set(onboardingGroups.flatMap((group) => group.steps.map((step) => step.id)));
+    const onboardingGroups = assertionRegistry.groups.filter(
+      (group) => group.phase === "onboarding",
+    );
+    const stepIds = new Set(
+      onboardingGroups.flatMap((group) => group.steps.map((step) => step.id)),
+    );
 
-    for (const id of ["onboarding.base.cli-installed", "onboarding.preflight.passed", "onboarding.preflight.expected-failed"]) {
+    for (const id of [
+      "onboarding.base.cli-installed",
+      "onboarding.preflight.passed",
+      "onboarding.preflight.expected-failed",
+    ]) {
       expect(stepIds.has(id), `missing onboarding step ${id}`).toBe(true);
     }
     for (const step of onboardingGroups.flatMap((group) => group.steps)) {
@@ -63,12 +73,16 @@ describe("assertion modules", () => {
   it("test_should_require_each_assertion_group_to_have_steps", () => {
     const emptyGroup: AssertionGroup = { id: "empty", phase: "runtime", steps: [] };
 
-    expect(() => validateAssertionGroups([...assertionRegistry.groups, emptyGroup], E2E_DIR)).toThrow(/empty/);
+    expect(() =>
+      validateAssertionGroups([...assertionRegistry.groups, emptyGroup], E2E_DIR),
+    ).toThrow(/empty/);
   });
 
   it("test_should_require_each_assertion_group_to_be_used_by_a_scenario_plan", () => {
     const planned = allPlannedAssertionGroupIds();
-    const unused = assertionRegistry.groups.map((group) => group.id).filter((id) => !planned.has(id));
+    const unused = assertionRegistry.groups
+      .map((group) => group.id)
+      .filter((id) => !planned.has(id));
 
     expect(unused, `unused assertion groups: ${unused.join(", ")}`).toEqual([]);
   });
@@ -81,7 +95,10 @@ describe("assertion modules", () => {
         {
           id: "bad.missing-script.step",
           phase: "runtime",
-          implementation: { kind: "shell", ref: "test/e2e-scenario/validation_suites/does-not-exist.sh" },
+          implementation: {
+            kind: "shell",
+            ref: "test/e2e-scenario/validation_suites/does-not-exist.sh",
+          },
           evidencePath: ".e2e/bad.log",
         },
       ],
@@ -109,7 +126,11 @@ describe("assertion modules", () => {
   });
 
   it("test_should_block_complete_status_for_manual_classification_steps", () => {
-    expect(() => validateAssertionGroups(assertionRegistry.groups, E2E_DIR)).not.toThrow(/needs-manual-classification/);
-    expect(assertionRegistry.groups.every((group) => group.migrationStatus === "complete")).toBe(true);
+    expect(() => validateAssertionGroups(assertionRegistry.groups, E2E_DIR)).not.toThrow(
+      /needs-manual-classification/,
+    );
+    expect(assertionRegistry.groups.every((group) => group.migrationStatus === "complete")).toBe(
+      true,
+    );
   });
 });

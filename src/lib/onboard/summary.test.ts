@@ -5,7 +5,10 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "../../../dist/lib/onboard/summary";
+import {
+  formatOnboardConfigSummary,
+  formatSandboxBuildEstimateNote,
+} from "../../../dist/lib/onboard/summary";
 
 describe("onboard summary helpers", () => {
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {

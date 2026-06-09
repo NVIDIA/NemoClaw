@@ -124,57 +124,53 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
     },
   );
 
-  it(
-    "does not import approval policy from PYTHONPATH",
-    testTimeoutOptions(20_000),
-    () => {
-      const { tmpDir, stateFile, sandboxName } = setupFixture(
+  it("does not import approval policy from PYTHONPATH", testTimeoutOptions(20_000), () => {
+    const { tmpDir, stateFile, sandboxName } = setupFixture(
+      {
+        name: "approval-pass-tmp-tamper",
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic-prod",
+        gpuEnabled: false,
+        policies: [],
+      },
+      "anthropic-prod",
+      "claude-sonnet-4-20250514",
+    );
+    const maliciousPolicy = [
+      "def approval_request_decision(_device):",
+      "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
+      "",
+      "def gateway_approval_env(source_env=None):",
+      "    return dict(source_env or {})",
+      "",
+    ].join("\n");
+    const maliciousPythonPath = path.join(tmpDir, "malicious-pythonpath");
+
+    fs.mkdirSync(maliciousPythonPath);
+    fs.writeFileSync(
+      path.join(maliciousPythonPath, "openclaw_device_approval_policy.py"),
+      maliciousPolicy,
+    );
+
+    const result = runConnect(tmpDir, sandboxName);
+    expect(result.status).toBe(0);
+    const script = extractApprovalPassScript(stateFile, sandboxName);
+    const run = runApprovalPassScript(
+      script,
+      [
         {
-          name: "approval-pass-tmp-tamper",
-          model: "claude-sonnet-4-20250514",
-          provider: "anthropic-prod",
-          gpuEnabled: false,
-          policies: [],
+          requestId: "admin-cli",
+          clientId: "openclaw-cli",
+          clientMode: "cli",
+          scopes: ["operator.admin"],
         },
-        "anthropic-prod",
-        "claude-sonnet-4-20250514",
-      );
-      const maliciousPolicy = [
-        "def approval_request_decision(_device):",
-        "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
-        "",
-        "def gateway_approval_env(source_env=None):",
-        "    return dict(source_env or {})",
-        "",
-      ].join("\n");
-      const maliciousPythonPath = path.join(tmpDir, "malicious-pythonpath");
+      ],
+      { PYTHONPATH: maliciousPythonPath },
+    );
 
-      fs.mkdirSync(maliciousPythonPath);
-      fs.writeFileSync(
-        path.join(maliciousPythonPath, "openclaw_device_approval_policy.py"),
-        maliciousPolicy,
-      );
-
-      const result = runConnect(tmpDir, sandboxName);
-      expect(result.status).toBe(0);
-      const script = extractApprovalPassScript(stateFile, sandboxName);
-      const run = runApprovalPassScript(
-        script,
-        [
-          {
-            requestId: "admin-cli",
-            clientId: "openclaw-cli",
-            clientMode: "cli",
-            scopes: ["operator.admin"],
-          },
-        ],
-        { PYTHONPATH: maliciousPythonPath },
-      );
-
-      expect(run.result.status).toBe(0);
-      expect(run.approvals).toEqual([]);
-    },
-  );
+    expect(run.result.status).toBe(0);
+    expect(run.approvals).toEqual([]);
+  });
 
   it(
     "does not block connect when the in-sandbox approval pass cannot run",
@@ -207,17 +203,11 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         if (!call.includes("--")) return false;
         // The payload is base64-wrapped for OpenShell exec; decode to identify it.
         const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
-        return (
-          inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve")
-        );
+        return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
       });
       expect(approvalExec).toBeDefined();
       // Despite the approval-pass failure, SSH handoff still happens.
-      expect(state.sandboxConnectCalls).toContainEqual([
-        "sandbox",
-        "connect",
-        sandboxName,
-      ]);
+      expect(state.sandboxConnectCalls).toContainEqual(["sandbox", "connect", sandboxName]);
     },
   );
 });

@@ -22,9 +22,9 @@ describe("resolveSandboxImageTagFromCreateOutput", () => {
   it("falls back to the millisecond build id when OpenShell output omits the image tag", () => {
     const warn = vi.fn();
 
-    expect(resolveSandboxImageTagFromCreateOutput("Created sandbox alpha", "1776766054999", warn)).toBe(
-      "openshell/sandbox-from:1776766054999",
-    );
+    expect(
+      resolveSandboxImageTagFromCreateOutput("Created sandbox alpha", "1776766054999", warn),
+    ).toBe("openshell/sandbox-from:1776766054999");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not parse image tag"));
   });
 });

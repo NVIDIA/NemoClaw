@@ -15,7 +15,10 @@ import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 
-function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  extraEnv: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-3437-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
@@ -199,11 +202,11 @@ httpProbe.runCurlProbe = (argv) => {
 const onboardSession = require(${j("state/onboard-session.js")});
 const sessionUpdates = [];
 const sessionLoadConfig = ${JSON.stringify({
-      sessionSandboxName,
-      sessionPolicyPresets,
-      sessionLoadThrows,
-      sessionMissing,
-    })};
+    sessionSandboxName,
+    sessionPolicyPresets,
+    sessionLoadThrows,
+    sessionMissing,
+  })};
 const sessionUpdateThrows = ${JSON.stringify(sessionUpdateThrows)};
 let sessionState = sessionLoadConfig.sessionMissing
   ? null
@@ -329,8 +332,14 @@ const ctx = module.exports;
       // Step 5.5 of rebuild.ts has nothing to restore.
       const applyIdx = payload.callOrder.indexOf(`applyPreset:${channel}`);
       const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
-      assert.ok(applyIdx >= 0, `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`);
-      assert.ok(rebuildIdx >= 0, `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`);
+      assert.ok(
+        applyIdx >= 0,
+        `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`,
+      );
+      assert.ok(
+        rebuildIdx >= 0,
+        `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`,
+      );
       assert.ok(
         applyIdx < rebuildIdx,
         `applyPreset must run before promptAndRebuild; got order: ${JSON.stringify(payload.callOrder)}`,
@@ -375,8 +384,9 @@ const ctx = module.exports;
       updates: { messagingChannels: ["whatsapp"], disabledChannels: [] },
     });
     const messagingStateUpdate = payload.registryUpdates.find(
-      (entry: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } } }) =>
-        entry.updates?.messaging?.plan,
+      (entry: {
+        updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } };
+      }) => entry.updates?.messaging?.plan,
     );
     assert.ok(
       messagingStateUpdate,
@@ -401,8 +411,14 @@ const ctx = module.exports;
     );
     const applyIdx = payload.callOrder.indexOf("applyPreset:whatsapp");
     const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
-    assert.ok(applyIdx >= 0, `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`);
-    assert.ok(rebuildIdx >= 0, `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`);
+    assert.ok(
+      applyIdx >= 0,
+      `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`,
+    );
+    assert.ok(
+      rebuildIdx >= 0,
+      `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`,
+    );
     assert.ok(
       applyIdx < rebuildIdx,
       `applyPreset must run before promptAndRebuild; got order: ${JSON.stringify(payload.callOrder)}`,
@@ -524,7 +540,9 @@ process.exit = (code) => {
       `missing preset YAML must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes(`Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram`),
+      result.stderr.includes(
+        `Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram`,
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -581,7 +599,9 @@ process.exit = (code) => {
       `expected diagnostic about unparseable network_policies section; got:\n${result.stderr}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -636,7 +656,9 @@ process.exit = (code) => {
       `expected parse-failure diagnostic; got:\n${result.stderr}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -725,7 +747,9 @@ process.exit = (code) => {
       `dry-run preset failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -778,7 +802,9 @@ process.exit = (code) => {
       `missing whatsapp preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add whatsapp"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add whatsapp",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -1730,7 +1756,9 @@ const ctx = module.exports;
     const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
     assert.ok(!payload.error, payload.error);
     assert.ok(
-      payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      payload.logs.some((line: string) =>
+        line.includes("was not marked enabled in baked openclaw.json"),
+      ),
       `expected enabled-flag warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1783,8 +1811,10 @@ const ctx = module.exports;
       `must not claim startup detected; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
-      payload.logs.some((line: string) =>
-        line.includes("logged credential/startup warnings") || line.includes("did not start within"),
+      payload.logs.some(
+        (line: string) =>
+          line.includes("logged credential/startup warnings") ||
+          line.includes("did not start within"),
       ),
       `expected the no-start breadcrumb to be surfaced; got:\n${payload.logs.join("\n")}`,
     );
@@ -1834,7 +1864,9 @@ const ctx = module.exports;
     assert.ok(!payload.error, payload.error);
     assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
     assert.ok(
-      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      !payload.logs.some((line: string) =>
+        line.includes("was not marked enabled in baked openclaw.json"),
+      ),
       `Hermes sandbox should not see OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
@@ -1865,7 +1897,9 @@ global.__testLog = "";
     assert.ok(!payload.error, payload.error);
     assert.equal(payload.execCalls, 0, "verifier must not probe sandbox exec for QR-only WhatsApp");
     assert.ok(
-      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      !payload.logs.some((line: string) =>
+        line.includes("was not marked enabled in baked openclaw.json"),
+      ),
       `WhatsApp should not trigger OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1873,10 +1907,14 @@ global.__testLog = "";
 
 describe("channel preset source-of-truth", () => {
   it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
-    const { knownChannelNames } = require(path.join(repoRoot, "dist", "lib", "sandbox", "channels.js")) as {
+    const { knownChannelNames } = require(
+      path.join(repoRoot, "dist", "lib", "sandbox", "channels.js"),
+    ) as {
       knownChannelNames: () => string[];
     };
-    const { loadPreset, parsePresetPolicyKeys } = require(path.join(repoRoot, "dist", "lib", "policy", "index.js")) as {
+    const { loadPreset, parsePresetPolicyKeys } = require(
+      path.join(repoRoot, "dist", "lib", "policy", "index.js"),
+    ) as {
       loadPreset: (name: string) => string | null;
       parsePresetPolicyKeys: (content: string | null | undefined) => string[];
     };

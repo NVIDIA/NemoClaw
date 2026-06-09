@@ -6,9 +6,12 @@ import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import type { StdioOptions } from "node:child_process";
 
-type CompatibleEndpointSmokeAgent = {
-  name?: string | null;
-} | null | undefined;
+type CompatibleEndpointSmokeAgent =
+  | {
+      name?: string | null;
+    }
+  | null
+  | undefined;
 
 type CompatibleEndpointSandboxSmokeScriptOptions = {
   configPath?: string;
@@ -341,7 +344,7 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
   return [
     "set -eu",
     'tmp="$(mktemp)"',
-    'trap \'rm -f "$tmp"\' EXIT',
+    "trap 'rm -f \"$tmp\"' EXIT",
     `python3 -c 'import base64, pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))' "$tmp" ${shellQuote(encoded)}`,
     'sh "$tmp"',
   ].join("; ");

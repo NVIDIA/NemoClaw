@@ -48,9 +48,11 @@ export interface UfwAutoApplyOptions {
   optedIn?: boolean;
 }
 
-function defaultRunArgv(
-  argv: readonly string[],
-): { status: number | null; stdout: string; stderr: string } {
+function defaultRunArgv(argv: readonly string[]): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
   const result = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf-8" });
   return {
     status: result.status,
@@ -76,7 +78,9 @@ function parseIpv4Address(value: string): number | null {
   return result >>> 0;
 }
 
-function parseDockerBridgeCidr(value: string): { network: number; prefix: number; mask: number } | null {
+function parseDockerBridgeCidr(
+  value: string,
+): { network: number; prefix: number; mask: number } | null {
   const [address, prefixRaw, extra] = value.split("/");
   if (!address || !prefixRaw || extra !== undefined) return null;
   if (!/^\d{1,2}$/.test(prefixRaw)) return null;
@@ -107,14 +111,17 @@ function validateUfwRuleOperands(
   if (gateway === null) {
     return `invalid IPv4 gateway ${gatewayIp}`;
   }
-  if (((gateway & cidr.mask) >>> 0) !== cidr.network) {
+  if ((gateway & cidr.mask) >>> 0 !== cidr.network) {
     return `gateway ${gatewayIp} is outside subnet ${subnet}`;
   }
   return undefined;
 }
 
 function sanitizeUfwDetail(value: string): string {
-  const clean = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  const clean = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!clean) return "ufw rejected the rule.";
   return clean.length > 240 ? `${clean.slice(0, 237)}...` : clean;
 }

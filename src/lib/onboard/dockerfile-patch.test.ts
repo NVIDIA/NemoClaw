@@ -46,9 +46,9 @@ afterEach(() => {
 
 describe("dockerfile patch helpers", () => {
   it("encodes Docker JSON ARG values as base64 JSON", () => {
-    expect(Buffer.from(encodeDockerJsonArg({ supportsStore: false }), "base64").toString("utf-8")).toBe(
-      JSON.stringify({ supportsStore: false }),
-    );
+    expect(
+      Buffer.from(encodeDockerJsonArg({ supportsStore: false }), "base64").toString("utf-8"),
+    ).toBe(JSON.stringify({ supportsStore: false }));
     expect(Buffer.from(encodeDockerJsonArg(null), "base64").toString("utf-8")).toBe("{}");
     expect(Buffer.from(encodeDockerJsonArg(false), "base64").toString("utf-8")).toBe("false");
   });
@@ -497,7 +497,9 @@ describe("dockerfile patch helpers", () => {
   });
 
   it("#1737: patches the staged Dockerfile with Telegram mention-only config", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tg-mention-"),
+    );
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
       dockerfilePath,
@@ -1310,5 +1312,4 @@ describe("dockerfile patch helpers", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
-
 });

@@ -54,7 +54,9 @@ describe("e2e-scenarios workflow boundary", () => {
         : [`${scenario.id}: workflow=${workflowRunner}, typed=${resolvedRunner}`];
     });
 
-    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual([]);
+    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual(
+      [],
+    );
     expect(extra, `workflow ROUTES has unknown scenario IDs: ${extra.join(", ")}`).toEqual([]);
     expect(
       runnerMismatches,

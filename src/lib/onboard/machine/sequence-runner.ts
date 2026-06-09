@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OnboardMachineRunnerOptions, OnboardStateHandlerResult } from "./runner";
-import { runOnboardMachine, type OnboardMachineRunnerRuntime, type OnboardStateHandlers } from "./runner";
+import {
+  runOnboardMachine,
+  type OnboardMachineRunnerRuntime,
+  type OnboardStateHandlers,
+} from "./runner";
 import type { OnboardNonTerminalMachineState } from "./types";
 
 export interface OnboardSequencePhaseResult<Context> {
@@ -12,7 +16,9 @@ export interface OnboardSequencePhaseResult<Context> {
 
 export interface OnboardSequencePhase<Context> {
   state: OnboardNonTerminalMachineState;
-  run(context: Context): Promise<OnboardSequencePhaseResult<Context>> | OnboardSequencePhaseResult<Context>;
+  run(
+    context: Context,
+  ): Promise<OnboardSequencePhaseResult<Context>> | OnboardSequencePhaseResult<Context>;
 }
 
 export interface OnboardSequenceRunnerOptions<Context> {

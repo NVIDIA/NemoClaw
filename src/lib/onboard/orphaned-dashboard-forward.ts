@@ -12,10 +12,7 @@ export type ListForwardsRunner = (
 
 export type KillRunner = (args: string[], opts: { ignoreError?: boolean }) => unknown;
 
-export type CheckPortAvailableFn = (
-  port: number,
-  opts?: CheckPortOpts,
-) => Promise<PortProbeResult>;
+export type CheckPortAvailableFn = (port: number, opts?: CheckPortOpts) => Promise<PortProbeResult>;
 
 export type SleepFn = (seconds: number) => void;
 

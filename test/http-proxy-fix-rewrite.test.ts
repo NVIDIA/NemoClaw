@@ -237,7 +237,13 @@ describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)",
       family: 4,
       hints: 0,
       headers: {},
-    } as http.RequestOptions & { socketPath?: string; localAddress?: string; lookup?: unknown; family?: number; hints?: number });
+    } as http.RequestOptions & {
+      socketPath?: string;
+      localAddress?: string;
+      lookup?: unknown;
+      family?: number;
+      hints?: number;
+    });
 
     expect(captured).not.toBeNull();
     for (const k of ["socketPath", "localAddress", "lookup", "family", "hints"]) {

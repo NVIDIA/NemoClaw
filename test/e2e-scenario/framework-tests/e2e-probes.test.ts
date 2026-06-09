@@ -136,11 +136,7 @@ function makeProbeCtx(tmp: string, evidenceFile = "diag-evidence.json"): ProbeCo
   };
 }
 
-function installFakeOnPath(
-  binDir: string,
-  name: string,
-  script: string,
-): { restore: () => void } {
+function installFakeOnPath(binDir: string, name: string, script: string): { restore: () => void } {
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(path.join(binDir, name), script, { mode: 0o755 });
   const oldPath = process.env.PATH;
