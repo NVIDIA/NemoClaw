@@ -491,7 +491,6 @@ const { createSandbox } = require(${onboardPath});
     "reuses existing messaging providers during non-interactive recreate when tokens are not in the host env",
     { timeout: 60_000 },
     async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-messaging-reuse-provider-"),
       );
@@ -653,7 +652,6 @@ const { createSandbox } = require(${onboardPath});
     "preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)",
     { timeout: 60_000 },
     async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
       );
