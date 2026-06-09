@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 
 import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
 import { ScenarioRunner } from "./orchestrators/runner.ts";
-import { listScenarios } from "./registry.ts";
+import { listScenarios, requireScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
+import { liveScenarioSupport, type LiveScenarioSupport } from "./runtime-support.ts";
 import type { PhaseResult, ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
   emitMatrix: boolean;
+  emitLiveMatrix: boolean;
   planOnly: boolean;
   scenarios: string[];
 }
@@ -31,8 +33,19 @@ export interface ScenarioMatrixEntry {
   suites: string[];
 }
 
+export interface LiveScenarioMatrixEntry extends ScenarioMatrixEntry {
+  install: string;
+  runtime: string;
+  onboarding: string;
+  expectedStateId: string;
+  requiredSecrets: string[];
+  supported: boolean;
+  supportReasons: string[];
+  pendingRuntimeSuites: string[];
+}
+
 function parseArgs(argv: string[]): Args {
-  const args: Args = { list: false, emitMatrix: false, planOnly: false, scenarios: [] };
+  const args: Args = { list: false, emitMatrix: false, emitLiveMatrix: false, planOnly: false, scenarios: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
@@ -41,6 +54,10 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--emit-matrix") {
       args.emitMatrix = true;
+      continue;
+    }
+    if (arg === "--emit-live-matrix") {
+      args.emitLiveMatrix = true;
       continue;
     }
     if (arg === "--plan-only") {
@@ -101,12 +118,42 @@ export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
   });
 }
 
+function liveMatrixEntry(scenario: ScenarioDefinition, support: LiveScenarioSupport): LiveScenarioMatrixEntry {
+  const { runner } = resolveRunnerForScenario(scenario);
+  return {
+    id: scenario.id,
+    runner,
+    label: buildLabel(scenario),
+    platform: scenario.environment?.platform ?? "unknown",
+    install: scenario.environment?.install ?? "unknown",
+    runtime: scenario.environment?.runtime ?? "unknown",
+    onboarding: scenario.environment?.onboarding ?? "unknown",
+    expectedStateId: scenario.expectedStateId ?? "",
+    suites: scenario.suiteIds ?? [],
+    requiredSecrets: scenario.requiredSecrets ?? [],
+    supported: support.supported,
+    supportReasons: support.reasons,
+    pendingRuntimeSuites: support.pendingRuntimeSuites,
+  };
+}
+
+export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
+  const scenarios = ids.length > 0
+    ? requireScenarios(ids)
+    : listScenarios().filter((scenario) => liveScenarioSupport(scenario).supported);
+  return scenarios.map((scenario) => liveMatrixEntry(scenario, liveScenarioSupport(scenario)));
+}
+
 function emitMatrix() {
   // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
   //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
   // without needing heredoc multi-line output handling.
   // Consumed by the dynamic matrix workflow (PR #4359).
   process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
+}
+
+function emitLiveMatrix(ids: string[]) {
+  process.stdout.write(`${JSON.stringify(buildLiveScenarioMatrix(ids))}\n`);
 }
 
 async function main() {
@@ -117,6 +164,10 @@ async function main() {
   }
   if (args.emitMatrix) {
     emitMatrix();
+    return;
+  }
+  if (args.emitLiveMatrix) {
+    emitLiveMatrix(args.scenarios);
     return;
   }
 
