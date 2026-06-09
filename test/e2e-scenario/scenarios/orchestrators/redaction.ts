@@ -27,9 +27,9 @@
  *
  * Tests:
  *   test/e2e-scenario/framework-tests/e2e-phase-orchestrators.test.ts
- *     - test_should_not_persist_secret_shaped_child_output_into_evidence
- *     - test_should_drop_non_allowlisted_parent_env_unless_declared_in_secretEnv
- *     - test_should_pass_declared_secretEnv_through_to_child
+ *     - child output redaction before evidence persistence
+ *     - parent env allowlist filtering unless declared in secretEnv
+ *     - declared secretEnv passthrough
  */
 
 import type { Readable, Writable } from "node:stream";

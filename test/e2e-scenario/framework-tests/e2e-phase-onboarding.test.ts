@@ -190,7 +190,7 @@ describe("onboarding phase fixture", () => {
     });
   });
 
-  it("requires NVIDIA_API_KEY before spawning cloud OpenClaw onboarding", async () => {
+  it("requires NVIDIA API key before spawning cloud OpenClaw onboarding", async () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
 

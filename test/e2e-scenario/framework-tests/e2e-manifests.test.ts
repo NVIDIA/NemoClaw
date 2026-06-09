@@ -13,7 +13,7 @@ const SCENARIO_SUITE_DIR = path.join(REPO_ROOT, "test/e2e-scenario");
 const MANIFEST_DIR = path.join(SCENARIO_SUITE_DIR, "manifests");
 
 describe("NemoClawInstance manifests", () => {
-  it("test_should_validate_all_nemoclaw_instance_manifests", () => {
+  it("should validate all NemoClaw instance manifests", () => {
     const manifests = loadManifestsFromDir(MANIFEST_DIR);
 
     expect(manifests.length).toBeGreaterThanOrEqual(19);
@@ -22,7 +22,7 @@ describe("NemoClawInstance manifests", () => {
     }
   });
 
-  it("test_should_reject_manifest_with_assertion_or_suite_ids", () => {
+  it("should reject manifest with assertion or suite IDs", () => {
     const badManifest = {
       apiVersion: "nemoclaw.io/v1",
       kind: "NemoClawInstance",
@@ -40,7 +40,7 @@ describe("NemoClawInstance manifests", () => {
     );
   });
 
-  it("test_should_reject_raw_secret_values_in_manifest", () => {
+  it("should reject raw secret values in manifest", () => {
     const badManifest = {
       apiVersion: "nemoclaw.io/v1",
       kind: "NemoClawInstance",
@@ -57,7 +57,7 @@ describe("NemoClawInstance manifests", () => {
     );
   });
 
-  it("test_should_cover_every_typed_scenario_manifest_need", () => {
+  it("should cover every typed scenario manifest need", () => {
     const manifestNames = new Set(
       loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name),
     );
@@ -70,7 +70,7 @@ describe("NemoClawInstance manifests", () => {
     expect(missingManifests, `missing manifest files: ${missingManifests.join(", ")}`).toEqual([]);
   });
 
-  it("plan_only_output_should_show_resolved_manifest_setup_and_onboarding_choices", () => {
+  it("plan only output should show resolved manifest setup and onboarding choices", () => {
     const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
 
     expect(plan.manifestPath).toBe("test/e2e-scenario/manifests/openclaw-nvidia.yaml");
