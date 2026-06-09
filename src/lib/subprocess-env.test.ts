@@ -4,7 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withLocalNoProxy } from "../../dist/lib/subprocess-env";
 
-const LOCAL_NO_PROXY = "localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0";
+const LOCAL_NO_PROXY =
+  "localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local";
 
 describe("withLocalNoProxy", () => {
   it("does nothing when no proxy vars are present", () => {
@@ -34,6 +35,27 @@ describe("withLocalNoProxy", () => {
     expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
+  it("adds local host-bound names when lowercase https_proxy is set", () => {
+    const env: Record<string, string> = { https_proxy: "http://proxy:8888" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
+  });
+
+  it("strips empty segments from a NO_PROXY with doubled or trailing commas", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://proxy:8888",
+      NO_PROXY: "corp.internal,,other.com,",
+      no_proxy: "corp.internal,,other.com,",
+    };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY).not.toContain(",,");
+    expect(env.NO_PROXY).not.toMatch(/^,|,$/);
+    expect(env.NO_PROXY).toContain("corp.internal");
+    expect(env.NO_PROXY).toContain("other.com");
+    expect(env.NO_PROXY).toContain("localhost");
+  });
+
   it("appends only the missing local entries when NO_PROXY already has localhost", () => {
     const env: Record<string, string> = {
       HTTP_PROXY: "http://proxy:8888",
@@ -41,8 +63,12 @@ describe("withLocalNoProxy", () => {
       no_proxy: "example.com,localhost",
     };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
-    expect(env.no_proxy).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+    expect(env.NO_PROXY).toBe(
+      "example.com,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+    );
+    expect(env.no_proxy).toBe(
+      "example.com,localhost,127.0.0.1,host.docker.internal,host.containers.internal,::1,0.0.0.0,inference.local",
+    );
   });
 
   it("does not duplicate entries when all local hosts are already present", () => {
@@ -65,6 +91,49 @@ describe("withLocalNoProxy", () => {
     withLocalNoProxy(env);
     expect(env.NO_PROXY).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
     expect(env.no_proxy).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
+  });
+
+  it("bypasses the host proxy for the managed inference hostname when HTTP_PROXY is set", () => {
+    const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY?.split(",")).toContain("inference.local");
+    expect(env.no_proxy?.split(",")).toContain("inference.local");
+  });
+
+  it("bypasses the host proxy for the rootless container host alias when HTTPS_PROXY is set", () => {
+    const env: Record<string, string> = { HTTPS_PROXY: "http://127.0.0.1:8118" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY?.split(",")).toContain("host.containers.internal");
+    expect(env.no_proxy?.split(",")).toContain("host.containers.internal");
+  });
+
+  it("does not inject a broad .local suffix or arbitrary *.local hostnames", () => {
+    const env: Record<string, string> = { HTTP_PROXY: "http://127.0.0.1:8118" };
+    withLocalNoProxy(env);
+    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+      const parts = (env[key] ?? "").split(",");
+      expect(parts).not.toContain(".local");
+      expect(parts).not.toContain("*.local");
+      expect(parts).not.toContain("evil.local");
+      expect(parts).not.toContain("attacker.local");
+      expect(parts.filter((p) => p.endsWith(".local"))).toEqual(["inference.local"]);
+    }
+  });
+
+  it("preserves a caller-provided .local entry without expanding the bypass", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://127.0.0.1:8118",
+      NO_PROXY: "trusted.local",
+      no_proxy: "trusted.local",
+    };
+    withLocalNoProxy(env);
+    for (const key of ["NO_PROXY", "no_proxy"] as const) {
+      const parts = (env[key] ?? "").split(",");
+      expect(parts).toContain("trusted.local");
+      expect(parts).toContain("inference.local");
+      expect(parts).not.toContain(".local");
+      expect(parts).not.toContain("*.local");
+    }
   });
 });
 

@@ -12,11 +12,14 @@ export interface OnboardProgressStep {
   title: string;
 }
 
-export type OnboardMachineProgressStepName =
-  OnboardMachineStateWithProgressDefinition["stepName"];
+export type OnboardMachineProgressStepName = OnboardMachineStateWithProgressDefinition["stepName"];
 
 export type OnboardProgressStepName = OnboardMachineProgressStepName | "messaging";
 
+// Messaging is still emitted inside the sandbox flow rather than represented as
+// a session/FSM state. Keep this legacy pseudo-step here only while the progress
+// API preserves that visible label; remove it when messaging becomes a real
+// FSM-backed onboarding step or the legacy pseudo-step lookup goes away.
 const EXTRA_PROGRESS_STEPS = [
   {
     stepName: "messaging",

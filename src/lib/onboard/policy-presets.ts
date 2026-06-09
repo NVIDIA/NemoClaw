@@ -7,6 +7,7 @@ import type { WebSearchConfig } from "../inference/web-search";
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
 };
+import { isOpenclawAgent, requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 
 export interface SuggestedPolicyPresetOptions {
   enabledChannels?: string[] | null;
@@ -14,6 +15,7 @@ export interface SuggestedPolicyPresetOptions {
   provider?: string | null;
   agent?: string | null;
   isNonInteractive?: () => boolean;
+  env?: NodeJS.ProcessEnv;
 }
 
 export function getSuggestedPolicyPresets({
@@ -22,18 +24,19 @@ export function getSuggestedPolicyPresets({
   provider = null,
   agent = null,
   isNonInteractive,
+  env = process.env,
 }: SuggestedPolicyPresetOptions = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
   if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
     suggestions.push("local-inference");
   }
-  if (agent === "openclaw") {
+  if (isOpenclawAgent(agent)) {
     suggestions.push("openclaw-pricing");
+    suggestions.push(...requiredOpenclawOtelPolicyPresets(agent, env));
   }
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
-  const nonInteractive =
-    isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  const nonInteractive = isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 
   const maybeSuggestMessagingPreset = (channel: string, envKey: string | null): void => {
     if (usesExplicitMessagingSelection) {

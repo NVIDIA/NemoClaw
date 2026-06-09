@@ -5,9 +5,7 @@ import type { OnboardFlowContext, OnboardFlowPhaseResult } from "../flow-context
 import { mergeOnboardFlowContext, onboardFlowPhaseResult } from "../flow-context";
 import type { OnboardSequencePhase } from "../sequence-runner";
 
-type FlowPhaseHandler<Context extends OnboardFlowContext> = (
-  context: Context,
-) => Promise<{
+type FlowPhaseHandler<Context extends OnboardFlowContext> = (context: Context) => Promise<{
   context?: Partial<Context>;
   result: OnboardFlowPhaseResult<Context>["result"];
 }>;

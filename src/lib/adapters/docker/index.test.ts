@@ -17,11 +17,13 @@ import {
   dockerContainerInspectFormat,
   dockerInfoFormat,
   dockerListVolumesByPrefix,
+  dockerManifestInspect,
   dockerPull,
-  dockerRename,
   dockerRemoveVolumesByPrefix,
+  dockerRename,
   dockerRmi,
   dockerRunDetached,
+  dockerTag,
 } from "./index";
 
 describe("docker helpers", () => {
@@ -130,6 +132,22 @@ describe("docker helpers", () => {
     ]);
   });
 
+  it("prefixes docker argv for manifest inspect and tag helpers (#3885)", () => {
+    runCaptureMock.mockReturnValue('{"manifests":[]}');
+
+    dockerManifestInspect("nvcr.io/nim/nvidia/x:latest", { ignoreError: true });
+    dockerTag("nvcr.io/nim/nvidia/x@sha256:abc", "nvcr.io/nim/nvidia/x:latest");
+
+    expect(runCaptureMock).toHaveBeenCalledWith(
+      ["docker", "manifest", "inspect", "nvcr.io/nim/nvidia/x:latest"],
+      { ignoreError: true },
+    );
+    expect(runMock).toHaveBeenCalledWith(
+      ["docker", "tag", "nvcr.io/nim/nvidia/x@sha256:abc", "nvcr.io/nim/nvidia/x:latest"],
+      {},
+    );
+  });
+
   it("filters docker volume names by exact prefix", () => {
     runCaptureMock.mockReturnValue(
       [
@@ -151,24 +169,17 @@ describe("docker helpers", () => {
   });
 
   it("removes only volumes returned by the prefix probe", () => {
-    runCaptureMock.mockReturnValue("openshell-cluster-nemoclaw\nopenshell-cluster-nemoclaw-cache\n");
+    runCaptureMock.mockReturnValue(
+      "openshell-cluster-nemoclaw\nopenshell-cluster-nemoclaw-cache\n",
+    );
 
     const removed = dockerRemoveVolumesByPrefix("  openshell-cluster-nemoclaw  ", {
       ignoreError: true,
     });
 
-    expect(removed).toEqual([
-      "openshell-cluster-nemoclaw",
-      "openshell-cluster-nemoclaw-cache",
-    ]);
+    expect(removed).toEqual(["openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw-cache"]);
     expect(runMock).toHaveBeenCalledWith(
-      [
-        "docker",
-        "volume",
-        "rm",
-        "openshell-cluster-nemoclaw",
-        "openshell-cluster-nemoclaw-cache",
-      ],
+      ["docker", "volume", "rm", "openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw-cache"],
       { ignoreError: true },
     );
   });
@@ -183,9 +194,9 @@ describe("docker helpers", () => {
       throw new Error("docker unavailable");
     });
 
-    expect(dockerRemoveVolumesByPrefix("openshell-cluster-nemoclaw", { ignoreError: true })).toEqual(
-      [],
-    );
+    expect(
+      dockerRemoveVolumesByPrefix("openshell-cluster-nemoclaw", { ignoreError: true }),
+    ).toEqual([]);
     expect(runMock).not.toHaveBeenCalled();
   });
 

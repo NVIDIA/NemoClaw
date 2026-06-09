@@ -27,7 +27,12 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
-    - /sandbox/.hermes              # Agent config (lockable via shields up)
+    # Agent config/state root. Shields-up locks config.yaml/.env and the
+    # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
+    # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
+    # on every Hermes TUI keypress. Remove that exception if upstream supports
+    # redirecting or disabling file history.
+    - /sandbox/.hermes
 
 landlock:
   compatibility: best_effort
@@ -46,6 +51,8 @@ network_policies:
         enforcement: enforce
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/messages" }
+          - allow: { method: POST, path: "/v1/responses" }
           - allow: { method: POST, path: "/v1/completions" }
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
@@ -142,7 +149,9 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
+      - { path: /usr/bin/curl }
       - { path: /usr/local/bin/pip3 }
+      - { path: /usr/local/bin/curl }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 

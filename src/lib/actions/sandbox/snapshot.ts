@@ -1,17 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import * as shields from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -97,14 +101,19 @@ function renderSnapshotTable(
   }
 }
 
-// Query the running src pod's image reference via `kubectl` inside the
-// gateway container. Returns null on any failure.
-function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: string }): string | null {
+// Resolve the running src pod's image. Docker- and VM-driver sandboxes don't
+// have the legacy cluster container — trust the registered imageTag and fail
+// fast if it's missing. Only the "kubernetes" driver falls back to the
+// kubectl probe inside the gateway container.
+function resolveSrcPodImage(
+  srcName: string,
+  srcEntry?: SandboxEntry | { name: string },
+): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
-  if (registeredDriver === "docker" && registeredImage) {
-    return registeredImage;
+  if (usesGatewayMetadataProbe(registeredDriver)) {
+    return registeredImage ?? null;
   }
 
   const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
@@ -124,8 +133,7 @@ function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: s
       ],
       { ignoreError: true, timeout: 10000 },
     );
-    const img = output.trim().split(/\s+/)[0];
-    return img || null;
+    return output.trim().split(/\s+/)[0] || null;
   } catch {
     return null;
   }
@@ -195,9 +203,10 @@ async function autoCreateSandboxFromSource(
     snapshotExit(1);
   }
 
-  // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
+  // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
-  if ((srcEntry as { openshellDriver?: string | null }).openshellDriver !== "docker" && fs.existsSync(dnsScript)) {
+  const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
+  if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
     run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
   }
 
@@ -212,6 +221,10 @@ async function autoCreateSandboxFromSource(
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
+    // No CUDA proof has run for dst (this auto-create path passes no GPU flags),
+    // so clear src's proof rather than inheriting it — otherwise dst could show
+    // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
+    sandboxGpuProof: null,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
@@ -315,6 +328,18 @@ function probeGatewayRunning(sandboxName?: string): boolean {
   return result.status === 0 && String(result.stdout || "").trim() === "true";
 }
 
+function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
+  // Snapshot creation is a shields/policy boundary. If a packaged or mocked
+  // CommonJS interop surface ever omits the helper, fail closed before any
+  // backup side effect instead of throwing an ambiguous TypeError.
+  const isShieldsDown = shields.isShieldsDown;
+  if (typeof isShieldsDown !== "function") {
+    console.error("  Cannot verify shields state. Refusing to create snapshot.");
+    return false;
+  }
+  return isShieldsDown(sandboxName);
+}
+
 export async function runSandboxSnapshot(
   sandboxName: string,
   request: SnapshotRequest = { kind: "help" },
@@ -331,6 +356,11 @@ export async function runSandboxSnapshot(
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
       }
+      if (!isSnapshotCreationAllowedByShields(sandboxName)) {
+        console.error("  Cannot create snapshot while shields are up.");
+        console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+        snapshotExit(1);
+      }
       const label = request.name ? ` (--name ${request.name})` : "";
       console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
       const result = sandboxState.backupSandboxState(sandboxName, { name: request.name ?? null });
@@ -342,9 +372,7 @@ export async function runSandboxSnapshot(
         const v = formatSnapshotVersion(entry);
         const nameSuffix = entry.name ? ` name=${entry.name}` : "";
         const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-        console.log(
-          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`,
-        );
+        console.log(`  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
         console.log(`    ${manifest.backupPath}`);
       } else {
         if (result.error) {

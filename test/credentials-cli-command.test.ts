@@ -190,7 +190,9 @@ describe("credentials oclif commands", () => {
     });
     const { CredentialsListCommand } = loadCommands();
 
-    const output = await captureOutput(() => expectExitCode(() => CredentialsListCommand.run([]), 1));
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsListCommand.run([]), 1),
+    );
 
     expect(output.stderr).toContain("Could not query OpenShell gateway");
     expect(output.stderr).toContain("openshell gateway start --name nemoclaw");
@@ -204,7 +206,9 @@ describe("credentials oclif commands", () => {
     });
     const { CredentialsListCommand } = loadCommands();
 
-    const output = await captureOutput(() => expectExitCode(() => CredentialsListCommand.run([]), 1));
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsListCommand.run([]), 1),
+    );
 
     expect(output.stderr).toContain("Could not query the NemoClaw OpenShell gateway");
     expect(runOpenshell).not.toHaveBeenCalled();

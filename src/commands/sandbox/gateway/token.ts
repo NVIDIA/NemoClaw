@@ -5,7 +5,10 @@ import { Args } from "@oclif/core";
 import { quietFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { GatewayTokenCommandError, runGatewayTokenCommand } from "../../../lib/gateway-token-command";
+import {
+  GatewayTokenCommandError,
+  runGatewayTokenCommand,
+} from "../../../lib/gateway-token-command";
 
 type GatewayTokenRuntimeBridge = {
   fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;

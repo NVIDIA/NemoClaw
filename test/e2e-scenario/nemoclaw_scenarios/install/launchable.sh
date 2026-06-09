@@ -18,11 +18,6 @@ _E2E_INST_LNCH_RUNTIME_LIB="$(cd "${_E2E_INST_LNCH_DIR}/../../runtime/lib" && pw
 
 e2e_install_launchable() {
   e2e_env_trace "install-launchable"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] install-launchable (skipped)"
-    return 0
-  fi
-
   # Match nightly launchable-smoke-e2e: exercise the launchable bootstrap
   # script on the current runner instead of assuming a pre-provisioned Brev VM.
   # The script has no Brev API dependency; it installs Docker/OpenShell/NemoClaw

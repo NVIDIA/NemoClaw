@@ -10,9 +10,7 @@ import {
   type PreflightGatewayReuseDeps,
 } from "./preflight-gateway-reuse";
 
-function makeDeps(
-  overrides: Partial<PreflightGatewayReuseDeps> = {},
-): PreflightGatewayReuseDeps {
+function makeDeps(overrides: Partial<PreflightGatewayReuseDeps> = {}): PreflightGatewayReuseDeps {
   return {
     gatewayReuseState: "healthy",
     supportsLifecycleCommands: true,
@@ -46,7 +44,10 @@ describe("reconcilePreflightGatewayReuseState", () => {
 
   it("short-circuits when lifecycle commands are not supported", async () => {
     const verify = vi.fn(() => "running" as GatewayContainerState);
-    const deps = makeDeps({ supportsLifecycleCommands: false, verifyGatewayContainerRunning: verify });
+    const deps = makeDeps({
+      supportsLifecycleCommands: false,
+      verifyGatewayContainerRunning: verify,
+    });
 
     const result = await reconcilePreflightGatewayReuseState(deps);
 
@@ -130,7 +131,10 @@ describe("reconcilePreflightGatewayReuseState", () => {
     const destroyForReuse = vi.fn(() => "missing" as GatewayReuseState);
     const deps = makeDeps({
       verifyGatewayContainerRunning: vi.fn(() => "running" as GatewayContainerState),
-      getGatewayClusterImageDrift: vi.fn(() => ({ currentVersion: "0.0.38", expectedVersion: "0.0.39" })),
+      getGatewayClusterImageDrift: vi.fn(() => ({
+        currentVersion: "0.0.38",
+        expectedVersion: "0.0.39",
+      })),
       destroyGatewayForReuse: destroyForReuse,
     });
 

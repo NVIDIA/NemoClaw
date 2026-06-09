@@ -32,9 +32,7 @@ export function openRebuildShieldsWindow(
     console.error("");
     console.error(`  ${_RD}Failed to auto-unlock shields:${R} ${message}`);
     console.error("  Sandbox is untouched — no data was lost.");
-    console.error(
-      `  Run \`${cliName} ${sandboxName} shields down\` manually, then retry rebuild.`,
-    );
+    console.error(`  Run \`${cliName} ${sandboxName} shields down\` manually, then retry rebuild.`);
     return null;
   }
   return window;
@@ -59,9 +57,7 @@ export function relockRebuildShieldsWindow(
   if (!window.wasLocked || window.relocked) return true;
   if (!sandboxStillExists) {
     console.warn("");
-    console.warn(
-      `  ${YW}⚠${R} Cannot re-apply shields lockdown — sandbox no longer exists.`,
-    );
+    console.warn(`  ${YW}⚠${R} Cannot re-apply shields lockdown — sandbox no longer exists.`);
     console.warn(
       `  After recovery, run \`${cliName} ${sandboxName} shields up\` to restore lockdown.`,
     );
@@ -78,9 +74,7 @@ export function relockRebuildShieldsWindow(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to re-apply shields lockdown: ${message}`);
-    console.error(
-      `  Run \`${cliName} ${sandboxName} shields up\` manually to restore lockdown.`,
-    );
+    console.error(`  Run \`${cliName} ${sandboxName} shields up\` manually to restore lockdown.`);
     return false;
   }
 }
