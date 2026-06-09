@@ -3,7 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession, filterSafeUpdates, normalizeSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import {
+  createSession,
+  filterSafeUpdates,
+  MACHINE_SNAPSHOT_VERSION,
+  normalizeSession,
+  type Session,
+  type SessionUpdates,
+} from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
 import { advanceTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
@@ -14,8 +21,8 @@ function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
 }
 
-function runtime() {
-  let session = createSession({ machine: { version: 1, state: "preflight", stateEnteredAt: null, revision: 1 } });
+function runtime(initialSession: Session = createSession()) {
+  let session = cloneSession(initialSession);
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     session = cloneSession(mutator(cloneSession(session)) ?? session);
     return cloneSession(session);
@@ -29,9 +36,13 @@ function runtime() {
     },
     updateSession,
     markStepStarted: () => cloneSession(session),
-    markStepComplete: (_stepName, updates: SessionUpdates = {}) => updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: () => cloneSession(session),
+    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: () => cloneSession(session),
     filterSafeUpdates,
     emitEvent: () => undefined,
@@ -67,7 +78,10 @@ function context(): OnboardFlowContext {
   };
 }
 
-function phase(state: OnboardSequencePhase<OnboardFlowContext>["state"], next: ReturnType<typeof advanceTo>["next"]): OnboardSequencePhase<OnboardFlowContext> {
+function phase(
+  state: OnboardSequencePhase<OnboardFlowContext>["state"],
+  next: ReturnType<typeof advanceTo>["next"],
+): OnboardSequencePhase<OnboardFlowContext> {
   return { state, run: (ctx) => ({ context: ctx, result: advanceTo(next) }) };
 }
 
@@ -79,13 +93,36 @@ describe("onboard flow slices", () => {
         phase("gateway", "provider_selection"),
         phase("provider_selection", "inference"),
       ]).map((entry) => entry.state),
-    ).toEqual(["preflight", "gateway"]);
+    ).toEqual(["init", "preflight", "gateway"]);
   });
 
-  it("runs the initial slice and stops at provider selection", async () => {
+  it("runs the initial slice from a default session and stops at provider selection", async () => {
     const result = await runInitialOnboardFlowSequence({
       context: context(),
       runtime: runtime(),
+      phases: [
+        phase("preflight", "gateway"),
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "inference"),
+      ],
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+
+  it("runs the initial slice from preflight and stops at provider selection", async () => {
+    const result = await runInitialOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: MACHINE_SNAPSHOT_VERSION,
+            state: "preflight",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
       phases: [
         phase("preflight", "gateway"),
         phase("gateway", "provider_selection"),
