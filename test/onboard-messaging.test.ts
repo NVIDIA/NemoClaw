@@ -10,13 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import { describe, it } from "vitest";
 import YAML from "yaml";
-import {
-  encodedMessagingPlan,
-  makeMessagingPlan,
-  makeMessagingState,
-  registeredChannels,
-  registeredDisabledChannels,
-} from "./helpers/messaging-plan-fixtures";
+import * as messagingFixtures from "./helpers/messaging-plan-fixtures";
 
 type CommandEntry = {
   command: string;
@@ -528,7 +522,7 @@ const commands = [];
 const registerCalls = [];
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: ${JSON.stringify(makeMessagingState("my-assistant", ["discord", "slack"]))},
+  messaging: ${JSON.stringify(messagingFixtures.makeMessagingState("my-assistant", ["discord", "slack"]))},
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -591,7 +585,7 @@ const { createSandbox } = require(${onboardPath});
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.SLACK_APP_TOKEN;
   delete process.env.TELEGRAM_BOT_TOKEN;
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${encodedMessagingPlan(makeMessagingPlan("my-assistant", ["discord", "slack"]))};
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${messagingFixtures.encodedMessagingPlan(messagingFixtures.makeMessagingPlan("my-assistant", ["discord", "slack"]))};
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["discord", "slack"],
   );
@@ -652,7 +646,10 @@ const { createSandbox } = require(${onboardPath});
     assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
     const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
     assert.deepEqual(channels, ["discord", "slack"]);
-    assert.deepEqual(registeredChannels(payload.registerCalls[0]), ["discord", "slack"]);
+    assert.deepEqual(messagingFixtures.registeredChannels(payload.registerCalls[0]), [
+      "discord",
+      "slack",
+    ]);
   });
 
   it("preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)", {
@@ -693,7 +690,7 @@ const commands = [];
 const registerCalls = [];
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: ${JSON.stringify(makeMessagingState("my-assistant", ["telegram"], ["telegram"]))},
+  messaging: ${JSON.stringify(messagingFixtures.makeMessagingState("my-assistant", ["telegram"], ["telegram"]))},
 });
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
@@ -751,7 +748,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.TELEGRAM_BOT_TOKEN;
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${encodedMessagingPlan(makeMessagingPlan("my-assistant", ["telegram"], ["telegram"]))};
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${messagingFixtures.encodedMessagingPlan(messagingFixtures.makeMessagingPlan("my-assistant", ["telegram"], ["telegram"]))};
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["telegram"],
   );
@@ -803,16 +800,10 @@ const { createSandbox } = require(${onboardPath});
       "disabled channel's bridge must not be attached to the new sandbox",
     );
 
-    assert.deepEqual(
-      registeredChannels(payload.registerCalls[0]),
-      ["telegram"],
-      "registry messaging plan must keep the disabled-but-configured channel so `channels start` can recover it",
-    );
-    assert.deepEqual(
-      registeredDisabledChannels(payload.registerCalls[0]),
-      ["telegram"],
-      "registry messaging plan disabledChannels must round-trip through the rebuild",
-    );
+    assert.deepEqual(messagingFixtures.registeredChannels(payload.registerCalls[0]), ["telegram"]);
+    assert.deepEqual(messagingFixtures.registeredDisabledChannels(payload.registerCalls[0]), [
+      "telegram",
+    ]);
   });
 
   it("bakes WhatsApp into the sandbox image without bridge providers when no messaging tokens are set", {
@@ -911,7 +902,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${encodedMessagingPlan(makeMessagingPlan("my-assistant", ["whatsapp"]))};
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${messagingFixtures.encodedMessagingPlan(messagingFixtures.makeMessagingPlan("my-assistant", ["whatsapp"]))};
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -966,7 +957,9 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
       const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
       assert.deepEqual(channels, ["whatsapp"]);
-      assert.deepEqual(registeredChannels(payload.registerCalls[0]), ["whatsapp"]);
+      assert.deepEqual(messagingFixtures.registeredChannels(payload.registerCalls[0]), [
+        "whatsapp",
+      ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1009,7 +1002,7 @@ const fs = require("node:fs");
 
 registry.registerSandbox({
   name: "my-assistant",
-  messaging: ${JSON.stringify(makeMessagingState("my-assistant", ["whatsapp"], ["whatsapp"]))},
+  messaging: ${JSON.stringify(messagingFixtures.makeMessagingState("my-assistant", ["whatsapp"], ["whatsapp"]))},
 });
 
 const commands = [];
@@ -1073,7 +1066,7 @@ const { createSandbox } = require(${onboardPath});
       delete process.env[key];
     }
   }
-  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${encodedMessagingPlan(makeMessagingPlan("my-assistant", ["whatsapp"], ["whatsapp"]))};
+  process.env.NEMOCLAW_MESSAGING_PLAN_B64 = ${messagingFixtures.encodedMessagingPlan(messagingFixtures.makeMessagingPlan("my-assistant", ["whatsapp"], ["whatsapp"]))};
   const sandboxName = await createSandbox(
     null, "gpt-5.4", "nvidia-prod", null, "my-assistant", null, ["whatsapp"],
   );
@@ -1118,16 +1111,12 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
       const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
       assert.deepEqual(channels, [], "disabled QR channel must not be baked into the image");
-      assert.deepEqual(
-        registeredChannels(payload.registerCalls[0]),
-        ["whatsapp"],
-        "registry messaging plan must keep the disabled QR channel so `channels start` can recover it (mirrors #3381)",
-      );
-      assert.deepEqual(
-        registeredDisabledChannels(payload.registerCalls[0]),
-        ["whatsapp"],
-        "registry messaging plan disabledChannels must round-trip through the rebuild",
-      );
+      assert.deepEqual(messagingFixtures.registeredChannels(payload.registerCalls[0]), [
+        "whatsapp",
+      ]);
+      assert.deepEqual(messagingFixtures.registeredDisabledChannels(payload.registerCalls[0]), [
+        "whatsapp",
+      ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

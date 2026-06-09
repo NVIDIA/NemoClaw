@@ -44,9 +44,7 @@ export function getConfiguredMessagingChannelsFromEntry(
 ): string[] {
   const plan = getMessagingPlanFromEntry(entry);
   if (!plan) return [];
-  return plan.channels
-    .filter((channel) => channel.configured)
-    .map((channel) => channel.channelId);
+  return plan.channels.filter((channel) => channel.configured).map((channel) => channel.channelId);
 }
 
 export function getActiveMessagingChannelsFromEntry(

@@ -74,8 +74,7 @@ export function createDeps(
       note: calls.note,
       updateSession: calls.updateSession,
       getStoredMessagingChannelConfig: () => null,
-      hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) =>
-        config,
+      hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
       computeTelegramRequireMention: () => null,
@@ -85,8 +84,7 @@ export function createDeps(
       normalizeHermesToolGatewaySelections: (value: unknown) =>
         Array.isArray(value) ? (value as string[]) : [],
       stringSetsEqual: (left: string[], right: string[]) =>
-        left.length === right.length &&
-        left.every((value) => right.includes(value)),
+        left.length === right.length && left.every((value) => right.includes(value)),
       removeSandboxFromRegistry: calls.removeSandbox,
       repairRecordedSandbox: calls.repairSandbox,
       ensureValidatedBraveSearchCredential: calls.validateBrave,
@@ -107,8 +105,7 @@ export function createDeps(
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
       recordStepComplete: calls.complete,
-      toSessionUpdates: (updates: Record<string, unknown>) =>
-        updates as SessionUpdates,
+      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
       recordStateSkipped: calls.recordSkip,
       recordRepairEvent: calls.repairEvent,

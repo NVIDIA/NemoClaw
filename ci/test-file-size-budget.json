@@ -9,9 +9,9 @@
     "test/generate-openclaw-config.test.ts": 2091,
     "test/install-preflight.test.ts": 4396,
     "test/nemoclaw-start.test.ts": 5289,
-    "test/onboard-messaging.test.ts": 2108,
+    "test/onboard-messaging.test.ts": 2097,
     "test/onboard-selection.test.ts": 6922,
     "test/onboard.test.ts": 4873,
-    "test/policies.test.ts": 2766
+    "test/policies.test.ts": 2756
   }
 }
