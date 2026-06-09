@@ -508,16 +508,19 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("emits Discord guild allowlist config when guilds are provided", () => {
+  it("emits OpenClaw-valid Discord guild allowlist config when guilds are provided", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
-    const guilds = { "1234567890": { enabled: true, requireMention: true } };
+    const legacyGuilds = { "1234567890": { enabled: true, requireMention: true } };
     const config = buildConfigDirect({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
-      NEMOCLAW_DISCORD_GUILDS_B64: Buffer.from(JSON.stringify(guilds)).toString("base64"),
+      NEMOCLAW_DISCORD_GUILDS_B64: Buffer.from(JSON.stringify(legacyGuilds)).toString("base64"),
     });
 
     expect(config.channels.discord.groupPolicy).toBe("allowlist");
-    expect(config.channels.discord.guilds).toEqual(guilds);
+    expect(config.channels.discord.guilds).toEqual({
+      "1234567890": { requireMention: true },
+    });
+    expect(config.channels.discord.guilds["1234567890"].enabled).toBeUndefined();
   });
 
   it("applies WeChat post-agent-install build-file outputs through the messaging applier", () => {
@@ -535,6 +538,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
       spec: "@tencent-weixin/openclaw-weixin@2.4.3",
       installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
     });
+    expect(config.plugins?.load?.paths ?? []).not.toContain(
+      "/sandbox/.openclaw/extensions/openclaw-weixin",
+    );
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
     expect(config.channels?.wechat).toBeUndefined();
   });

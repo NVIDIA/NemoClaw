@@ -88,9 +88,6 @@ export function buildWechatSeedOpenClawAccountOutputs(
                 installPath: pluginInstallPath,
               },
             },
-            load: {
-              paths: [pluginInstallPath],
-            },
             entries: {
               [WECHAT_PLUGIN_ID]: {
                 enabled: true,

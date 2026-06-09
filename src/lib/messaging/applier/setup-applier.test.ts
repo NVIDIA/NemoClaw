@@ -532,9 +532,9 @@ describe("MessagingSetupApplier", () => {
     expect(openclawConfig.plugins.installs["openclaw-weixin"].spec).toBe(
       "@tencent-weixin/openclaw-weixin@2.4.3",
     );
-    expect(openclawConfig.plugins.load.paths).toEqual([
+    expect(openclawConfig.plugins.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
-    ]);
+    );
     expect(openclawConfig.channels["openclaw-weixin"].accounts["wechat-account"]).toEqual({
       enabled: true,
     });

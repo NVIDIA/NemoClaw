@@ -15,7 +15,6 @@ import {
 } from "../template-resolver-utils";
 
 type DiscordGuildConfig = {
-  readonly enabled: true;
   readonly requireMention?: boolean;
   readonly users?: readonly string[];
 };
@@ -64,7 +63,6 @@ function discordGuilds(context: RenderTemplateContext): Record<string, DiscordGu
     serverIds.map((serverId) => [
       serverId,
       {
-        enabled: true,
         requireMention,
         ...(users.length > 0 ? { users } : {}),
       },

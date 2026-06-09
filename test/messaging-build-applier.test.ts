@@ -332,7 +332,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         spec: "@tencent-weixin/openclaw-weixin@2.4.3",
         installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
       });
-      expect(config.plugins?.load?.paths).toEqual(["/sandbox/.openclaw/extensions/openclaw-weixin"]);
+      expect(config.plugins?.load?.paths ?? []).not.toContain(
+        "/sandbox/.openclaw/extensions/openclaw-weixin",
+      );
       expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
       expect(config.channels?.wechat).toBeUndefined();
 
