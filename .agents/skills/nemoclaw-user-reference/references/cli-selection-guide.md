@@ -167,7 +167,7 @@ Use the NemoClaw commands for model or provider inspection and switches so the O
 
 ```bash
 nemoclaw inference get
-nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-ultra-550b-a55b
 ```
 
 For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/config.yaml` without a rebuild or restart:

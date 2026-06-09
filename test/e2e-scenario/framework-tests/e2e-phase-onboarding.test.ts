@@ -99,12 +99,13 @@ describe("onboarding phase fixture", () => {
         args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
         options: {
           artifactName: "onboard-cloud-openclaw",
-          env: {
+          env: expect.objectContaining({
             NEMOCLAW_AGENT: "openclaw",
             NEMOCLAW_PROVIDER: "cloud",
             NEMOCLAW_SANDBOX_NAME: "e2e-ubuntu-repo-cloud-openclaw",
-          },
-          inheritEnv: true,
+            NVIDIA_API_KEY: "secret-token",
+            PATH: expect.any(String),
+          }),
           redactionValues: ["secret-token"],
           timeoutMs: 900_000,
         },
@@ -118,6 +119,14 @@ describe("onboarding phase fixture", () => {
     const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
 
     await expect(onboard.from(ready())).rejects.toThrow(/cloud-openclaw onboarding failed: provider rejected/);
+  });
+
+  it("requires NVIDIA_API_KEY before spawning cloud OpenClaw onboarding", async () => {
+    const runner = new FakeRunner();
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
+
+    await expect(onboard.from(ready())).rejects.toThrow(/missing required E2E secret: NVIDIA_API_KEY/);
+    expect(runner.calls).toEqual([]);
   });
 
   it("requires Docker for cloud OpenClaw onboarding", async () => {
@@ -155,23 +164,30 @@ describe("onboarding phase fixture", () => {
         errorClass: "docker-missing",
       },
     });
-    expect(secrets.requiredCalls).toEqual([]);
     expect(runner.calls[0]).toMatchObject({
       command: "nemoclaw",
       args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
       options: {
         artifactName: "onboard-cloud-openclaw-no-docker",
-        inheritEnv: true,
         timeoutMs: 900_000,
       },
     });
+    expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
+    expect(runner.calls[0]?.options?.redactionValues).toEqual(["secret-token"]);
+    expect(runner.calls[0]?.options?.env).toMatchObject({
+      NEMOCLAW_AGENT: "openclaw",
+      NEMOCLAW_PROVIDER: "cloud",
+      NEMOCLAW_SANDBOX_NAME: "e2e-no-docker",
+      NVIDIA_API_KEY: "secret-token",
+    });
     expect(runner.calls[0]?.options?.env?.PATH).toContain("e2e-no-docker-");
+    expect(secrets.requiredCalls).toEqual(["NVIDIA_API_KEY"]);
   });
 
   it("fails the no-Docker path when onboarding unexpectedly succeeds", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
-    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
 
     await expect(
       onboard.from(
@@ -182,6 +198,22 @@ describe("onboarding phase fixture", () => {
         }),
       ),
     ).rejects.toThrow(/unexpectedly succeeded/);
+  });
+
+  it("rejects unrelated no-Docker onboarding failures", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(9, "provider rejected credential"));
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets({ NVIDIA_API_KEY: "secret" }));
+
+    await expect(
+      onboard.from(
+        ready({
+          runtime: "docker-missing",
+          onboarding: "cloud-openclaw-no-docker",
+          docker: { id: "docker-missing", expectation: "missing", available: false },
+        }),
+      ),
+    ).rejects.toThrow(/without Docker-missing preflight signature/);
   });
 
   it("rejects unsupported onboarding profiles", async () => {

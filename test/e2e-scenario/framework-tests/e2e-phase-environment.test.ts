@@ -81,14 +81,21 @@ describe("environment phase fixture", () => {
       {
         command: "./bin/nemoclaw.js",
         args: ["--version"],
-        options: { artifactName: "nemoclaw-version", inheritEnv: true },
+        options: {
+          artifactName: "nemoclaw-version",
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
+        },
       },
       {
         command: "docker",
         args: ["info"],
         options: {
           artifactName: "runtime-docker-info-docker-running",
-          inheritEnv: true,
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
           timeoutMs: 30_000,
         },
       },
@@ -157,6 +164,120 @@ describe("environment phase fixture", () => {
       expectation: "optional",
       available: false,
       probeError: "spawn docker ENOENT",
+    });
+  });
+
+  it("records optional Docker as available when present", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "Docker is available\n"));
+    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      platform: "macos-local",
+      runtime: "macos-docker-optional",
+    });
+
+    expect(ready.docker).toMatchObject({
+      id: "macos-docker-optional",
+      expectation: "optional",
+      available: true,
+    });
+  });
+
+  it("scopes availability probe env instead of inheriting unrelated secrets", async () => {
+    const previousSecret = process.env.NVIDIA_API_KEY;
+    const previousDockerHost = process.env.DOCKER_HOST;
+    const previousHome = process.env.HOME;
+    const previousPath = process.env.PATH;
+    process.env.NVIDIA_API_KEY = "must-not-leak";
+    process.env.DOCKER_HOST = "unix:///tmp/e2e-docker.sock";
+    process.env.HOME = "/tmp/e2e-home";
+    process.env.PATH = "/usr/bin";
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      runner.enqueue(shellResult(0, "Docker is available\n"));
+      const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+
+      await environment.assertReady(cloudOpenClawEnvironment);
+
+      const cliEnv = runner.calls[0]?.options?.env;
+      const dockerEnv = runner.calls[1]?.options?.env;
+      expect(cliEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
+      expect(dockerEnv).toMatchObject({ DOCKER_HOST: "unix:///tmp/e2e-docker.sock" });
+      expect(cliEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+      expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
+      expect(cliEnv).not.toHaveProperty("NVIDIA_API_KEY");
+      expect(dockerEnv).not.toHaveProperty("NVIDIA_API_KEY");
+      expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
+      expect(runner.calls[1]?.options?.inheritEnv).toBeUndefined();
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = previousSecret;
+      }
+      if (previousDockerHost === undefined) {
+        delete process.env.DOCKER_HOST;
+      } else {
+        process.env.DOCKER_HOST = previousDockerHost;
+      }
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      if (previousPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previousPath;
+      }
+    }
+  });
+
+  it("treats launchable install as current first-layer CLI readiness", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "Docker is available\n"));
+    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      install: "launchable",
+    });
+
+    expect(ready.install).toBe("launchable");
+    expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
+      ["nemoclaw", ["--version"]],
+      ["docker", ["info"]],
+    ]);
+  });
+
+  it("treats gpu-docker-cdi as current first-layer Docker daemon readiness", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "Docker is available\n"));
+    const environment = new EnvironmentPhaseFixture(new HostCliClient(runner));
+
+    const ready = await environment.assertReady({
+      ...cloudOpenClawEnvironment,
+      runtime: "gpu-docker-cdi",
+    });
+
+    expect(ready.docker).toMatchObject({
+      id: "gpu-docker-cdi",
+      expectation: "required",
+      available: true,
+    });
+    expect(runner.calls[1]).toMatchObject({
+      command: "docker",
+      args: ["info"],
+      options: {
+        artifactName: "runtime-docker-info-gpu-docker-cdi",
+        timeoutMs: 30_000,
+      },
     });
   });
 

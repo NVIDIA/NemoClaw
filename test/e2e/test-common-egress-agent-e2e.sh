@@ -312,7 +312,7 @@ run_hermes_agent_assertion() {
   local prompt="$3"
   local expected="$4"
   local payload response reply rc=0 model remote attempt last_fail http_code body log_file
-  model="${NEMOCLAW_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
+  model="${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}"
   log_file="/tmp/nemoclaw-e2e-common-egress-${sandbox}-agent.log"
   payload=$(
     MODEL="$model" PROMPT="$prompt" python3 - <<'PY'
