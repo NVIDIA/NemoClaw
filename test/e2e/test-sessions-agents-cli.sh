@@ -422,7 +422,25 @@ test_agents_list_passthrough() {
   fi
   # The previously added secondary agent must appear in the listing. A pure
   # exit-status check does not prove the passthrough reached the gateway.
-  if ! printf '%s' "$out" | python3 -c "import json,sys; data=json.loads(sys.stdin.read()); entries=data if isinstance(data, list) else data.get('agents', []); sys.exit(0 if any((entry.get('id') == '${TEST_AGENT_ID}') for entry in entries) else 1)" 2>/dev/null; then
+  # Mirror `is_valid_json`'s prefix-strip so Node warning lines that escape
+  # `NODE_NO_WARNINGS=1` (via openshell sub-invocations) don't break the parse.
+  if ! printf '%s' "$out" | TARGET="$TEST_AGENT_ID" python3 -c "
+import json, os, sys
+raw = sys.stdin.read()
+offset = -1
+cursor = 0
+for line in raw.splitlines(keepends=True):
+  if line.startswith('{') or line.startswith('['):
+    offset = cursor
+    break
+  cursor += len(line)
+if offset < 0:
+  sys.exit(1)
+data = json.loads(raw[offset:])
+entries = data if isinstance(data, list) else data.get('agents', [])
+target = os.environ['TARGET']
+sys.exit(0 if any(entry.get('id') == target for entry in entries) else 1)
+" 2>/dev/null; then
     fail "TC-AGENT-03: agent '${TEST_AGENT_ID}' not present in agents list --json output"
     info "$out"
     return 1
