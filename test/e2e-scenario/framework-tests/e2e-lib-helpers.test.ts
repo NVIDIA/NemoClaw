@@ -157,6 +157,35 @@ exit 2
     }
   });
 
+  it("no_docker_redactor_fallback_should_redact_sensitive_env_values_without_python", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-redactor-"));
+    const noPythonBin = path.join(tmp, "bin");
+    const logPath = path.join(tmp, "negative-preflight.log");
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        mkdir -p "${noPythonBin}"
+        for cmd in rm mktemp sed env cat mv; do
+          ln -s "$(command -v "\${cmd}")" "${noPythonBin}/\${cmd}"
+        done
+        . "${ONBOARD_DIR}/cloud-openclaw-no-docker.sh"
+        export NVIDIA_API_KEY=plain-secret-value
+        PATH="${noPythonBin}"
+        printf 'plain-secret-value\\nDocker is required before onboarding\\n' | e2e_no_docker_write_redacted_preflight_log "${logPath}"
+      `,
+        { TMPDIR: tmp },
+      );
+      expect(r.status, `${r.stdout}\n${r.stderr}`).toBe(0);
+      const logBody = fs.readFileSync(logPath, "utf8");
+      expect(logBody).toContain("[REDACTED]");
+      expect(logBody).toContain("Docker is required before onboarding");
+      expect(logBody).not.toContain("plain-secret-value");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_policy_credentials_helper_should_load_with_context_library", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
     try {

@@ -68,9 +68,20 @@ with open(target, "w", encoding="utf-8") as handle:
     return
   fi
 
-  local redacted
+  local redacted text name value lower_name pattern
   redacted="$(mktemp -t e2e-negative-preflight-redacted-XXXXXX)"
-  sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' >"${redacted}"
+  text="$(cat)"
+  while IFS='=' read -r name value; do
+    lower_name="${name,,}"
+    if [[ -n "${value}" && "${lower_name}" =~ (api[_-]?key|token|secret|password|credential) ]]; then
+      pattern="${value//\\/\\\\}"
+      pattern="${pattern//\*/\\*}"
+      pattern="${pattern//\?/\\?}"
+      pattern="${pattern//\[/\\[}"
+      text="${text//${pattern}/[REDACTED]}"
+    fi
+  done < <(env)
+  printf "%s" "${text}" | sed -E 's/(sk-[A-Za-z0-9_-]{8,}|nvapi-[A-Za-z0-9_-]{8,}|[A-Za-z0-9._%+-]+:[A-Za-z0-9_\/-]{12,}|(api[_-]?key|token|secret|password)[=:][^[:space:]]+)/[REDACTED]/Ig' >"${redacted}"
   mv "${redacted}" "${redacted_log}"
 }
 
