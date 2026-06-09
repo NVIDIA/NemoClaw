@@ -19,12 +19,26 @@ type ConfigureWebSearchOutcome = {
   errors: string[];
 };
 
-function setupBraveCurlShim(fakeBin: string, spec: { status: string; body: string }): void {
+function setupBraveCurlShim(
+  fakeBin: string,
+  spec: { status: string; body: string; forbiddenArg?: string },
+): void {
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
     `#!/usr/bin/env bash
 outfile=""
+forbidden=${JSON.stringify(spec.forbiddenArg ?? "")}
+for arg in "$@"; do
+  case "$arg" in
+    *"$forbidden"*)
+      if [ -n "$forbidden" ]; then
+        echo "secret leaked through curl argv" >&2
+        exit 66
+      fi
+      ;;
+  esac
+done
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
@@ -51,7 +65,11 @@ function runConfigureWebSearch(spec: { status: string; body: string; apiKey: str
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
   const outputPathLiteral = JSON.stringify(outputPath);
 
-  setupBraveCurlShim(fakeBin, { status: spec.status, body: spec.body });
+  setupBraveCurlShim(fakeBin, {
+    status: spec.status,
+    body: spec.body,
+    forbiddenArg: spec.apiKey,
+  });
 
   const script = String.raw`
 const fs = require("node:fs");

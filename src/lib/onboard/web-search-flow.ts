@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { AgentDefinition } from "../agent/defs";
@@ -21,6 +24,7 @@ import { agentSupportsWebSearch } from "./web-search-support";
 import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } from "./web-search-verify";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
+const BRAVE_CURL_CONFIG_PREFIX = "nemoclaw-brave-probe";
 
 export interface WebSearchFlowDeps {
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
@@ -49,23 +53,57 @@ export interface WebSearchFlowHelpers {
 }
 
 export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFlowHelpers {
-  function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
-    return runCurlProbe([
+  function escapeCurlConfigValue(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function braveCurlConfig(apiKey: string): string {
+    const tokenHeader = escapeCurlConfigValue(`X-Subscription-Token: ${apiKey}`);
+    return [
+      'header = "Accept: application/json"',
+      'header = "Accept-Encoding: gzip"',
+      `header = "${tokenHeader}"`,
+      "",
+    ].join("\n");
+  }
+
+  function writeBraveCurlConfig(apiKey: string): { configPath: string; cleanup: () => void } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${BRAVE_CURL_CONFIG_PREFIX}-`));
+    const configPath = path.join(dir, "curl.conf");
+    try {
+      fs.writeFileSync(configPath, braveCurlConfig(apiKey), { mode: 0o600 });
+    } catch (error) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+    return {
+      configPath,
+      cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+    };
+  }
+
+  function braveSearchArgs(configPath: string): string[] {
+    return [
       "-sS",
       "--compressed",
-      "-H",
-      "Accept: application/json",
-      "-H",
-      "Accept-Encoding: gzip",
-      "-H",
-      `X-Subscription-Token: ${apiKey}`,
+      "--config",
+      configPath,
       "--get",
       "--data-urlencode",
       "q=ping",
       "--data-urlencode",
       "count=1",
       "https://api.search.brave.com/res/v1/web/search",
-    ]);
+    ];
+  }
+
+  function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
+    const { configPath, cleanup } = writeBraveCurlConfig(apiKey);
+    try {
+      return runCurlProbe(braveSearchArgs(configPath), { trustedConfigFiles: [configPath] });
+    } finally {
+      cleanup();
+    }
   }
 
   async function promptBraveSearchRecovery(
