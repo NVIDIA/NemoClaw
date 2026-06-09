@@ -104,14 +104,21 @@ describe("state-validation phase fixture", () => {
       {
         command: "nemoclaw",
         args: ["gateway", "status"],
-        options: { artifactName: "gateway-status", inheritEnv: true },
+        options: {
+          artifactName: "gateway-status",
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
+        },
       },
       {
         command: "openshell",
         args: ["sandbox", "status", "e2e-ubuntu-repo-cloud-openclaw"],
         options: {
           artifactName: "sandbox-status-e2e-ubuntu-repo-cloud-openclaw",
-          inheritEnv: true,
+          env: expect.objectContaining({
+            PATH: expect.any(String),
+          }),
         },
       },
     ]);
@@ -121,6 +128,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueue(shellResult(0, "other-sandbox\n"));
 
@@ -144,9 +152,11 @@ describe("state-validation phase fixture", () => {
     expect(runner.calls.map((call) => call.args)).toEqual([
       ["--version"],
       ["gateway", "status"],
+      ["-fsS", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:18789/health"],
       ["list"],
       ["sandbox", "list"],
     ]);
+    expect(result.probes.find((probe) => probe.id === "gateway-absent")?.results).toHaveLength(2);
   });
 
   it("fails a gateway-absent probe if the gateway is running", async () => {
@@ -159,10 +169,42 @@ describe("state-validation phase fixture", () => {
     );
   });
 
+  it("fails a gateway-absent probe if the gateway health endpoint responds", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(1, "gateway status unavailable\n"));
+    runner.enqueue(shellResult(0, "ok\n"));
+
+    await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
+      /health responded healthy/,
+    );
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["--version"],
+      ["gateway", "status"],
+      ["-fsS", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:18789/health"],
+    ]);
+  });
+
+  it("requires a loopback gateway URL for gateway-absent health probes", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(1, "gateway stopped"));
+
+    await expect(
+      fixture(runner).from(
+        "preflight-failure-no-sandbox",
+        instance({
+          gatewayUrl: "http://10.0.0.1:18789",
+        }),
+      ),
+    ).rejects.toThrow(/private or link-local/);
+  });
+
   it("fails a sandbox-absent probe if NemoClaw lists the sandbox", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
     await expect(fixture(runner).from("preflight-failure-no-sandbox", instance())).rejects.toThrow(
@@ -174,6 +216,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
 
@@ -186,6 +229,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
     runner.enqueueError(new Error("spawn openshell ENOENT"));
 
@@ -196,6 +240,7 @@ describe("state-validation phase fixture", () => {
     expect(runner.calls.map((call) => call.args)).toEqual([
       ["--version"],
       ["gateway", "status"],
+      ["-fsS", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:18789/health"],
       ["list"],
       ["sandbox", "list"],
     ]);
@@ -205,6 +250,7 @@ describe("state-validation phase fixture", () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
     runner.enqueue(shellResult(1, "gateway stopped"));
+    runner.enqueue(shellResult(7, "connection refused"));
     runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw-old\n"));
     runner.enqueue(shellResult(0, "NAME\nold-e2e-ubuntu-repo-cloud-openclaw\n"));
 
@@ -215,6 +261,33 @@ describe("state-validation phase fixture", () => {
       "gateway-absent",
       "sandbox-absent",
     ]);
+  });
+
+  it("does not pass unrelated secret environment values to status probes", async () => {
+    const original = process.env.NVIDIA_API_KEY;
+    process.env.NVIDIA_API_KEY = "nvapi-test-secret-value";
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      runner.enqueue(shellResult(1, "gateway stopped"));
+      runner.enqueue(shellResult(7, "connection refused"));
+      runner.enqueue(shellResult(0, "NAME\nother-sandbox\n"));
+      runner.enqueue(shellResult(0, "other-sandbox\n"));
+
+      await fixture(runner).from("preflight-failure-no-sandbox", instance());
+
+      for (const call of runner.calls.slice(1)) {
+        expect(call.options).not.toHaveProperty("inheritEnv");
+        expect(call.options?.env).toEqual(expect.objectContaining({ PATH: expect.any(String) }));
+        expect(call.options?.env).not.toHaveProperty("NVIDIA_API_KEY");
+      }
+    } finally {
+      if (original === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = original;
+      }
+    }
   });
 
   it("requires an instance for sandbox probes", async () => {

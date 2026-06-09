@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GatewayClient, HostCliClient, SandboxClient } from "../clients/index.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import {
+  trustedProviderEndpoint,
+  type GatewayClient,
+  type HostCliClient,
+  type SandboxClient,
+} from "../clients/index.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import { probesForState, requireExpectedState } from "../../scenarios/expected-states.ts";
 import type { ExpectedState, StateProbeId } from "../../scenarios/types.ts";
@@ -34,6 +40,14 @@ function outputContainsSandbox(result: ShellProbeResult, sandboxName: string): b
   return new RegExp(`(^|\\s)${escapeRegExp(sandboxName)}(\\s|$)`, "m").test(output);
 }
 
+function statusProbeEnv(): NodeJS.ProcessEnv {
+  return buildAvailabilityProbeEnv();
+}
+
+function gatewayHealthEndpoint(gatewayUrl: string): string {
+  return trustedProviderEndpoint(`${gatewayUrl.replace(/\/+$/, "")}/health`).url;
+}
+
 export class StateValidationPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -57,7 +71,7 @@ export class StateValidationPhaseFixture {
       case "gateway-healthy":
         return await this.expectGatewayHealthy();
       case "gateway-absent":
-        return await this.expectGatewayAbsent();
+        return await this.expectGatewayAbsent(requireInstance(probe, instance));
       case "sandbox-running":
         return await this.expectSandboxRunning(requireInstance(probe, instance));
       case "sandbox-absent":
@@ -75,23 +89,36 @@ export class StateValidationPhaseFixture {
   }
 
   private async expectGatewayHealthy(): Promise<StateValidationProbeResult> {
-    const result = await this.gateway.expectHealthy({ inheritEnv: true });
+    const result = await this.gateway.expectHealthy({ env: statusProbeEnv() });
     return { id: "gateway-healthy", status: "passed", results: [result] };
   }
 
-  private async expectGatewayAbsent(): Promise<StateValidationProbeResult> {
+  private async expectGatewayAbsent(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
     const result = await this.gateway.status({
       artifactName: "gateway-absent-status",
-      inheritEnv: true,
+      env: statusProbeEnv(),
     });
     if (result.exitCode === 0) {
       throw new Error("state-validation expected gateway to be absent, but 'nemoclaw gateway status' succeeded.");
     }
-    return { id: "gateway-absent", status: "passed", results: [result] };
+    const healthUrl = gatewayHealthEndpoint(instance.gatewayUrl);
+    const health = await this.host.command(
+      "curl",
+      ["-fsS", "-o", "/dev/null", "--max-time", "3", healthUrl],
+      {
+        artifactName: "gateway-absent-health",
+        env: statusProbeEnv(),
+        redactionValues: [healthUrl],
+      },
+    );
+    if (health.exitCode === 0) {
+      throw new Error(`state-validation expected gateway to be absent, but ${healthUrl} responded healthy.`);
+    }
+    return { id: "gateway-absent", status: "passed", results: [result, health] };
   }
 
   private async expectSandboxRunning(instance: NemoClawInstance): Promise<StateValidationProbeResult> {
-    const result = await this.sandbox.expectRunning(instance.sandboxName, { inheritEnv: true });
+    const result = await this.sandbox.expectRunning(instance.sandboxName, { env: statusProbeEnv() });
     return { id: "sandbox-running", status: "passed", results: [result] };
   }
 
@@ -99,7 +126,7 @@ export class StateValidationPhaseFixture {
     const results: ShellProbeResult[] = [];
     const nemoclawList = await this.host.nemoclaw(["list"], {
       artifactName: "sandbox-absent-nemoclaw-list",
-      inheritEnv: true,
+      env: statusProbeEnv(),
     });
     results.push(nemoclawList);
     if (nemoclawList.exitCode === 0 && outputContainsSandbox(nemoclawList, instance.sandboxName)) {
@@ -110,7 +137,7 @@ export class StateValidationPhaseFixture {
     try {
       openshellList = await this.sandbox.list({
         artifactName: "sandbox-absent-openshell-list",
-        inheritEnv: true,
+        env: statusProbeEnv(),
       });
     } catch {
       // Bridge tolerance for negative preflight states: `nemoclaw list` is the
