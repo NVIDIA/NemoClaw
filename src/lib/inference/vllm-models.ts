@@ -21,6 +21,8 @@
  * tracking the express vLLM model picker).
  */
 
+export type VllmPlatform = "spark" | "station" | "linux";
+
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
   id: string;
@@ -34,6 +36,14 @@ export interface VllmModelDef {
   modelArgs: string[];
   /** True when the upstream HF repo requires accepting a licence. */
   gated: boolean;
+  /**
+   * Platforms whose interactive picker should offer this entry. Models with
+   * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
+   * the very large V4 Flash recipe wants Station-class VRAM) appear only on
+   * profiles they can actually run on. Non-interactive callers and direct
+   * `NEMOCLAW_VLLM_MODEL` overrides bypass the filter.
+   */
+  platforms: readonly VllmPlatform[];
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -64,6 +74,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--enable-prefix-caching",
     ],
     gated: false,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -82,6 +93,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "hermes",
     ],
     gated: true,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
@@ -93,6 +105,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     maxModelLen: 262144,
     modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
     gated: false,
+    platforms: ["spark", "station", "linux"],
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Flash",
@@ -132,6 +145,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "auto",
     ],
     gated: false,
+    platforms: ["station"],
   },
   {
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
@@ -174,6 +188,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "fastsafetensors",
     ],
     gated: false,
+    platforms: ["spark"],
     // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
     // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
     serveEnv: {
@@ -186,6 +201,15 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
 ] as const;
 
 export const DEFAULT_VLLM_MODEL: VllmModelDef = VLLM_MODELS[0];
+
+/**
+ * Subset of the registry that should appear in the interactive picker for a
+ * given platform. Order matches registry order so callers can stably annotate
+ * the recommended entry by id rather than position.
+ */
+export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef[] {
+  return VLLM_MODELS.filter((model) => model.platforms.includes(platform));
+}
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 
