@@ -132,10 +132,20 @@ def plugin_specs(
     return specs
 
 
-def doctor_env_overrides(channels: Iterable[str]) -> dict[str, str]:
+def doctor_env_overrides(
+    channels: Iterable[str],
+    *,
+    web_search_enabled: bool,
+) -> dict[str, str]:
     overrides: dict[str, str] = {}
     for channel in channels:
         overrides.update(DOCTOR_ENV_BY_CHANNEL.get(channel, {}))
+    # The generated config references openshell:resolve:env:BRAVE_API_KEY in
+    # tools.web.search.apiKey. `openclaw doctor --fix` runs with only this env,
+    # so without the placeholder set it can mutate/strip the web-search block.
+    # Inject it the same way the messaging channel tokens above are injected.
+    if web_search_enabled:
+        overrides["BRAVE_API_KEY"] = "openshell:resolve:env:BRAVE_API_KEY"
     return overrides
 
 
@@ -169,7 +179,9 @@ def main(argv: list[str]) -> int:
         diagnostics_otel_enabled=diagnostics_otel_enabled,
         web_search_enabled=web_search_enabled,
     )
-    env_overrides = doctor_env_overrides(channels)
+    env_overrides = doctor_env_overrides(
+        channels, web_search_enabled=web_search_enabled
+    )
 
     if args.dry_run:
         print(
