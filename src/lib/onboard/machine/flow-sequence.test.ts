@@ -48,7 +48,10 @@ function context(): Context {
   };
 }
 
-function result(ctx: Context, next: ReturnType<typeof advanceTo>["next"]): OnboardFlowPhaseResult<Context> {
+function result(
+  ctx: Context,
+  next: ReturnType<typeof advanceTo>["next"],
+): OnboardFlowPhaseResult<Context> {
   return onboardFlowPhaseResult(ctx, advanceTo(next));
 }
 
@@ -106,10 +109,13 @@ function createRuntime(initialSession: Session = createSession()) {
 describe("onboard flow phase sequence", () => {
   it("assembles phases in machine order", () => {
     const phases = buildOnboardFlowPhaseSequence<Context>({
-      preflight: async (ctx) => result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
+      preflight: async (ctx) =>
+        result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
       gateway: async (ctx) => result(ctx, "provider_selection"),
-      providerInference: async (ctx) => result({ ...ctx, provider: "nvidia", model: "model" }, "sandbox"),
-      sandbox: async (ctx) => onboardFlowPhaseResult({ ...ctx, sandboxName: "my-assistant" }, branchTo("openclaw")),
+      providerInference: async (ctx) =>
+        result({ ...ctx, provider: "nvidia", model: "model" }, "sandbox"),
+      sandbox: async (ctx) =>
+        onboardFlowPhaseResult({ ...ctx, sandboxName: "my-assistant" }, branchTo("openclaw")),
       openclaw: async (ctx) => result(ctx, "policies"),
       agentSetup: async (ctx) => result(ctx, "policies"),
       policies: async (ctx) => result(ctx, "finalizing"),
@@ -132,7 +138,8 @@ describe("onboard flow phase sequence", () => {
 
   it("delegates phase execution to supplied handlers", async () => {
     const phases = buildOnboardFlowPhaseSequence<Context>({
-      preflight: async (ctx) => result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
+      preflight: async (ctx) =>
+        result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
       gateway: async (ctx) => result(ctx, "provider_selection"),
       providerInference: async (ctx) => result(ctx, "sandbox"),
       sandbox: async (ctx) => onboardFlowPhaseResult(ctx, branchTo("openclaw")),
@@ -159,16 +166,14 @@ describe("onboard flow phase sequence", () => {
       },
     });
     const phases = buildOnboardFlowPhaseSequence<Context>({
-      preflight: async (ctx) => result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
+      preflight: async (ctx) =>
+        result({ ...ctx, gpu: { type: "nvidia" }, gpuPassthrough: true }, "gateway"),
       gateway: async (ctx) => result(ctx, "provider_selection"),
       providerInference: async (ctx) =>
-        onboardFlowPhaseResult(
-          { ...ctx, provider: "nvidia", model: "model" },
-          [
-            advanceTo("inference", { metadata: { state: "provider_selection" } }),
-            advanceTo("sandbox", { metadata: { state: "inference" } }),
-          ],
-        ),
+        onboardFlowPhaseResult({ ...ctx, provider: "nvidia", model: "model" }, [
+          advanceTo("inference", { metadata: { state: "provider_selection" } }),
+          advanceTo("sandbox", { metadata: { state: "inference" } }),
+        ]),
       sandbox: async (ctx) =>
         onboardFlowPhaseResult({ ...ctx, sandboxName: "my-assistant" }, branchTo("openclaw")),
       openclaw: async (ctx) => result(ctx, "policies"),
