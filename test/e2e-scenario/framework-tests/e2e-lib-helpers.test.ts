@@ -32,7 +32,7 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
 // ──────────────────────────────────────────────────────────────────────────
 
 describe("E2E shell helpers", () => {
-  it("test_should_source_inference_routing_helpers_under_strict_shell_mode", () => {
+  it("should source inference routing helpers under strict shell mode", () => {
     const r = runBash(`
       set -euo pipefail
       . "${VALIDATION_SUITES}/lib/inference_routing.sh"
@@ -41,7 +41,7 @@ describe("E2E shell helpers", () => {
     expect(r.status, r.stderr).toBe(0);
   });
 
-  it("test_should_fail_clearly_when_required_context_is_missing", () => {
+  it("should fail clearly when required context is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-missing-"));
     try {
       const r = runBash(
@@ -61,7 +61,7 @@ describe("E2E shell helpers", () => {
     }
   });
 
-  it("no_docker_onboarding_worker_should_preserve_seeded_context_and_redact_log", () => {
+  it("no-Docker onboarding worker should preserve seeded context and redact the log", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-context-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -120,7 +120,7 @@ exit 2
     }
   });
 
-  it("no_docker_onboarding_worker_should_fail_on_unrelated_onboarding_errors", () => {
+  it("no-Docker onboarding worker should fail on unrelated onboarding errors", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-unrelated-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -175,7 +175,7 @@ exit 2
     }
   });
 
-  it("no_docker_onboarding_worker_should_accept_current_preflight_wording", () => {
+  it("no-Docker onboarding worker should accept current preflight wording", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-wording-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -218,7 +218,7 @@ exit 2
     }
   });
 
-  it("no_docker_redactor_fallback_should_redact_sensitive_env_values_without_python", () => {
+  it("no-Docker redactor fallback should redact sensitive env values without Python", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-no-docker-redactor-"));
     const noPythonBin = path.join(tmp, "bin");
     const logPath = path.join(tmp, "negative-preflight.log");
@@ -247,7 +247,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_load_with_context_library", () => {
+  it("security policy credentials helper should load with context library", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
     try {
       fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
@@ -267,7 +267,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_fail_when_required_context_missing", () => {
+  it("security policy credentials helper should fail when required context is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-missing-"));
     try {
       fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
@@ -286,7 +286,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_not_log_secret_values", () => {
+  it("security policy credentials helper should not log secret values", () => {
     const r = runBash(`
       set -euo pipefail
       . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
@@ -299,7 +299,7 @@ exit 2
     expect(r.stdout).toMatch(/\[REDACTED\]/);
   });
 
-  it("security_policy_credentials_helper_should_reject_empty_gateway_credentials", () => {
+  it("security policy credentials helper should reject empty gateway credentials", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-empty-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -331,7 +331,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_reject_raw_credential_leaks", () => {
+  it("security policy credentials helper should reject raw credential leaks", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-leak-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -365,7 +365,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_reject_raw_credential_leaks_from_failed_list", () => {
+  it("security policy credentials helper should reject raw credential leaks from failed list", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-failed-leak-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -399,7 +399,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_verify_policy_and_shields_state", () => {
+  it("security policy credentials helper should verify policy and shields state", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-policy-shields-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -453,7 +453,7 @@ exit 2
     }
   });
 
-  it("security_policy_credentials_helper_should_fail_on_missing_policy_preset", () => {
+  it("security policy credentials helper should fail on missing policy preset", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-policy-missing-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -482,7 +482,7 @@ exit 0
     }
   });
 
-  it("security_policy_credentials_helper_should_verify_openshell_rewrite_markers", () => {
+  it("security policy credentials helper should verify OpenShell rewrite markers", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-openshell-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -515,7 +515,7 @@ exit 0
     }
   });
 
-  it("security_policy_credentials_helper_should_reject_below_minimum_openshell_version", () => {
+  it("security policy credentials helper should reject below minimum OpenShell version", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-openshell-old-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -548,7 +548,7 @@ exit 0
     }
   });
 
-  it("env_helper_should_set_standard_noninteractive_env", () => {
+  it("env helper should set standard noninteractive env", () => {
     const r = runBash(`
       set -euo pipefail
       . "${RUNTIME_LIB}/env.sh"
@@ -562,7 +562,7 @@ exit 0
     expect(r.stdout).toContain("DEBIAN_FRONTEND=noninteractive");
   });
 
-  it("sandbox_helper_should_fail_for_missing_sandbox_name", () => {
+  it("sandbox helper should fail for missing sandbox name", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sb-"));
     try {
       // Initialise a context file without E2E_SANDBOX_NAME.
@@ -591,7 +591,7 @@ exit 0
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("rebuild/upgrade validation helpers", () => {
-  it("rebuild_upgrade_library_should_source_without_side_effects", () => {
+  it("rebuild/upgrade library should source without side effects", () => {
     const r = runBash(`
       set -euo pipefail
       . "${REBUILD_UPGRADE_LIB}"
@@ -601,7 +601,7 @@ describe("rebuild/upgrade validation helpers", () => {
     expect(r.stdout + r.stderr).not.toMatch(/install|onboard|rebuild/i);
   });
 
-  it("rebuild_upgrade_context_should_fail_with_missing_key_name", () => {
+  it("rebuild/upgrade context should fail with a missing key name", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
     try {
       fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
@@ -619,7 +619,7 @@ describe("rebuild/upgrade validation helpers", () => {
     }
   });
 
-  it("rebuild_upgrade_context_should_pass_when_required_keys_present", () => {
+  it("rebuild/upgrade context should pass when required keys are present", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
     try {
       fs.writeFileSync(
@@ -640,7 +640,7 @@ describe("rebuild/upgrade validation helpers", () => {
     }
   });
 
-  it("rebuild_upgrade_checks_should_allow_command_fakes", () => {
+  it("rebuild/upgrade checks should allow command fakes", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
     try {
       fs.writeFileSync(
@@ -679,7 +679,7 @@ describe("rebuild/upgrade validation helpers", () => {
     }
   });
 
-  it("policy_preset_check_should_match_endpoint_url_when_preset_name_absent", () => {
+  it("policy preset check should match endpoint URL when preset name absent", () => {
     // The legacy assertion called `nemoclaw policy status` (a command
     // that does not exist) and silently failed. The new assertion calls
     // `openshell policy get --full <sandbox>` and matches preset names
@@ -719,7 +719,7 @@ describe("rebuild/upgrade validation helpers", () => {
     }
   });
 
-  it("policy_preset_check_should_fail_with_diagnostic_when_preset_missing", () => {
+  it("policy preset check should fail with diagnostic when preset missing", () => {
     // Negative case: when a declared preset is absent from the live
     // policy dump, the assertion must fail AND emit a diagnostic line
     // identifying the missing preset and showing the policy head. The
@@ -757,7 +757,7 @@ describe("rebuild/upgrade validation helpers", () => {
 });
 
 describe("Phase 1.A logging helpers", () => {
-  it("logging_should_emit_stable_pass_marker_when_e2e_pass_called", () => {
+  it("logging should emit stable pass marker when E2E pass called", () => {
     const r = runBash(`
       set -euo pipefail
       . "${RUNTIME_LIB}/logging.sh"
@@ -767,7 +767,7 @@ describe("Phase 1.A logging helpers", () => {
     expect(r.stdout).toMatch(/^PASS:.*assertion X/m);
   });
 
-  it("logging_should_emit_stable_fail_marker_and_nonzero_exit_when_e2e_fail_called", () => {
+  it("logging should emit stable fail marker and nonzero exit when E2E fail called", () => {
     const r = runBash(`
       . "${RUNTIME_LIB}/logging.sh"
       ( e2e_fail "assertion Y" )
@@ -776,7 +776,7 @@ describe("Phase 1.A logging helpers", () => {
     expect(r.stdout + r.stderr).toMatch(/FAIL:.*assertion Y/);
   });
 
-  it("logging_should_include_phase_prefix_when_e2e_section_called", () => {
+  it("logging should include phase prefix when E2E section called", () => {
     const r = runBash(`
       set -euo pipefail
       . "${RUNTIME_LIB}/logging.sh"
@@ -786,7 +786,7 @@ describe("Phase 1.A logging helpers", () => {
     expect(r.stdout).toMatch(/^=== Phase 2:.*onboarding/m);
   });
 
-  it("logging_should_autosource_logging_when_env_sh_sourced", () => {
+  it("logging should autosource logging when env.sh is sourced", () => {
     const r = runBash(`
       set -euo pipefail
       . "${RUNTIME_LIB}/env.sh"
@@ -803,7 +803,7 @@ describe("Phase 1.A logging helpers", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Phase 1.B sandbox-exec helper", () => {
-  it("sandbox_exec_should_propagate_exit_code_when_command_fails", () => {
+  it("sandbox exec should propagate exit code when command fails", () => {
     // Use a fake openshell on PATH that executes the command after `--`.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sbex-fail-"));
     try {
@@ -839,7 +839,7 @@ exec "$@"
     }
   });
 
-  it("sandbox_exec_stdin_should_quote_args_safely_when_piped", () => {
+  it("sandbox exec stdin should quote args safely when input is piped", () => {
     // Verify that $TOKEN is NOT expanded on the host side before being
     // delivered to the sandbox. We stub openshell to echo back stdin.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sbex-stdin-"));
@@ -873,7 +873,7 @@ exec "$@"
     }
   });
 
-  it("sandbox_exec_should_prefer_ssh_config_transport_when_openshell_offers_one", () => {
+  it("sandbox exec should prefer SSH config transport when OpenShell offers one", () => {
     // Verify the new default: when `openshell sandbox ssh-config <name>`
     // succeeds, the wrapper routes through `ssh -F <cfg>` instead of
     // `openshell sandbox exec`.
@@ -933,7 +933,7 @@ exit 0
     }
   });
 
-  it("sandbox_exec_should_fall_back_to_openshell_when_ssh_config_unavailable", () => {
+  it("sandbox exec should fall back to OpenShell when SSH config is unavailable", () => {
     // If `openshell sandbox ssh-config` fails, the wrapper must fall
     // back to `openshell sandbox exec`.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-sbex-fb-"));
@@ -984,7 +984,7 @@ exit 99
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Phase 1.C fixtures", () => {
-  it("fake_openai_should_start_and_stop_cleanly_and_serve_chat_completions", () => {
+  it("fake OpenAI should start and stop cleanly and serve chat completions", () => {
     const r = runBash(`
       set -euo pipefail
       . "${FIXTURES}/fake-openai.sh"
@@ -1001,7 +1001,7 @@ describe("Phase 1.C fixtures", () => {
     expect(r.stdout).toMatch(/content/);
   });
 
-  it("older_base_image_should_emit_dockerfile_pointing_at_tagged_base", () => {
+  it("older base image should emit Dockerfile pointing at tagged base", () => {
     const r = runBash(`
       set -euo pipefail
       . "${FIXTURES}/older-base-image.sh"
@@ -1013,7 +1013,7 @@ describe("Phase 1.C fixtures", () => {
     expect(r.stdout).toMatch(/^FROM .*:v0\.0\.1-test/m);
   });
 
-  it("fake_messaging_fixtures_should_bind_a_port_and_accept_stub_requests", () => {
+  it("fake messaging fixtures should bind a port and accept stub requests", () => {
     for (const provider of ["telegram", "discord", "slack"]) {
       const r = runBash(`
         set -euo pipefail
@@ -1036,7 +1036,7 @@ describe("Phase 1.C fixtures", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Phase 1.D assertion helpers", () => {
-  it("inference_works_should_pass_when_round_trip_returns_ok", () => {
+  it("inference works assertion should pass when the round trip returns ok", () => {
     const r = runBash(`
       set -euo pipefail
       . "${FIXTURES}/fake-openai.sh"
@@ -1051,7 +1051,7 @@ describe("Phase 1.D assertion helpers", () => {
     expect(r.status, r.stderr).toBe(0);
   });
 
-  it("no_credentials_leaked_should_fail_when_pattern_leaks_in_bundle", () => {
+  it("no credentials leaked assertion should fail when a pattern leaks in the bundle", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-creds-"));
     try {
       const bundle = path.join(tmp, "bundle");
@@ -1068,7 +1068,7 @@ describe("Phase 1.D assertion helpers", () => {
     }
   });
 
-  it("policy_preset_applied_should_pass_when_active_presets_match_declared_set", () => {
+  it("policy preset applied assertion should pass when active presets match the declared set", () => {
     // Stub `nemoclaw policies list` to emit a known set.
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-pol-"));
     try {
@@ -1093,7 +1093,7 @@ describe("Phase 1.D assertion helpers", () => {
     }
   });
 
-  it("messaging_bridge_reachable_should_pass_when_provider_endpoint_alive", () => {
+  it("messaging bridge reachable assertion should pass when the provider endpoint is alive", () => {
     const r = runBash(`
       set -euo pipefail
       . "${FIXTURES}/fake-telegram.sh"
@@ -1125,7 +1125,7 @@ describe("Issue #3810 messaging provider helper library", () => {
     return tmp;
   }
 
-  it("should_source_messaging_provider_library_in_isolation", () => {
+  it("should source messaging provider library in isolation", () => {
     const r = runBash(`
       set -euo pipefail
       . "${VALIDATION_LIB}/messaging_providers.sh"
@@ -1135,7 +1135,7 @@ describe("Issue #3810 messaging provider helper library", () => {
     expect(r.stdout).toContain("e2e_messaging_load_context");
   });
 
-  it("should_fail_with_clear_diagnostic_when_context_missing", () => {
+  it("should fail with a clear diagnostic when context is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-msgmissing-"));
     fs.rmSync(tmp, { recursive: true, force: true });
     const r = runBash(
@@ -1150,7 +1150,7 @@ describe("Issue #3810 messaging provider helper library", () => {
     expect(r.stderr).toMatch(/E2E_CONTEXT_DIR|context\.env/);
   });
 
-  it("should_derive_provider_names_for_messaging_channels", () => {
+  it("should derive provider names for messaging channels", () => {
     const cases: Array<[string, Record<string, string>, string]> = [
       ["telegram", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "telegram" }, "telegram"],
       ["discord", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "discord" }, "discord"],
@@ -1178,7 +1178,7 @@ describe("Issue #3810 messaging provider helper library", () => {
     }
   });
 
-  it("should_resolve_agent_config_paths", () => {
+  it("should resolve agent config paths", () => {
     const cases: Array<[string, string]> = [
       ["openclaw", "/sandbox/.openclaw/openclaw.json"],
       ["hermes", "/sandbox/.hermes/.env"],
@@ -1203,7 +1203,7 @@ describe("Issue #3810 messaging provider helper library", () => {
     }
   });
 
-  it("should_expose_placeholder_and_secret_leak_interfaces_without_live_secrets", () => {
+  it("should expose placeholder and secret leak interfaces without live secrets", () => {
     const r = runBash(`
       set -euo pipefail
       . "${VALIDATION_LIB}/messaging_providers.sh"
@@ -1220,12 +1220,12 @@ describe("Issue #3810 messaging provider helper library", () => {
 });
 
 describe("baseline onboarding validation helper", () => {
-  it("baseline_helper_should_source_under_strict_shell_options", () => {
+  it("baseline helper should source under strict shell options", () => {
     const r = runBash(`set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`);
     expect(r.status, r.stderr).toBe(0);
   });
 
-  it("baseline_cli_assertions_should_use_mocked_binaries", () => {
+  it("baseline CLI assertions should use mocked binaries", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "baseline-cli-"));
     try {
       const bin = path.join(tmp, "bin");
@@ -1262,7 +1262,7 @@ esac
 });
 
 describe("sandbox lifecycle validation helper", () => {
-  it("test_should_load_context_from_e2e_context_dir", () => {
+  it("should load context from E2E context dir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-"));
     try {
       fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
@@ -1272,14 +1272,14 @@ describe("sandbox lifecycle validation helper", () => {
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 
-  it("test_should_emit_stable_pass_and_fail_ids", () => {
+  it("should emit stable pass and fail IDs", () => {
     const r = runBash(`. "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_pass validation.sandbox_lifecycle.gateway_health ok; sandbox_lifecycle_fail validation.sandbox_operations.logs_available nope`);
     expect(r.status).not.toBe(0);
     expect(r.stdout).toMatch(/PASS: validation\.sandbox_lifecycle\.gateway_health/);
     expect(r.stderr).toMatch(/FAIL: validation\.sandbox_operations\.logs_available/);
   });
 
-  it("test_should_apply_timeout_to_command_execution", () => {
+  it("should apply timeout to command execution", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-timeout-"));
     try {
       const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
@@ -1290,7 +1290,7 @@ describe("sandbox lifecycle validation helper", () => {
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 
-  it("test_should_validate_list_status_logs_exec_with_mocked_commands", () => {
+  it("should validate list status logs exec with mocked commands", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-mock-"));
     try {
       const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);

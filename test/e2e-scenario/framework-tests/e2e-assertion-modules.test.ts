@@ -36,7 +36,7 @@ function allPlannedAssertionGroupIds(): Set<string> {
 }
 
 describe("assertion modules", () => {
-  it("test_should_define_onboarding_assertions_in_modules", () => {
+  it("should define onboarding assertions in modules", () => {
     const onboardingGroups = assertionRegistry.groups.filter((group) => group.phase === "onboarding");
     const stepIds = new Set(onboardingGroups.flatMap((group) => group.steps.map((step) => step.id)));
 
@@ -49,7 +49,7 @@ describe("assertion modules", () => {
     }
   });
 
-  it("test_should_map_every_old_validation_suite_to_canonical_assertion_group", () => {
+  it("should map every old validation suite to canonical assertion group", () => {
     const suites = loadYaml(SUITES_PATH).suites as AnyRecord;
 
     for (const suiteId of Object.keys(suites)) {
@@ -60,7 +60,7 @@ describe("assertion modules", () => {
     }
   });
 
-  it("test_should_keep_snapshot_suite_distinct_from_snapshot_lifecycle", () => {
+  it("should keep snapshot suite distinct from snapshot lifecycle", () => {
     const snapshot = assertionGroupForSuite("snapshot");
     const snapshotLifecycle = assertionGroupForSuite("snapshot-lifecycle");
 
@@ -73,20 +73,20 @@ describe("assertion modules", () => {
     ]);
   });
 
-  it("test_should_require_each_assertion_group_to_have_steps", () => {
+  it("should require each assertion group to have steps", () => {
     const emptyGroup: AssertionGroup = { id: "empty", phase: "runtime", steps: [] };
 
     expect(() => validateAssertionGroups([...assertionRegistry.groups, emptyGroup], E2E_DIR)).toThrow(/empty/);
   });
 
-  it("test_should_require_each_assertion_group_to_be_used_by_a_scenario_plan", () => {
+  it("should require each assertion group to be used by a scenario plan", () => {
     const planned = allPlannedAssertionGroupIds();
     const unused = assertionRegistry.groups.map((group) => group.id).filter((id) => !planned.has(id));
 
     expect(unused, `unused assertion groups: ${unused.join(", ")}`).toEqual([]);
   });
 
-  it("test_should_fail_when_assertion_step_references_missing_script", () => {
+  it("should fail when assertion step references missing script", () => {
     const badGroup: AssertionGroup = {
       id: "bad.missing-script",
       phase: "runtime",
@@ -103,7 +103,7 @@ describe("assertion modules", () => {
     expect(() => validateAssertionGroups([badGroup], E2E_DIR)).toThrow(/does-not-exist/);
   });
 
-  it("test_should_fail_when_retry_attempts_lack_classifier", () => {
+  it("should fail when retry attempts lack classifier", () => {
     const badGroup: AssertionGroup = {
       id: "bad.retry",
       phase: "runtime",
@@ -121,7 +121,7 @@ describe("assertion modules", () => {
     expect(() => validateAssertionGroups([badGroup], E2E_DIR)).toThrow(/classifier|retry/i);
   });
 
-  it("test_should_block_complete_status_for_manual_classification_steps", () => {
+  it("should block complete status for manual classification steps", () => {
     expect(() => validateAssertionGroups(assertionRegistry.groups, E2E_DIR)).not.toThrow(/needs-manual-classification/);
     expect(assertionRegistry.groups.every((group) => group.migrationStatus === "complete")).toBe(true);
   });
