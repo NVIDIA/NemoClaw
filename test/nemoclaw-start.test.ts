@@ -5228,9 +5228,8 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         "write_auth_profile() { :; }",
         "harden_auth_profiles() { :; }",
-        // write_runtime_shell_env reads a handful of script-globals; default
-        // them so `set -u` does not trip and the optional emit branches stay
-        // dormant in the test (their content is exercised elsewhere).
+        // Default the script-globals write_runtime_shell_env reads so `set -u`
+        // does not trip and the optional emit branches stay dormant in the test.
         '_SANDBOX_SAFETY_NET=""',
         '_PROXY_FIX_SCRIPT=""',
         '_WS_FIX_SCRIPT=""',
@@ -5239,6 +5238,7 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         '_CIAO_GUARD_SCRIPT=""',
         '_TELEGRAM_DIAGNOSTICS_SCRIPT=""',
         '_SLACK_GUARD_SCRIPT=""',
+        '_WHATSAPP_QR_COMPACT_SCRIPT=""',
         '_TOOL_REDIRECTS=("NEMOCLAW_TEST_REDIRECT=/tmp/nemoclaw-test")',
         'NODE_USE_ENV_PROXY=""',
         readToken,

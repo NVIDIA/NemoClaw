@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import YAML from "yaml";
 
 import { redact, runCapture } from "../dist/lib/runner";
 
@@ -915,6 +916,43 @@ describe("regression guards", () => {
       expect(src).toContain("command -v tmux");
       // The smoke must be wired into the run, not just defined.
       expect(src).toMatch(/^\s*test_sbx_09_tmux_session_flow\s*$/m);
+    });
+
+    // The reopened #4513: installing tmux was not enough — the bundled
+    // tmux-session flow still failed with `create window failed: fork failed:
+    // Permission denied`. Root cause: the sandbox landlock filesystem policy
+    // never granted the devpts PTY devices, so forkpty() open of /dev/ptmx
+    // (-> /dev/pts/ptmx) and the /dev/pts/<n> slave was denied with EACCES.
+    for (const policyFile of [
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
+      path.join("agents", "openclaw", "policy-permissive.yaml"),
+    ]) {
+      it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
+        const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));
+        const readWrite: string[] = doc.filesystem_policy?.read_write ?? [];
+        // devpts must be writable — tmux opens the master and slave O_RDWR.
+        expect(readWrite).toContain("/dev/pts");
+        // /dev/ptmx is a symlink to pts/ptmx; the supervisor refuses to chown a
+        // symlinked read_write path, so it must NOT be listed directly. The
+        // /dev/pts directory grant already covers ptmx via the landlock
+        // path hierarchy.
+        expect(readWrite).not.toContain("/dev/ptmx");
+      });
+    }
+
+    it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
+      const src = fs.readFileSync(
+        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        "utf-8",
+      );
+      // The PTY root cause is pinned with an explicit openpty() probe.
+      expect(src).toContain("os.openpty()");
+      // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
+      // failure now means the devpts grant regressed and must fail loudly.
+      const tc09 = src.slice(src.indexOf("test_sbx_09_tmux_session_flow"));
+      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n"));
+      expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
     });
   });
 });
