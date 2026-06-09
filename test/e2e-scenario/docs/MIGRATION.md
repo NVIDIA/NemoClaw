@@ -84,7 +84,10 @@ that owns the work instead.
 
 The one repo-local exception is the machine-readable deletion gate inventory at
 `test/e2e-scenario/migration/legacy-inventory.json`. Keep that file focused on
-script-level migration state that prevents accidental legacy E2E deletion:
+script-level migration state that prevents accidental legacy E2E deletion. It
+must cover every direct legacy shell entrypoint under `test/e2e/test-*.sh`,
+plus any explicitly retained bridge entrypoints such as Brev. It is not a
+progress dashboard or owner queue:
 
 - `not-migrated`: legacy coverage still has no equivalent Vitest scenario.
 - `bridge-probe`: coverage is temporarily represented by a bridge path.
@@ -93,6 +96,10 @@ script-level migration state that prevents accidental legacy E2E deletion:
 
 Do not set `deletionReady: true` unless the entry is `covered` or `retired` and
 the deletion approval is recorded through #4357.
+
+After #4357 completes final legacy E2E reconciliation, remove the inventory if
+there are no remaining legacy entrypoints to guard. If maintainers keep it, keep
+it as an audit artifact rather than as a living migration checklist.
 
 ## What to migrate next
 
