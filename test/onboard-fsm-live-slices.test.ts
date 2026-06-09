@@ -14,8 +14,12 @@ function runSliceProbe(slice: "initial" | "core" | "final") {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-onboard-fsm-${slice}-`));
   const scriptPath = path.join(tmpDir, `probe-${slice}.js`);
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-  const flowSlicesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"));
-  const resultPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "machine", "result.js"));
+  const flowSlicesPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"),
+  );
+  const resultPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "onboard", "machine", "result.js"),
+  );
 
   fs.writeFileSync(
     scriptPath,
