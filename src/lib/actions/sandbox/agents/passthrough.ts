@@ -5,7 +5,7 @@ import { CLI_NAME } from "../../../cli/branding";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 
-export type AgentsPassthroughVerb = "add" | "delete";
+export type AgentsPassthroughVerb = "add" | "delete" | "list";
 
 export interface AgentsPassthroughOptions {
   verb: AgentsPassthroughVerb;
@@ -44,6 +44,7 @@ export function printAgentsParentHelp(): void {
   console.log("  Subcommands:");
   console.log("    add       Add an OpenClaw agent in the sandbox.");
   console.log("    delete    Delete an OpenClaw agent in the sandbox.");
+  console.log("    list      List OpenClaw agents configured in the sandbox.");
   console.log("");
 }
 
