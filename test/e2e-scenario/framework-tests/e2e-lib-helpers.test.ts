@@ -14,13 +14,13 @@ const VALIDATION_LIB = path.join(VALIDATION_SUITES, "lib");
 const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/fixtures");
-const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/install");
 const ONBOARD_DIR = path.join(REPO_ROOT, "test/e2e-scenario/nemoclaw_scenarios/onboard");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-c", script], {
+  return spawnSync("bash", ["--noprofile", "--norc"], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    input: script,
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });
@@ -165,7 +165,9 @@ exit 2
         },
       );
       expect(r.status).toBe(42);
-      expect(`${r.stdout}\n${r.stderr}`).toContain("failed without Docker-missing preflight signature");
+      expect(`${r.stdout}\n${r.stderr}`).toContain(
+        "failed without Docker-missing preflight signature",
+      );
       const logBody = fs.readFileSync(path.join(tmp, "negative-preflight.log"), "utf8");
       expect(logBody).toContain("provider rejected");
       expect(logBody).toContain("[REDACTED]");
@@ -250,7 +252,10 @@ exit 2
   it("security policy credentials helper should load with context library", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n",
+      );
       const r = runBash(
         `
         set -euo pipefail
@@ -315,7 +320,10 @@ exit 2
       { mode: 0o755 },
     );
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n",
+      );
       const r = runBash(
         `
         set -euo pipefail
@@ -348,7 +356,10 @@ exit 2
       { mode: 0o755 },
     );
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n",
+      );
       const r = runBash(
         `
         set -euo pipefail
@@ -381,7 +392,10 @@ exit 2
       { mode: 0o755 },
     );
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n",
+      );
       const r = runBash(
         `
         set -euo pipefail
@@ -466,7 +480,10 @@ exit 0
       { mode: 0o755 },
     );
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_SANDBOX_NAME=sb\n");
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_SANDBOX_NAME=sb\n",
+      );
       const r = runBash(
         `
         set -euo pipefail
@@ -583,7 +600,6 @@ exit 0
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -849,7 +865,7 @@ exec "$@"
       // Fake openshell: when called as `openshell sandbox exec --name sb1 -- cat`
       // read stdin and print it verbatim so the test can see what the sandbox
       // would have received.
-      fs.writeFileSync(path.join(bin, "openshell"), '#!/usr/bin/env bash\ncat\n', {
+      fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\ncat\n", {
         mode: 0o755,
       });
       const r = runBash(
@@ -1056,7 +1072,10 @@ describe("Phase 1.D assertion helpers", () => {
     try {
       const bundle = path.join(tmp, "bundle");
       fs.mkdirSync(bundle);
-      fs.writeFileSync(path.join(bundle, "leak.txt"), "token=sk-abc123DEADBEEFCAFE0000111122223333");
+      fs.writeFileSync(
+        path.join(bundle, "leak.txt"),
+        "token=sk-abc123DEADBEEFCAFE0000111122223333",
+      );
       const r = runBash(`
         . "${ASSERT}/no-credentials-leaked.sh"
         e2e_assert_no_credentials_leaked "${bundle}"
@@ -1154,8 +1173,16 @@ describe("Issue #3810 messaging provider helper library", () => {
     const cases: Array<[string, Record<string, string>, string]> = [
       ["telegram", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "telegram" }, "telegram"],
       ["discord", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "discord" }, "discord"],
-      ["slack-bot", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "bot" }, "slack-bot"],
-      ["slack-app", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "app" }, "slack-app"],
+      [
+        "slack-bot",
+        { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "bot" },
+        "slack-bot",
+      ],
+      [
+        "slack-app",
+        { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "app" },
+        "slack-app",
+      ],
       ["whatsapp", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "whatsapp" }, "whatsapp-qr"],
     ];
     for (const [name, values, expected] of cases) {
@@ -1184,7 +1211,11 @@ describe("Issue #3810 messaging provider helper library", () => {
       ["hermes", "/sandbox/.hermes/.env"],
     ];
     for (const [agent, expected] of cases) {
-      const ctx = withContext({ E2E_SANDBOX_NAME: "sb", E2E_AGENT: agent, E2E_MESSAGING_PROVIDER: "discord" });
+      const ctx = withContext({
+        E2E_SANDBOX_NAME: "sb",
+        E2E_AGENT: agent,
+        E2E_MESSAGING_PROVIDER: "discord",
+      });
       try {
         const r = runBash(
           `
@@ -1221,7 +1252,9 @@ describe("Issue #3810 messaging provider helper library", () => {
 
 describe("baseline onboarding validation helper", () => {
   it("baseline helper should source under strict shell options", () => {
-    const r = runBash(`set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`);
+    const r = runBash(
+      `set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`,
+    );
     expect(r.status, r.stderr).toBe(0);
   });
 
@@ -1230,18 +1263,29 @@ describe("baseline onboarding validation helper", () => {
     try {
       const bin = path.join(tmp, "bin");
       const ctx = path.join(tmp, "ctx");
-      fs.mkdirSync(bin); fs.mkdirSync(ctx);
-      fs.writeFileSync(path.join(ctx, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_PROVIDER=nvidia\nE2E_INFERENCE_ROUTE=inference-local\n");
-      fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
+      fs.mkdirSync(bin);
+      fs.mkdirSync(ctx);
+      fs.writeFileSync(
+        path.join(ctx, "context.env"),
+        "E2E_SANDBOX_NAME=sb1\nE2E_PROVIDER=nvidia\nE2E_INFERENCE_ROUTE=inference-local\n",
+      );
+      fs.writeFileSync(
+        path.join(bin, "nemoclaw"),
+        `#!/usr/bin/env bash
 case "$*" in
   --help) echo help;;
   "sb1 status") echo 'status running gateway healthy sandbox running';;
   "sb1 logs") echo baseline-log;;
   *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
 esac
-`, { mode: 0o755 });
-      fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-      const r = runBash(`
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+      const r = runBash(
+        `
         set -euo pipefail
         source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"
         baseline_onboarding_load_context
@@ -1250,14 +1294,18 @@ esac
         baseline_assert_nemoclaw_help_exits_zero
         baseline_assert_sandbox_status_exits_zero
         baseline_assert_logs_produce_output
-      `, { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` });
+      `,
+        { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` },
+      );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.sandbox_status");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.logs_available");
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1265,15 +1313,25 @@ describe("sandbox lifecycle validation helper", () => {
   it("should load context from E2E context dir", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-"));
     try {
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
-      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; echo "$E2E_SANDBOX_NAME $E2E_GATEWAY_URL"`, { E2E_CONTEXT_DIR: tmp });
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n",
+      );
+      const r = runBash(
+        `set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; echo "$E2E_SANDBOX_NAME $E2E_GATEWAY_URL"`,
+        { E2E_CONTEXT_DIR: tmp },
+      );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("sb1 http://127.0.0.1:1");
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("should emit stable pass and fail IDs", () => {
-    const r = runBash(`. "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_pass validation.sandbox_lifecycle.gateway_health ok; sandbox_lifecycle_fail validation.sandbox_operations.logs_available nope`);
+    const r = runBash(
+      `. "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_pass validation.sandbox_lifecycle.gateway_health ok; sandbox_lifecycle_fail validation.sandbox_operations.logs_available nope`,
+    );
     expect(r.status).not.toBe(0);
     expect(r.stdout).toMatch(/PASS: validation\.sandbox_lifecycle\.gateway_health/);
     expect(r.stderr).toMatch(/FAIL: validation\.sandbox_operations\.logs_available/);
@@ -1282,39 +1340,70 @@ describe("sandbox lifecycle validation helper", () => {
   it("should apply timeout to command execution", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-timeout-"));
     try {
-      const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
-      fs.writeFileSync(path.join(bin, "timeout"), "#!/usr/bin/env bash\necho timed out >&2\nexit 124\n", { mode: 0o755 });
-      const r = runBash(`set -e; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_run_with_timeout 1 bash -c 'sleep 5'`, { PATH: `${bin}:${process.env.PATH}` });
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        path.join(bin, "timeout"),
+        "#!/usr/bin/env bash\necho timed out >&2\nexit 124\n",
+        { mode: 0o755 },
+      );
+      const r = runBash(
+        `set -e; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_run_with_timeout 1 bash -c 'sleep 5'`,
+        { PATH: `${bin}:${process.env.PATH}` },
+      );
       expect(r.status).toBe(124);
       expect(r.stderr).toMatch(/timed out/);
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("should validate list status logs exec with mocked commands", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-mock-"));
     try {
-      const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
-      fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        path.join(bin, "nemoclaw"),
+        `#!/usr/bin/env bash
 case "$*" in
   list) echo sb1;;
   "sb1 status") printf '  Sandbox: sb1\\n    Model:    nvidia/x\\n    OpenShell: 0.0.44\\n    Policies: npm\\n';;
   "sb1 logs") echo logline;;
   *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
 esac
-`, { mode: 0o755 });
-      fs.writeFileSync(path.join(bin, "openshell"), `#!/usr/bin/env bash
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(bin, "openshell"),
+        `#!/usr/bin/env bash
 echo lifecycle-ok
-`, { mode: 0o755 });
-      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
+`,
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n",
+      );
       // Force the wrapper's openshell-exec fallback transport: this
       // stub openshell ignores its argv and always echoes 'lifecycle-ok',
       // which would corrupt an ssh-config materialization. The opt-out
       // env var keeps the test exercising openshell-exec directly while
       // production callers still pick up ssh-config-preferred routing.
-      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox; sandbox_lifecycle_assert_status_fields_present; sandbox_lifecycle_assert_logs_available; sandbox_lifecycle_assert_openshell_exec_ok`, { E2E_CONTEXT_DIR: tmp, PATH: `${bin}:${process.env.PATH}`, E2E_SANDBOX_EXEC_VIA_OPENSHELL: "1" });
+      const r = runBash(
+        `set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox; sandbox_lifecycle_assert_status_fields_present; sandbox_lifecycle_assert_logs_available; sandbox_lifecycle_assert_openshell_exec_ok`,
+        {
+          E2E_CONTEXT_DIR: tmp,
+          PATH: `${bin}:${process.env.PATH}`,
+          E2E_SANDBOX_EXEC_VIA_OPENSHELL: "1",
+        },
+      );
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toMatch(/validation\.sandbox_operations\.sandbox_listed/);
       expect(r.stdout).toMatch(/validation\.sandbox_operations\.openshell_exec_ok/);
-    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

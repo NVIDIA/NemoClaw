@@ -281,17 +281,14 @@ describe("Hermes managed-tool gateway broker", () => {
       });
       expect(denied.status).toBe(401);
 
-      const firecrawl = await fetch(
-        `http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape?debug=1`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": "refresh-2",
-          },
-          body: JSON.stringify({ url: "https://example.com" }),
+      const firecrawl = await fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape?debug=1`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "refresh-2",
         },
-      );
+        body: JSON.stringify({ url: "https://example.com" }),
+      });
       const firecrawlBody = await firecrawl.text();
       expect(firecrawl.status, `${firecrawlBody}\n${output}`).toBe(200);
       expect(firecrawl.headers.get("content-encoding")).toBeNull();

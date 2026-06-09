@@ -164,14 +164,11 @@ describe("CLI onboard compatibility", () => {
     // (with #2753's onboard fix, sandboxName is no longer written here either).
     writeIncompleteResumeSession(nemoclawDir);
 
-    const r = runWithEnv(
-      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_SANDBOX_NAME: "",
-      },
-    );
+    const r = runWithEnv("onboard --resume --non-interactive --yes-i-accept-third-party-software", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_SANDBOX_NAME: "",
+    });
 
     expect(r.code).toBe(1);
     expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
@@ -190,14 +187,11 @@ describe("CLI onboard compatibility", () => {
     writeOpenShellVersionStub(localBin);
     writeIncompleteResumeSession(nemoclawDir);
 
-    const r = runWithEnv(
-      "onboard --resume --non-interactive --yes-i-accept-third-party-software",
-      {
-        HOME: home,
-        PATH: `${localBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_SANDBOX_NAME: "   ",
-      },
-    );
+    const r = runWithEnv("onboard --resume --non-interactive --yes-i-accept-third-party-software", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_SANDBOX_NAME: "   ",
+    });
 
     expect(r.code).toBe(1);
     expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();

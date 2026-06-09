@@ -18,7 +18,13 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     displayName: "Hermes Agent",
     healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
     forwardPort: 8642,
-    dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1", healthPath: "/health", auth: "none" },
+    dashboard: {
+      kind: "api",
+      label: "OpenAI-compatible API",
+      path: "/v1",
+      healthPath: "/health",
+      auth: "none",
+    },
     configPaths: {
       dir: "/sandbox/.hermes",
       configFile: "config.yaml",
@@ -61,9 +67,11 @@ function withMockedDocker<T>(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerImageModule = require("../../../dist/lib/adapters/docker/image") as DockerImageModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerInspectModule = require("../../../dist/lib/adapters/docker/inspect") as DockerInspectModule;
+  const dockerInspectModule =
+    require("../../../dist/lib/adapters/docker/inspect") as DockerInspectModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sandboxBaseImageModule = require("../../../dist/lib/sandbox-base-image") as SandboxBaseImageModule;
+  const sandboxBaseImageModule =
+    require("../../../dist/lib/sandbox-base-image") as SandboxBaseImageModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const runnerModule = require("../../../dist/lib/runner") as { ROOT: string };
   const originalDockerBuild = dockerImageModule.dockerBuild;
@@ -141,30 +149,32 @@ describe("agent base image provisioning", () => {
   });
 
   it("rebuilds an agent base image when rebuild flow forces local Dockerfile.base refresh", () => {
-    withMockedDocker(({
-      ensureAgentBaseImage,
-      dockerBuildMock,
-      dockerImageInspectMock,
-      resolveSandboxBaseImageMock,
-      root,
-    }) => {
-      dockerImageInspectMock.mockReturnValue({ status: 0 });
-
-      const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
-
-      expect(result).toEqual({
-        imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
-        built: true,
-      });
-      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-      expect(dockerImageInspectMock).not.toHaveBeenCalled();
-      expect(dockerBuildMock).toHaveBeenCalledWith(
-        "/test/root/agents/hermes/Dockerfile.base",
-        "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+    withMockedDocker(
+      ({
+        ensureAgentBaseImage,
+        dockerBuildMock,
+        dockerImageInspectMock,
+        resolveSandboxBaseImageMock,
         root,
-        { ignoreError: true, stdio: ["ignore", "inherit", "inherit"] },
-      );
-    });
+      }) => {
+        dockerImageInspectMock.mockReturnValue({ status: 0 });
+
+        const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
+
+        expect(result).toEqual({
+          imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+          built: true,
+        });
+        expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+        expect(dockerImageInspectMock).not.toHaveBeenCalled();
+        expect(dockerBuildMock).toHaveBeenCalledWith(
+          "/test/root/agents/hermes/Dockerfile.base",
+          "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+          root,
+          { ignoreError: true, stdio: ["ignore", "inherit", "inherit"] },
+        );
+      },
+    );
   });
 
   it("throws when a forced agent base image rebuild fails", () => {
@@ -179,27 +189,29 @@ describe("agent base image provisioning", () => {
   });
 
   it("builds an agent base image when no resolved image or cached image exists on non-Linux hosts", () => {
-    withMockedDocker(({
-      ensureAgentBaseImage,
-      dockerBuildMock,
-      dockerImageInspectMock,
-      resolveSandboxBaseImageMock,
-    }) => {
-      resolveSandboxBaseImageMock.mockReturnValue(null);
-      dockerImageInspectMock.mockReturnValue({ status: 1 });
+    withMockedDocker(
+      ({
+        ensureAgentBaseImage,
+        dockerBuildMock,
+        dockerImageInspectMock,
+        resolveSandboxBaseImageMock,
+      }) => {
+        resolveSandboxBaseImageMock.mockReturnValue(null);
+        dockerImageInspectMock.mockReturnValue({ status: 1 });
 
-      if (process.platform === "linux") {
-        expect(() => ensureAgentBaseImage(makeAgent())).toThrow(
-          "No compatible Hermes Agent sandbox base image found",
-        );
-        expect(dockerBuildMock).not.toHaveBeenCalled();
-        return;
-      }
+        if (process.platform === "linux") {
+          expect(() => ensureAgentBaseImage(makeAgent())).toThrow(
+            "No compatible Hermes Agent sandbox base image found",
+          );
+          expect(dockerBuildMock).not.toHaveBeenCalled();
+          return;
+        }
 
-      const result = ensureAgentBaseImage(makeAgent());
+        const result = ensureAgentBaseImage(makeAgent());
 
-      expect(result.built).toBe(true);
-      expect(dockerBuildMock).toHaveBeenCalledOnce();
-    });
+        expect(result.built).toBe(true);
+        expect(dockerBuildMock).toHaveBeenCalledOnce();
+      },
+    );
   });
 });

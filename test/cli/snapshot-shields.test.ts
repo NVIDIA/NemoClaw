@@ -46,7 +46,9 @@ describe("CLI dispatch", () => {
 
     const restore = runWithEnv("alpha snapshot restore --help", { HOME: home });
     expect(restore.code).toBe(0);
-    expect(restore.out).toContain("$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]");
+    expect(restore.out).toContain(
+      "$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]",
+    );
   });
 
   it("snapshot list dispatches through oclif", () => {

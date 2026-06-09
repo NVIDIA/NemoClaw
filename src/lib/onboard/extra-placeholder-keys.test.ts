@@ -159,7 +159,6 @@ describe("canonicalPlaceholderKeys", () => {
     expect(canonical.has("GITHUB_TOKEN")).toBe(false);
     expect(canonical.has("AWS_SECRET_ACCESS_KEY")).toBe(false);
   });
-
 });
 
 describe("registerExtraPlaceholderProviders", () => {
@@ -202,15 +201,10 @@ describe("registerExtraPlaceholderProviders", () => {
           providerType?: string;
         }> = [];
         const warnings: string[] = [];
-        const extraKeys = registerExtraPlaceholderProviders(
-          "my-sandbox",
-          messagingTokenDefs,
-          (m) => warnings.push(m),
+        const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
+          warnings.push(m),
         );
-        expect(extraKeys).toEqual([
-          "TELEGRAM_BOT_TOKEN_AGENT_A",
-          "SLACK_BOT_TOKEN_AGENT_B",
-        ]);
+        expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A", "SLACK_BOT_TOKEN_AGENT_B"]);
         expect(warnings).toEqual([]);
         expect(messagingTokenDefs).toEqual([
           {
@@ -277,10 +271,8 @@ describe("registerExtraPlaceholderProviders", () => {
           providerType?: string;
         }> = [];
         const warnings: string[] = [];
-        const extraKeys = registerExtraPlaceholderProviders(
-          "my-sandbox",
-          messagingTokenDefs,
-          (m) => warnings.push(m),
+        const extraKeys = registerExtraPlaceholderProviders("my-sandbox", messagingTokenDefs, (m) =>
+          warnings.push(m),
         );
         expect(extraKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
         expect(messagingTokenDefs.map((d) => d.envKey)).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);

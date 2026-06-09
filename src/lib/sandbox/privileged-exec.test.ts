@@ -10,10 +10,7 @@ const requireCache: Record<string, unknown> = require.cache as any;
 const helperPath = require.resolve("../../../dist/lib/sandbox/privileged-exec");
 const dockerRunPath = require.resolve("../../../dist/lib/adapters/docker/run");
 const registryPath = require.resolve("../../../dist/lib/state/registry");
-const {
-  containerNameMatchesSandbox,
-  selectDirectSandboxContainer,
-} = require(helperPath);
+const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
 function withPrivilegedExecMocks<T>(
   deps: {
@@ -96,27 +93,20 @@ describe("privileged sandbox exec routing", () => {
       "openshell-alpha-abc123",
     ].join("\n");
 
+    expect(selectDirectSandboxContainer("alpha", containerNames, ["alpha", "alpha-child"])).toBe(
+      "openshell-alpha-abc123",
+    );
     expect(
-      selectDirectSandboxContainer("alpha", containerNames, [
-        "alpha",
-        "alpha-child",
-      ]),
-    ).toBe("openshell-alpha-abc123");
-    expect(
-      selectDirectSandboxContainer("alpha-child", containerNames, [
-        "alpha",
-        "alpha-child",
-      ]),
+      selectDirectSandboxContainer("alpha-child", containerNames, ["alpha", "alpha-child"]),
     ).toBe("openshell-alpha-child");
   });
 
   it("does not consider unrelated OpenShell containers direct sandbox matches", () => {
     expect(
-      selectDirectSandboxContainer(
+      selectDirectSandboxContainer("alpha", "openshell-gateway-nemoclaw\nopenshell-alpha-child\n", [
         "alpha",
-        "openshell-gateway-nemoclaw\nopenshell-alpha-child\n",
-        ["alpha", "alpha-child"],
-      ),
+        "alpha-child",
+      ]),
     ).toBeNull();
   });
 

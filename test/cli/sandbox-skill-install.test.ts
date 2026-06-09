@@ -54,7 +54,10 @@ describe("sandbox skill install CLI dispatch", () => {
     const pluginDir = path.join(home, "openclaw-plugin");
     fs.mkdirSync(pluginDir, { recursive: true });
     writeSandboxRegistry(home);
-    fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify({ name: "demo" }));
+    fs.writeFileSync(
+      path.join(pluginDir, "openclaw.plugin.json"),
+      JSON.stringify({ name: "demo" }),
+    );
 
     const r = runWithEnv(`alpha skill install ${JSON.stringify(pluginDir)}`, { HOME: home });
 

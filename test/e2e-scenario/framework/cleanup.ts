@@ -54,6 +54,8 @@ export class CleanupRegistry {
 
 export function assertCleanupPassed(result: CleanupResult): void {
   if (result.failures.length === 0) return;
-  const details = result.failures.map((failure) => `${failure.name}: ${failure.message}`).join("; ");
+  const details = result.failures
+    .map((failure) => `${failure.name}: ${failure.message}`)
+    .join("; ");
   throw new Error(`E2E cleanup failed: ${details}`);
 }

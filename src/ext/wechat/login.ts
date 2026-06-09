@@ -112,9 +112,7 @@ function resolveOptions(opts: WechatLoginOptions = {}): ResolvedLoginOptions {
     // fetch's keep-alive socket is released (notably after an IDC redirect
     // switches hosts). An unref'd timer there causes Node to exit silently
     // mid-login.
-    sleep:
-      opts.sleep ??
-      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
+    sleep: opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
   };
 }
 
@@ -127,7 +125,9 @@ function emitQr(session: WechatQrSession, opts: ResolvedLoginOptions): void {
   try {
     opts.renderQr(session.qrcodeUrl);
   } catch (err) {
-    opts.log(`  (could not render terminal QR: ${err instanceof Error ? err.message : String(err)})`);
+    opts.log(
+      `  (could not render terminal QR: ${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 }
 
@@ -162,9 +162,10 @@ export async function runWechatHostQrLogin(
   // operators can self-diagnose IDC redirects and silently-swallowed
   // gateway errors. Quiet via NEMOCLAW_WECHAT_QUIET=1 once the flow is
   // stable in their environment.
-  const debug = process.env.NEMOCLAW_WECHAT_QUIET === "1"
-    ? (_msg: string) => {}
-    : (msg: string) => opts.log(`  [wechat] ${msg}`);
+  const debug =
+    process.env.NEMOCLAW_WECHAT_QUIET === "1"
+      ? (_msg: string) => {}
+      : (msg: string) => opts.log(`  [wechat] ${msg}`);
   debug(`polling ${currentBaseUrl}`);
 
   while (opts.now() < deadline) {

@@ -7,37 +7,36 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } = require(
-  "../../../dist/lib/onboard/providers",
-) as {
-  buildProviderArgs: (
-    action: "create" | "update",
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-  ) => string[];
-  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
-  upsertProvider: (
-    name: string,
-    type: string,
-    credentialEnv: string,
-    baseUrl: string | null,
-    env: Record<string, string | undefined>,
-    runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean },
-  ) => { ok: boolean; status?: number; message?: string };
-  upsertMessagingProviders: (
-    tokenDefs: Array<{
-      name: string;
-      envKey: string;
-      token: string | null;
-      providerType?: string;
-    }>,
-    runOpenshell: RunOpenshell,
-    options?: { replaceExisting?: boolean; bestEffort?: boolean },
-  ) => string[];
-};
+const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } =
+  require("../../../dist/lib/onboard/providers") as {
+    buildProviderArgs: (
+      action: "create" | "update",
+      name: string,
+      type: string,
+      credentialEnv: string,
+      baseUrl: string | null,
+    ) => string[];
+    providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+    upsertProvider: (
+      name: string,
+      type: string,
+      credentialEnv: string,
+      baseUrl: string | null,
+      env: Record<string, string | undefined>,
+      runOpenshell: RunOpenshell,
+      options?: { replaceExisting?: boolean },
+    ) => { ok: boolean; status?: number; message?: string };
+    upsertMessagingProviders: (
+      tokenDefs: Array<{
+        name: string;
+        envKey: string;
+        token: string | null;
+        providerType?: string;
+      }>,
+      runOpenshell: RunOpenshell,
+      options?: { replaceExisting?: boolean; bestEffort?: boolean },
+    ) => string[];
+  };
 
 describe("onboard provider helpers", () => {
   it("builds create arguments for generic providers", () => {
@@ -165,7 +164,9 @@ describe("onboard provider helpers", () => {
     expect(commands).toHaveLength(2);
     expect(commands[0]).toMatch(/provider get/);
     expect(commands[1]).toMatch(/provider update/);
-    expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+    expect(commands[1]).toMatch(
+      /--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/,
+    );
   });
 
   it("omits --credential from the update args when the env value is empty", () => {
@@ -196,18 +197,11 @@ describe("onboard provider helpers", () => {
     // create cannot omit credentials — OpenShell rejects empty credential
     // maps on creation. The caller is responsible for staging a value.
     const commands: string[] = [];
-    upsertProvider(
-      "fresh-provider",
-      "generic",
-      "FRESH_TOKEN",
-      null,
-      {},
-      (command) => {
-        commands.push(command.join(" "));
-        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
-        return { status: 0, stdout: "", stderr: "" };
-      },
-    );
+    upsertProvider("fresh-provider", "generic", "FRESH_TOKEN", null, {}, (command) => {
+      commands.push(command.join(" "));
+      if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+      return { status: 0, stdout: "", stderr: "" };
+    });
 
     expect(commands).toHaveLength(2);
     expect(commands[1]).toMatch(/^provider create --name fresh-provider /);

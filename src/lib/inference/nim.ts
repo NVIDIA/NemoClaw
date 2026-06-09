@@ -275,12 +275,9 @@ function hostPathExists(path: string): boolean {
 }
 
 function hasTegraDeviceNodeSignal(): boolean {
-  return [
-    "/dev/nvhost-gpu",
-    "/dev/nvhost-ctrl-gpu",
-    "/dev/nvhost-ctrl",
-    "/dev/nvmap",
-  ].some(hostPathExists);
+  return ["/dev/nvhost-gpu", "/dev/nvhost-ctrl-gpu", "/dev/nvhost-ctrl", "/dev/nvmap"].some(
+    hostPathExists,
+  );
 }
 
 function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null {
@@ -418,11 +415,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
   // available memory, not just the headline total.
   try {
     const output = runCapture(
-      [
-        "nvidia-smi",
-        "--query-gpu=name,memory.total,memory.free",
-        "--format=csv,noheader,nounits",
-      ],
+      ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
       { ignoreError: true },
     );
     if (output) {
@@ -485,8 +478,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           // named NVIDIA rows; drop unrecognized garbage so a mixed-row spoof
           // cannot inflate totalMemoryMB with a phantom device.
           trusted = parsed.filter(
-            (p: ParsedGpu) =>
-              isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
+            (p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name) || isPlausibleNvidiaGpuName(p.name),
           );
           wslDockerDesktopGpuProofPassed = true;
         } else {
@@ -498,10 +490,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         if (trusted.length === 0) {
           return null;
         }
-        const totalMemoryMB = trusted.reduce(
-          (sum: number, p: ParsedGpu) => sum + p.memoryMB,
-          0,
-        );
+        const totalMemoryMB = trusted.reduce((sum: number, p: ParsedGpu) => sum + p.memoryMB, 0);
         const availableMemoryMB = trusted.reduce(
           (sum: number, p: ParsedGpu) => sum + p.freeMemoryMB,
           0,
@@ -509,8 +498,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
         const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
-        const allSameName =
-          !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
+        const allSameName = !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
@@ -547,14 +535,14 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
     // unified-memory one (#3510). When firmware confirms a unified-memory
     // platform, accept whatever name nvidia-smi reports.
     const firmwarePlatform = detectNvidiaPlatform();
-    const firmwareIsUnifiedMemory =
-      firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    const firmwareIsUnifiedMemory = firmwarePlatform === "spark" || firmwarePlatform === "jetson";
     // Reject placeholder names on hosts where firmware does not vouch for an
     // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
     // could in principle emit `JMJWOA-Generic-*` on this fallback too.
-    if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
-      isDenylistedNvidiaGpuName(name),
-    )) {
+    if (
+      !firmwareIsUnifiedMemory &&
+      gpuNames.some((name: string) => isDenylistedNvidiaGpuName(name))
+    ) {
       return null;
     }
     const taggedNames = gpuNames.filter((name: string) =>
@@ -592,7 +580,7 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
             ? "station"
             : firmwarePlatform === "jetson"
               ? "jetson"
-            : "linux";
+              : "linux";
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
       // Approximation, but the only number nvidia-smi gives us in this path.
@@ -745,10 +733,7 @@ interface ManifestIndexDoc {
 
 // Linux image-manifest digest for `ociArch` from `docker manifest inspect` JSON,
 // or null if not a multi-arch index / no match. Arch+os match skips attestations.
-export function selectPlatformManifestDigest(
-  manifestJson: string,
-  ociArch: string,
-): string | null {
+export function selectPlatformManifestDigest(manifestJson: string, ociArch: string): string | null {
   let doc: ManifestIndexDoc;
   try {
     doc = JSON.parse(manifestJson);
@@ -846,9 +831,7 @@ export function startNimContainerByName(
   // value through the spawn env instead. Docker reads each named var from
   // its own process env and forwards it to the container.
   const envFlags = ngcApiKey ? ["-e", "NGC_API_KEY", "-e", "NIM_NGC_API_KEY"] : [];
-  const runEnv = ngcApiKey
-    ? { NGC_API_KEY: ngcApiKey, NIM_NGC_API_KEY: ngcApiKey }
-    : undefined;
+  const runEnv = ngcApiKey ? { NGC_API_KEY: ngcApiKey, NIM_NGC_API_KEY: ngcApiKey } : undefined;
   if (!ngcApiKey) {
     console.warn(
       "  No NGC API key available; NIM will fail to download model weights. " +

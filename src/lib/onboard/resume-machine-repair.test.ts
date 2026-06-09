@@ -13,10 +13,7 @@ import {
 } from "../state/onboard-session";
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
-import {
-  repairResumeMachineSnapshot,
-  resumeMachineState,
-} from "./resume-machine-repair";
+import { repairResumeMachineSnapshot, resumeMachineState } from "./resume-machine-repair";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
 /**
@@ -239,56 +236,53 @@ describe("resume machine repair", () => {
     ["preflight", "preflight", null],
     ["gateway", "gateway", "preflight"],
     ["inference", "inference", "provider_selection"],
-  ] as const)(
-    "lets record-only resume complete from failed %s",
-    async (_name, failedStep, completedStep) => {
-      const session = createFailedSession((current) => {
-        current.failure = {
-          step: failedStep,
-          message: `${failedStep} failed`,
-          recordedAt: "2026-06-01T00:00:00.000Z",
-        };
-        current.lastStepStarted = failedStep;
-        current.steps[failedStep].status = "failed";
-        if (completedStep) {
-          current.lastCompletedStep = completedStep;
-          current.steps[completedStep].status = "complete";
-        }
-      });
+  ] as const)("lets record-only resume complete from failed %s", async (_name, failedStep, completedStep) => {
+    const session = createFailedSession((current) => {
+      current.failure = {
+        step: failedStep,
+        message: `${failedStep} failed`,
+        recordedAt: "2026-06-01T00:00:00.000Z",
+      };
+      current.lastStepStarted = failedStep;
+      current.steps[failedStep].status = "failed";
+      if (completedStep) {
+        current.lastCompletedStep = completedStep;
+        current.steps[completedStep].status = "complete";
+      }
+    });
 
-      const completed = await runRecordOnlyResumeSequence(session);
+    const completed = await runRecordOnlyResumeSequence(session);
 
-      expect(completed).toMatchObject({
-        status: "complete",
-        failure: null,
-        machine: { state: "complete" },
-      });
-    },
-  );
+    expect(completed).toMatchObject({
+      status: "complete",
+      failure: null,
+      machine: { state: "complete" },
+    });
+  });
 
-  it.each(["gateway", "policies"] as const)(
-    "lets record-only resume complete from a reopened complete snapshot after %s",
-    async (completedStep) => {
-      const session = createSession({
-        resumable: true,
-        status: "in_progress",
-        lastCompletedStep: completedStep,
-        machine: {
-          version: MACHINE_SNAPSHOT_VERSION,
-          state: "complete",
-          stateEnteredAt: "2026-06-01T00:00:00.000Z",
-          revision: 7,
-        },
-      });
-      session.steps[completedStep].status = "complete";
+  it.each([
+    "gateway",
+    "policies",
+  ] as const)("lets record-only resume complete from a reopened complete snapshot after %s", async (completedStep) => {
+    const session = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: completedStep,
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 7,
+      },
+    });
+    session.steps[completedStep].status = "complete";
 
-      const completed = await runRecordOnlyResumeSequence(session);
+    const completed = await runRecordOnlyResumeSequence(session);
 
-      expect(completed).toMatchObject({
-        status: "complete",
-        failure: null,
-        machine: { state: "complete" },
-      });
-    },
-  );
+    expect(completed).toMatchObject({
+      status: "complete",
+      failure: null,
+      machine: { state: "complete" },
+    });
+  });
 });

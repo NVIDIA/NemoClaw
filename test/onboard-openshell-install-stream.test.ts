@@ -12,9 +12,7 @@ import {
   type RunOpenshellInstallDeps,
 } from "../src/lib/onboard/openshell-pin";
 
-function makeDeps(
-  overrides: Partial<RunOpenshellInstallDeps> = {},
-): RunOpenshellInstallDeps {
+function makeDeps(overrides: Partial<RunOpenshellInstallDeps> = {}): RunOpenshellInstallDeps {
   return {
     getBlueprintMaxOpenshellVersion: () => null,
     versionGte: () => true,

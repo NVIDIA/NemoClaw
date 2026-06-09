@@ -92,7 +92,10 @@ function useStatusProbeTiming(argv: string[]): string[] {
 }
 
 function quoteCurlConfigValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ");
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/[\r\n]+/g, " ");
 }
 
 function createAuthCurlConfig(headerValue: string): string {

@@ -130,7 +130,10 @@ function splitCliArgs(args: string): string[] {
   return tokens;
 }
 
-export function normalizeChildExit(code: number | null, signal: NodeJS.Signals | null): number | null {
+export function normalizeChildExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): number | null {
   if (code !== null) return code;
   if (signal === "SIGTERM") return 143;
   if (signal === "SIGINT") return 130;
@@ -220,8 +223,7 @@ export function writeSandboxRegistry(
   sandboxNameOrOverrides: string | SandboxOverrides = "alpha",
   sandboxOverridesArg: SandboxOverrides = {},
 ): void {
-  const sandboxName =
-    typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";
+  const sandboxName = typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";
   const sandboxOverrides =
     typeof sandboxNameOrOverrides === "string" ? sandboxOverridesArg : sandboxNameOrOverrides;
   const registryDir = path.join(home, ".nemoclaw");
@@ -321,7 +323,11 @@ export function createLogsTestSetup(
   };
 }
 
-export function createDoctorTestSetup(prefix: string, openshellLines: string[], sandboxName = "alpha") {
+export function createDoctorTestSetup(
+  prefix: string,
+  openshellLines: string[],
+  sandboxName = "alpha",
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const markerFile = path.join(home, "doctor-calls");
@@ -371,7 +377,10 @@ export function createDoctorTestSetup(prefix: string, openshellLines: string[], 
   };
 }
 
-export function createCloudflaredServiceDir(prefix: string): { sandboxName: string; serviceDir: string } {
+export function createCloudflaredServiceDir(prefix: string): {
+  sandboxName: string;
+  serviceDir: string;
+} {
   const suffix = [
     process.pid.toString(36),
     Date.now().toString(36),

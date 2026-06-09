@@ -25,9 +25,10 @@ import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type ForwardListFetcher = () => string;
 
-export type DetachedForwardSpawnRunner = (
-  stdio: { stdout: number; stderr: number },
-) => { pid?: number; error?: Error };
+export type DetachedForwardSpawnRunner = (stdio: { stdout: number; stderr: number }) => {
+  pid?: number;
+  error?: Error;
+};
 
 export interface DetachedForwardStartOutcome {
   ok: boolean;
@@ -54,12 +55,7 @@ function readDiagnosticFile(filePath: string): string {
   try {
     return fs.readFileSync(filePath, "utf-8");
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
       return "";
     }
     throw error;
@@ -162,7 +158,9 @@ function terminateDetachedForwardChild(pid: number | undefined): void {
  * still polling. Kept here so the onboard call site does not need to
  * recreate the same closure inline.
  */
-export function buildForwardStartProgressLogger(port: number): (info: { elapsedMs: number }) => void {
+export function buildForwardStartProgressLogger(
+  port: number,
+): (info: { elapsedMs: number }) => void {
   return ({ elapsedMs }) => {
     console.log(
       `  Still waiting for forward on port ${port} to register (${Math.round(elapsedMs / 1000)}s elapsed)...`,

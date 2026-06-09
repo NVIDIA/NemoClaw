@@ -17,7 +17,11 @@ export interface NpmLinkTargetState {
 
 export type NpmLinkTargetWritableResult =
   | { ok: true; paths: NpmLinkTargetPaths }
-  | { ok: false; paths: NpmLinkTargetPaths; reason: "empty-prefix" | "bin-unwritable" | "lib-unwritable" };
+  | {
+      ok: false;
+      paths: NpmLinkTargetPaths;
+      reason: "empty-prefix" | "bin-unwritable" | "lib-unwritable";
+    };
 
 export function npmGlobalBin(prefix: string): string | null {
   const normalized = prefix.trim();
@@ -48,7 +52,8 @@ export function npmLinkTargetsWritable(
   }
 
   if (state.exists(paths.nodeModulesDir)) {
-    if (!state.isWritable(paths.nodeModulesDir)) return { ok: false, paths, reason: "lib-unwritable" };
+    if (!state.isWritable(paths.nodeModulesDir))
+      return { ok: false, paths, reason: "lib-unwritable" };
   } else if (state.exists(paths.libDir)) {
     if (!state.isWritable(paths.libDir)) return { ok: false, paths, reason: "lib-unwritable" };
   } else if (!state.isWritable(paths.prefix)) {

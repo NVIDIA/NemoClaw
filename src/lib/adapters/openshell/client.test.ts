@@ -230,7 +230,10 @@ describe("openshell helpers", () => {
   it("includes stderr in async capture output when requested", async () => {
     const result = await captureOpenshellCommandAsync(
       process.execPath,
-      ["-e", "process.stdout.write('hello\\n'); process.stderr.write('boom\\n'); process.exitCode = 1;"],
+      [
+        "-e",
+        "process.stdout.write('hello\\n'); process.stderr.write('boom\\n'); process.exitCode = 1;",
+      ],
       { ignoreError: true, includeStderr: true },
     );
 
