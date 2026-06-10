@@ -99,11 +99,13 @@ function isCoveredByInventoryPath(filePath: string, inventoryPath: string): bool
   return filePath === inventoryPath || filePath.startsWith(`${inventoryPath}/`);
 }
 
-function expectPathListIsRepoRelative(paths: readonly string[]) {
+function expectPathListIsRepoRelative(paths: readonly string[], options = { mustExist: true }) {
   expect(paths.length).toBeGreaterThan(0);
   for (const repoRelativePath of paths) {
     expect(repoRelativePath).not.toBe("");
-    expect(repoPathExists(repoRelativePath)).toBe(true);
+    if (options.mustExist) {
+      expect(repoPathExists(repoRelativePath)).toBe(true);
+    }
   }
 }
 
@@ -139,7 +141,7 @@ function expectMigrationRecordDeletionGate(
 
   if (record.deletionReady) {
     expect(["covered", "retired"]).toContain(record.status);
-    expect(record.deletionApprovalIssue).toBe("#4357");
+    expect(["#4357", "#5098"]).toContain(record.deletionApprovalIssue);
     expect(
       record.status === "retired" ? record.retiredReason : record.targetVitestScenarios.length,
     ).toBeTruthy();
@@ -175,9 +177,9 @@ describe("E2E migration inventory deletion gates", () => {
       expect(surface.id).toMatch(/^[a-z0-9-]+$/);
       expect(internalSurfaceIds.has(surface.id)).toBe(false);
       internalSurfaceIds.add(surface.id);
-      expectPathListIsRepoRelative(surface.paths);
+      expectPathListIsRepoRelative(surface.paths, { mustExist: surface.status !== "retired" });
       expect(surface.domain).not.toBe("");
-      expect(surface.ownerIssue).toMatch(/^#(?:3588|434[7-9]|435[0-7]|4941)$/);
+      expect(surface.ownerIssue).toMatch(/^#(?:3588|434[7-9]|435[0-7]|4941|5098)$/);
       expect(surface.replacementSurface).not.toBe("");
       expect(surface.notes).not.toBe("");
     }
@@ -198,8 +200,16 @@ describe("E2E migration inventory deletion gates", () => {
     const surfacePaths = inventory.internalSurfaces.flatMap((surface) => surface.paths);
 
     for (const root of INTERNAL_SURFACE_ROOTS) {
+      if (!repoPathExists(root)) {
+        const retiredSurface = inventory.internalSurfaces.find((surface) =>
+          surface.paths.some((surfacePath) => isCoveredByInventoryPath(root, surfacePath)),
+        );
+        expect(retiredSurface?.status).toBe("retired");
+        expect(retiredSurface?.retiredReason).not.toBe("");
+        continue;
+      }
+
       const files = listRepoFilesUnder(root);
-      expect(files.length).toBeGreaterThan(0);
       for (const file of files) {
         expect(
           surfacePaths.some((surfacePath) => isCoveredByInventoryPath(file, surfacePath)),

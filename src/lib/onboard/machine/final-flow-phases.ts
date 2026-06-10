@@ -13,8 +13,9 @@ import { runFinalOnboardFlowSequence } from "./flow-slices";
 import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
 import { type FinalizationStateOptions, handleFinalizationState } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
-import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
+import type { OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 export interface FinalOnboardFlowPhaseOptions<
@@ -120,11 +121,6 @@ export function createFinalOnboardFlowPhases<
   return [branchSetupPhase, policiesPhase, finalizationPhase];
 }
 
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
-}
-
 function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
   return (
     result.type === "transition" &&
@@ -172,7 +168,6 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   afterPoliciesResultApplied?(): void;
   onContextUpdated?(context: Context): void;
 }): Promise<void> {
-  const finalRuntimeSession = await options.runtime.session();
   // Keep resume and ahead-state sessions on the compatibility path for now.
   // The persisted invalid states for this slice are "policies", "finalizing",
   // and "post_verify": a previous run may have advanced `session.machine`
@@ -185,27 +180,17 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   // final-phase repair checks are first-class resumable FSM states, or once
   // legacy step helpers no longer advance `session.machine` and handler FSM
   // results are the sole transition source.
-  if (
-    !options.resume &&
-    (finalRuntimeSession.machine.state === "openclaw" ||
-      finalRuntimeSession.machine.state === "agent_setup")
-  ) {
-    await runFinalOnboardFlowSequence({
-      context: options.context,
-      runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
-      phases: withContextObserver(options.phases, options.onContextUpdated),
-    });
-    return;
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
+  await runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
+    phases: withContextObserver(options.phases, options.onContextUpdated),
+    resume: options.resume,
+    runWhenState: ["openclaw", "agent_setup"],
+    compatibilityWhenState: ["policies", "finalizing", "post_verify"],
+    runSlice: runFinalOnboardFlowSequence,
+    applyCompatibleResult: async (stateResult) => {
       await options.recordStateResult(stateResult);
       if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
-    }
-    context = phaseResult.context;
-    options.onContextUpdated?.(context);
-  }
+    },
+  });
 }

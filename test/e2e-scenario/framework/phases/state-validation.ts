@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import type { ArtifactSink } from "../artifacts.ts";
 import {
   trustedProviderEndpoint,
   type GatewayClient,
@@ -115,6 +116,7 @@ export class StateValidationPhaseFixture {
     private readonly gateway: GatewayClient,
     private readonly sandbox: SandboxClient,
     io: ProbeIO = {},
+    private readonly artifacts?: ArtifactSink,
   ) {
     this.io = io;
   }
@@ -123,13 +125,36 @@ export class StateValidationPhaseFixture {
     expectedState: string | ExpectedState,
     instance?: NemoClawInstance,
   ): Promise<StateValidationResult> {
-    const state =
-      typeof expectedState === "string" ? requireExpectedState(expectedState) : expectedState;
-    const probes: StateValidationProbeResult[] = [];
-    for (const probe of probesForState(state)) {
-      probes.push(await this.runProbe(probe, instance));
+    try {
+      const state =
+        typeof expectedState === "string" ? requireExpectedState(expectedState) : expectedState;
+      const probes: StateValidationProbeResult[] = [];
+      for (const probe of probesForState(state)) {
+        probes.push(await this.runProbe(probe, instance));
+      }
+      const result = { state, probes };
+      await this.writeResult("passed", state, result);
+      return result;
+    } catch (error) {
+      const stateId = typeof expectedState === "string" ? expectedState : expectedState.id;
+      await this.writeResult("failed", stateId, undefined, error);
+      throw error;
     }
-    return { state, probes };
+  }
+
+  private async writeResult(
+    status: "passed" | "failed",
+    expectedState: string | ExpectedState,
+    result?: StateValidationResult,
+    error?: unknown,
+  ): Promise<void> {
+    await this.artifacts?.writeJson("state-validation.result.json", {
+      phase: "state-validation",
+      status,
+      expectedStateId: typeof expectedState === "string" ? expectedState : expectedState.id,
+      probes: result?.probes.map((probe) => probe.id) ?? [],
+      ...(error ? { error: errorMessage(error) } : {}),
+    });
   }
 
   private async runProbe(
