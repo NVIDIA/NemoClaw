@@ -39,4 +39,15 @@ describe("Regression E2E workflow contract", () => {
     expect(selectorScript).not.toContain(jobName);
     expect(selectorScript).not.toContain(selectorOutput);
   });
+
+  it("does not advertise or select the retired strict-tool-call-probe lane", () => {
+    const jobsDescription = workflow.on?.workflow_dispatch?.inputs?.jobs?.description ?? "";
+    const selectorScript =
+      workflow.jobs?.select_regression_jobs?.steps?.find((step) => step.id === "select")?.run ?? "";
+
+    expect(jobsDescription).not.toContain("strict-tool-call-probe-e2e");
+    expect(Object.keys(workflow.jobs ?? {})).not.toContain("strict-tool-call-probe-e2e");
+    expect(selectorScript).not.toContain("strict-tool-call-probe-e2e");
+    expect(selectorScript).not.toContain("strict_tool_call_probe");
+  });
 });
