@@ -96,6 +96,16 @@ if [ "${NVIDIA_API_KEY:0:6}" != "nvapi-" ]; then
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 0
 fi
+if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
+  skip "NEMOCLAW_NON_INTERACTIVE must be 1; refusing to risk an interactive onboard prompt"
+  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+  exit 0
+fi
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  skip "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE must be 1; refusing to risk an interactive onboard prompt"
+  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+  exit 0
+fi
 pass "prerequisites satisfied"
 
 CREATED_SANDBOX=0
@@ -127,8 +137,8 @@ NEMOCLAW_SANDBOX_NAME="$SANDBOX" \
   NEMOCLAW_PROVIDER=build \
   NEMOCLAW_MODEL="$MODEL" \
   nemoclaw onboard \
-    --non-interactive \
-    --yes-i-accept-third-party-software 2>&1 | sed 's/^/    /'
+  --non-interactive \
+  --yes-i-accept-third-party-software 2>&1 | sed 's/^/    /'
 ONBOARD_RC=${PIPESTATUS[0]}
 if [ "$ONBOARD_RC" -ne 0 ]; then
   fail "onboard exited $ONBOARD_RC"

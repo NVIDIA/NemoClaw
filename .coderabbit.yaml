@@ -619,6 +619,28 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-inference-e2e
         ```
 
+    - path: "test/e2e/test-cron-preflight-inference-local-e2e.sh"
+      instructions: |
+        This script onboards a sandbox against the managed cloud
+        inference provider, schedules an isolated agentTurn cron job,
+        and force-triggers it via `openclaw cron run --wait`, asserting
+        the provider preflight does not skip the run with EAI_AGAIN or
+        the "local provider endpoint is not reachable" message.
+
+        Exercises the Dockerfile fetch-guard patch that opts the cron
+        model-provider preflight into trusted env-proxy mode so the
+        managed inference hostname (`inference.local`) routes through
+        the OpenShell L7 proxy instead of failing pinned DNS lookup.
+
+        **E2E test recommendation:**
+        - `cron-preflight-inference-local-e2e` — managed inference cron
+          preflight via OpenShell L7 proxy
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cron-preflight-inference-local-e2e
+        ```
+
     - path: "test/e2e/test-openclaw-inference-switch.sh"
       instructions: |
         This script validates OpenClaw model/provider switching with
