@@ -382,42 +382,52 @@ RUN set -eu; \
             patch_fail "Patch 4 cannot safely skip"; \
         fi; \
     fi; \
-    # --- Patch 5: cron model-provider preflight opts into trusted env-proxy mode --- \
+    # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
     # Reviewed against openclaw@2026.5.27 dist: the cron isolated-agent preflight \
     # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
     # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
-    # SsrFPolicy, but does not pass a `mode`. Default STRICT mode pins DNS for the \
-    # managed inference hostname (`inference.local`), which is intentionally only \
-    # resolvable through the OpenShell L7 proxy — pinned `dns.lookup` therefore \
-    # fails with EAI_AGAIN and the scheduler permanently skips every cron run. \
-    # Inject `mode: "trusted_env_proxy"` so the call uses the env proxy dispatcher; \
-    # SSRF protection is retained through the existing hostname allowlist and the \
-    # proxy's own ACLs. Scoped to the exact audit-context string; other \
-    # `fetchWithSsrFGuard` callers are untouched. \
+    # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
+    # Default STRICT mode pins DNS for the managed inference hostname \
+    # (`inference.local`), which is intentionally only resolvable through the \
+    # OpenShell L7 proxy — pinned `dns.lookup` therefore fails with EAI_AGAIN and \
+    # the scheduler permanently skips every cron run. Inject \
+    # `mode: "trusted_env_proxy"` so the call uses the env proxy dispatcher; SSRF \
+    # protection is retained through the existing hostname allowlist and the \
+    # proxy's own ACLs. \
+    # \
+    # The patch keys on three co-located markers in the same file — the audit \
+    # context literal, the `fetchWithSsrFGuard(` call, and the \
+    # `buildLocalProviderSsrFPolicy` helper that builds the surrounding policy — \
+    # to pin the rewrite to the preflight call and fail closed if upstream drift \
+    # ever reuses the audit-context string outside this shape. \
     preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
     if [ -n "$preflight_files" ]; then \
         patched_preflight=0; \
         for f in $preflight_files; do \
+            grep -Fq 'fetchWithSsrFGuard(' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
+            grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
             if grep -Fq 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f"; then \
-                echo "INFO: Patch 5 already present in $f"; \
+                echo "INFO: Patch 6 already present in $f"; \
             else \
                 sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
                 grep -Fq 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" \
-                    || patch_fail "Patch 5 verification failed for $f"; \
+                    || patch_fail "Patch 6 verification failed for $f"; \
                 patched_preflight=1; \
             fi; \
         done; \
         if [ "$patched_preflight" = "1" ]; then \
-            echo "INFO: Patch 5 applied to OpenClaw ${OC_VERSION} cron preflight trusted env-proxy"; \
+            echo "INFO: Patch 6 applied to OpenClaw ${OC_VERSION} cron preflight trusted env-proxy"; \
         fi; \
     else \
         preflight_refs="$(grep -RIlE --include='*.js' 'preflightCronModelProvider|probeLocalProviderEndpoint' "$OC_DIST" || true)"; \
         if [ -z "$preflight_refs" ]; then \
-            echo "INFO: OpenClaw ${OC_VERSION} has no cron model-provider preflight; Patch 5 not needed"; \
+            echo "INFO: OpenClaw ${OC_VERSION} has no cron model-provider preflight; Patch 6 not needed"; \
         else \
-            echo "ERROR: Patch 5 target missing but cron preflight references remain:" >&2; \
+            echo "ERROR: Patch 6 target missing but cron preflight references remain:" >&2; \
             printf '%s\n' "$preflight_refs" | head -n 5 >&2; \
-            patch_fail "Patch 5 cannot safely skip"; \
+            patch_fail "Patch 6 cannot safely skip"; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \

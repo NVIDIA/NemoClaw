@@ -98,10 +98,16 @@ if [ "${NVIDIA_API_KEY:0:6}" != "nvapi-" ]; then
 fi
 pass "prerequisites satisfied"
 
-# shellcheck disable=SC2317 # invoked via trap
+CREATED_SANDBOX=0
+
+# shellcheck disable=SC2317,SC2329 # invoked via trap
 cleanup() {
   if [ "${NEMOCLAW_CRON_PREFLIGHT_KEEP:-0}" = "1" ]; then
     info "NEMOCLAW_CRON_PREFLIGHT_KEEP=1 set; leaving sandbox $SANDBOX in place"
+    return
+  fi
+  if [ "$CREATED_SANDBOX" != "1" ]; then
+    info "sandbox $SANDBOX was pre-existing and not recreated; leaving it alone"
     return
   fi
   info "destroying sandbox $SANDBOX"
@@ -114,17 +120,22 @@ section "Onboard sandbox '$SANDBOX'"
 if [ "${NEMOCLAW_RECREATE_SANDBOX:-0}" = "1" ]; then
   info "NEMOCLAW_RECREATE_SANDBOX=1 set; destroying existing sandbox first"
   nemoclaw "$SANDBOX" destroy --yes >/dev/null 2>&1 || true
+  CREATED_SANDBOX=1
 fi
 
-NEMOCLAW_SANDBOX_NAME="$SANDBOX" nemoclaw onboard \
-  --provider build \
-  --model "$MODEL" 2>&1 | sed 's/^/    /'
+NEMOCLAW_SANDBOX_NAME="$SANDBOX" \
+  NEMOCLAW_PROVIDER=build \
+  NEMOCLAW_MODEL="$MODEL" \
+  nemoclaw onboard \
+    --non-interactive \
+    --yes-i-accept-third-party-software 2>&1 | sed 's/^/    /'
 ONBOARD_RC=${PIPESTATUS[0]}
 if [ "$ONBOARD_RC" -ne 0 ]; then
   fail "onboard exited $ONBOARD_RC"
   echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
   exit 1
 fi
+CREATED_SANDBOX=1
 pass "onboard completed"
 
 # ── Schedule cron job ──

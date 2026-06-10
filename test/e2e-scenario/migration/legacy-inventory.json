@@ -201,6 +201,17 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
+      "legacyScript": "test/e2e/test-cron-preflight-inference-local-e2e.sh",
+      "domain": "inference",
+      "ownerIssue": "#4349",
+      "status": "not-migrated",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Covers OpenClaw cron isolated-agent provider preflight against the managed inference hostname; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
+    },
+    {
       "legacyScript": "test/e2e/test-common-egress-agent-e2e.sh",
       "domain": "security-policy",
       "ownerIssue": "#4352",
