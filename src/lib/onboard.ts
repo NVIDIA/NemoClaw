@@ -86,8 +86,8 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const {
-  resolveProviderKeyFallback,
-}: typeof import("./onboard/provider-key-fallback") = require("./onboard/provider-key-fallback");
+  resolveRequestedProviderSelection,
+}: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -4135,93 +4135,68 @@ async function setupNim(
       hermesAuthMethod = null;
 
       if (isNonInteractive() || requestedProvider) {
-        let providerKey = requestedProvider;
-        if (!providerKey) {
-          const recordedProvider = readRecordedProvider(sandboxName);
-          const hasNimContainer = !!readRecordedNimContainer(sandboxName);
-          const recoveredKey = providerRecovery.providerNameToOptionKey(
-            REMOTE_PROVIDER_CONFIG,
-            recordedProvider,
-            { hasNimContainer },
-          );
-          if (recoveredKey) {
-            // Refuse to silently switch providers behind the user's back; if
-            // the previously-recorded one is gone, surface the recorded value
-            // so the user can fix the dependency or override via env var.
-            // Special case: on WSL, recorded ollama-local was WSL Ollama at
-            // record time. If the only reachable Ollama is now Windows-host
-            // (so the menu's "ollama" key points there), the availability
-            // check below would pass and silently swap the daemon. Detect
-            // and fail-loud with a hint.
-            if (isWslHost && recordedProvider === "ollama-local" && isWindowsHostOllama) {
+        const providerSelection = resolveRequestedProviderSelection({
+          options,
+          requestedProvider,
+          sandboxName,
+          remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+          isWsl: isWslHost,
+          isWindowsHostOllama,
+          windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
+          hermesProviderAvailable,
+          readRecordedProvider,
+          readRecordedNimContainer,
+          readRecordedModel,
+        });
+        if (providerSelection.kind === "failure") {
+          switch (providerSelection.reason.kind) {
+            case "wsl-recorded-ollama-windows-host":
               console.error(
-                `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
+                `  Recorded provider '${providerSelection.reason.recordedProvider}' (WSL Ollama) is not available in this environment.`,
               );
               console.error(
                 "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
               );
-              process.exit(1);
-            }
-            if (!options.some((o) => o.key === recoveredKey)) {
+              break;
+            case "recorded-provider-unavailable":
               console.error(
-                `  Recorded provider '${recordedProvider}' is not available in this environment.`,
+                `  Recorded provider '${providerSelection.reason.recordedProvider}' is not available in this environment.`,
               );
               console.error(
                 "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
               );
-              if (recoveredKey === "ollama") {
-                const winHostKey = options.find(
-                  (o) => o.key === "start-windows-ollama" || o.key === "install-windows-ollama",
-                )?.key;
-                if (winHostKey) {
-                  console.error(
-                    `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${winHostKey} to use it.`,
-                  );
-                }
+              if (providerSelection.reason.windowsHostKey) {
+                console.error(
+                  `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${providerSelection.reason.windowsHostKey} to use it.`,
+                );
               }
-              process.exit(1);
-            }
-            providerKey = recoveredKey;
-            recoveredFromSandbox = true;
-            recoveredModel = readRecordedModel(sandboxName);
-          } else if (recordedProvider === "vllm-local") {
-            // vllm-local without a nimContainer marker is ambiguous — could be
-            // standalone vLLM or Local NIM. Don't guess; require an override.
-            console.error(
-              "  Recorded provider 'vllm-local' is ambiguous (could be standalone vLLM or Local NIM).",
-            );
-            console.error("  Set NEMOCLAW_PROVIDER explicitly (vllm or nim-local) and re-run.");
-            process.exit(1);
-          } else {
-            providerKey = "build";
-          }
-        }
-        selected = options.find((o) => o.key === providerKey);
-        if (!selected) {
-          if (
-            (providerKey === "start-windows-ollama" || providerKey === "install-windows-ollama") &&
-            rejectWindowsHostOllama(providerKey, isWindowsHostOllama)
-          ) {
-            process.exit(1);
-          }
-          selected = resolveProviderKeyFallback(options, providerKey, {
-            canUseWindowsHostOllama:
-              isWindowsHostOllama && windowsHostOllamaDockerRequirement.supported,
-          });
-          if (!selected) {
-            if (providerKey === "hermesProvider" && !hermesProviderAvailable) {
+              break;
+            case "ambiguous-recorded-vllm":
+              console.error(
+                "  Recorded provider 'vllm-local' is ambiguous (could be standalone vLLM or Local NIM).",
+              );
+              console.error("  Set NEMOCLAW_PROVIDER explicitly (vllm or nim-local) and re-run.");
+              break;
+            case "unsupported-windows-host-ollama":
+              rejectWindowsHostOllama(providerSelection.reason.providerKey, isWindowsHostOllama);
+              break;
+            case "hermes-provider-unavailable":
               console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
               console.error(
                 "  Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
               );
-              process.exit(1);
-            }
-            console.error(
-              `  Requested provider '${providerKey}' is not available in this environment.`,
-            );
-            process.exit(1);
+              break;
+            case "requested-provider-unavailable":
+              console.error(
+                `  Requested provider '${providerSelection.reason.providerKey}' is not available in this environment.`,
+              );
+              break;
           }
+          process.exit(1);
         }
+        selected = providerSelection.selected;
+        recoveredFromSandbox = providerSelection.recoveredFromSandbox;
+        recoveredModel = providerSelection.recoveredModel;
         note(
           recoveredFromSandbox
             ? `  [non-interactive] Provider: ${selected.key} (recovered from sandbox '${sandboxName}')`
