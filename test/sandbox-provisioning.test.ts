@@ -841,8 +841,23 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const localSrc = path.join(tmp, "src");
     const localScripts = path.join(tmp, "scripts");
     const generatorPath = path.join(localScripts, "generate-openclaw-config.mts");
-    const applierPath = path.join(localSrc, "lib", "messaging", "applier", "build", "messaging-build-applier.mts");
-    const messagingHookPath = path.join(localSrc, "lib", "messaging", "channels", "fixture", "hooks", "example.ts");
+    const applierPath = path.join(
+      localSrc,
+      "lib",
+      "messaging",
+      "applier",
+      "build",
+      "messaging-build-applier.mts",
+    );
+    const messagingHookPath = path.join(
+      localSrc,
+      "lib",
+      "messaging",
+      "channels",
+      "fixture",
+      "hooks",
+      "example.ts",
+    );
     const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
     const pluginFile = path.join(pluginDir, "index.js");
     const nestedPluginDir = path.join(pluginDir, "lib");

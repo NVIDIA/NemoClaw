@@ -87,7 +87,14 @@ stderr: ${result.stderr}`,
 
   const applierResult = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", APPLIER_PATH, "--agent", "hermes", "--phase", "post-agent-install"],
+    [
+      "--experimental-strip-types",
+      APPLIER_PATH,
+      "--agent",
+      "hermes",
+      "--phase",
+      "post-agent-install",
+    ],
     {
       encoding: "utf-8",
       env,

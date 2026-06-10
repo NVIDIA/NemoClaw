@@ -56,12 +56,24 @@ function runDryRun(envOverrides: Record<string, string> = {}) {
     },
     "openclaw",
   );
-  return spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install", "--dry-run"], {
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    env,
-    timeout: 10_000,
-  });
+  return spawnSync(
+    "node",
+    [
+      "--experimental-strip-types",
+      SCRIPT_PATH,
+      "--agent",
+      "openclaw",
+      "--phase",
+      "agent-install",
+      "--dry-run",
+    ],
+    {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      env,
+      timeout: 10_000,
+    },
+  );
 }
 
 function parseDryRun(envOverrides: Record<string, string> = {}) {
@@ -172,12 +184,23 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
         "openclaw",
       );
-      const result = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: planEnv,
-        timeout: 10_000,
-      });
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: planEnv,
+          timeout: 10_000,
+        },
+      );
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
@@ -249,7 +272,14 @@ describe("messaging-build-applier.mts: agent-install", () => {
       };
       const pluginResult = spawnSync(
         "node",
-        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "agent-install"],
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "agent-install",
+        ],
         {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
@@ -261,7 +291,14 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
       const postInstallResult = spawnSync(
         "node",
-        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
         {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
@@ -309,19 +346,32 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
       const fakeOpenclaw = path.join(tmp, "openclaw");
       fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-      const postInstallResult = spawnSync("node", ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: {
-          PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
-          HOME: tmp,
-          NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+      const postInstallResult = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+            HOME: tmp,
+            NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+          },
+          timeout: 10_000,
         },
-        timeout: 10_000,
-      });
+      );
       expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
 
-      const config = JSON.parse(fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"));
+      const config = JSON.parse(
+        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
+      );
       expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
         source: "npm",
         spec: "@tencent-weixin/openclaw-weixin@2.4.3",
@@ -334,7 +384,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.channels?.wechat).toBeUndefined();
 
       const account = JSON.parse(
-        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw-weixin", "accounts", "primary.json"), "utf-8"),
+        fs.readFileSync(
+          path.join(tmp, ".openclaw", "openclaw-weixin", "accounts", "primary.json"),
+          "utf-8",
+        ),
       );
       expect(account).toMatchObject({
         token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
@@ -342,7 +395,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         userId: "u1",
       });
       expect(
-        JSON.parse(fs.readFileSync(path.join(tmp, ".openclaw", "openclaw-weixin", "accounts.json"), "utf-8")),
+        JSON.parse(
+          fs.readFileSync(path.join(tmp, ".openclaw", "openclaw-weixin", "accounts.json"), "utf-8"),
+        ),
       ).toEqual(["primary"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -373,7 +428,14 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const result = spawnSync(
         "node",
-        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
         {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
@@ -427,7 +489,14 @@ describe("messaging-build-applier.mts: agent-install", () => {
 
       const result = spawnSync(
         "node",
-        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "hermes", "--phase", "post-agent-install"],
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "post-agent-install",
+        ],
         {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],

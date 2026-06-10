@@ -102,7 +102,14 @@ function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T 
 function runMessagingPostInstall(env: Record<string, string>): void {
   const result = spawnSync(
     "node",
-    ["--experimental-strip-types", APPLIER_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
+    [
+      "--experimental-strip-types",
+      APPLIER_PATH,
+      "--agent",
+      "openclaw",
+      "--phase",
+      "post-agent-install",
+    ],
     {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

@@ -42,8 +42,7 @@ export const resolveDiscordTemplateReference: BuiltInRenderTemplateResolver = (
       );
     case "discord.allowAllUsers":
       return resolvedRenderTemplateReference(
-        Object.keys(discordGuilds(context)).length > 0 &&
-          discordAllowedUsers(context).length === 0
+        Object.keys(discordGuilds(context)).length > 0 && discordAllowedUsers(context).length === 0
           ? true
           : undefined,
       );

@@ -11,7 +11,6 @@ const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
-
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
 }
@@ -227,7 +226,9 @@ export function patchStagedDockerfile(
   if (messagingPlan) {
     const messagingPlanArgPattern = /^ARG NEMOCLAW_MESSAGING_PLAN_B64=.*$/m;
     if (!messagingPlanArgPattern.test(dockerfile)) {
-      throw new Error("Dockerfile is missing ARG NEMOCLAW_MESSAGING_PLAN_B64; cannot apply messaging plan.");
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_MESSAGING_PLAN_B64; cannot apply messaging plan.",
+      );
     }
     dockerfile = dockerfile.replace(
       messagingPlanArgPattern,

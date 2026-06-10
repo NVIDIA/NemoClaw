@@ -79,24 +79,20 @@ export function buildMessagingPlanB64(
   agent: MessagingPlanAgent,
   channels: readonly string[],
 ): string {
-  const result = spawnSync(
-    "npx",
-    ["tsx", "-e", PLAN_BUILDER],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-      env: {
-        PATH: process.env.PATH || "/usr/bin:/bin",
-        ...env,
-        NEMOCLAW_TEST_MESSAGING_PLAN_AGENT: agent,
-        NEMOCLAW_TEST_MESSAGING_PLAN_CHANNELS_JSON: JSON.stringify([...new Set(channels)]),
-        NEMOCLAW_TEST_MESSAGING_CREDENTIAL_AVAILABILITY_JSON: JSON.stringify(
-          credentialAvailability(),
-        ),
-      },
-      timeout: 10_000,
+  const result = spawnSync("npx", ["tsx", "-e", PLAN_BUILDER], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+    env: {
+      PATH: process.env.PATH || "/usr/bin:/bin",
+      ...env,
+      NEMOCLAW_TEST_MESSAGING_PLAN_AGENT: agent,
+      NEMOCLAW_TEST_MESSAGING_PLAN_CHANNELS_JSON: JSON.stringify([...new Set(channels)]),
+      NEMOCLAW_TEST_MESSAGING_CREDENTIAL_AVAILABILITY_JSON: JSON.stringify(
+        credentialAvailability(),
+      ),
     },
-  );
+    timeout: 10_000,
+  });
   if (result.status !== 0) {
     throw new Error(
       `Failed to build ${agent} messaging test plan (exit ${result.status}):\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
@@ -140,11 +136,7 @@ function legacyMessagingConfigEnv(env: Record<string, string>): Record<string, s
   assignString(next, "WECHAT_BASE_URL", wechatConfig.baseUrl);
   assignString(next, "WECHAT_USER_ID", wechatConfig.userId);
 
-  const slackConfig = decodeJsonEnv<Record<string, unknown>>(
-    env,
-    "NEMOCLAW_SLACK_CONFIG_B64",
-    {},
-  );
+  const slackConfig = decodeJsonEnv<Record<string, unknown>>(env, "NEMOCLAW_SLACK_CONFIG_B64", {});
   assignCsv(next, "SLACK_ALLOWED_CHANNELS", slackConfig.allowedChannels);
 
   return next;
@@ -160,9 +152,7 @@ function assignDiscordConfig(
 
   const users = uniqueStrings([
     ...stringList(allowedUsers),
-    ...Object.values(guilds).flatMap((entry) =>
-      isRecord(entry) ? stringList(entry.users) : [],
-    ),
+    ...Object.values(guilds).flatMap((entry) => (isRecord(entry) ? stringList(entry.users) : [])),
   ]);
   assignCsv(target, "DISCORD_USER_ID", users);
 
@@ -176,11 +166,7 @@ function assignDiscordConfig(
   }
 }
 
-function assignMentionMode(
-  target: Record<string, string>,
-  key: string,
-  value: unknown,
-): void {
+function assignMentionMode(target: Record<string, string>, key: string, value: unknown): void {
   if (typeof value === "boolean") {
     target[key] = value ? "1" : "0";
     return;
@@ -206,7 +192,12 @@ function stringList(value: unknown): string[] {
     return uniqueStrings(value.map((entry) => String(entry).trim()).filter(Boolean));
   }
   if (typeof value === "string") {
-    return uniqueStrings(value.split(",").map((entry) => entry.trim()).filter(Boolean));
+    return uniqueStrings(
+      value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    );
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return [String(value)];

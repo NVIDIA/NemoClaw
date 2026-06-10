@@ -49,7 +49,9 @@ export function nonEmptyString(value: unknown): string | undefined {
 }
 
 export function cleanString(value: unknown): string {
-  return String(value ?? "").replace(/\r/g, "").trim();
+  return String(value ?? "")
+    .replace(/\r/g, "")
+    .trim();
 }
 
 export function nonEmptyArray(values: readonly string[]): string[] | undefined {

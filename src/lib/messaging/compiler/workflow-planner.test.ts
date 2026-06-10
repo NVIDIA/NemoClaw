@@ -290,7 +290,7 @@ describe("MessagingWorkflowPlanner", () => {
           createBuiltInChannelManifestRegistry(),
           hooks,
           createBuiltInRenderTemplateResolver(),
-    ).buildPlan({
+        ).buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
           workflow: "onboard",
