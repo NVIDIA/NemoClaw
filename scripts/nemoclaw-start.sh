@@ -193,34 +193,29 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
-# Drop the marker the Docker HEALTHCHECK reads to decide whether an
-# in-container gateway liveness check is meaningful. We write it as early as
-# possible on the gateway-serving path — before the long startup work below —
-# so a slow or hung boot is governed by the strict local liveness check
-# (pgrep + gateway log) instead of being masked as healthy. Its presence means
-# this container runs the OpenClaw gateway (standalone deployments and the
-# #3975 forwarded-port shape). Its absence means the gateway is delivered out
-# of this container's namespace (OpenShell docker-driver sandboxes run it on
-# the host — #4503); an in-container probe cannot observe it, so the HEALTHCHECK
-# reports healthy and defers to NemoClaw/OpenShell host-side delivery-chain
-# monitoring. See the HEALTHCHECK block in the Dockerfile.
+# Marker file the Docker HEALTHCHECK reads to decide whether an in-container
+# gateway liveness check is meaningful. Its presence means this container runs
+# the OpenClaw gateway (standalone deployments and the #3975 forwarded-port
+# shape); its absence means the gateway is delivered out of this container's
+# namespace (OpenShell docker-driver sandboxes run it on the host — #4503),
+# so the HEALTHCHECK short-circuits to healthy and defers to host-side
+# delivery-chain monitoring. See the HEALTHCHECK block in the Dockerfile.
+#
+# IMPORTANT (#4710): the marker is dropped immediately before each
+# `openclaw gateway run --port ...` invocation later in this script — NOT
+# here. An early conditional gated on env hints (NEMOCLAW_CMD empty or
+# OPENSHELL_DRIVERS=docker) is unreliable because OpenShell 0.0.44 does not
+# export OPENSHELL_DRIVERS into the sandbox container env, so the guard never
+# fires for docker-driver sandboxes and the marker would be created
+# unconditionally — defeating the HEALTHCHECK short-circuit. Tying the marker
+# to the actual gateway-launch code path makes it true-by-construction: the
+# marker exists if-and-only-if this container is about to start the gateway.
+# Both the root and non-root entrypoint paths call `mark_in_container_gateway`
+# directly before their `openclaw gateway run` invocation.
 # Best-effort: a write failure must never block startup.
 mark_in_container_gateway() {
   : >/tmp/nemoclaw-gateway-local 2>/dev/null || true
 }
-# A non-empty NEMOCLAW_CMD means this container only runs a one-shot command
-# (e.g. `openclaw agent ...`) and never serves the gateway, so leave the marker
-# absent. Docker-driver sandboxes also leave it absent because OpenShell runs
-# the gateway as a host-side process outside this container's namespace. Both
-# the root and non-root entrypoint paths gate local gateway startup on the same
-# emptiness check further below.
-case ",${OPENSHELL_DRIVERS:-}," in
-  *,docker,*) _NEMOCLAW_DOCKER_DRIVER=1 ;;
-  *) _NEMOCLAW_DOCKER_DRIVER=0 ;;
-esac
-if [ ${#NEMOCLAW_CMD[@]} -eq 0 ] && [ "$_NEMOCLAW_DOCKER_DRIVER" != "1" ]; then
-  mark_in_container_gateway
-fi
 
 _chat_ui_url_port() {
   [ -n "${CHAT_UI_URL:-}" ] || return 1
@@ -3325,7 +3320,12 @@ if [ "$(id -u)" -ne 0 ]; then
   # inject code into any Node process via NODE_OPTIONS).
   validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
-  # Start gateway in background, auto-pair, then wait
+  # Start gateway in background, auto-pair, then wait. Mark the in-container
+  # gateway path so the Docker HEALTHCHECK probes it rather than short-circuiting
+  # to healthy — see the mark_in_container_gateway comment near the top of this
+  # file for the #4710 rationale (why the marker is tied to the launch site
+  # rather than an env-var conditional at startup).
+  mark_in_container_gateway
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   echo "[gateway] openclaw gateway launched (pid $GATEWAY_PID)" >&2
@@ -3547,6 +3547,10 @@ validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON
 # SECURITY: The sandbox user cannot kill this process because it runs
 # under a different UID. The fake-HOME attack no longer works because
 # the agent cannot restart the gateway with a tampered config.
+# Mark the in-container gateway path so the Docker HEALTHCHECK probes it
+# rather than short-circuiting to healthy — see mark_in_container_gateway
+# comment near the top of this file for the #4710 rationale.
+mark_in_container_gateway
 nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "[gateway] openclaw gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
