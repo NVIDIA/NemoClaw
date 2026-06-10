@@ -10,6 +10,7 @@ import {
   canonicalDispatchCommand,
   normalizeScenarioAdvisorResult,
   renderScenarioSummary,
+  SCENARIO_ADVISOR_WORKFLOWS,
   type ScenarioAdvisorResult,
 } from "../tools/e2e-advisor/scenarios.mts";
 
@@ -19,13 +20,15 @@ import {
 // downstream consumers (sticky comment, CI loop dispatch) depend on is
 // asserted here.
 
+const VITEST_SCENARIO_WORKFLOW = "e2e-vitest-scenarios.yaml";
+
 function metadata(
   overrides: Partial<{ baseRef: string; headRef: string; changedFiles: string[] }> = {},
 ) {
   return {
     baseRef: "origin/main",
     headRef: "HEAD",
-    changedFiles: ["test/e2e-scenario/runtime/run-scenario.sh"],
+    changedFiles: ["test/e2e-scenario/scenarios/runtime-support.ts"],
     ...overrides,
   };
 }
@@ -35,23 +38,34 @@ describe("E2E scenario advisor — prompt construction", () => {
     const prompt = buildPrompt({
       baseRef: "origin/main",
       headRef: "HEAD",
-      changedFiles: ["test/e2e-scenario/validation_suites/messaging/telegram/foo.sh"],
+      changedFiles: ["test/e2e-scenario/framework/phases/onboarding.ts"],
       diff: "+ echo ok",
     });
     // Caller of normalizeScenarioAdvisorResult re-injects metadata, but the
     // prompt must still surface enough context for the model to reason.
     expect(prompt).toContain("origin/main");
-    expect(prompt).toContain("test/e2e-scenario/validation_suites/messaging/telegram/foo.sh");
+    expect(prompt).toContain("test/e2e-scenario/framework/phases/onboarding.ts");
     expect(prompt).toContain("+ echo ok");
   });
 
   it("system prompt is non-empty and embeds the JSON schema for the model", () => {
     // The model receives the schema inline; we only assert that the prompt
-    // exists and includes the schema discriminator. Specific phrasing is an
-    // implementation detail and intentionally not asserted here.
+    // exists, includes the schema discriminator, and routes scenario
+    // recommendations to the Vitest workflow rather than the legacy
+    // typed-shell dispatch surfaces.
     const systemPrompt = buildSystemPrompt({ $id: "test-schema", type: "object" });
     expect(systemPrompt.length).toBeGreaterThan(0);
     expect(systemPrompt).toContain("test-schema");
+    expect(systemPrompt).toContain(VITEST_SCENARIO_WORKFLOW);
+    expect(systemPrompt).not.toContain("e2e-scenarios-all.yaml");
+    expect(systemPrompt).not.toContain("e2e-scenarios.yaml");
+  });
+
+  it("exports the Vitest scenario workflow for both targeted and fan-out recommendations", () => {
+    expect(SCENARIO_ADVISOR_WORKFLOWS).toEqual({
+      single: VITEST_SCENARIO_WORKFLOW,
+      all: VITEST_SCENARIO_WORKFLOW,
+    });
   });
 });
 
@@ -59,11 +73,11 @@ describe("E2E scenario advisor — normalization contract", () => {
   it("preserves valid recommendations and canonicalizes the dispatch command", () => {
     const raw = {
       version: 1,
-      relevantChangedFiles: ["test/e2e-scenario/runtime/run-scenario.sh"],
+      relevantChangedFiles: ["test/e2e-scenario/scenarios/runtime-support.ts"],
       required: [
         {
           id: "e2e-scenarios-all",
-          workflow: "e2e-scenarios-all.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           required: true,
           reason: "shared scenario runtime changed",
           // Model returns a non-canonical command; sanitizer must overwrite it.
@@ -73,7 +87,7 @@ describe("E2E scenario advisor — normalization contract", () => {
       optional: [
         {
           id: "ubuntu-repo-cloud-openclaw",
-          workflow: "e2e-scenarios.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           scenario: "ubuntu-repo-cloud-openclaw",
           required: false,
           reason: "smoke confirmation on the canonical scenario",
@@ -90,10 +104,10 @@ describe("E2E scenario advisor — normalization contract", () => {
     expect(normalized.required).toHaveLength(1);
     expect(normalized.optional).toHaveLength(1);
     expect(normalized.required[0]?.dispatchCommand).toBe(
-      canonicalDispatchCommand("e2e-scenarios-all.yaml", "e2e-scenarios-all"),
+      canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),
     );
     expect(normalized.optional[0]?.dispatchCommand).toBe(
-      canonicalDispatchCommand("e2e-scenarios.yaml", "ubuntu-repo-cloud-openclaw"),
+      canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "ubuntu-repo-cloud-openclaw"),
     );
     // Canonical fan-out command must not contain a scenarios field.
     expect(normalized.required[0]?.dispatchCommand).not.toContain("--field scenarios=");
@@ -124,32 +138,26 @@ describe("E2E scenario advisor — normalization contract", () => {
     expect(normalized.required).toHaveLength(0);
   });
 
-  it("rejects workflow/id pairing mismatches for the fan-out workflow", () => {
+  it("rejects legacy typed-shell workflows while accepting Vitest fan-out", () => {
     const normalized = normalizeScenarioAdvisorResult(
       {
         required: [
           {
-            // Fan-out workflow with a single-scenario id is incoherent: the
-            // sticky-comment dispatch line would falsely suggest you can
-            // narrow the fan-out to one scenario via this command.
             id: "ubuntu-repo-cloud-openclaw",
-            workflow: "e2e-scenarios-all.yaml",
-            reason: "mismatched workflow/id",
-            dispatchCommand: "gh ...",
-          },
-          {
-            // Inverse: synthetic fan-out id on the single-scenario workflow
-            // would render "--field scenarios=e2e-scenarios-all", which is
-            // not a real scenario in ROUTES.
-            id: "e2e-scenarios-all",
             workflow: "e2e-scenarios.yaml",
-            reason: "synthetic id on single-scenario workflow",
+            reason: "legacy single-scenario workflow",
             dispatchCommand: "gh ...",
           },
           {
             id: "e2e-scenarios-all",
             workflow: "e2e-scenarios-all.yaml",
-            reason: "valid pairing",
+            reason: "legacy fan-out workflow",
+            dispatchCommand: "gh ...",
+          },
+          {
+            id: "e2e-scenarios-all",
+            workflow: VITEST_SCENARIO_WORKFLOW,
+            reason: "valid Vitest fan-out",
             dispatchCommand: "gh ...",
           },
         ],
@@ -167,7 +175,7 @@ describe("E2E scenario advisor — normalization contract", () => {
         required: [
           {
             id: "ubuntu-repo-cloud-openclaw",
-            workflow: "e2e-scenarios.yaml",
+            workflow: VITEST_SCENARIO_WORKFLOW,
             // Model claims this required item is actually optional.
             required: false,
             reason: "in required[] but model marked optional",
@@ -177,7 +185,7 @@ describe("E2E scenario advisor — normalization contract", () => {
         optional: [
           {
             id: "ubuntu-repo-cloud-hermes",
-            workflow: "e2e-scenarios.yaml",
+            workflow: VITEST_SCENARIO_WORKFLOW,
             // Model claims this optional item is actually required.
             required: true,
             reason: "in optional[] but model marked required",
@@ -198,19 +206,19 @@ describe("E2E scenario advisor — normalization contract", () => {
         required: [
           {
             id: "ubuntu;rm -rf /",
-            workflow: "e2e-scenarios.yaml",
+            workflow: VITEST_SCENARIO_WORKFLOW,
             reason: "shell injection attempt",
             dispatchCommand: "gh ...",
           },
           {
             id: "Ubuntu_Repo_Cloud", // not kebab
-            workflow: "e2e-scenarios.yaml",
+            workflow: VITEST_SCENARIO_WORKFLOW,
             reason: "non-canonical id",
             dispatchCommand: "gh ...",
           },
           {
             id: "ubuntu-repo-cloud-openclaw",
-            workflow: "e2e-scenarios.yaml",
+            workflow: VITEST_SCENARIO_WORKFLOW,
             reason: "valid",
             dispatchCommand: "gh ...",
           },
@@ -226,10 +234,15 @@ describe("E2E scenario advisor — normalization contract", () => {
   it("drops malformed recommendations and de-duplicates by id", () => {
     const raw = {
       required: [
-        { id: "good", workflow: "e2e-scenarios.yaml", reason: "ok", dispatchCommand: "gh ..." },
-        { id: "good", workflow: "e2e-scenarios.yaml", reason: "dup", dispatchCommand: "gh ..." },
-        { id: "missing-reason", workflow: "e2e-scenarios.yaml", dispatchCommand: "gh ..." },
-        { workflow: "e2e-scenarios.yaml", reason: "no id", dispatchCommand: "gh ..." },
+        { id: "good", workflow: VITEST_SCENARIO_WORKFLOW, reason: "ok", dispatchCommand: "gh ..." },
+        {
+          id: "good",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "dup",
+          dispatchCommand: "gh ...",
+        },
+        { id: "missing-reason", workflow: VITEST_SCENARIO_WORKFLOW, dispatchCommand: "gh ..." },
+        { workflow: VITEST_SCENARIO_WORKFLOW, reason: "no id", dispatchCommand: "gh ..." },
       ],
       optional: [],
       noScenarioE2eReason: null,
@@ -244,7 +257,7 @@ describe("E2E scenario advisor — normalization contract", () => {
       required: [
         {
           id: "ubuntu-repo-cloud-openclaw",
-          workflow: "e2e-scenarios.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           required: true,
           reason: "primary",
           dispatchCommand: "gh ...",
@@ -253,14 +266,14 @@ describe("E2E scenario advisor — normalization contract", () => {
       optional: [
         {
           id: "ubuntu-repo-cloud-openclaw",
-          workflow: "e2e-scenarios.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           required: false,
           reason: "duplicate fallback",
           dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-hermes",
-          workflow: "e2e-scenarios.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           required: false,
           reason: "adjacent",
           dispatchCommand: "gh ...",
@@ -276,15 +289,20 @@ describe("E2E scenario advisor — normalization contract", () => {
   it("filters relevantChangedFiles to the metadata changedFiles set", () => {
     const normalized = normalizeScenarioAdvisorResult(
       {
-        relevantChangedFiles: ["test/e2e-scenario/runtime/run-scenario.sh", "fabricated/file.txt"],
+        relevantChangedFiles: [
+          "test/e2e-scenario/scenarios/runtime-support.ts",
+          "fabricated/file.txt",
+        ],
         required: [],
         optional: [],
         noScenarioE2eReason: "no impact",
         confidence: "low",
       },
-      metadata({ changedFiles: ["test/e2e-scenario/runtime/run-scenario.sh"] }),
+      metadata({ changedFiles: ["test/e2e-scenario/scenarios/runtime-support.ts"] }),
     );
-    expect(normalized.relevantChangedFiles).toEqual(["test/e2e-scenario/runtime/run-scenario.sh"]);
+    expect(normalized.relevantChangedFiles).toEqual([
+      "test/e2e-scenario/scenarios/runtime-support.ts",
+    ]);
   });
 
   it("supplies a default noScenarioE2eReason when none provided and there are no recommendations", () => {
@@ -307,15 +325,15 @@ describe("E2E scenario advisor — summary and comment rendering", () => {
       version: 1,
       baseRef: "origin/main",
       headRef: "HEAD",
-      changedFiles: [".github/workflows/e2e-scenarios.yaml"],
-      relevantChangedFiles: [".github/workflows/e2e-scenarios.yaml"],
+      changedFiles: [".github/workflows/e2e-vitest-scenarios.yaml"],
+      relevantChangedFiles: [".github/workflows/e2e-vitest-scenarios.yaml"],
       required: [
         {
           id: "e2e-scenarios-all",
-          workflow: "e2e-scenarios-all.yaml",
+          workflow: VITEST_SCENARIO_WORKFLOW,
           required: true,
           reason: "scenario workflow changed",
-          dispatchCommand: canonicalDispatchCommand("e2e-scenarios-all.yaml", "e2e-scenarios-all"),
+          dispatchCommand: canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),
         },
       ],
       optional: [],
@@ -328,7 +346,7 @@ describe("E2E scenario advisor — summary and comment rendering", () => {
     const summary = renderScenarioSummary(sampleResult());
     expect(summary).toContain("e2e-scenarios-all");
     expect(summary).toContain(
-      canonicalDispatchCommand("e2e-scenarios-all.yaml", "e2e-scenarios-all"),
+      canonicalDispatchCommand(VITEST_SCENARIO_WORKFLOW, "e2e-scenarios-all"),
     );
   });
 
