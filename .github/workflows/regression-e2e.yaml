@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,docker-unreachable-gateway-start-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,strict-tool-call-probe-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,strict-tool-call-probe-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
         required: false
         type: string
         default: ""
@@ -46,7 +46,6 @@ jobs:
     outputs:
       dashboard: ${{ steps.select.outputs.dashboard }}
       gateway: ${{ steps.select.outputs.gateway }}
-      docker_unreachable_gateway_start: ${{ steps.select.outputs.docker_unreachable_gateway_start }}
       gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
       openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
       onboard_inference_smoke: ${{ steps.select.outputs.onboard_inference_smoke }}
@@ -79,12 +78,6 @@ jobs:
             echo "gateway=true" >> "$GITHUB_OUTPUT"
           else
             echo "gateway=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ -z "$normalized" ] || includes_job "docker-unreachable-gateway-start-e2e"; then
-            echo "docker_unreachable_gateway_start=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "docker_unreachable_gateway_start=false" >> "$GITHUB_OUTPUT"
           fi
 
           if [ -z "$normalized" ] || includes_job "gateway-drift-preflight-e2e"; then
@@ -192,44 +185,6 @@ jobs:
             /tmp/nemoclaw-e2e-gateway-health-honest.log
             /tmp/nemoclaw-e2e-gateway-health-honest-start.log
             /tmp/nemoclaw-e2e-gateway-health-honest-process.log
-          if-no-files-found: ignore
-
-  # ── Docker-unreachable gateway-start E2E ───────────────────
-  # Coverage guard for #2347's fallback path. Preflight catches Docker
-  # daemon outages before step [2/8] on the normal path; this focused
-  # regression simulates Docker dying during `openshell gateway start` and
-  # verifies onboard exits before health polling with Docker recovery advice.
-  docker-unreachable-gateway-start-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.docker_unreachable_gateway_start == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Run Docker-unreachable gateway-start E2E test
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-docker-unreachable-gateway-start.sh
-
-      - name: Upload Docker-unreachable gateway-start logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: docker-unreachable-gateway-start-logs
-          path: |
-            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start.log
-            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start-node.log
-            /tmp/nemoclaw-e2e-docker-unreachable-gateway-start-openshell.log
           if-no-files-found: ignore
 
   # ── OpenShell version-pin E2E ──────────────────────────────

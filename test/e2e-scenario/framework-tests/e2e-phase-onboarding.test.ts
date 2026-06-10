@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { ArtifactSink } from "../framework/artifacts.ts";
 import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
@@ -41,6 +42,10 @@ function shellResult(exitCode: number, output = ""): ShellProbeResult {
       result: "/tmp/result.json",
     },
   };
+}
+
+function readJson(filePath: string): unknown {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 class FakeRunner implements CommandRunner {
@@ -475,6 +480,63 @@ describe("onboarding phase fixture", () => {
     await expect(onboard.from(ready({ onboarding: "cloud-hermes" }))).rejects.toThrow(
       /Unsupported onboarding profile 'cloud-hermes'/,
     );
+  });
+
+  it("writes an onboarding phase result artifact on success", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-onboarding-artifacts-"));
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "onboarded\n"));
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(runner),
+        new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+        undefined,
+        new ArtifactSink(tmp),
+      );
+
+      await onboard.from(ready(), { sandboxName: "e2e-artifact-success" });
+
+      expect(readJson(path.join(tmp, "onboarding.result.json"))).toMatchObject({
+        phase: "onboarding",
+        status: "passed",
+        onboarding: "cloud-openclaw",
+        sandboxName: "e2e-artifact-success",
+        agent: "openclaw",
+        provider: "nvidia",
+        providerEnv: "cloud",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes an onboarding phase result artifact on failure", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-onboarding-artifacts-"));
+    try {
+      const onboard = new OnboardingPhaseFixture(
+        new HostCliClient(new FakeRunner()),
+        new FakeSecrets({ NVIDIA_API_KEY: "secret" }),
+        undefined,
+        new ArtifactSink(tmp),
+      );
+
+      await expect(
+        onboard.from(
+          ready({
+            docker: { id: "docker-running", expectation: "required", available: false },
+          }),
+        ),
+      ).rejects.toThrow(/requires an available Docker runtime/);
+
+      expect(readJson(path.join(tmp, "onboarding.result.json"))).toMatchObject({
+        phase: "onboarding",
+        status: "failed",
+        onboarding: "cloud-openclaw",
+        error: "cloud-openclaw onboarding requires an available Docker runtime.",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("exposes the onboarding phase on the Vitest scenario context", () => {
