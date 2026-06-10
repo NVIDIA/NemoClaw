@@ -6,6 +6,8 @@ import { isSafeModelId } from "../validation";
 import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
+export { promptVllmModel, type VllmModelPromptOptions } from "./vllm-prompt";
+
 // credentials.ts still uses CommonJS-style exports.
 const { getCredential, prompt } = require("../credentials/store");
 

@@ -54,6 +54,35 @@ jobs:
           path: .e2e/vitest/
           include-hidden-files: true
           if-no-files-found: ignore
+  openshell-version-pin-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Run OpenShell version-pin live test
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload OpenShell version-pin artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-version-pin
+          path: .e2e/openshell-version-pin/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -95,6 +124,25 @@ jobs:
           "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/shell/",
           "artifact upload retention-days must be 14",
           "upload-artifact action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest job must run independently of generate-matrix",
+          "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
+          "openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
+          "openshell-version-pin-vitest job env must not include NVIDIA_API_KEY",
+          "openshell-version-pin-vitest checkout action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest checkout step must set persist-credentials=false",
+          "openshell-version-pin-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "openshell-version-pin-vitest setup-node action must be pinned to a full commit SHA",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "openshell-version-pin-vitest step 'Run OpenShell version-pin live test' env must not include NVIDIA_API_KEY",
+          "step 'Run OpenShell version-pin live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run OpenShell version-pin live test' run script must include test/e2e-scenario/live/openshell-version-pin.test.ts",
+          "openshell-version-pin-vitest upload-artifact action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/openshell-version-pin/",
+          "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
+          "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
+          "openshell-version-pin-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {

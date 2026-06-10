@@ -446,6 +446,34 @@ describe("inventory commands", () => {
     ).toBe(true);
   });
 
+  it("marks a shared-gateway Slack Socket Mode overlap as conflicted (#4953)", () => {
+    const lines: string[] = [];
+    const backfillAndFindOverlaps = vi
+      .fn()
+      .mockReturnValue([
+        { channel: "slack", sandboxes: ["alice", "bob"], reason: "slack-socket-mode-gateway" },
+      ]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messagingChannels: ["slack"] },
+          { name: "bob", model: "m", messagingChannels: ["slack"] },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      backfillAndFindOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((l) =>
+        l.includes("'alice' and 'bob' both have Slack Socket Mode enabled on the same gateway"),
+      ),
+    ).toBe(true);
+  });
+
   it("surfaces Hermes gateway log when messaging is degraded", () => {
     const lines: string[] = [];
     const checkMessagingBridgeHealth = vi
