@@ -446,6 +446,9 @@ if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
   process.exit(0);
 }
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.exit(2);
+}
 if (cmd.includes("find ")) {
   process.exit(0);
 }
@@ -514,6 +517,10 @@ function readStdin() {
 }
 if (cmd.includes("[ -d ")) {
   process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.stdout.write(JSON.stringify({ gateway: { auth: { token: "fresh" } }, channels: {} }));
   process.exit(0);
 }
 if (cmd.includes("find ")) {
