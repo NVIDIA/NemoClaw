@@ -452,18 +452,13 @@ const {
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const {
-  handleAgentSetupState,
-}: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
-const {
-  handleFinalizationState,
-}: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
-const {
-  handlePoliciesState,
-}: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
-const {
   createCoreOnboardFlowPhases,
   runCoreOnboardFlowSlice,
 }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+const {
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+}: typeof import("./onboard/machine/final-flow-phases") = require("./onboard/machine/final-flow-phases");
 const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
@@ -6681,19 +6676,32 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const hermesToolGateways = coreContext.hermesToolGateways;
     const nimContainer = coreContext.nimContainer;
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    selectedMessagingChannels = coreContext.selectedMessagingChannels;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const agentSetupResult = await handleAgentSetupState({
-      agent,
+    const finalFlowContext: CoreOnboardFlowContext = {
+      ...coreContext,
+      session,
       sandboxName,
       model,
       provider,
-      resume,
-      session,
+      endpointUrl,
+      credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,
-      deps: {
+      nimContainer,
+      webSearchConfig,
+      selectedMessagingChannels: coreContext.selectedMessagingChannels,
+      webSearchSupported,
+    };
+    let liveFinalFlowContext = finalFlowContext;
+
+    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+      CoreOnboardFlowContext,
+      import("./dashboard/contract").DashboardDeliveryChain,
+      import("./verify-deployment").VerifyDeploymentResult
+    >({
+      branchState: agent ? "agent_setup" : "openclaw",
+      agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({
           step,
@@ -6708,7 +6716,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepFailed,
           skippedStepMessage,
         }),
-        ensureAgentDashboardForward,
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         recordStepSkipped,
         isOpenclawReady,
         skippedStepMessage,
@@ -6720,31 +6729,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
-    });
-    await recordStateResult(agentSetupResult.stateResult);
-
-    const policiesResult = await handlePoliciesState({
-      resume,
-      sandboxName,
-      provider,
-      model,
-      endpointUrl,
-      credentialEnv,
-      selectedMessagingChannels,
-      webSearchConfig,
-      webSearchSupported,
-      hermesToolGateways,
-      agent,
-      deps: {
+      policiesDeps: {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
-          verifyCompatibleEndpointSandboxSmoke({
-            ...options,
-            runOpenshell,
-            redact,
-          }),
+          verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell, redact }),
         preparePolicyPresetResumeSelection: (name, options) =>
           preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,
@@ -6758,23 +6748,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
-    });
-    await recordStateResult(policiesResult.stateResult);
-    sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
-
-    const finalizationResult = await handleFinalizationState({
-      sandboxName,
-      model,
-      provider,
-      nimContainer,
-      agent,
-      hermesAuthMethod,
-      hermesToolGateways,
-      stagedLegacyKeys,
-      migratedLegacyKeys,
-      webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
-      deps: {
-        ensureAgentDashboardForward,
+      finalization: {
+        stagedLegacyKeys,
+        migratedLegacyKeys,
+        webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+      },
+      finalizationDeps: {
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
@@ -6788,7 +6769,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
         verifyDeployment: async (name, chain) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.verifyDeployment(name, chain, {
             executeSandboxCommand: (sandbox: string, script: string) =>
               executeSandboxCommandForVerification(sandbox, script),
@@ -6810,13 +6792,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             },
             captureForwardList: () =>
               runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
+            getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) =>
               providerExistsInGateway(providerName),
           });
         },
         formatVerificationDiagnostics: (result) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.formatVerificationDiagnostics(result);
         },
         printDashboard,
@@ -6824,7 +6807,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-    await recordStateResult(finalizationResult.stateResult);
+
+    await runFinalOnboardFlowSlice({
+      context: finalFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
+      resume,
+      recordStateResult,
+      afterPoliciesResultApplied: () => {
+        sandboxCancelRollback.disarm();
+      },
+      onContextUpdated: (context) => {
+        liveFinalFlowContext = context;
+      },
+    });
     traceCompleted = true;
   } finally {
     releaseOnboardLock();

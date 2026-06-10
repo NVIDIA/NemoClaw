@@ -30,7 +30,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, it } from "vitest";
 import { testTimeout } from "./helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(20_000);
@@ -699,14 +699,19 @@ describe("Scenario 12: skill install — wrong gateway active yields guidance, n
 });
 
 // ─── Scenario 14 (#4497) ─── connect preserves enough state for rebuild ─────
-// End-to-end recovery contract: a healthy gateway reports the sandbox as gone,
-// `connect` must NOT delete the registry entry, and a follow-up
-// `rebuild --yes` must still be able to LOCATE the sandbox (it now gets past
-// the dispatcher's "does not exist" guard and into the rebuild flow, where it
-// stops at the credential preflight with the sandbox untouched). Before the
-// fix, `connect` removed the entry and `rebuild` failed with "does not exist".
+// End-to-end recovery contract for the REOPENED issue: a healthy gateway
+// reports the sandbox as gone, `connect` must NOT delete the registry entry,
+// and the follow-up `rebuild --yes` must actually RECOVER it.
+//
+// The first fix (PR #4647) only stopped `connect` from deleting the entry. But
+// `rebuild` then still dead-ended at its backup step with "Cannot back up
+// state" because the live sandbox was absent — exactly this stale state. So the
+// recommended recovery path was still broken. This scenario now asserts rebuild
+// (a) locates the preserved entry (no "does not exist"), (b) does NOT dead-end
+// at "Cannot back up state", and (c) reports the stale state and proceeds to
+// recreate from the preserved registry metadata instead of aborting.
 describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover", () => {
-  it("after a non-destructive connect, `rebuild --yes` still finds the sandbox", {
+  it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({
@@ -728,11 +733,11 @@ describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover
     assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
     assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
 
-    // Step 4: the previously-suggested rebuild can still locate the sandbox.
-    // The registry provider is `nvidia-prod`; with NVIDIA_API_KEY unset the
-    // rebuild stops at the credential preflight (before any destructive
-    // backup/delete) — proving it located the entry rather than tripping the
-    // dispatcher's "does not exist" guard.
+    // Step 4: the previously-suggested rebuild must RECOVER the stale sandbox.
+    // The live `sandbox list` does not report it, so rebuild enters its
+    // stale-recovery path: it locates the preserved registry entry, skips the
+    // impossible backup (instead of dead-ending at "Cannot back up state"),
+    // and proceeds to recreate from the preserved metadata.
     const repoRoot = path.join(import.meta.dirname, "..");
     const rebuild = spawnSync(
       process.execPath,
@@ -747,8 +752,10 @@ describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover
           PATH: `${homeLocalBin}:/usr/bin:/bin`,
           NO_COLOR: "1",
           NEMOCLAW_NON_INTERACTIVE: "1",
-          // Force the credential preflight to fail deterministically so the
-          // rebuild halts the moment after it locates the sandbox.
+          // The recreate handoff (onboard --resume) fails fast in this stubbed
+          // HOME — fine: the assertions below target the recovery markers that
+          // are emitted BEFORE the recreate, proving rebuild crossed the
+          // backup gate that previously blocked it.
           NVIDIA_API_KEY: "",
           NEMOCLAW_PROVIDER_KEY: "",
         },
@@ -761,19 +768,39 @@ describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover
       /does not exist/,
       `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
     );
+    // The reopened-issue dead-end must be gone.
+    assert.doesNotMatch(
+      rebuildOut,
+      /Cannot back up state/,
+      `rebuild must not dead-end on the stale sandbox (#4497), got:\n${rebuildOut}`,
+    );
     assert.match(
       rebuildOut,
       new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
       `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
     );
-    // Registry entry still intact after the located-but-halted rebuild.
-    const registryPath = path.join(registryDir, "sandboxes.json");
-    const reg = fs.existsSync(registryPath)
-      ? JSON.parse(fs.readFileSync(registryPath, "utf-8"))
-      : null;
-    assert.ok(
-      reg?.sandboxes?.[SANDBOX_NAME],
-      `registry entry must remain after rebuild preflight, got: ${JSON.stringify(reg)}`,
+    // It must recognize the stale state and skip the impossible backup.
+    assert.match(
+      rebuildOut,
+      /absent from the live OpenShell gateway/,
+      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}`,
+    );
+    assert.match(
+      rebuildOut,
+      /No live workspace state to back up/,
+      `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
+    );
+    assert.doesNotMatch(
+      rebuildOut,
+      /Backing up sandbox state/,
+      `rebuild must not attempt backup on a stale sandbox (#4497), got:\n${rebuildOut}`,
+    );
+    // And it must proceed to recreate from the preserved metadata — this line
+    // is printed right before the onboard --resume handoff.
+    assert.match(
+      rebuildOut,
+      /Creating new sandbox with current image/,
+      `rebuild must proceed to recreate the sandbox (#4497), got:\n${rebuildOut}`,
     );
   });
 });
