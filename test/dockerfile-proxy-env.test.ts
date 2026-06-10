@@ -18,17 +18,16 @@ const NO_PROXY_VAL = String.raw`localhost,127\.0\.0\.1,::1,\$\{NEMOCLAW_PROXY_HO
 describe("Dockerfile runtime proxy environment (#4304)", () => {
   const dockerfile = readFileSync(DOCKERFILE, "utf8");
 
-  it.each(["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"])(
-    "seeds %s from NEMOCLAW_PROXY_HOST/PORT",
-    (key) => {
-      expect(dockerfile).toMatch(new RegExp(`(?<![A-Za-z_])${key}=${PROXY_URL}`));
-    },
-  );
+  it.each([
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+  ])("seeds %s from NEMOCLAW_PROXY_HOST/PORT", (key) => {
+    expect(dockerfile).toMatch(new RegExp(`(?<![A-Za-z_])${key}=${PROXY_URL}`));
+  });
 
-  it.each(["NO_PROXY", "no_proxy"])(
-    "seeds %s with local exclusions plus the proxy host",
-    (key) => {
-      expect(dockerfile).toMatch(new RegExp(`(?<![A-Za-z_])${key}=${NO_PROXY_VAL}`));
-    },
-  );
+  it.each(["NO_PROXY", "no_proxy"])("seeds %s with local exclusions plus the proxy host", (key) => {
+    expect(dockerfile).toMatch(new RegExp(`(?<![A-Za-z_])${key}=${NO_PROXY_VAL}`));
+  });
 });
