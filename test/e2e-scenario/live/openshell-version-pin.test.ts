@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { type ArtifactSink } from "../framework/artifacts.ts";
 import { expect, test } from "../framework/e2e-test.ts";
 
 // Migrated from test/e2e/test-openshell-version-pin.sh (regression guard for
@@ -21,6 +22,8 @@ import { expect, test } from "../framework/e2e-test.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+
+type GhDownloadMode = "success" | "fail";
 
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -89,9 +92,17 @@ exit 0`,
   }
 }
 
-// gh succeeds and writes fake archives + matching sha256 checksum files into
-// the requested --dir. Logs every invocation to DOWNLOAD_LOG.
-function createFakeGh(binDir: string, downloadLog: string): void {
+// gh writes fake archives + matching sha256 checksum files into the requested
+// --dir unless the test case asks it to fail so the installer must use curl.
+// Logs every invocation to DOWNLOAD_LOG.
+function createFakeGh(binDir: string, downloadLog: string, mode: GhDownloadMode): void {
+  const failureBranch =
+    mode === "fail"
+      ? `\
+  printf 'gh download-fail %s %s\\n' "$tag" "$pattern" >> ${JSON.stringify(downloadLog)}
+  exit 1
+`
+      : "";
   writeExecutable(
     path.join(binDir, "gh"),
     `#!/usr/bin/env bash
@@ -109,6 +120,7 @@ if [ "\${1:-}" = "release" ] && [ "\${2:-}" = "download" ]; then
     shift || true
   done
   [ -n "$tag" ] && [ -n "$pattern" ] && [ -n "$dir" ] || exit 2
+${failureBranch}
   printf 'gh download %s %s\\n' "$tag" "$pattern" >> ${JSON.stringify(downloadLog)}
   mkdir -p "$dir"
   case "$pattern" in
@@ -216,14 +228,16 @@ cat "$@" 2>/dev/null || true`,
   );
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.44 end-to-end", async ({
-  artifacts,
-}) => {
+async function runVersionPinScenario(
+  artifacts: ArtifactSink,
+  options: { ghDownloadMode: GhDownloadMode },
+): Promise<void> {
   await artifacts.writeJson("scenario.json", {
     id: "openshell-version-pin",
     runner: "vitest",
     boundary: "installer-script-unit",
     regressionTarget: "#3474",
+    ghDownloadMode: options.ghDownloadMode,
   });
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
@@ -236,7 +250,7 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.4
     createFakeUname(fakeBin);
     createFakeStickyOpenshell(fakeBin, "0.0.45");
     createFakeHelperBinaries(fakeBin);
-    createFakeGh(fakeBin, downloadLog);
+    createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
     createFakeTar(fakeBin, "0.0.44");
     createFakeStrings(fakeBin);
@@ -269,6 +283,16 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.4
     // is never re-fetched.
     expect(downloads).not.toContain("v0.0.45");
 
+    if (options.ghDownloadMode === "fail") {
+      // Assertion 3b: curl-fallback-observed — the installer must recover from
+      // gh download failure by re-requesting the pinned assets via curl.
+      expect(downloads).toContain("gh download-fail v0.0.44");
+      expect(downloads).toContain("curl ");
+    } else {
+      expect(downloads).toContain("gh download v0.0.44");
+      expect(downloads).not.toContain("curl ");
+    }
+
     // Assertion 4: replaced-openshell-reports-0.0.44 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
     // there and it is writable) was overwritten with the pinned 0.0.44 build.
@@ -281,4 +305,16 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.4
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.44 via gh download", async ({
+  artifacts,
+}) => {
+  await runVersionPinScenario(artifacts, { ghDownloadMode: "success" });
+});
+
+test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", async ({
+  artifacts,
+}) => {
+  await runVersionPinScenario(artifacts, { ghDownloadMode: "fail" });
 });
