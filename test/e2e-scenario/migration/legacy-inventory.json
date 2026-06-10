@@ -756,17 +756,6 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
-      "legacyScript": "test/e2e/test-strict-tool-call-probe.sh",
-      "domain": "inference",
-      "ownerIssue": "#4349",
-      "status": "not-migrated",
-      "targetVitestScenarios": [],
-      "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
-    },
-    {
       "legacyScript": "test/e2e/test-telegram-injection.sh",
       "domain": "messaging",
       "ownerIssue": "#4351",
