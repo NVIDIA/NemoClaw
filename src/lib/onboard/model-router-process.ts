@@ -56,8 +56,12 @@ export function isProcessRunning(pid: number | null | undefined): boolean {
 }
 
 export function isModelRouterCommandLineForPort(args: readonly string[], port: number): boolean {
-  const commandName = path.basename(args[0] || "");
-  if (commandName !== "model-router") return false;
+  // model-router may run as a Python venv script, where the OS interposes the
+  // interpreter: args[0]=python, args[1]=/path/to/model-router. Check both
+  // positions so /proc-based detection works regardless of execution mode.
+  const name0 = path.basename(args[0] || "");
+  const name1 = path.basename(args[1] || "");
+  if (name0 !== "model-router" && name1 !== "model-router") return false;
   if (!args.includes("proxy")) return false;
   return args.some((arg, index) => {
     if (arg === "--port") return args[index + 1] === String(port);

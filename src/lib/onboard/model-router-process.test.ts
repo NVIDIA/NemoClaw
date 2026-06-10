@@ -6,11 +6,29 @@ import { describe, expect, it } from "vitest";
 import { findModelRouterPidForPort } from "./model-router-process";
 
 describe("findModelRouterPidForPort", () => {
-  it("returns the PID when a model-router proxy is found via proc scan (#5169)", () => {
+  it("returns the PID when a model-router proxy is found via proc scan (direct, #5169)", () => {
     const pid = findModelRouterPidForPort(4000, {
       readProcCommandLine: (p) =>
         p === 12345
           ? ["/home/user/.nemoclaw/model-router-venv/bin/model-router", "proxy", "--port", "4000"]
+          : null,
+      listProcPids: () => [1, 100, 12345, 99999],
+    });
+    expect(pid).toBe(12345);
+  });
+
+  it("returns the PID when model-router is Python-interpreted (args[1], #5169)", () => {
+    // Real-world: python /path/model-router proxy --port 4000
+    const pid = findModelRouterPidForPort(4000, {
+      readProcCommandLine: (p) =>
+        p === 12345
+          ? [
+              "/home/user/.nemoclaw/model-router-venv/bin/python",
+              "/home/user/.nemoclaw/model-router-venv/bin/model-router",
+              "proxy",
+              "--port",
+              "4000",
+            ]
           : null,
       listProcPids: () => [1, 100, 12345, 99999],
     });

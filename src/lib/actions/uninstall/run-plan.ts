@@ -498,9 +498,11 @@ function isModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
   if (result.status !== 0) return false;
   const args = result.stdout.trim().split(/\s+/).filter(Boolean);
-  // Mirrors isModelRouterCommandLineForPort in model-router-process.ts: basename
-  // must be "model-router" and the args must include the "proxy" subcommand.
-  return path.basename(args[0] || "").includes("model-router") && args.includes("proxy");
+  // model-router runs as a Python venv script: args[0]=python, args[1]=model-router.
+  // Check both positions, mirroring isModelRouterCommandLineForPort.
+  const name0 = path.basename(args[0] || "");
+  const name1 = path.basename(args[1] || "");
+  return (name0 === "model-router" || name1 === "model-router") && args.includes("proxy");
 }
 
 function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {

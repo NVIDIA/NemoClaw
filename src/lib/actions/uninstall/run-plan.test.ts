@@ -987,7 +987,10 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped host openshell-gateway process 9999887");
   });
 
-  const ROUTER_CMDLINE = "/home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port 4000\n";
+  // Real-world: model-router is a Python venv script so the OS interposes the
+  // interpreter — args[0]=python, args[1]=model-router (issue #5169).
+  const ROUTER_CMDLINE =
+    "/home/test/.nemoclaw/model-router-venv/bin/python /home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port 4000\n";
 
   function routerPsStub(
     pidStr: string,
