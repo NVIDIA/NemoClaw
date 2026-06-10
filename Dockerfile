@@ -395,26 +395,43 @@ RUN set -eu; \
     # protection is retained through the existing hostname allowlist and the \
     # proxy's own ACLs. \
     # \
-    # The patch keys on three co-located markers in the same file — the audit \
-    # context literal, the `fetchWithSsrFGuard(` call, and the \
-    # `buildLocalProviderSsrFPolicy` helper that builds the surrounding policy — \
-    # to pin the rewrite to the preflight call and fail closed if upstream drift \
-    # ever reuses the audit-context string outside this shape. \
+    # The patch keys on the co-located shape of the reviewed preflight call: in \
+    # any file that mentions the audit context literal, both the \
+    # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
+    # builder must appear; the audit literal itself must appear exactly once; and \
+    # after patching exactly one patched literal must remain. Any ambiguous \
+    # multi-callsite or mixed patched/unpatched layout fails the image build \
+    # rather than silently widening the rewrite. \
+    # \
+    # Removal condition: drop this block (and any related `OC_VERSION` floor bump) \
+    # once an OpenClaw release sets `mode: "trusted_env_proxy"` directly at the \
+    # preflight call site or otherwise routes the managed inference base URL \
+    # through the env-proxy dispatcher by default. The reviewed shape lives at \
+    # `src/cron/isolated-agent/model-preflight.runtime.ts` in the openclaw repo. \
     preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
     if [ -n "$preflight_files" ]; then \
         patched_preflight=0; \
         for f in $preflight_files; do \
+            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            [ "${audit_count:-0}" -ge 1 ] \
+                || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
+            [ "${audit_count:-0}" -eq 1 ] \
+                || patch_fail "Patch 6 shape gate: $f has ${audit_count} auditContext literals (expected exactly 1); refusing ambiguous multi-callsite rewrite"; \
             grep -Fq 'fetchWithSsrFGuard(' "$f" \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
             grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
-            if grep -Fq 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f"; then \
+            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            if [ "${patched_count:-0}" -eq 1 ]; then \
                 echo "INFO: Patch 6 already present in $f"; \
-            else \
+            elif [ "${patched_count:-0}" -eq 0 ]; then \
                 sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
-                grep -Fq 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" \
-                    || patch_fail "Patch 6 verification failed for $f"; \
+                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                [ "${new_patched_count:-0}" -eq 1 ] \
+                    || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
                 patched_preflight=1; \
+            else \
+                patch_fail "Patch 6 shape gate: $f has ${patched_count} already-patched literals (expected 0 or 1); refusing mixed-state rewrite"; \
             fi; \
         done; \
         if [ "$patched_preflight" = "1" ]; then \
