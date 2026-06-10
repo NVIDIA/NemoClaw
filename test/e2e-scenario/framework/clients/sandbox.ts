@@ -44,21 +44,32 @@ export class SandboxClient {
     });
   }
 
+  // openshell `sandbox exec` requires the sandbox name as a `-n <name>`
+  // flag value, NOT a positional argument. Production code (src/lib/agent/
+  // onboard.ts, src/lib/onboard/initial-policy.ts, src/lib/onboard/web-search-
+  // verify.ts, ...) uniformly uses the `-n` short form; the legacy bash tests
+  // and the existing test/openclaw-tui-chat-correlation.test.ts use the
+  // equivalent `--name` long form. Passing the name positionally returns
+  // exit 127 (openshell argument-parse failure surfacing as command-not-
+  // found) — silently latent until a free-standing live test invoked
+  // `sandbox.exec` against a real sandbox, since the registry-driven matrix
+  // mostly skips and the one cloud-openclaw scenario that ran did not
+  // exercise this code path.
   exec(
     name: string,
     command: string[],
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "exec", name, "--", ...command], {
+    return this.openshell(["sandbox", "exec", "-n", name, "--", ...command], {
       artifactName: `sandbox-exec-${name}`,
       ...options,
     });
   }
 
   // Convenience wrapper for running a multi-line bash script in a sandbox.
-  // Equivalent to `openshell sandbox exec <name> -- sh -lc "<script>"`. Used
-  // by free-standing live tests that need to run bespoke shell pipelines
+  // Equivalent to `openshell sandbox exec -n <name> -- sh -lc "<script>"`.
+  // Used by free-standing live tests that need to run bespoke shell pipelines
   // (e.g. starting an in-sandbox gateway, reading config files via node -e)
   // without manually wiring `["sh", "-lc", script]` argv at every call site.
   execShell(
@@ -67,7 +78,7 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "exec", name, "--", "sh", "-lc", script], {
+    return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", script], {
       artifactName: `sandbox-exec-shell-${name}`,
       ...options,
     });

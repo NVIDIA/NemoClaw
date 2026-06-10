@@ -111,6 +111,7 @@ describe("runtime phase fixture", () => {
         args: [
           "sandbox",
           "exec",
+          "-n",
           "e2e-ubuntu-repo-cloud-openclaw",
           "--",
           "curl",
@@ -170,6 +171,7 @@ describe("runtime phase fixture", () => {
     expect(call?.args).toEqual([
       "sandbox",
       "exec",
+      "-n",
       "e2e-ubuntu-repo-cloud-openclaw",
       "--",
       "curl",
@@ -183,7 +185,9 @@ describe("runtime phase fixture", () => {
       "https://inference.local/v1/chat/completions",
     ]);
     expect(call?.args).not.toContain("sh");
-    const payload = JSON.parse(call?.args[11] ?? "{}");
+    // Index 12: shifted +1 by inserting "-n" before the sandbox name in
+    // SandboxClient.exec; the data-raw payload is now at args[12].
+    const payload = JSON.parse(call?.args[12] ?? "{}");
     expect(payload).toEqual({
       model: "default",
       messages: [{ role: "user", content: "Reply with ok" }],
@@ -207,6 +211,7 @@ describe("runtime phase fixture", () => {
       args: [
         "sandbox",
         "exec",
+        "-n",
         "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",

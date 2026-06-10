@@ -137,15 +137,17 @@ describe("E2E fixture clients", () => {
     });
   });
 
-  it("sandbox client builds OpenShell sandbox commands", async () => {
+  it("sandbox client builds OpenShell sandbox exec commands using -n flag form", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
     await sandbox.exec("assistant", ["echo", "ok"]);
 
+    // openshell sandbox exec requires the sandbox name as -n <name>;
+    // positional name yields exit 127 against a real openshell binary.
     expect(runner.calls[0]).toEqual({
       command: "openshell",
-      args: ["sandbox", "exec", "assistant", "--", "echo", "ok"],
+      args: ["sandbox", "exec", "-n", "assistant", "--", "echo", "ok"],
       options: {
         artifactName: "sandbox-exec-assistant",
       },
@@ -192,6 +194,7 @@ describe("E2E fixture clients", () => {
     expect(runner.calls[0]?.args).toEqual([
       "sandbox",
       "exec",
+      "-n",
       "assistant",
       "--",
       "sh",
@@ -211,6 +214,7 @@ describe("E2E fixture clients", () => {
       args: [
         "sandbox",
         "exec",
+        "-n",
         "assistant",
         "--",
         "sh",

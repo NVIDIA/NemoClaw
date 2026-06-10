@@ -222,6 +222,7 @@ describe("state-validation phase fixture", () => {
       args: [
         "sandbox",
         "exec",
+        "-n",
         "e2e-ubuntu-repo-cloud-openclaw",
         "--",
         "curl",
