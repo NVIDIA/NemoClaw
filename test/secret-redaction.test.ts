@@ -84,6 +84,7 @@ describe("secret redaction consistency (#1736)", () => {
             encoding: "utf-8",
             env: {
               ...process.env,
+              HOME: tmp,
               NEMOCLAW_NODE: process.execPath,
               TMPDIR: tmp,
               PATH: `${fakeBin}:${process.env.PATH || ""}`,
@@ -139,6 +140,7 @@ describe("secret redaction consistency (#1736)", () => {
             encoding: "utf-8",
             env: {
               ...process.env,
+              HOME: tmp,
               NEMOCLAW_NODE: process.execPath,
               TMPDIR: tmp,
               PATH: fakeBin,

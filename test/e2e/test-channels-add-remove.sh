@@ -175,10 +175,17 @@ if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPat
 const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
 const entry = registry.sandboxes?.[sandboxName];
 if (!entry) fail("sandbox " + sandboxName + " missing from registry");
-const config = entry.messagingChannelConfig;
-if (!config || typeof config !== "object" || Array.isArray(config)) {
-  fail("messagingChannelConfig missing or not an object");
-}
+const plan = entry.messaging?.plan;
+if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");
+const channel = Array.isArray(plan.channels)
+  ? plan.channels.find((item) => item?.channelId === "telegram")
+  : null;
+if (!channel) fail("telegram channel missing from messaging.plan.channels");
+const config = Object.fromEntries(
+  (Array.isArray(channel.inputs) ? channel.inputs : [])
+    .filter((input) => input?.kind === "config" && typeof input.sourceEnv === "string")
+    .map((input) => [input.sourceEnv, input.value]),
+);
 if (config.TELEGRAM_ALLOWED_IDS !== allowedIds) {
   fail("TELEGRAM_ALLOWED_IDS expected " + allowedIds + ", got " + JSON.stringify(config.TELEGRAM_ALLOWED_IDS));
 }
@@ -186,9 +193,9 @@ if (config.TELEGRAM_REQUIRE_MENTION !== requireMention) {
   fail("TELEGRAM_REQUIRE_MENTION expected " + requireMention + ", got " + JSON.stringify(config.TELEGRAM_REQUIRE_MENTION));
 }
 ' "$REGISTRY" "$SANDBOX_NAME" "$TELEGRAM_ALLOWED_IDS_VALUE" "$TELEGRAM_REQUIRE_MENTION_VALUE" 2>&1)"; then
-    pass "host registry messagingChannelConfig persists telegram config ${context}"
+    pass "host registry messaging.plan persists telegram config ${context}"
   else
-    fail "host registry messagingChannelConfig missing telegram config ${context}: ${output}"
+    fail "host registry messaging.plan missing telegram config ${context}: ${output}"
   fi
 }
 
@@ -567,7 +574,6 @@ else
   fail "C5a: channels remove telegram did not unregister"
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
-assert_host_telegram_config "after channels remove"
 assert_host_telegram_plan "removed" "after channels remove"
 
 info "Rebuilding sandbox to apply the remove..."
@@ -614,6 +620,6 @@ else
   pass "C6c: 'telegram' preset removed from policy list after remove+rebuild"
 fi
 
-assert_host_telegram_config "after remove+rebuild"
+assert_host_telegram_plan "removed" "after remove+rebuild"
 
 print_summary

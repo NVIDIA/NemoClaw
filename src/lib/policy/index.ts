@@ -789,12 +789,11 @@ function applyPresetContent(
     );
     return false;
   }
-  const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
-
   const endpoints = getPresetEndpoints(presetContent);
   if (endpoints.length > 0) {
     console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
   }
+  const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).

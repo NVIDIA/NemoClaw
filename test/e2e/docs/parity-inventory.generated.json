@@ -1,4 +1,6 @@
 {
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
   "generated_by": "scripts/e2e/extract-legacy-assertions.ts",
   "entrypoints": [
     {
@@ -7986,17 +7988,17 @@
         {
           "script": "test/e2e/test-messaging-providers.sh",
           "line": 477,
-          "text": "M-WA2: registry.messagingChannels contains whatsapp after channel add",
+          "text": "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add",
           "polarity": "pass",
-          "normalized_id": "m.wa2.registry.messagingchannels.contains.whatsapp.after.channel.add",
+          "normalized_id": "m.wa2.registry.messaging.plan.channels.contains.whatsapp.after.channel.add",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
           "line": 479,
-          "text": "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))",
+          "text": "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add ($(registry_field messaging))",
           "polarity": "fail",
-          "normalized_id": "m.wa2.registry.messagingchannels.missing.whatsapp.after.channel.add.registry.field.messagingchannels",
+          "normalized_id": "m.wa2.registry.messaging.plan.channels.missing.whatsapp.after.channel.add.registry.field.messaging",
           "mapping_status": "deferred"
         },
         {

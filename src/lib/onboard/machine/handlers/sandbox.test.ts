@@ -3,175 +3,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
-
-function makeMinimalPlan(sandboxName: string, agent = "openclaw"): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: agent as SandboxMessagingPlan["agent"],
-    workflow: "onboard",
-    channels: [],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
-type Gpu = { type: string } | null;
-type Agent = { displayName?: string } | null;
-type WebSearchConfig = { fetchEnabled: true };
-type MessagingChannelConfig = Record<string, string>;
-type SandboxGpuConfig = { sandboxGpuEnabled: boolean; mode: string };
-type ResourceProfile = { cpu: string; memory: string };
-
-function createDeps(
-  overrides: Partial<
-    SandboxStateOptions<
-      Gpu,
-      Agent,
-      WebSearchConfig,
-      MessagingChannelConfig,
-      SandboxGpuConfig,
-      ResourceProfile
-    >["deps"]
-  > = {},
-) {
-  let session = createSession();
-  const calls = {
-    note: vi.fn(),
-    updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-      session = mutator(session) ?? session;
-      return session;
-    }),
-    persistMessaging: vi.fn(),
-    removeSandbox: vi.fn(),
-    repairSandbox: vi.fn(),
-    validateBrave: vi.fn(async () => "brave-key"),
-    isBackToSelection: vi.fn(() => false),
-    configureWebSearch: vi.fn(async () => null as WebSearchConfig | null),
-    startStep: vi.fn(async () => undefined),
-    getRecordedChannels: vi.fn(() => null),
-    setupMessaging: vi.fn(async () => [] as string[]),
-    promptName: vi.fn(async () => "my-assistant"),
-    selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
-    stopStale: vi.fn(),
-    createSandbox: vi.fn(async () => "my-assistant"),
-    updateSandbox: vi.fn(),
-    complete: vi.fn(async () => createSession()),
-    skipped: vi.fn(),
-    recordSkip: vi.fn(async () => createSession()),
-    repairEvent: vi.fn(async () => createSession()),
-    error: vi.fn(),
-    exit: vi.fn((code: number): never => {
-      throw new Error(`exit ${code}`);
-    }),
-  };
-  return {
-    calls,
-    deps: {
-      resolvePath: (value: string) => `/abs/${value}`,
-      agentSupportsWebSearch: () => true,
-      note: calls.note,
-      updateSession: calls.updateSession,
-      getStoredMessagingChannelConfig: () => null,
-      hydrateMessagingChannelConfig: (config: MessagingChannelConfig | null) => config,
-      messagingChannelConfigsEqual: () => true,
-      persistMessagingChannelConfigToSession: calls.persistMessaging,
-      getSandboxReuseState: () => "missing",
-      computeTelegramRequireMention: () => null,
-      hasSandboxGpuDrift: () => false,
-      hasWechatConfigDrift: () => false,
-      getSandboxHermesToolGateways: () => [],
-      normalizeHermesToolGatewaySelections: (value: unknown) =>
-        Array.isArray(value) ? (value as string[]) : [],
-      stringSetsEqual: (left: string[], right: string[]) =>
-        left.length === right.length && left.every((value) => right.includes(value)),
-      removeSandboxFromRegistry: calls.removeSandbox,
-      repairRecordedSandbox: calls.repairSandbox,
-      ensureValidatedBraveSearchCredential: calls.validateBrave,
-      isBackToSelection: calls.isBackToSelection,
-      configureWebSearch: calls.configureWebSearch,
-      startRecordedStep: calls.startStep,
-      getRecordedMessagingChannelsForResume: calls.getRecordedChannels,
-      getSandboxMessagingChannels: () => ["telegram"],
-      setupMessagingChannels: calls.setupMessaging,
-      readMessagingChannelConfigFromEnv: () => null,
-      readMessagingPlanFromEnv: () => null,
-      writePlanToEnv: () => undefined,
-      getRegistrySandboxMessagingPlan: () => null,
-      promptValidatedSandboxName: calls.promptName,
-      selectResourceProfileForSandbox: calls.selectResourceProfile,
-      stopStaleDashboardListenersForSandbox: calls.stopStale,
-      listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
-      createSandbox: calls.createSandbox,
-      updateSandboxRegistry: calls.updateSandbox,
-      getSandboxAgentRegistryFields: () => ({ agent: null }),
-      recordStepComplete: calls.complete,
-      toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
-      skippedStepMessage: calls.skipped,
-      recordStateSkipped: calls.recordSkip,
-      recordRepairEvent: calls.repairEvent,
-      error: calls.error,
-      exitProcess: calls.exit,
-      ...overrides,
-    },
-    getSession: () => session,
-  };
-}
-
-function baseOptions(
-  deps: SandboxStateOptions<
-    Gpu,
-    Agent,
-    WebSearchConfig,
-    MessagingChannelConfig,
-    SandboxGpuConfig,
-    ResourceProfile
-  >["deps"],
-  session: Session | null = createSession(),
-): SandboxStateOptions<
-  Gpu,
-  Agent,
-  WebSearchConfig,
-  MessagingChannelConfig,
-  SandboxGpuConfig,
-  ResourceProfile
-> {
-  return {
-    resume: false,
-    fresh: false,
-    resumeAgentChanged: false,
-    session,
-    sandboxName: null,
-    model: "model",
-    provider: "provider",
-    nimContainer: null,
-    webSearchConfig: null,
-    selectedMessagingChannels: [],
-    fromDockerfile: null,
-    agent: null,
-    gpu: { type: "nvidia" },
-    preferredInferenceApi: "openai-completions",
-    sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
-    hermesToolGateways: [],
-    controlUiPort: null,
-    rootDir: "/repo",
-    deps,
-  };
-}
+import { createSession, type Session } from "../../../state/onboard-session";
+import { handleSandboxState } from "./sandbox";
+import {
+  baseOptions,
+  createDeps,
+  makeMinimalPlan,
+} from "../../../../../test/helpers/sandbox-handler-fixtures";
 
 describe("handleSandboxState", () => {
   it("creates a sandbox and records messaging/web search state", async () => {
+    const mockPlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
     const { deps, calls } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
-      readMessagingChannelConfigFromEnv: () => ({ telegram: "polling" }),
+      readMessagingPlanFromEnv: () => mockPlan,
     });
     calls.setupMessaging.mockResolvedValue(["telegram"]);
 
@@ -222,7 +67,10 @@ describe("handleSandboxState", () => {
   });
 
   it("reuses a completed ready sandbox on resume", async () => {
-    const session = createSession({ sandboxName: "saved", messagingChannels: ["slack"] });
+    const session = createSession({
+      sandboxName: "saved",
+      messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
+    });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
 
@@ -376,98 +224,5 @@ describe("handleSandboxState", () => {
       [],
     );
     expect(result.webSearchConfig).toBeNull();
-  });
-
-  it("uses recorded messaging channels on non-interactive resume", async () => {
-    const getRecordedMessagingChannelsForResume = vi.fn(() => ["discord"]);
-    const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume });
-
-    const result = await handleSandboxState({ ...baseOptions(deps), resume: true });
-
-    expect(calls.setupMessaging).not.toHaveBeenCalled();
-    expect(getRecordedMessagingChannelsForResume).toHaveBeenCalledWith(
-      true,
-      expect.any(Object),
-      "my-assistant",
-    );
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [non-interactive] Reusing messaging channel configuration: discord",
-    );
-    expect(result.selectedMessagingChannels).toEqual(["discord"]);
-  });
-
-  it("persists plan from env into session after fresh messaging setup", async () => {
-    const mockPlan = makeMinimalPlan("my-assistant");
-    const { deps, getSession } = createDeps({
-      readMessagingPlanFromEnv: () => mockPlan,
-    });
-
-    await handleSandboxState({ ...baseOptions(deps) });
-
-    expect(getSession().messagingPlan).toEqual(mockPlan);
-  });
-
-  it("restores registry plan to env on non-interactive resume when env is empty", async () => {
-    const registryPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
-    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
-    const writePlanToEnv = vi.fn();
-    const { deps } = createDeps({
-      getRecordedMessagingChannelsForResume,
-      writePlanToEnv,
-      readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-    });
-
-    expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
-  });
-
-  it("prefers env-staged plan over registry plan on non-interactive resume (rebuild path)", async () => {
-    const registryPlan = makeMinimalPlan("my-assistant");
-    const rebuiltPlan = makeMinimalPlan("my-assistant");
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
-    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
-    const writePlanToEnv = vi.fn();
-    const { deps, getSession } = createDeps({
-      getRecordedMessagingChannelsForResume,
-      writePlanToEnv,
-      readMessagingPlanFromEnv: () => rebuiltPlan,
-      getRegistrySandboxMessagingPlan: () => registryPlan,
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-    });
-
-    expect(writePlanToEnv).not.toHaveBeenCalled();
-    expect(getSession().messagingPlan).toEqual(rebuiltPlan);
-  });
-
-  it("does not restore plan to env when registry has no entry", async () => {
-    const session = createSession({ sandboxName: "my-assistant", messagingChannels: ["telegram"] });
-    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
-    const writePlanToEnv = vi.fn();
-    const { deps } = createDeps({
-      getRecordedMessagingChannelsForResume,
-      writePlanToEnv,
-      readMessagingPlanFromEnv: () => null,
-      getRegistrySandboxMessagingPlan: () => null,
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-    });
-
-    expect(writePlanToEnv).not.toHaveBeenCalled();
   });
 });

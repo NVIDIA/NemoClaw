@@ -161,12 +161,18 @@ process.stdout.write(JSON.stringify(v ?? null));
   fi
 }
 
-registry_array_contains() {
-  local field="$1"
-  local item="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${item}\""
+registry_plan_contains_channel() {
+  local item="$1"
+  if [ ! -f "$REGISTRY" ]; then
+    return 1
+  fi
+  node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, item] = process.argv.slice(1);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const channels = registry.sandboxes?.[sandboxName]?.messaging?.plan?.channels;
+process.exit(Array.isArray(channels) && channels.some((channel) => channel?.channelId === item) ? 0 : 1);
+' "$REGISTRY" "$SANDBOX_NAME" "$item" 2>/dev/null
 }
 
 assert_openclaw_config_activation() {
@@ -899,10 +905,10 @@ else
   pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
 fi
 
-if registry_array_contains messagingChannels "whatsapp"; then
-  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+if registry_plan_contains_channel "whatsapp"; then
+  pass "M-WA2: registry.messaging.plan.channels contains whatsapp after channel add"
 else
-  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+  fail "M-WA2: registry.messaging.plan.channels missing whatsapp after channel add ($(registry_field messaging))"
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)

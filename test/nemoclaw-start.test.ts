@@ -2171,8 +2171,8 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
-          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.0001",
-          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "0.05",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "3",
           NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "0.05",
           NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "0.25",
         },

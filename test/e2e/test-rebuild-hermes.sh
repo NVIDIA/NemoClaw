@@ -247,6 +247,85 @@ echo "$PRE_REBUILD_CONFIG" | grep -Fq "discord:" \
 # Register in NemoClaw registry
 python3 -c "
 import hashlib, json
+credential_hash = hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+messaging_plan = {
+    'schemaVersion': 1,
+    'sandboxName': '${SANDBOX_NAME}',
+    'agent': 'hermes',
+    'workflow': 'rebuild',
+    'channels': [{
+        'channelId': 'discord',
+        'displayName': 'Discord',
+        'authMode': 'token-paste',
+        'active': True,
+        'selected': True,
+        'configured': True,
+        'disabled': False,
+        'inputs': [{
+            'channelId': 'discord',
+            'inputId': 'botToken',
+            'kind': 'secret',
+            'required': True,
+            'sourceEnv': 'DISCORD_BOT_TOKEN',
+            'credentialAvailable': True,
+        }],
+        'hooks': [],
+    }],
+    'disabledChannels': [],
+    'credentialBindings': [{
+        'channelId': 'discord',
+        'credentialId': 'discordBotToken',
+        'sourceInput': 'botToken',
+        'providerName': '${SANDBOX_NAME}-discord-bridge',
+        'providerEnvKey': 'DISCORD_BOT_TOKEN',
+        'placeholder': '${DISCORD_PLACEHOLDER}',
+        'credentialAvailable': True,
+        'credentialHash': credential_hash,
+    }],
+    'networkPolicy': {
+        'presets': ['discord'],
+        'entries': [{
+            'channelId': 'discord',
+            'presetName': 'discord',
+            'policyKeys': ['discord'],
+            'source': 'manifest',
+        }],
+    },
+    'agentRender': [
+        {
+            'channelId': 'discord',
+            'renderId': 'discord-hermes-env',
+            'agent': 'hermes',
+            'target': '~/.hermes/.env',
+            'kind': 'env-lines',
+            'lines': [
+                'DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}',
+                'DISCORD_ALLOW_ALL_USERS=true',
+            ],
+            'templateRefs': [],
+        },
+        {
+            'channelId': 'discord',
+            'renderId': 'discord-hermes-config',
+            'agent': 'hermes',
+            'target': '~/.hermes/config.yaml',
+            'kind': 'json-fragment',
+            'path': 'discord',
+            'value': {
+                'require_mention': False,
+                'free_response_channels': '',
+                'allowed_channels': '',
+                'auto_thread': True,
+                'reactions': True,
+                'channel_prompts': {},
+            },
+            'templateRefs': [],
+        },
+    ],
+    'buildSteps': [],
+    'stateUpdates': [],
+    'healthChecks': [],
+}
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',
     'createdAt': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
@@ -257,9 +336,9 @@ reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'policyTier': None,
     'agent': 'hermes',
     'agentVersion': '${OLD_HERMES_REGISTRY_VERSION}',
-    'messagingChannels': ['discord'],
+    'messaging': {'schemaVersion': 1, 'plan': messaging_plan},
     'providerCredentialHashes': {
-        'DISCORD_BOT_TOKEN': hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
+        'DISCORD_BOT_TOKEN': credential_hash
     }
 }}, 'defaultSandbox': '${SANDBOX_NAME}'}
 with open('${REGISTRY_FILE}', 'w') as f:
@@ -274,7 +353,7 @@ except Exception:
 sess['sandboxName'] = '${SANDBOX_NAME}'
 sess['agent'] = 'hermes'
 sess['status'] = 'complete'
-sess['messagingChannels'] = ['discord']
+sess['messagingPlan'] = messaging_plan
 with open(sess_path, 'w') as f:
     json.dump(sess, f, indent=2)
 print('Registry and session updated')

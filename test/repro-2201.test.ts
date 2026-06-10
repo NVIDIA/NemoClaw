@@ -30,6 +30,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath); // need node on PATH for shebangs
@@ -64,12 +65,12 @@ function createFixture({
   rebuildTarget: {
     name: string;
     agent: string | null;
-    messagingChannelConfig?: Record<string, string> | null;
+    messagingConfig?: Record<string, string> | null;
   };
   lastOnboarded: {
     name: string;
     agent: string | null;
-    messagingChannelConfig?: Record<string, string> | null;
+    messagingConfig?: Record<string, string> | null;
   };
   fromDockerfile?: string | null;
 }) {
@@ -91,8 +92,20 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: rebuildTarget.agent,
-          ...(rebuildTarget.messagingChannelConfig
-            ? { messagingChannelConfig: rebuildTarget.messagingChannelConfig }
+          ...(rebuildTarget.messagingConfig
+            ? {
+                messaging: {
+                  schemaVersion: 1,
+                  plan: makeMessagingPlan(
+                    rebuildTarget.name,
+                    ["telegram"],
+                    [],
+                    rebuildTarget.agent ?? "openclaw",
+                    "onboard",
+                    rebuildTarget.messagingConfig,
+                  ),
+                },
+              }
             : {}),
         },
         [lastOnboarded.name]: {
@@ -102,8 +115,20 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: lastOnboarded.agent,
-          ...(lastOnboarded.messagingChannelConfig
-            ? { messagingChannelConfig: lastOnboarded.messagingChannelConfig }
+          ...(lastOnboarded.messagingConfig
+            ? {
+                messaging: {
+                  schemaVersion: 1,
+                  plan: makeMessagingPlan(
+                    lastOnboarded.name,
+                    ["telegram"],
+                    [],
+                    lastOnboarded.agent ?? "openclaw",
+                    "onboard",
+                    lastOnboarded.messagingConfig,
+                  ),
+                },
+              }
             : {}),
         },
       },
@@ -135,8 +160,16 @@ function createFixture({
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
-      messagingChannelConfig: lastOnboarded.messagingChannelConfig ?? null,
+      messagingPlan: lastOnboarded.messagingConfig
+        ? makeMessagingPlan(
+            lastOnboarded.name,
+            ["telegram"],
+            [],
+            lastOnboarded.agent ?? "openclaw",
+            "onboard",
+            lastOnboarded.messagingConfig,
+          )
+        : null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -249,7 +282,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
 
 type SessionFixture = {
   agent?: string | null;
-  messagingChannelConfig?: Record<string, string> | null;
+  messagingPlan?: { sandboxName?: string | null } | null;
 };
 
 /**
@@ -268,12 +301,12 @@ function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | n
 }
 
 /**
- * Read only the messaging config recorded in the fixture onboarding session.
+ * Read only the messaging plan recorded in the fixture onboarding session.
  */
-function readSessionMessagingChannelConfig(
+function readSessionMessagingPlan(
   fixture: ReturnType<typeof createFixture>,
-): Record<string, string> | null | undefined {
-  return readSession(fixture).messagingChannelConfig;
+): SessionFixture["messagingPlan"] {
+  return readSession(fixture).messagingPlan;
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
@@ -305,7 +338,7 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
     expect(readSessionAgent(f)).toBe("hermes");
   });
 
-  it("does not inherit messaging channel config from a stale session for another sandbox", {
+  it("does not inherit messaging plan config from a stale session for another sandbox", {
     timeout: 60_000,
   }, () => {
     const f = createFixture({
@@ -313,14 +346,14 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
       lastOnboarded: {
         name: "hermes",
         agent: "hermes",
-        messagingChannelConfig: {
+        messagingConfig: {
           TELEGRAM_ALLOWED_IDS: "999",
           TELEGRAM_REQUIRE_MENTION: "1",
         },
       },
     });
     runRebuild(f);
-    expect(readSessionMessagingChannelConfig(f)).toBeNull();
+    expect(readSessionMessagingPlan(f)).toBeNull();
   });
 });
 

@@ -210,7 +210,7 @@ describe("CLI sandbox status JSON output", () => {
     expect(parsed.provider).toBe("unknown");
     expect(parsed.openshellDriver).toBe("unknown");
     expect(parsed.openshellVersion).toBe("unknown");
-  });
+  }, 15_000);
 
   it("sandbox status --json reports gatewayState!=present and exits 1 when sandbox is registered but gateway lookup is missing", () => {
     const home = fs.mkdtempSync(

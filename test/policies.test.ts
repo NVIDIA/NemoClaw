@@ -732,24 +732,17 @@ exit 1
 
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, "log").mockImplementation((message) => {
+        if (String(message).includes("Widening sandbox egress"))
+          throw new Error("__disclosure_logged__");
+      });
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
         throw new Error("exit");
       });
 
       try {
-        try {
-          policies.applyPreset("test-sandbox", "npm");
-        } catch {
-          /* applyPreset may throw if sandbox not running — we only care about the log */
-        }
-        const messages = logSpy.mock.calls.map((call) =>
-          typeof call[0] === "string" ? call[0] : undefined,
-        );
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(true);
+        expect(() => policies.applyPreset("test-sandbox", "npm")).toThrow("__disclosure_logged__");
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
@@ -1070,7 +1063,7 @@ exit 1
         });
         expect(result).toBe(false);
         expect(errs.join("\n")).toMatch(/[Cc]ould not read the current policy/);
-        expect(logs.join("\n")).not.toContain("Applied preset:");
+        expect(logs.join("\n")).not.toMatch(/Widening sandbox egress|Applied preset:/);
       } finally {
         errSpy.mockRestore();
         logSpy.mockRestore();

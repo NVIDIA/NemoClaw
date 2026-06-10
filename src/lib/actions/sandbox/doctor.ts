@@ -423,9 +423,9 @@ function channelRuntimeDoctorCheck(
 }
 
 function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorCheck {
-  const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
-  const disabledChannels = new Set(Array.isArray(sb.disabledChannels) ? sb.disabledChannels : []);
-  const channels = registeredChannels.filter((channel: string) => !disabledChannels.has(channel));
+  const registeredChannels = registry.getConfiguredMessagingChannelsFromEntry(sb);
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
+  const channels = registry.getActiveMessagingChannelsFromEntry(sb);
   const pausedChannels = registeredChannels.filter((channel: string) =>
     disabledChannels.has(channel),
   );
@@ -783,13 +783,7 @@ export async function runSandboxDoctor(
     // #4156: bridge the gap between "configured" and "runtime-visible" — the
     // existing messaging check above probes provider attachment, not whether
     // OpenClaw's runtime config actually surfaces each enabled channel.
-    const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
-    const disabledChannelsSet = new Set(
-      Array.isArray(sb.disabledChannels) ? sb.disabledChannels : [],
-    );
-    const enabledChannels = registeredChannels.filter(
-      (channel: string) => !disabledChannelsSet.has(channel),
-    );
+    const enabledChannels = registry.getActiveMessagingChannelsFromEntry(sb);
     const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabledChannels);
     if (runtimeCheck) checks.push(runtimeCheck);
   }

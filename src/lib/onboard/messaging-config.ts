@@ -5,11 +5,10 @@ import {
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
   resolveMessagingChannelConfigEnvValue,
-  sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
 import type { Session } from "../state/onboard-session";
-import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
+import { getMessagingChannelConfigFromPlan } from "./messaging-plan-session";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -107,23 +106,14 @@ export function getStoredMessagingChannelConfig(
   session: Session | null,
 ): MessagingChannelConfig | null {
   const registryConfig = sandboxName
-    ? sanitizeMessagingChannelConfig(registry.getSandbox(sandboxName)?.messagingChannelConfig)
+    ? getMessagingChannelConfigFromPlan(registry.getSandbox(sandboxName)?.messaging?.plan)
     : null;
   const sessionMatchesSandbox =
     !session?.sandboxName || !sandboxName || session.sandboxName === sandboxName;
   const sessionConfig = sessionMatchesSandbox
-    ? sanitizeMessagingChannelConfig(session?.messagingChannelConfig)
+    ? getMessagingChannelConfigFromPlan(session?.messagingPlan)
     : null;
   return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
-}
-
-export function persistMessagingChannelConfigToSession(
-  config: MessagingChannelConfig | null,
-): void {
-  onboardSession.updateSession((current: Session) => {
-    current.messagingChannelConfig = config;
-    return current;
-  });
 }
 
 export function messagingChannelConfigsEqual(

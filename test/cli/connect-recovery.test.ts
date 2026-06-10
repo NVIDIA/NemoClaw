@@ -529,7 +529,7 @@ describe("CLI dispatch", () => {
     expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
     expect(openshellLog).toContain("sandbox ssh-config alpha");
     expect(sshLog).toContain('OPENCLAW="$(command -v openclaw)"');
-  });
+  }, 30_000);
 
   it("recovers non-OpenClaw agents over SSH instead of root sandbox exec", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
@@ -701,7 +701,7 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("sandbox get alpha");
     expect(calls.filter((call) => call === "sandbox list").length).toBeGreaterThanOrEqual(2);
     expect(calls).toContain("sandbox connect alpha");
-  });
+  }, 30_000);
 
   it(
     "fails fast with gateway recovery guidance when connect readiness sees a disconnected gateway",

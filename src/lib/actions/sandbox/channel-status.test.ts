@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { makeMessagingState } from "../../../../test/helpers/messaging-plan-fixtures";
 
 // The orchestrator transitively pulls in policy/index.ts and agent/defs.ts,
 // both of which require runner.ts via CJS; runner.ts uses `require()` calls
@@ -15,6 +16,14 @@ vi.mock("../../policy", () => ({
 
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
+  getConfiguredMessagingChannelsFromEntry: vi.fn((entry?: SandboxEntry | null) =>
+    (entry?.messaging?.plan.channels ?? [])
+      .filter((channel) => channel.configured)
+      .map((channel) => channel.channelId),
+  ),
+  getDisabledMessagingChannelsFromEntry: vi.fn((entry?: SandboxEntry | null) =>
+    entry?.messaging?.plan.disabledChannels ? [...entry.messaging.plan.disabledChannels] : [],
+  ),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -104,15 +113,11 @@ function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
   } as unknown as AgentDefinition;
 }
 
-function entry(
-  messagingChannels: string[] = ["whatsapp"],
-  disabledChannels: string[] = [],
-): SandboxEntry {
+function entry(channelIds: string[] = ["whatsapp"], disabledChannels: string[] = []): SandboxEntry {
   return {
     name: "alpha",
     agent: "openclaw",
-    messagingChannels,
-    disabledChannels,
+    messaging: makeMessagingState("alpha", channelIds, disabledChannels),
   } as SandboxEntry;
 }
 
@@ -434,7 +439,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(capturedCmd as unknown as string).toMatch(/pgrep -fa/);
   });
 
-  it("skips the deep probe and reports paused state when WhatsApp is in disabledChannels", async () => {
+  it("skips the deep probe and reports paused state when WhatsApp is disabled in the plan", async () => {
     // Regression guard: `channels stop whatsapp` deliberately drops the
     // bridge and preset until the operator runs `channels start`. The
     // status command should reflect that rather than probing a torn-down

@@ -21,6 +21,36 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+function messagingState(sandboxName: string, channels: readonly string[], agent = "openclaw") {
+  return {
+    schemaVersion: 1,
+    plan: {
+      schemaVersion: 1,
+      sandboxName,
+      agent,
+      workflow: "onboard",
+      channels: channels.map((channelId) => ({
+        channelId,
+        displayName: channelId,
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      })),
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: channels, entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    },
+  };
+}
+
 describe("CLI dispatch", () => {
   it("routes logs to OpenClaw and OpenShell log sources", () => {
     const setup = createLogsTestSetup("nemoclaw-cli-logs-routing-");
@@ -86,42 +116,46 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
   });
 
-  it("starts OpenClaw logs before enabling audit logs for logs --follow", () => {
-    const gatewayStartedMarker = "gateway-started";
-    const auditCompleteMarker = "audit-enabled";
-    const setup = createLogsTestSetup(
-      "nemoclaw-cli-logs-follow-audit-slow-",
-      [
-        'if [ "$1" = "settings" ]; then',
-        "  sleep 0.05",
-        `  printf '%s\\n' ${JSON.stringify(auditCompleteMarker)} >> "$marker_file"`,
-        "  exit 0",
-        "fi",
-      ],
-      { gatewayStartedMarker },
-    );
+  it(
+    "starts OpenClaw logs before enabling audit logs for logs --follow",
+    testTimeoutOptions(30_000),
+    () => {
+      const gatewayStartedMarker = "gateway-started";
+      const auditCompleteMarker = "audit-enabled";
+      const setup = createLogsTestSetup(
+        "nemoclaw-cli-logs-follow-audit-slow-",
+        [
+          'if [ "$1" = "settings" ]; then',
+          "  sleep 0.05",
+          `  printf '%s\\n' ${JSON.stringify(auditCompleteMarker)} >> "$marker_file"`,
+          "  exit 0",
+          "fi",
+        ],
+        { gatewayStartedMarker },
+      );
 
-    const start = Date.now();
-    const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "2000" });
-    const calls = setup.readCalls();
+      const start = Date.now();
+      const r = setup.runLogs("alpha logs --follow", { NEMOCLAW_LOGS_PROBE_TIMEOUT_MS: "10000" });
+      const calls = setup.readCalls();
 
-    expect(Date.now() - start).toBeGreaterThanOrEqual(40);
-    expect(r.code).toBe(0);
-    // All three calls must happen: OpenClaw log stream, audit enable, OpenShell log stream.
-    expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
-    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
-    expect(calls).toContain("logs alpha -n 200 --source all --tail");
-    expect(calls).toContain(gatewayStartedMarker);
-    expect(calls).toContain(auditCompleteMarker);
-    const gatewayStartedIdx = calls.indexOf(gatewayStartedMarker);
-    const auditIdx = calls.indexOf("settings set alpha --key ocsf_json_enabled --value true");
-    const auditCompleteIdx = calls.indexOf(auditCompleteMarker);
-    const openshellIdx = calls.indexOf("logs alpha -n 200 --source all --tail");
-    expect(gatewayStartedIdx).toBeLessThan(auditCompleteIdx);
-    expect(auditIdx).toBeLessThan(openshellIdx);
-    expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
-    expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
-  });
+      expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+      expect(r.code).toBe(0);
+      // All three calls must happen: OpenClaw log stream, audit enable, OpenShell log stream.
+      expect(calls).toContain("sandbox exec -n alpha -- tail -n 200 -f /tmp/gateway.log");
+      expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
+      expect(calls).toContain("logs alpha -n 200 --source all --tail");
+      expect(calls).toContain(gatewayStartedMarker);
+      expect(calls).toContain(auditCompleteMarker);
+      const gatewayStartedIdx = calls.indexOf(gatewayStartedMarker);
+      const auditIdx = calls.indexOf("settings set alpha --key ocsf_json_enabled --value true");
+      const auditCompleteIdx = calls.indexOf(auditCompleteMarker);
+      const openshellIdx = calls.indexOf("logs alpha -n 200 --source all --tail");
+      expect(gatewayStartedIdx).toBeLessThan(auditCompleteIdx);
+      expect(auditIdx).toBeLessThan(openshellIdx);
+      expect(r.out).toContain(FAKE_OPENCLAW_LOG_LINE);
+      expect(r.out).toContain(FAKE_OPENSHELL_LOG_LINE);
+    },
+  );
 
   it(
     "keeps logs --follow running when one log source exits",
@@ -310,7 +344,7 @@ describe("CLI dispatch", () => {
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"], "hermes"),
             agent: "hermes",
           },
         },

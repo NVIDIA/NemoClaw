@@ -5,13 +5,13 @@
     "nemoclaw/src/commands/migration-state.test.ts": 1566,
     "src/lib/inference/nim.test.ts": 2068,
     "src/lib/onboard/preflight.test.ts": 1905,
-    "test/channels-add-preset.test.ts": 1872,
+    "test/channels-add-preset.test.ts": 1866,
     "test/generate-openclaw-config.test.ts": 2091,
     "test/install-preflight.test.ts": 4396,
     "test/nemoclaw-start.test.ts": 5289,
     "test/onboard-messaging.test.ts": 2097,
     "test/onboard-selection.test.ts": 6922,
-    "test/onboard.test.ts": 4874,
-    "test/policies.test.ts": 2763
+    "test/onboard.test.ts": 4873,
+    "test/policies.test.ts": 2756
   }
 }

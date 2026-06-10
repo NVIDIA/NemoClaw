@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import * as registry from "../../state/registry";
 import type { SandboxMessagingPlan } from "../manifest";
 import { MessagingHostStateApplier } from "./host-state-applier";
 import { MessagingSetupApplier } from "./setup-applier";
-import * as registry from "../../state/registry";
 
 vi.mock("../../state/registry", () => {
   const sandboxes = new Map<string, Record<string, unknown>>();
@@ -53,8 +52,6 @@ describe("MessagingHostStateApplier", () => {
   it("stores only the new messaging state on an existing sandbox entry", () => {
     registryMock.__setSandbox("demo", {
       name: "demo",
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
     });
     const plan = makePlan(["telegram"]);
 
@@ -68,13 +65,13 @@ describe("MessagingHostStateApplier", () => {
       },
     });
     expect(registryMock.__getSandbox("demo")).toMatchObject({
-      messagingChannels: ["telegram"],
-      disabledChannels: ["discord"],
       messaging: {
         schemaVersion: 1,
         plan,
       },
     });
+    expect(registryMock.__getSandbox("demo")).not.toHaveProperty("messagingChannels");
+    expect(registryMock.__getSandbox("demo")).not.toHaveProperty("disabledChannels");
   });
 
   it("can merge a single-channel add plan into existing messaging state", () => {
@@ -119,7 +116,12 @@ function makePlan(
     channels: channelIds.map((channelId) => ({
       channelId,
       displayName: channelId,
-      authMode: "token-paste",
+      authMode:
+        channelId === "wechat"
+          ? "host-qr"
+          : channelId === "whatsapp"
+            ? "in-sandbox-qr"
+            : "token-paste",
       active: true,
       selected: true,
       configured: true,
@@ -128,52 +130,71 @@ function makePlan(
       hooks: [],
     })),
     disabledChannels: [],
-    credentialBindings: channelIds.map((channelId) => makeCredentialBinding(channelId, "bot")),
+    credentialBindings: channelIds.flatMap((channelId) => makeCredentialBindings(channelId)),
     networkPolicy: {
       presets: [...channelIds],
-      entries: channelIds.map((channelId) => ({
-        channelId,
-        presetName: channelId,
-        policyKeys: [channelId],
-        source: "manifest",
-      })),
+      entries: channelIds.map((channelId) => makePolicyEntry(channelId)),
     },
-    agentRender: channelIds.map((channelId) => ({
-      channelId,
-      agent: "openclaw",
-      target: "openclaw.json",
-      kind: "json-fragment",
-      path: `channels.${channelId}`,
-      value: { enabled: true },
-      templateRefs: [],
-    })),
+    agentRender: [],
     buildSteps: [],
-    stateUpdates: channelIds.map((channelId) => ({
-      channelId,
-      kind: "persist-inputs",
-      stateKey: channelId,
-      inputIds: [],
-    })),
+    stateUpdates: [],
     healthChecks: [],
     ...overrides,
   };
+}
+
+function makeCredentialBindings(
+  channelId: string,
+): SandboxMessagingPlan["credentialBindings"][number][] {
+  if (channelId === "slack") {
+    return [makeCredentialBinding("slack", "bot"), makeCredentialBinding("slack", "app")];
+  }
+  if (channelId === "whatsapp") return [];
+  return [makeCredentialBinding(channelId, "bot")];
 }
 
 function makeCredentialBinding(
   channelId: string,
   credentialId: string,
 ): SandboxMessagingPlan["credentialBindings"][number] {
-  const envKey =
-    channelId === "slack" && credentialId === "app"
-      ? "SLACK_APP_TOKEN"
-      : `${channelId.toUpperCase()}_BOT_TOKEN`;
+  if (channelId === "slack" && credentialId === "app") {
+    return {
+      channelId,
+      credentialId: "slackAppToken",
+      sourceInput: "appToken",
+      providerName: "demo-slack-app",
+      providerEnvKey: "SLACK_APP_TOKEN",
+      placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+      credentialAvailable: true,
+    };
+  }
+  const envKey = `${channelId.toUpperCase()}_BOT_TOKEN`;
   return {
     channelId,
-    credentialId,
-    sourceInput: credentialId,
-    providerName: `demo-${channelId}-${credentialId}`,
+    credentialId: `${channelId}BotToken`,
+    sourceInput: "botToken",
+    providerName: `demo-${channelId}-bridge`,
     providerEnvKey: envKey,
-    placeholder: `\${${envKey}}`,
+    placeholder:
+      channelId === "slack"
+        ? "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"
+        : `openshell:resolve:env:${envKey}`,
     credentialAvailable: true,
+  };
+}
+
+function makePolicyEntry(
+  channelId: string,
+): SandboxMessagingPlan["networkPolicy"]["entries"][number] {
+  return {
+    channelId,
+    presetName: channelId,
+    policyKeys:
+      channelId === "telegram"
+        ? ["telegram_bot"]
+        : channelId === "wechat"
+          ? ["wechat_bridge"]
+          : [channelId],
+    source: "manifest",
   };
 }

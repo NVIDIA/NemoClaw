@@ -123,7 +123,7 @@ describe("CLI dispatch", () => {
         detail: expect.stringContaining("Creating"),
       }),
     );
-  });
+  }, 30_000);
 
   it("doctor does not inspect the legacy k3s gateway container in Docker-driver mode", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
@@ -182,7 +182,7 @@ describe("CLI dispatch", () => {
     expect(report.checks.filter((c) => c.group === "Gateway" && c.status === "fail")).toEqual([]);
     expect(report.status).toBe("ok");
     expect(r.code).toBe(0);
-  });
+  }, 30_000);
 
   it("doctor still inspects the legacy k3s gateway container for the kubernetes driver", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
@@ -208,7 +208,7 @@ describe("CLI dispatch", () => {
         detail: expect.stringContaining("openshell-cluster-nemoclaw"),
       }),
     );
-  });
+  }, 30_000);
 
   it("doctor accepts a local openshell-gateway process when legacy inspect fails", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
@@ -250,7 +250,7 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
     expect(calls).not.toContain("pgrep:-af openshell-gateway");
     expect(calls).not.toContain("docker:port");
-  });
+  }, 30_000);
 
   it("doctor treats local gateway process evidence as informational until OpenShell verifies the named gateway", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-unverified-local-gateway-", [
@@ -284,7 +284,7 @@ describe("CLI dispatch", () => {
     expect(report.checks.find((check) => check.label === "OpenShell status")).toEqual(
       expect.objectContaining({ group: "Gateway", status: "fail" }),
     );
-  });
+  }, 30_000);
 
   it("doctor reports unavailable local gateway probe tools while trusting a verified named gateway", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-missing-local-probe-tools-", [
@@ -321,7 +321,7 @@ describe("CLI dispatch", () => {
     );
     expect(report.checks.find((check) => check.label === "Docker container")).toBeUndefined();
     expect(report.status).toBe("ok");
-  });
+  }, 30_000);
 
   it(
     "doctor reports fresh shields state as not configured instead of down",
@@ -369,7 +369,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("OpenShell status");
     expect(r.out).toContain("Gateway: other");
     expect(setup.readCalls().some((call) => /^sandbox list(\s|$)/.test(call))).toBe(false);
-  });
+  }, 30_000);
 
   it("doctor treats a live non-cloudflared PID as stale", () => {
     const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");

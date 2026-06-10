@@ -4,6 +4,7 @@
 import type { JsonObject, JsonValue } from "../../core/json-types";
 import { redactSensitiveText, redactUrl } from "../../security/redact";
 import type { HermesAuthMethod, Session } from "../../state/onboard-session";
+import { getActiveChannelsFromPlan } from "../messaging-plan-session";
 import {
   ONBOARD_MACHINE_STATE_DEFINITIONS,
   type OnboardMachineStateWithStepDefinition,
@@ -128,7 +129,7 @@ export function buildOnboardMachineContext(session: Session): OnboardMachineCont
     hermesAuthMethod: hermesAuthMethod(session.hermesAuthMethod),
     hermesToolGateways: stringArray(session.hermesToolGateways),
     policyPresets: stringArray(session.policyPresets),
-    messagingChannels: stringArray(session.messagingChannels),
+    messagingChannels: getActiveChannelsFromPlan(session.messagingPlan),
     gpuPassthrough: booleanValue(session.gpuPassthrough),
   };
 }

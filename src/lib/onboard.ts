@@ -401,6 +401,8 @@ const {
 }: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
 const messagingConfig: typeof import("./onboard/messaging-config") = require("./onboard/messaging-config");
+const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
+  require("./onboard/messaging-plan-session");
 const {
   detectMessagingCredentialRotation,
   getMessagingChannelForEnvKey,
@@ -411,8 +413,8 @@ const {
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
-  persistMessagingChannelConfigToSession,
 } = messagingConfig;
+const { getActiveChannelsFromPlan } = messagingPlanSession;
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
@@ -452,18 +454,13 @@ const {
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const {
-  handleAgentSetupState,
-}: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
-const {
-  handleFinalizationState,
-}: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
-const {
-  handlePoliciesState,
-}: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
-const {
   createCoreOnboardFlowPhases,
   runCoreOnboardFlowSlice,
 }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+const {
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+}: typeof import("./onboard/machine/final-flow-phases") = require("./onboard/machine/final-flow-phases");
 const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
@@ -2928,17 +2925,8 @@ async function createSandbox(
   const hasPlanCredentials =
     currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (hasPlanCredentials) {
-    const {
-      backfillMessagingChannels,
-      findChannelConflictsFromPlan,
-      createMessagingConflictProbe,
-    } = require("./messaging/applier") as typeof import("./messaging/applier");
-    const probe = createMessagingConflictProbe({
-      checkGatewayLiveness: () =>
-        runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-      providerExists: (name) => providerExistsInGateway(name),
-    });
-    backfillMessagingChannels(registry, probe);
+    const { findChannelConflictsFromPlan } =
+      require("./messaging/applier") as typeof import("./messaging/applier");
     const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan!, registry);
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
@@ -3576,7 +3564,6 @@ async function createSandbox(
         ? { requireMention: telegramConfig.requireMention as boolean }
         : null;
     current.wechatConfig = toSessionWechatConfig(wechatConfig);
-    current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
@@ -3895,16 +3882,7 @@ async function createSandbox(
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
     policies: initialSandboxPolicy.appliedPresets,
-    // Persist the operator's configured channel set, not the post-disabled-filter
-    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
-    // X, but X is still configured — losing it here means a later `channels start
-    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
-    // never reattaches the gateway bridge). See #3381.
-    messagingChannels:
-      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
-    messagingChannelConfig: messagingChannelConfig || undefined,
     messaging: messagingState,
-    disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
     ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
     dashboardPort: actualDashboardPort,
@@ -4559,10 +4537,9 @@ async function setupNim(
           // Check raw process.env — the override must apply before resolving from credentials.json.
           const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
           if (_providerKeyHint && credentialEnv) {
-            const existingCredentialKey = normalizeCredentialValue(
-              // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-              process.env[credentialEnv] ?? "",
-            );
+            // check-direct-credential-env-ignore -- intentional: checking raw env before applying NEMOCLAW_PROVIDER_KEY override
+            const existingCredentialValue = process.env[credentialEnv] ?? "";
+            const existingCredentialKey = normalizeCredentialValue(existingCredentialValue);
             if (!existingCredentialKey) {
               process.env[credentialEnv] = _providerKeyHint;
             }
@@ -5432,7 +5409,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: session?.messagingChannels,
+    sessionMessagingChannels: getActiveChannelsFromPlan(session?.messagingPlan),
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -6619,7 +6596,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
-          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -6634,9 +6610,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
+          getSandboxMessagingChannels: (name) => registry.getConfiguredMessagingChannels(name),
           setupMessagingChannels,
-          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,
@@ -6681,19 +6656,32 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const hermesToolGateways = coreContext.hermesToolGateways;
     const nimContainer = coreContext.nimContainer;
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    selectedMessagingChannels = coreContext.selectedMessagingChannels;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const agentSetupResult = await handleAgentSetupState({
-      agent,
+    const finalFlowContext: CoreOnboardFlowContext = {
+      ...coreContext,
+      session,
       sandboxName,
       model,
       provider,
-      resume,
-      session,
+      endpointUrl,
+      credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,
-      deps: {
+      nimContainer,
+      webSearchConfig,
+      selectedMessagingChannels: coreContext.selectedMessagingChannels,
+      webSearchSupported,
+    };
+    let liveFinalFlowContext = finalFlowContext;
+
+    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+      CoreOnboardFlowContext,
+      import("./dashboard/contract").DashboardDeliveryChain,
+      import("./verify-deployment").VerifyDeploymentResult
+    >({
+      branchState: agent ? "agent_setup" : "openclaw",
+      agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({
           step,
@@ -6708,7 +6696,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepFailed,
           skippedStepMessage,
         }),
-        ensureAgentDashboardForward,
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         recordStepSkipped,
         isOpenclawReady,
         skippedStepMessage,
@@ -6720,31 +6709,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
-    });
-    await recordStateResult(agentSetupResult.stateResult);
-
-    const policiesResult = await handlePoliciesState({
-      resume,
-      sandboxName,
-      provider,
-      model,
-      endpointUrl,
-      credentialEnv,
-      selectedMessagingChannels,
-      webSearchConfig,
-      webSearchSupported,
-      hermesToolGateways,
-      agent,
-      deps: {
+      policiesDeps: {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
-          verifyCompatibleEndpointSandboxSmoke({
-            ...options,
-            runOpenshell,
-            redact,
-          }),
+          verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell, redact }),
         preparePolicyPresetResumeSelection: (name, options) =>
           preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,
@@ -6758,23 +6728,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
-    });
-    await recordStateResult(policiesResult.stateResult);
-    sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
-
-    const finalizationResult = await handleFinalizationState({
-      sandboxName,
-      model,
-      provider,
-      nimContainer,
-      agent,
-      hermesAuthMethod,
-      hermesToolGateways,
-      stagedLegacyKeys,
-      migratedLegacyKeys,
-      webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
-      deps: {
-        ensureAgentDashboardForward,
+      finalization: {
+        stagedLegacyKeys,
+        migratedLegacyKeys,
+        webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+      },
+      finalizationDeps: {
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
@@ -6788,7 +6749,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
         verifyDeployment: async (name, chain) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.verifyDeployment(name, chain, {
             executeSandboxCommand: (sandbox: string, script: string) =>
               executeSandboxCommandForVerification(sandbox, script),
@@ -6810,13 +6772,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             },
             captureForwardList: () =>
               runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
+            getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) =>
               providerExistsInGateway(providerName),
           });
         },
         formatVerificationDiagnostics: (result) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.formatVerificationDiagnostics(result);
         },
         printDashboard,
@@ -6824,7 +6787,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-    await recordStateResult(finalizationResult.stateResult);
+
+    await runFinalOnboardFlowSlice({
+      context: finalFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
+      resume,
+      recordStateResult,
+      afterPoliciesResultApplied: () => {
+        sandboxCancelRollback.disarm();
+      },
+      onContextUpdated: (context) => {
+        liveFinalFlowContext = context;
+      },
+    });
     traceCompleted = true;
   } finally {
     releaseOnboardLock();

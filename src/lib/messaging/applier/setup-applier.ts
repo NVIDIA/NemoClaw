@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 
 import type { ChannelHookPhase, SandboxMessagingPlan } from "../manifest";
+import { assertValidSandboxMessagingPlan } from "../plan-validation";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
@@ -24,7 +25,7 @@ import {
 
 export class MessagingSetupApplier {
   static encodePlan(plan: SandboxMessagingPlan): string {
-    assertSandboxMessagingPlan(plan);
+    assertValidSandboxMessagingPlan(plan);
     assertJsonSerializable(plan);
     return Buffer.from(JSON.stringify(plan), "utf8").toString("base64");
   }
@@ -32,7 +33,7 @@ export class MessagingSetupApplier {
   static decodePlan(encoded: string): SandboxMessagingPlan {
     const raw = Buffer.from(encoded, "base64").toString("utf8");
     const parsed = JSON.parse(raw) as unknown;
-    assertSandboxMessagingPlan(parsed);
+    assertValidSandboxMessagingPlan(parsed);
     return parsed;
   }
 
@@ -64,7 +65,7 @@ export class MessagingSetupApplier {
     plan: SandboxMessagingPlan,
     phase?: ChannelHookPhase,
   ): MessagingHookApplyRequest[] {
-    assertSandboxMessagingPlan(plan);
+    assertValidSandboxMessagingPlan(plan);
     return listPlanHookRequests(plan, phase);
   }
 
@@ -79,7 +80,7 @@ export class MessagingSetupApplier {
     readonly appliedHooks: readonly string[];
     readonly unresolvedTemplateRefs: readonly string[];
   }> {
-    assertSandboxMessagingPlan(plan);
+    assertValidSandboxMessagingPlan(plan);
     return applyAgentConfigPlanAtOpenShell(plan, options);
   }
 
@@ -87,7 +88,7 @@ export class MessagingSetupApplier {
     plan: SandboxMessagingPlan,
     options: MessagingCredentialApplyOptions,
   ): MessagingCredentialApplyResult {
-    assertSandboxMessagingPlan(plan);
+    assertValidSandboxMessagingPlan(plan);
     return applyCredentialsPlanAtOpenShell(plan, options);
   }
 
@@ -95,33 +96,9 @@ export class MessagingSetupApplier {
     plan: SandboxMessagingPlan,
     options: MessagingPolicyApplyOptions,
   ): MessagingPolicyApplyResult {
-    assertSandboxMessagingPlan(plan);
+    assertValidSandboxMessagingPlan(plan);
     return applyPolicyPlanAtOpenShell(plan, options);
   }
-}
-
-function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMessagingPlan {
-  if (
-    !isObject(value) ||
-    value.schemaVersion !== 1 ||
-    typeof value.sandboxName !== "string" ||
-    typeof value.agent !== "string" ||
-    typeof value.workflow !== "string" ||
-    !Array.isArray(value.channels) ||
-    !Array.isArray(value.disabledChannels) ||
-    !Array.isArray(value.credentialBindings) ||
-    !isObject(value.networkPolicy) ||
-    !Array.isArray(value.agentRender) ||
-    !Array.isArray(value.buildSteps) ||
-    !Array.isArray(value.stateUpdates) ||
-    !Array.isArray(value.healthChecks)
-  ) {
-    throw new Error("Expected a serializable SandboxMessagingPlan.");
-  }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertJsonSerializable(
