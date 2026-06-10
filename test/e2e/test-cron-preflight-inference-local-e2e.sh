@@ -320,8 +320,12 @@ PROBE_RC=$?
 info "preflight probe output (rc=$PROBE_RC):"
 printf '%s\n' "$PROBE_OUT" | sed 's/^/    /'
 
-STATUS="$(printf '%s' "$PROBE_OUT" | jq -r 'select(.result) | .result.status // empty' 2>/dev/null || true)"
-REASON="$(printf '%s' "$PROBE_OUT" | jq -r 'select(.result) | .result.reason // ""' 2>/dev/null || true)"
+# Probe stdout/stderr are interleaved (captured via 2>&1). Pick the structured
+# JSON result line (the only line that starts with `{"providerKey"`) before
+# parsing, so undici experimental-feature warnings on stderr do not break jq.
+PROBE_JSON="$(printf '%s\n' "$PROBE_OUT" | grep -E '^\s*\{"providerKey"' | tail -n 1)"
+STATUS="$(printf '%s' "$PROBE_JSON" | jq -r '.result.status // empty' 2>/dev/null || true)"
+REASON="$(printf '%s' "$PROBE_JSON" | jq -r '.result.reason // ""' 2>/dev/null || true)"
 
 section "Assertions"
 if [ "$PROBE_RC" -ge 2 ]; then
