@@ -547,6 +547,33 @@ export async function runSandboxSnapshot(
         }
         snapshotExit(1);
       }
+      // #5027/#4538: openclaw.json restores via the generic copy strategy,
+      // which lands it at 0640. The always-on OpenClaw gateway needs the
+      // mutable config contract (setgid dir + group-writable openclaw.json) to
+      // keep writing config at runtime. Rebuild repairs this in its
+      // post-restore sequence; the standalone snapshot-restore path must do the
+      // same. Gated on openclaw.json having been restored (only OpenClaw
+      // declares it) and posture-aware (a no-op for shields-up/non-OpenClaw).
+      if (result.restoredFiles.includes("openclaw.json")) {
+        try {
+          const permRepair = shields.repairMutableConfigPerms(targetSandbox);
+          if (permRepair.applied && permRepair.verified) {
+            console.log(`  ${G}✓${R} OpenClaw config permissions restored`);
+          } else if (!permRepair.applied && permRepair.skipReason === "unreadable") {
+            console.warn(
+              `  Warning: could not verify OpenClaw config permissions: ${permRepair.reason}`,
+            );
+          } else if (permRepair.applied && !permRepair.verified) {
+            console.warn(
+              `  Warning: OpenClaw config permission repair incomplete: ${permRepair.errors.join("; ")}`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            `  Warning: OpenClaw config permission repair errored: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       // Reconcile the target's policy presets to match the snapshot manifest
       // exactly — add anything the snapshot recorded but the target is
       // missing, and remove anything the target has that the snapshot did

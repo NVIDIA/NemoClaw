@@ -18,11 +18,8 @@ spec:
     modelRoute: inference-local
     policyTier: balanced
     messaging: []
-    # Lifecycle phase opt-in. Routes through
-    # nemoclaw_scenarios/lifecycle/dispatch.sh to the
-    # rebuild-current-version worker, which seeds a workspace marker,
-    # invokes `nemoclaw <sandbox> rebuild --yes`, and publishes the
-    # marker contract to runtime-phase assertions.
+    # Lifecycle phase opt-in. The live Vitest path only runs this when a
+    # matching LifecyclePhaseFixture profile is wired.
     lifecycle: rebuild-current-version
   state:
     workspaceRef: default

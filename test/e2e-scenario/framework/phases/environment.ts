@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import type { ArtifactSink } from "../artifacts.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
@@ -46,16 +47,39 @@ function supportedRuntime(runtime: string): DockerRuntimeExpectation {
 }
 
 export class EnvironmentPhaseFixture {
-  constructor(private readonly host: HostCliClient) {}
+  constructor(
+    private readonly host: HostCliClient,
+    private readonly artifacts?: ArtifactSink,
+  ) {}
 
   async assertReady(environment: ScenarioEnvironment): Promise<EnvironmentReady> {
-    await this.assertInstallReady(environment.install);
-    const docker = await this.assertRuntimeReady(environment.runtime);
-    return {
-      ...environment,
-      cliPath: this.host.commandPath,
-      docker,
-    };
+    try {
+      await this.assertInstallReady(environment.install);
+      const docker = await this.assertRuntimeReady(environment.runtime);
+      const result = {
+        ...environment,
+        cliPath: this.host.commandPath,
+        docker,
+      };
+      await this.writeResult("passed", result);
+      return result;
+    } catch (error) {
+      await this.writeResult("failed", environment, error);
+      throw error;
+    }
+  }
+
+  private async writeResult(
+    status: "passed" | "failed",
+    environment: ScenarioEnvironment | EnvironmentReady,
+    error?: unknown,
+  ): Promise<void> {
+    await this.artifacts?.writeJson("environment.result.json", {
+      phase: "environment",
+      status,
+      environment,
+      ...(error ? { error: errorMessage(error) } : {}),
+    });
   }
 
   private async assertInstallReady(install: string): Promise<ShellProbeResult> {

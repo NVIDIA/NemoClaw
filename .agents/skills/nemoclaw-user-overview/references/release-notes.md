@@ -1,8 +1,29 @@
 # Release Notes
 
+import { AgentOnly } from "../_components/AgentGuide";
+
 NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
+
+## v0.0.62
+
+NemoClaw v0.0.62 improves onboarding reliability for GPU sandboxes, local inference, gateway pairing, Hermes configuration, and release validation:
+
+- GPU sandbox creation and local inference checks now match the runtime paths agents use. Docker-driver recreation prefers NVIDIA CDI when the host advertises a CDI spec, Jetson/Tegra sandboxes inherit the device-node group needed for CUDA, and local GPU inference is verified through `inference.local` from inside the sandbox runtime before onboarding reports success. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- Onboarding and recovery fail earlier and stay quieter on common host drift. NemoClaw no longer requires `nc` for port readiness checks, clears pending gateway scope approvals after onboard and recover, preserves install-version fingerprints in package installs without `.git`, and suppresses fresh-sandbox provider cleanup probe noise. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+
+<AgentOnly variant="openclaw">
+
+- Sandbox state and OpenClaw operations recover better after direct in-sandbox changes. Startup restores mutable OpenClaw config permissions after a raw in-sandbox `openclaw doctor --fix`, and the host CLI can now run `nemoclaw <name> agents list` alongside the existing agent add and delete passthrough commands. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- WhatsApp pairing uses the compact QR renderer used by the real pairing flow. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+- Hermes setup exposes clearer operator state. Generated Hermes config records the upstream NemoClaw provider and model while still presenting Hermes as a custom proxy route, the provider menu labels Hermes choices more clearly, and NemoClaw rejects the reserved Hermes API port as a dashboard port before sandbox creation. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+</AgentOnly>
 
 ## v0.0.61
 

@@ -51,8 +51,8 @@ export function ubuntuRepoNoDocker(onboarding: string): ScenarioEnvironment {
  * ubuntu-local + repo-current + docker-running + a lifecycle profile.
  * Use for scenarios whose runtime assertions depend on a post-onboard
  * state mutation (rebuild, upgrade, snapshot+restore). The lifecycle
- * profile id maps to a worker under nemoclaw_scenarios/lifecycle/ via
- * its dispatcher.
+ * profile id must be supported by LifecyclePhaseFixture before the
+ * scenario can run in the live Vitest matrix.
  */
 export function ubuntuRepoDockerLifecycle(
   onboarding: string,
