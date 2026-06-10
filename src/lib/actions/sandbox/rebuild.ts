@@ -41,6 +41,7 @@ import { ensureAgentBaseImage } from "../../agent/onboard";
 import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
 import {
   createBuiltInChannelManifestRegistry,
@@ -68,11 +69,17 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
+import {
+  getReconciledSandboxGatewayState,
+  printGatewayLifecycleHint,
+  printWrongGatewayActiveGuidance,
+} from "./gateway-state";
 import { executeSandboxCommand } from "./process-recovery";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
   openRebuildShieldsWindow,
   printRebuildShieldsRecovery,
+  type RebuildShieldsWindow,
   relockRebuildShieldsWindow,
 } from "./rebuild-shields";
 
@@ -491,11 +498,120 @@ export async function rebuildSandbox(
   }
   const liveNames = parseLiveSandboxNames(isLive.output || "");
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
+  // Stale-sandbox recovery (#4497): the local registry still holds this entry,
+  // but the live OpenShell gateway no longer lists the sandbox — a stuck or
+  // diverged provision, or the live container was reaped. This is exactly the
+  // state `status` flags with a `rebuild --yes` hint, and the non-destructive
+  // `connect` recovery now preserves the registry entry so this rebuild can act
+  // on it. There is no live workspace state to back up, so rather than aborting
+  // with "Cannot back up state" — which dead-ended the very recovery path the
+  // CLI recommended — skip the backup/restore steps and recreate the sandbox
+  // from the preserved registry + onboard-session metadata.
+  let staleRecovery = false;
+  // Full registry snapshot captured before stale recovery touches anything
+  // destructive. If the recovery recreate fails after the entry was removed,
+  // the snapshot is restored verbatim so no local metadata (defaultSandbox,
+  // customPolicies, every field) is silently dropped or mutated (#4497).
+  let staleRegistrySnapshot: ReturnType<typeof registry.load> | null = null;
   if (!liveNames.has(sandboxName)) {
-    console.error(`  Sandbox '${sandboxName}' is not running. Cannot back up state.`);
-    console.error(`  Start it first or recreate with \`${CLI_NAME} onboard --recreate-sandbox\`.`);
-    bail(`Sandbox '${sandboxName}' is not running.`);
-    return;
+    // The default-gateway liveness checks below can only authoritatively reason
+    // about the default `nemoclaw` gateway. A sandbox created on a non-default
+    // per-port gateway (#4645, e.g. `nemoclaw-9000`) that is simply not the
+    // active gateway would look absent here, and recreating-from-scratch would
+    // orphan its live workspace. Refuse the destructive path in that case and
+    // point the operator at the sandbox's own gateway. (If that gateway were
+    // active, the sandbox would have appeared in the list above.)
+    const recordedGateway =
+      typeof sb.gatewayName === "string" && sb.gatewayName ? sb.gatewayName : "nemoclaw";
+    if (recordedGateway !== "nemoclaw") {
+      console.error(
+        `  Sandbox '${sandboxName}' is registered on the '${recordedGateway}' OpenShell gateway, which is not the active gateway.`,
+      );
+      console.error(
+        "  Its live state could not be confirmed — your local registry entry has been preserved.",
+      );
+      console.error("  Select that gateway and retry:");
+      console.error(`      openshell gateway select ${recordedGateway}`);
+      console.error(`  Then re-run: ${CLI_NAME} ${sandboxName} rebuild --yes`);
+      bail(
+        `Sandbox '${sandboxName}' is on the non-default gateway '${recordedGateway}'; select it before rebuilding.`,
+      );
+      return;
+    }
+
+    // The active-gateway `sandbox list` does not show this sandbox. That alone
+    // is NOT proof it is gone: a different active gateway (multi-gateway setups,
+    // #4645) would hide a live NemoClaw sandbox, and `sandbox list` can omit a
+    // sandbox that `sandbox get` still resolves. Recreating on that false
+    // signal would destroy live workspace state. So confirm authoritatively
+    // against the NAMED NemoClaw gateway: getReconciledSandboxGatewayState runs
+    // `sandbox get`, re-selecting/recovering nemoclaw as needed, and only
+    // reports "missing" once the named gateway is confirmed healthy and the
+    // sandbox is genuinely absent.
+    const reconciled = await getReconciledSandboxGatewayState(sandboxName);
+    if (reconciled.state === "present") {
+      // `sandbox get` resolved the sandbox, but that query ran against whatever
+      // gateway is currently active. Only trust it as live when the named
+      // nemoclaw gateway is the active healthy one — otherwise a foreign active
+      // gateway with a same-named sandbox (or a list/get inconsistency) could
+      // send the destructive backup/delete below at the wrong sandbox. If a
+      // foreign gateway is active, abort with guidance instead.
+      const lifecycle = getNamedGatewayLifecycleState();
+      if (lifecycle.state !== "healthy_named") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          lifecycle.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+        bail(
+          `Could not confirm '${sandboxName}' against the NemoClaw gateway (gateway '${lifecycle.activeGateway ?? "unknown"}' is active).`,
+        );
+        return;
+      }
+      // Live on the healthy named gateway (the list omitted it). Fall through to
+      // the normal backup/rebuild path so workspace state is preserved.
+      log("Sandbox live on the healthy named gateway; using normal rebuild path");
+    } else if (reconciled.state === "missing") {
+      // Genuinely absent on a healthy named gateway — stale-sandbox recovery.
+      staleRecovery = true;
+      staleRegistrySnapshot = JSON.parse(JSON.stringify(registry.load()));
+      console.log("");
+      console.log(
+        `  ${YW}⚠${R} Sandbox '${sandboxName}' is registered locally but absent from the live OpenShell gateway.`,
+      );
+      console.log(
+        "  No live workspace state to back up — recreating from the preserved registry metadata.",
+      );
+      log(
+        "Stale-sandbox recovery: live sandbox missing on healthy named gateway; skipping backup/restore and recreating from registry metadata",
+      );
+    } else if (reconciled.state === "gateway_schema_mismatch") {
+      console.error(reconciled.output);
+      bail("OpenShell gateway schema mismatch.");
+      return;
+    } else {
+      // Ambiguous gateway state (wrong gateway active, or the named gateway is
+      // missing/unreachable/drifted). Do NOT destroy — a transient gateway
+      // problem must never be mistaken for a gone sandbox. Surface guidance and
+      // abort with the registry entry intact.
+      if (reconciled.state === "wrong_gateway_active") {
+        printWrongGatewayActiveGuidance(
+          sandboxName,
+          reconciled.activeGateway,
+          console.error,
+          "rebuild --yes",
+        );
+      } else {
+        console.error(
+          `  Sandbox '${sandboxName}' is not visible on the NemoClaw gateway and its live state could not be confirmed.`,
+        );
+        console.error("  Your local registry entry has been preserved — nothing was removed.");
+        printGatewayLifecycleHint(reconciled.output || "", sandboxName, console.error);
+      }
+      bail(`Could not confirm live state of '${sandboxName}' (gateway not in a known-good state).`);
+      return;
+    }
   }
 
   // Build agent base layers before backup/delete so Dockerfile.base errors leave
@@ -516,7 +632,23 @@ export async function rebuildSandbox(
     }
   }
 
-  const rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  // On stale-sandbox recovery the live sandbox is gone, so the normal
+  // unlock→recreate→relock cycle cannot run: openRebuildShieldsWindow would call
+  // `shieldsDown`, which captures policy from the absent sandbox and fails, and
+  // a later `shieldsUp` would try to re-seal the fresh image against the gone
+  // sandbox's stale file-hash seal and may refuse (#4497). Instead, just note
+  // whether the sandbox was locked (read-only). The stale shields state is reset
+  // only AFTER the recreate succeeds (below) so a failed recreate leaves the
+  // lockdown record intact for a retry; the operator re-applies `shields up`
+  // post-recovery (printed on success) since the workspace state was lost anyway.
+  let staleSandboxWasLocked = false;
+  let rebuildShieldsWindow: RebuildShieldsWindow | null;
+  if (staleRecovery) {
+    staleSandboxWasLocked = !shields.isShieldsDown(sandboxName);
+    rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  } else {
+    rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  }
   if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
 
   const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
@@ -524,59 +656,67 @@ export async function rebuildSandbox(
 
   let sandboxStillExists = true;
 
+  // backupManifest stays null on stale-sandbox recovery (#4497): the live
+  // sandbox is gone, so there is nothing to back up and the downstream
+  // restore/preset steps are skipped in favor of recreating from registry
+  // metadata.
+  let backupManifest: sandboxState.RebuildManifest | null = null;
+
   try {
-    // Step 2: Backup
-    console.log("  Backing up sandbox state...");
-    log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-    const backup = sandboxState.backupSandboxState(sandboxName);
-    log(
-      `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
-    );
-    const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-    if (!backup.success && !hasAnyBackup) {
-      // Total failure — nothing was backed up at all.
-      console.error("  Failed to back up sandbox state.");
-      if (backup.failedDirs.length > 0) {
-        console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
-      }
-      if (backup.failedFiles.length > 0) {
-        console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
-      }
-      console.error("  Aborting rebuild to prevent data loss.");
-      relockShieldsIfNeeded(true);
-      bail("Failed to back up sandbox state.");
-      return;
-    }
-    const backupManifest = backup.manifest;
-    if (!backupManifest) {
-      console.error("  Failed to record backup metadata.");
-      console.error("  Aborting rebuild to prevent data loss.");
-      relockShieldsIfNeeded(true);
-      bail("Failed to record backup metadata.");
-      return;
-    }
-    if (!backup.success) {
-      // Partial backup — some state succeeded, some failed (e.g. root-owned
-      // files caused tar permission errors).  Proceed with a warning so the
-      // rebuild isn't blocked by a handful of inaccessible files (#2727).
-      console.warn(
-        `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
-          `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
-          `${backup.failedFiles.length} files failed`,
+    // Step 2: Backup (skipped on stale-sandbox recovery -- no live state exists)
+    if (!staleRecovery) {
+      console.log("  Backing up sandbox state...");
+      log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
+      const backup = sandboxState.backupSandboxState(sandboxName);
+      log(
+        `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
       );
-      if (backup.failedDirs.length > 0) {
-        console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
+      const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
+      if (!backup.success && !hasAnyBackup) {
+        // Total failure — nothing was backed up at all.
+        console.error("  Failed to back up sandbox state.");
+        if (backup.failedDirs.length > 0) {
+          console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+        }
+        if (backup.failedFiles.length > 0) {
+          console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
+        }
+        console.error("  Aborting rebuild to prevent data loss.");
+        relockShieldsIfNeeded(true);
+        bail("Failed to back up sandbox state.");
+        return;
       }
-      if (backup.failedFiles.length > 0) {
-        console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
+      backupManifest = backup.manifest ?? null;
+      if (!backupManifest) {
+        console.error("  Failed to record backup metadata.");
+        console.error("  Aborting rebuild to prevent data loss.");
+        relockShieldsIfNeeded(true);
+        bail("Failed to record backup metadata.");
+        return;
       }
-      console.warn("    Rebuild will continue — failed state could not be preserved.");
-    } else {
-      console.log(
-        `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
-      );
+      if (!backup.success) {
+        // Partial backup — some state succeeded, some failed (e.g. root-owned
+        // files caused tar permission errors).  Proceed with a warning so the
+        // rebuild isn't blocked by a handful of inaccessible files (#2727).
+        console.warn(
+          `  ${YW}⚠${R} Partial backup: ${backup.backedUpDirs.length} dirs and ` +
+            `${backup.backedUpFiles.length} files OK; ${backup.failedDirs.length} dirs and ` +
+            `${backup.failedFiles.length} files failed`,
+        );
+        if (backup.failedDirs.length > 0) {
+          console.warn(`    Failed dirs: ${backup.failedDirs.join(", ")}`);
+        }
+        if (backup.failedFiles.length > 0) {
+          console.warn(`    Failed files: ${backup.failedFiles.join(", ")}`);
+        }
+        console.warn("    Rebuild will continue — failed state could not be preserved.");
+      } else {
+        console.log(
+          `  ${G}\u2713${R} State backed up (${backup.backedUpDirs.length} directories, ${backup.backedUpFiles.length} files)`,
+        );
+      }
+      console.log(`    Backup: ${backupManifest.backupPath}`);
     }
-    console.log(`    Backup: ${backupManifest.backupPath}`);
 
     // Step 3: Delete sandbox without tearing down gateway or session.
     // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -603,7 +743,9 @@ export async function rebuildSandbox(
     log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
     if (deleteResult.status !== 0 && !alreadyGone) {
       console.error("  Failed to delete sandbox. Aborting rebuild.");
-      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+      if (backupManifest) {
+        console.error("  State backup is preserved at: " + backupManifest.backupPath);
+      }
       relockShieldsIfNeeded(true);
       bail("Failed to delete sandbox.", deleteResult.status || 1);
       return;
@@ -802,26 +944,71 @@ export async function rebuildSandbox(
         /* best effort */
       }
 
+      // Stale-sandbox recovery had no backup to fall back on and already removed
+      // the registry entry before the recreate. If the recreate failed, restore
+      // the captured entry so the recommended `rebuild --yes` (and `connect`)
+      // remain retryable instead of failing at dispatch with "not found in
+      // registry" (#4497). Restore unconditionally — overwriting any partial entry
+      // a failed `onboard` may have registered — so the original metadata
+      // (defaultSandbox, customPolicies, every field) wins, not a half-written
+      // recreate entry. The restore targets only this sandbox under the registry
+      // lock, leaving other sandboxes' concurrent changes intact.
+      const snapshotEntry = staleRegistrySnapshot?.sandboxes?.[sandboxName];
+      if (staleRecovery && snapshotEntry) {
+        try {
+          registry.restoreSandboxEntry(snapshotEntry, {
+            reclaimDefault:
+              staleRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
+          });
+          log("Stale-recovery recreate failed: restored preserved registry entry for retry");
+        } catch (err) {
+          log(
+            `Failed to restore registry entry after stale-recovery recreate failure: ${String(err)}`,
+          );
+        }
+      }
+
       console.error("");
-      console.error(`  ${_RD}Recreate failed after sandbox was destroyed.${R}`);
-      console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      if (staleRecovery) {
+        console.error(`  ${_RD}Recovery recreate failed.${R}`);
+        console.error(
+          "  Your local registry entry has been preserved — you can retry once the issue above is fixed.",
+        );
+      } else {
+        console.error(`  ${_RD}Recreate failed after sandbox was destroyed.${R}`);
+      }
+      if (backupManifest) {
+        console.error(`  Backup is preserved at: ${backupManifest.backupPath}`);
+      }
       console.error("");
       console.error("  To recover manually:");
       console.error(`    1. Fix the issue above (missing credential, Docker problem, etc.)`);
       console.error(`    2. Run: ${CLI_NAME} onboard --resume`);
       console.error(`       This will recreate sandbox '${sandboxName}'.`);
-      console.error(`    3. Then restore your workspace state:`);
-      console.error(
-        `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
-      );
+      if (backupManifest) {
+        console.error(`    3. Then restore your workspace state:`);
+        console.error(
+          `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
+        );
+      }
       printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
       console.error("");
       relockShieldsIfNeeded(false);
       bail(
-        `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`,
+        backupManifest
+          ? `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`
+          : "Recreate failed (stale-sandbox recovery).",
         onboardExitCode,
       );
       return;
+    }
+
+    // Recreate succeeded. For stale recovery, reset the now-stale shields state so
+    // the freshly recreated (mutable) sandbox reports its true posture instead of
+    // the gone sandbox's old lock seal. Deferred until here so a failed recreate
+    // above leaves the lockdown record intact for a retry (#4497).
+    if (staleRecovery) {
+      shields.clearShieldsState(sandboxName);
     }
 
     const preservedRegistryFields = {
@@ -836,33 +1023,46 @@ export async function rebuildSandbox(
       registry.updateSandbox(sandboxName, preservedRegistryFields);
     }
 
-    // Step 5: Restore
-    console.log("");
-    console.log("  Restoring workspace state...");
-    log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
-    const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath);
-    log(
-      `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
-    );
-    if (!restore.success) {
-      console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
-      console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
-      if (restore.failedFiles.length > 0) {
-        console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
-      }
-      console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
-    } else {
-      console.log(
-        `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+    // Step 5: Restore (skipped on stale-sandbox recovery -- no backup exists)
+    let restoreSucceeded = true;
+    if (backupManifest) {
+      console.log("");
+      console.log("  Restoring workspace state...");
+      log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
+      const restore = sandboxState.restoreSandboxState(sandboxName, backupManifest.backupPath);
+      log(
+        `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}`,
       );
+      restoreSucceeded = restore.success;
+      if (!restore.success) {
+        console.error(`  Partial restore: ${restore.restoredDirs.join(", ") || "none"}`);
+        console.error(`  Failed: ${restore.failedDirs.join(", ")}`);
+        if (restore.failedFiles.length > 0) {
+          console.error(`  Failed files: ${restore.failedFiles.join(", ")}`);
+        }
+        console.error(`  Manual restore available from: ${backupManifest.backupPath}`);
+      } else {
+        console.log(
+          `  ${G}\u2713${R} State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
+        );
+      }
     }
 
     // Step 5.5: Restore policy presets (#1952)
-    // Policy presets live in the gateway policy engine, not the sandbox filesystem.
-    // They are lost when the sandbox is destroyed and recreated. Re-apply any
-    // presets that were captured in the backup manifest.
+    // Built-in policy presets live in the gateway policy engine, not the sandbox
+    // filesystem, so they are lost when the sandbox is destroyed and recreated.
+    // Re-apply the presets captured in the backup manifest. On stale-sandbox
+    // recovery there is no manifest, so fall back to the built-in preset names
+    // recorded on the registry entry (`sb.policies`) — the same source the backup
+    // manifest is built from — so the recovered sandbox keeps its built-in egress
+    // presets (#4497). Custom `policy-add --from-file/--from-dir` rules
+    // (`sb.customPolicies`) are not re-applied here; like a normal rebuild, they
+    // follow the recreate/onboard path and must be re-added if they were in use.
+    const registryPolicyPresets = Array.isArray(sb.policies)
+      ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
+      : [];
     const savedPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest.policyPresets || [],
+      backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
     );
     if (savedPresets.length > 0) {
@@ -1008,8 +1208,13 @@ export async function rebuildSandbox(
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
 
     console.log("");
-    if (restore.success && !mutablePermsRepairUnverified) {
+    if (restoreSucceeded && !mutablePermsRepairUnverified) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
+      if (staleRecovery) {
+        console.log(
+          `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
+        );
+      }
       if (versionCheck.expectedVersion) {
         console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
       }
@@ -1021,7 +1226,7 @@ export async function rebuildSandbox(
       console.log(
         `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but some post-restore steps were incomplete`,
       );
-      if (!restore.success) {
+      if (!restoreSucceeded && backupManifest) {
         console.log(
           `    State restore was incomplete \u2014 backup available at: ${backupManifest.backupPath}`,
         );
@@ -1031,6 +1236,14 @@ export async function rebuildSandbox(
           `    Mutable config permissions were not verified \u2014 run \`${CLI_NAME} ${sandboxName} doctor --fix\` to restore the OpenClaw config permission contract`,
         );
       }
+    }
+    // Stale recovery reset the shields state to mutable (the gone sandbox's lock
+    // seal could not carry over to the fresh image). If lockdown had been enabled,
+    // tell the operator to re-apply it on the recreated sandbox (#4497).
+    if (staleRecovery && staleSandboxWasLocked) {
+      console.log(
+        `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
+      );
     }
   } finally {
     if (!rebuildShieldsWindow.relocked) {

@@ -3,19 +3,16 @@
 
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { OnboardFlowContext } from "./flow-context";
+import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
-import type {
-  OnboardMachineRunnerResult,
-  OnboardMachineRunnerRuntime,
-  OnboardStateHandlerResult,
-} from "./runner";
+import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
-import { runCoreOnboardFlowSequence } from "./flow-slices";
 
 export interface CoreOnboardFlowPhaseOptions<
   Context extends OnboardFlowContext,
@@ -61,15 +58,15 @@ export function createCoreOnboardFlowPhases<
         agent: context.agent,
         forceProviderSelection: options.forceProviderSelection,
         initial: {
-          model: context.session?.model || null,
-          provider: context.session?.provider || null,
-          endpointUrl: context.session?.endpointUrl || null,
-          credentialEnv: context.session?.credentialEnv || null,
-          hermesAuthMethod: context.session?.hermesAuthMethod || null,
-          hermesToolGateways: context.session?.hermesToolGateways ?? [],
-          preferredInferenceApi: context.session?.preferredInferenceApi || null,
-          nimContainer: context.session?.nimContainer || null,
-          webSearchConfig: context.session?.webSearchConfig || null,
+          model: context.model,
+          provider: context.provider,
+          endpointUrl: context.endpointUrl,
+          credentialEnv: context.credentialEnv,
+          hermesAuthMethod: context.hermesAuthMethod,
+          hermesToolGateways: context.hermesToolGateways,
+          preferredInferenceApi: context.preferredInferenceApi,
+          nimContainer: context.nimContainer,
+          webSearchConfig: context.webSearchConfig,
         },
         selectedMessagingChannels: context.selectedMessagingChannels,
         env: options.env,
@@ -142,11 +139,6 @@ export function createCoreOnboardFlowPhases<
   return [providerInferencePhase, sandboxPhase];
 }
 
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
-}
-
 export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -154,24 +146,20 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  const coreRuntimeSession = await options.runtime.session();
-  // Keep resume on the compatibility path for now: resume can intentionally
-  // re-run provider/sandbox repair checks even when saved machine state is ahead.
-  if (!options.resume && coreRuntimeSession.machine.state === "provider_selection") {
-    return runCoreOnboardFlowSequence({
-      context: options.context,
-      runtime: options.runtime,
-      phases: options.phases,
-    });
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
-      await options.recordStateResult(stateResult);
-    }
-    context = phaseResult.context;
-  }
-  return { context, session: await options.runtime.session() };
+  // Compatibility bridge for live host glue while legacy step helpers remain a
+  // second machine snapshot writer. OnboardRuntimeBoundary records skipped
+  // stale/already-reached transition results from handlers whose source state
+  // was advanced by markStepStarted()/markStepComplete() in the durable session.
+  // Keep resume and ahead-state sessions here so provider/sandbox repair checks
+  // still run. Remove this path once legacy step helpers no longer advance
+  // session.machine and handler FSM results are the only transition source.
+  return runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: options.runtime,
+    phases: options.phases,
+    resume: options.resume,
+    runWhenState: ["provider_selection"],
+    runSlice: runCoreOnboardFlowSequence,
+    applyCompatibleResult: options.recordStateResult,
+  });
 }

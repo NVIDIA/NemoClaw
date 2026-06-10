@@ -1530,11 +1530,30 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
   return mode !== "locked";
 }
 
+/**
+ * Remove the local shields state for a sandbox, returning it to the
+ * `mutable_default` posture. Used by stale-sandbox rebuild recovery (#4497):
+ * the live sandbox is gone, so the recorded lock seal/file-hashes no longer
+ * correspond to any live image. Clearing the state prevents a stale seal from
+ * blocking a fresh `shields up` and stops a freshly recreated (mutable) sandbox
+ * from being reported as locked. Best-effort: a missing state file is fine.
+ */
+function clearShieldsState(sandboxName: string): void {
+  validateName(sandboxName, "sandbox name");
+  killTimer(sandboxName);
+  try {
+    fs.rmSync(stateFilePath(sandboxName), { force: true });
+  } catch {
+    /* best effort — absent or unreadable state is already mutable_default */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
 export {
+  clearShieldsState,
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,
   getShieldsPosture,

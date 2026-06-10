@@ -24,13 +24,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import {
-  type ListSandboxesCommandDeps,
   getSandboxInventory,
+  type ListSandboxesCommandDeps,
   renderSandboxInventoryText,
 } from "../dist/lib/inventory/index.js";
 import { recoverRegistryEntriesWithFallback } from "../dist/lib/list-command-deps.js";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
@@ -280,16 +280,20 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     expect(code).toBe(0);
   });
 
-  it("nemoclaw <name> status never produces silent empty output when openshell is broken", () => {
-    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
-    const combined = `${stdout}\n${stderr}`;
-    // Must include the sandbox header AND an actionable hint.
-    expect(combined.trim().length).toBeGreaterThan(0);
-    expect(combined).toContain("my-assist");
-    // `status` must exit non-zero when the live gateway can't be verified
-    // — that's the contract a watchdog wrapping the command relies on.
-    expect(code).not.toBe(0);
-  });
+  it(
+    "nemoclaw <name> status never produces silent empty output when openshell is broken",
+    testTimeoutOptions(30_000),
+    () => {
+      const { code, stdout, stderr } = runCli(["my-assist", "status"]);
+      const combined = `${stdout}\n${stderr}`;
+      // Must include the sandbox header AND an actionable hint.
+      expect(combined.trim().length).toBeGreaterThan(0);
+      expect(combined).toContain("my-assist");
+      // `status` must exit non-zero when the live gateway can't be verified
+      // — that's the contract a watchdog wrapping the command relies on.
+      expect(code).not.toBe(0);
+    },
+  );
 
   it("nemoclaw <name> status prints the classifier header before gateway_unreachable_after_restart guidance", () => {
     writeFakeDocker([

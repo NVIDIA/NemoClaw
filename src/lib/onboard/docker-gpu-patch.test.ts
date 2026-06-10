@@ -385,6 +385,8 @@ describe("docker-gpu-patch", () => {
         dockerCapture: vi.fn(() => ""),
         dockerRun,
         dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
       },
     );
 
@@ -423,14 +425,16 @@ describe("docker-gpu-patch", () => {
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
-  it("tries CDI only when Docker reports readable NVIDIA CDI specs", () => {
+  it("prefers CDI only when Docker reports readable NVIDIA CDI specs", () => {
     expect(buildDockerGpuModeCandidates("all", { cdiAvailable: false }).map((m) => m.kind)).toEqual(
       ["gpus", "nvidia-runtime"],
     );
+    // When a CDI spec is present, CDI is preferred first (see #4948); --gpus
+    // and the NVIDIA runtime remain as fallbacks.
     expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual([
+      "cdi",
       "gpus",
       "nvidia-runtime",
-      "cdi",
     ]);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-cdi-"));
@@ -454,8 +458,7 @@ describe("docker-gpu-patch", () => {
     // case: `docker info` returns an empty CDISpecDirs list, but Docker is
     // still reading specs from its well-known default /etc/cdi. The detector
     // should mirror Docker's behavior and surface cdi as available so the
-    // candidate list keeps `cdi` for fallback after `--gpus all` trips the
-    // AMD-CDI bug.
+    // candidate list prefers `cdi` ahead of `--gpus all` on CDI hosts (#4948).
     const readDir = vi.fn((dirPath: string) => (dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null));
     const readFile = vi.fn((filePath: string) =>
       filePath === "/etc/cdi/nvidia.yaml"
@@ -535,6 +538,8 @@ describe("docker-gpu-patch", () => {
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
       },
     );
 

@@ -70,6 +70,15 @@ function runtime(session: Session = createSession()): OnboardMachineRunnerRuntim
   };
 }
 
+function completeStep(): Session["steps"][string] {
+  return {
+    status: "complete",
+    startedAt: "2026-06-09T00:00:00.000Z",
+    completedAt: "2026-06-09T00:01:00.000Z",
+    error: null,
+  };
+}
+
 describe("initial onboard flow phases", () => {
   it("carries preflight GPU output into the gateway phase", async () => {
     const notes: string[] = [];
@@ -174,6 +183,240 @@ describe("initial onboard flow phases", () => {
       },
     });
 
+    expect(recorded).toEqual(["gateway", "provider_selection"]);
+  });
+
+  it("returns the runtime session after resume compatibility state recording", async () => {
+    const phaseSession = createSession({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 0,
+      },
+    });
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 0,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<Context>[] = [
+      {
+        state: "preflight",
+        run: (ctx) => ({
+          context: { ...ctx, session: phaseSession },
+          result: advanceTo("gateway"),
+        }),
+      },
+    ];
+
+    const result = await runInitialOnboardFlowSlice({
+      context: context({ resume: true, session: phaseSession }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async () => {
+          throw new Error("resume compatibility path should not use strict applyResult");
+        },
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (stateResult) => {
+        if (stateResult.type === "transition") {
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: stateResult.next,
+              stateEnteredAt: "2026-06-09T00:01:00.000Z",
+              revision: 1,
+            },
+          });
+        }
+      },
+    });
+
+    expect(result.context.session).toBe(phaseSession);
+    expect(result.session).toBe(runtimeSession);
+    expect(result.session.machine.state).toBe("gateway");
+  });
+
+  it("runs resume preflight and gateway backstops when saved machine state is already ahead", async () => {
+    const calls: string[] = [];
+    const gpu: Gpu = { type: "nvidia", platform: "linux" };
+    const session = createSession({
+      gpuPassthrough: true,
+      machine: {
+        version: 1,
+        state: "provider_selection",
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
+      steps: {
+        preflight: completeStep(),
+        gateway: completeStep(),
+      },
+    });
+    const ensureResumePreflightDashboardPortAvailable = vi.fn(() => {
+      calls.push("ensure-resume-preflight-port");
+    });
+    const phases = createInitialOnboardFlowPhases({
+      explicitSandboxGpuFlag: null,
+      sandboxGpuDevice: null,
+      gpuRequested: false,
+      noGpu: false,
+      env: {},
+      platform: "darwin",
+      recordedGpuPassthroughBeforePreflight: true,
+      ensureResumePreflightDashboardPortAvailable,
+      preflightDeps: {
+        getSandbox: vi.fn(() => {
+          calls.push("get-sandbox");
+          return { name: "existing" };
+        }),
+        getResumeSandboxGpuOverrides: vi.fn(() => {
+          calls.push("resume-gpu-overrides");
+          return { flag: "enable" as const, device: null };
+        }),
+        detectGpu: vi.fn(() => {
+          calls.push("detect-gpu");
+          return gpu;
+        }),
+        runPreflight: vi.fn(async () => {
+          throw new Error("cached resume preflight should not run full preflight");
+        }),
+        assessHost: vi.fn(() => {
+          calls.push("assess-host");
+          return { docker: true };
+        }),
+        assertCdiNvidiaGpuSpecPresent: vi.fn(() => {
+          calls.push("assert-cdi");
+        }),
+        rejectUnsupportedContainerRuntime: vi.fn(() => {
+          calls.push("reject-unsupported-runtime");
+        }),
+        assertDockerBridgeAndContainerDnsHealthy: vi.fn(() => {
+          calls.push("assert-bridge-dns");
+        }),
+        resolveSandboxGpuConfig: vi.fn((detectedGpu) => {
+          calls.push("resolve-gpu-config");
+          return config(detectedGpu);
+        }),
+        validateSandboxGpuPreflight: vi.fn(() => {
+          calls.push("validate-gpu-preflight");
+        }),
+        skippedStepMessage: vi.fn(() => {
+          calls.push("skip-preflight");
+        }),
+        recordStateSkipped: vi.fn(async () => {
+          calls.push("record-preflight-skipped");
+          return session;
+        }),
+        startRecordedStep: vi.fn(async () => {
+          throw new Error("cached resume preflight should not start a recorded preflight step");
+        }),
+        recordStepComplete: vi.fn(async () => session),
+        updateSession: vi.fn((mutator) => mutator(session) ?? session),
+      },
+      getInitialGatewayReuseState: () => {
+        calls.push("initial-gateway-reuse-state");
+        return "healthy";
+      },
+      gatewayName: "nemoclaw",
+      recreateSandbox: () => false,
+      gatewayDeps: {
+        refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
+          calls.push("refresh-gateway-reuse");
+          return state;
+        }),
+        gatewayCliSupportsLifecycleCommands: vi.fn(() => {
+          calls.push("gateway-lifecycle-support");
+          return false;
+        }),
+        verifyGatewayContainerRunning: vi.fn(() => {
+          throw new Error("gateway lifecycle probe should not run without lifecycle support");
+        }),
+        waitForGatewayHttpReady: vi.fn(async () => true),
+        recoverGatewayRuntime: vi.fn(async () => true),
+        getGatewayLocalEndpoint: vi.fn(() => "http://127.0.0.1:31818"),
+        stopDashboardForward: vi.fn(),
+        destroyGateway: vi.fn(() => true),
+        destroyGatewayForReuse: vi.fn(() => "missing" as const),
+        getGatewayClusterImageDrift: vi.fn(() => null),
+        stopAllDashboardForwards: vi.fn(),
+        reconcileGatewayGpuReuseForGpuIntent: vi.fn((options) => {
+          calls.push("reconcile-gateway-gpu");
+          return options.gatewayReuseState;
+        }),
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
+        destroyGatewayRuntimeForGpuReuse: vi.fn(() => true),
+        skippedStepMessage: vi.fn(() => {
+          calls.push("skip-gateway");
+        }),
+        recordStateSkipped: vi.fn(async () => {
+          calls.push("record-gateway-skipped");
+          return session;
+        }),
+        note: vi.fn(),
+        startRecordedStep: vi.fn(async () => {
+          throw new Error("healthy resume gateway should not start a recorded gateway step");
+        }),
+        startGateway: vi.fn(async () => {
+          throw new Error("healthy resume gateway should not start a new gateway");
+        }),
+        recordStepComplete: vi.fn(async () => {
+          calls.push("record-gateway-complete");
+          return session;
+        }),
+        exitProcess: (code) => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+      note: vi.fn(),
+    });
+    const recorded: string[] = [];
+
+    const result = await runInitialOnboardFlowSlice({
+      context: context({
+        resume: true,
+        session,
+        recordedSandboxName: "existing",
+        gpuPassthrough: true,
+      }),
+      runtime: runtime(session),
+      phases,
+      resume: true,
+      recordStateResult: async (stateResult) => {
+        if (stateResult.type === "transition") recorded.push(stateResult.next);
+      },
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+    expect(ensureResumePreflightDashboardPortAvailable).toHaveBeenCalledOnce();
+    expect(calls).toEqual([
+      "get-sandbox",
+      "resume-gpu-overrides",
+      "skip-preflight",
+      "record-preflight-skipped",
+      "detect-gpu",
+      "resolve-gpu-config",
+      "validate-gpu-preflight",
+      "assess-host",
+      "reject-unsupported-runtime",
+      "assert-cdi",
+      "assert-bridge-dns",
+      "resolve-gpu-config",
+      "ensure-resume-preflight-port",
+      "initial-gateway-reuse-state",
+      "refresh-gateway-reuse",
+      "gateway-lifecycle-support",
+      "reconcile-gateway-gpu",
+      "skip-gateway",
+      "record-gateway-skipped",
+      "record-gateway-complete",
+    ]);
     expect(recorded).toEqual(["gateway", "provider_selection"]);
   });
 

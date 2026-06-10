@@ -17,7 +17,6 @@ import type { NemoClawInstance } from "./onboarding.ts";
 // probe.
 const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const DOCKER_PROBE_TIMEOUT_MS = 15_000;
-const GATEWAY_STOP_TIMEOUT_MS = 60_000;
 // Status invocation can take several minutes on unfixed code while
 // the gateway recovery path retries. Keep the budget generous; the
 // bug is independent of latency.
@@ -83,19 +82,19 @@ export class LifecyclePhaseFixture {
    * Reproduce the host-side conditions of a DGX Spark / Linux Docker-driver
    * reboot AND drive the user-visible action that exposes the bug:
    *
-   *   1. Ask OpenShell to stop its gateway runtime so the in-memory
-   *      sandbox view drops to NotFound. The actual sandbox container
-   *      is unaffected — that is the entire point of the bug class
-   *      tracked by #4423.
-   *
-   *   2. Locate the OpenShell-labeled Docker container for the
+   *   1. Locate the OpenShell-labeled Docker container for the
    *      scenario's sandbox name and either stop it (default) or
    *      stop+rename it to a `*-nemoclaw-gpu-backup-*` sibling.
+   *      The gateway runtime is left HEALTHY — attempting to stop
+   *      and restart it from the OpenShell CLI is unreliable on
+   *      `ubuntu-latest` (no `gateway start` subcommand) and the
+   *      remaining bug class for #4423 specifically requires a
+   *      `healthy_named` gateway when status runs (otherwise
+   *      #4578's mitigation takes over and masks the signal).
    *
-   *   3. Invoke `nemoclaw <name> status` — the user-visible action
+   *   2. Invoke `nemoclaw <name> status` — the user-visible action
    *      that documented the regression in #4423. On unfixed `main`
-   *      this restarts the gateway (per #4580) and then the
-   *      destructive `missing` branch in `status.ts` wipes the
+   *      the destructive `missing` branch in `status.ts` wipes the
    *      registry entry. On the PR-A fix branch the new Docker-driver
    *      recovery helper restarts the labeled container before
    *      stale-removal can fire.
@@ -119,17 +118,6 @@ export class LifecyclePhaseFixture {
   ): Promise<LifecycleResult> {
     const mode: PostRebootMode = options.mode ?? "stop-original";
     const steps: LifecycleResult["steps"] = [];
-
-    const gatewayStop = await this.sandbox.openshell(["gateway", "stop"], {
-      artifactName: "lifecycle-post-reboot-gateway-stop",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: GATEWAY_STOP_TIMEOUT_MS,
-    });
-    // gateway stop is best-effort: a fresh-start/no-runtime gateway
-    // will exit non-zero with NoSuchProcess, which is exactly the
-    // post-reboot state we want to simulate. Don't fail the lifecycle
-    // phase on it.
-    steps.push({ id: "gateway-stop", results: [gatewayStop] });
 
     const containerNames = await this.discoverLabeledContainerNames(instance);
     if (containerNames.length === 0) {
