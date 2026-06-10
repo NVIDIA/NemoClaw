@@ -30,10 +30,7 @@ const troubleshooting = readFileSync(
   path.join(repoRoot, "docs/reference/troubleshooting.mdx"),
   "utf8",
 );
-const commands = readFileSync(
-  path.join(repoRoot, "docs/reference/commands.mdx"),
-  "utf8",
-);
+const commands = readFileSync(path.join(repoRoot, "docs/reference/commands.mdx"), "utf8");
 
 describe("Control UI config endpoint documentation (#4778)", () => {
   it("documents the supported endpoint in the troubleshooting guide", () => {
