@@ -5,13 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { githubGraphql } from "../tools/advisors/github.mts";
+
+import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import {
   buildPromptTurns,
   buildSystemPrompt,
   classifyMonolithDelta,
   classifyTestDepth,
-  detectE2eVitestSimplicitySignals,
   detectLocalizedPatchSignals,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
@@ -19,7 +19,7 @@ import {
   renderSummary,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { githubGraphql } from "../tools/advisors/github.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -39,7 +39,6 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     previousAdvisorReview: null,
     workflowSignals: [],
     localizedPatchSignals: [],
-    e2eVitestSimplicitySignals: [],
     monolithDeltas: [],
     driftEvidence: [],
     github: null,
@@ -220,9 +219,6 @@ describe("PR review advisor", () => {
       "any unmet acceptance clause or security fail/warning must be represented as a finding",
     );
     expect(prompt).toContain("Source-of-truth review");
-    expect(prompt).toContain("Vitest E2E simplicity");
-    expect(prompt).toContain("Prefer focused Vitest tests with local helpers");
-    expect(prompt).toContain("Do not add new framework");
     expect(prompt).toContain("what invalid state is handled");
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
@@ -268,7 +264,6 @@ describe("PR review advisor", () => {
     expect(turns[1]?.prompt).toContain("sandbox escape");
     expect(turns[2]?.prompt).toContain("Acceptance/correctness/source-of-truth context");
     expect(turns[2]?.prompt).toContain("localizedPatchSignals");
-    expect(turns[2]?.prompt).toContain("e2eVitestSimplicitySignals");
     expect(turns[2]?.prompt).toContain("source-of-truth questions");
     expect(turns[3]?.prompt).toContain("<pr_review_advisor_json>");
   });
@@ -353,70 +348,6 @@ describe("PR review advisor", () => {
       }),
     ]);
     expect(signals[0]?.reviewRule).toContain("invalid state");
-  });
-
-  it("detects Vitest E2E migrations that add framework or ledger surfaces", () => {
-    const signals = detectE2eVitestSimplicitySignals(
-      [
-        "test/e2e-scenario/live/onboard-resume.test.ts",
-        "test/e2e-scenario/framework/clients/sandbox.ts",
-        "test/e2e-scenario/migration/legacy-inventory.json",
-        "tools/e2e-scenarios/workflow-boundary.mts",
-      ],
-      `diff --git a/test/e2e-scenario/live/onboard-resume.test.ts b/test/e2e-scenario/live/onboard-resume.test.ts
-@@ -1,1 +1,3 @@
-+// migrate into the typed scenario framework
-+// update legacy-inventory.json after convergence
-`,
-    );
-
-    expect(signals).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: "warning",
-          kind: "shared Vitest E2E fixture/support change",
-        }),
-        expect.objectContaining({ severity: "blocker", kind: "repo-local E2E migration ledger" }),
-        expect.objectContaining({
-          severity: "warning",
-          kind: "one-off E2E workflow validator expansion",
-        }),
-        expect.objectContaining({ severity: "blocker", kind: "second-framework wording" }),
-        expect.objectContaining({
-          severity: "blocker",
-          kind: "repo-local E2E migration ledger reference",
-        }),
-      ]),
-    );
-  });
-
-  it("injects a deterministic finding for Vitest E2E simplicity issues", () => {
-    const result = normalizeReviewResult(
-      validResult({ findings: [] }),
-      metadata({
-        changedFiles: ["test/e2e-scenario/migration/legacy-inventory.json"],
-        deterministic: {
-          ...metadata().deterministic,
-          e2eVitestSimplicitySignals: [
-            {
-              severity: "blocker",
-              file: "test/e2e-scenario/migration/legacy-inventory.json",
-              line: null,
-              kind: "repo-local E2E migration ledger",
-              evidence: "legacy-inventory.json is repo-local migration bookkeeping",
-              recommendation: "Do not add or modify migration ledgers.",
-            },
-          ],
-        },
-      }),
-    );
-
-    expect(result.findings[0]).toMatchObject({
-      severity: "blocker",
-      category: "architecture",
-      title: "Keep Vitest E2E migrations simple and ledger-free",
-    });
-    expect(result.findings[0]?.recommendation).toContain("focused Vitest test with local helpers");
   });
 
   it("adds a finding when source-of-truth review is missing follow-up", () => {
