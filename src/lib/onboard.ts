@@ -6519,7 +6519,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (!initialContext.sandboxGpuConfig) {
       throw new Error("Preflight did not produce a sandbox GPU configuration.");
     }
-    session = initialContext.session;
+    session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
     const { resumeHasResolvedGpuIntent, requestedGpuPassthrough, gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu ?? null;
