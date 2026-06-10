@@ -58,6 +58,27 @@ describe("messaging channel config", () => {
     ).toBeNull();
   });
 
+  it("normalizes Discord compatibility aliases to canonical channel config", () => {
+    const env: NodeJS.ProcessEnv = {
+      DISCORD_SERVER_IDS: "1491590992753590594",
+      DISCORD_ALLOWED_IDS: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    };
+
+    expect(readMessagingChannelConfigFromEnv(env)).toEqual({
+      DISCORD_SERVER_ID: "1491590992753590594",
+      DISCORD_USER_ID: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    });
+    expect(hydrateMessagingChannelConfig(null, env)).toEqual({
+      DISCORD_SERVER_ID: "1491590992753590594",
+      DISCORD_USER_ID: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    });
+    expect(env.DISCORD_SERVER_ID).toBe("1491590992753590594");
+    expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
+  });
+
   it("hydrates missing env values but preserves explicit env overrides", () => {
     const env: NodeJS.ProcessEnv = {
       TELEGRAM_ALLOWED_IDS: "env-user",
