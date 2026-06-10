@@ -153,10 +153,23 @@ command -v nemoclaw >/dev/null 2>&1 || {
 
 register_sandbox_for_teardown "$SANDBOX"
 
+# Run an openclaw command inside the sandbox with the runtime shell env
+# (/tmp/nemoclaw-proxy-env.sh) sourced first. The non-interactive `exec`
+# path bypasses the system-wide shell hook that sources this file on login,
+# leaving OPENCLAW_GATEWAY_TOKEN unset and forcing the call into a fresh
+# baseline-scope device pair — so privileged operations like `cron add`
+# trip a scope-upgrade approval that never completes in CI. Sourcing it
+# explicitly hands the call the admin token (mirrors connect-shell).
+sandbox_openclaw() {
+  nemoclaw "$SANDBOX" exec -- \
+    sh -c '. /tmp/nemoclaw-proxy-env.sh && exec openclaw "$@"' \
+    nemoclaw-openclaw "$@"
+}
+
 # ── Schedule cron job ──
 section "Schedule isolated agentTurn cron job"
 JOB_NAME="preflight-$(date +%s)"
-ADD_OUT="$(nemoclaw "$SANDBOX" exec -- openclaw cron add \
+ADD_OUT="$(sandbox_openclaw cron add \
   --name "$JOB_NAME" \
   --agent main \
   --session isolated \
@@ -183,7 +196,7 @@ pass "scheduled job $JOB_NAME ($JOB_ID)"
 
 # ── Force-trigger + wait ──
 section "Force-trigger and wait"
-RUN_OUT="$(nemoclaw "$SANDBOX" exec -- openclaw cron run "$JOB_ID" \
+RUN_OUT="$(sandbox_openclaw cron run "$JOB_ID" \
   --wait --wait-timeout "$WAIT_TIMEOUT" --json 2>&1)"
 RUN_RC=$?
 info "raw cron run output (rc=$RUN_RC):"
