@@ -13,12 +13,9 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
-import type {
-  OnboardMachineRunnerResult,
-  OnboardMachineRunnerRuntime,
-  OnboardStateHandlerResult,
-} from "./runner";
+import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 export type InitialOnboardFlowContext<
@@ -55,11 +52,6 @@ export interface InitialOnboardFlowPhaseOptions<
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
   note(message: string): void;
   spawnSync?: SpawnSync;
-}
-
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
 }
 
 function emitPreflightGpuNote<Gpu, Config extends PreflightSandboxGpuConfig>(options: {
@@ -198,30 +190,18 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  const initialRuntimeSession = await options.runtime.session();
   // Keep resume on the compatibility path for now: resume intentionally re-runs
   // preflight/gateway backstops even when the saved machine is already ahead.
   // Remove this fallback only after resume repairs are modeled as strict FSM
   // transitions that preserve these safety checks before later phases run.
-  if (
-    !options.resume &&
-    (initialRuntimeSession.machine.state === "init" ||
-      initialRuntimeSession.machine.state === "preflight")
-  ) {
-    return runInitialOnboardFlowSequence({
-      context: options.context,
-      runtime: options.runtime,
-      phases: options.phases,
-    });
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
-      await options.recordStateResult(stateResult);
-    }
-    context = phaseResult.context;
-  }
-  return { context, session: await options.runtime.session() };
+  return runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: options.runtime,
+    phases: options.phases,
+    resume: options.resume,
+    runWhenState: ["init", "preflight"],
+    compatibilityWhenState: ["gateway", "provider_selection"],
+    runSlice: runInitialOnboardFlowSequence,
+    applyCompatibleResult: options.recordStateResult,
+  });
 }

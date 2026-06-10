@@ -54,6 +54,18 @@ jobs:
           fi
           matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          MATRIX_JSON="${matrix}" python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+
+          rows = json.loads(os.environ["MATRIX_JSON"])
+          print("## Vitest E2E Scenario Matrix")
+          print()
+          print("| Scenario | Runner | Label |")
+          print("| --- | --- | --- |")
+          for row in rows:
+              print(f"| `{row['id']}` | `{row['runner']}` | {row['label']} |")
+          PY
 
   live-scenarios:
     needs: generate-matrix
@@ -64,10 +76,9 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/${{ matrix.id }}
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -87,6 +98,7 @@ jobs:
 
       - name: Run Vitest live E2E scenarios
         env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           SCENARIO_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
@@ -98,27 +110,99 @@ jobs:
           SCENARIO_ID: ${{ matrix.id }}
           SCENARIO_LABEL: ${{ matrix.label }}
         run: |
-          {
-            echo "## Vitest E2E Scenarios"
-            echo
-            echo "- Project: \`e2e-scenarios-live\`"
-            printf '%s%s%s\n' '- Scenario: `' "${SCENARIO_ID}" '`'
-            printf '%s%s%s\n' '- Label: `' "${SCENARIO_LABEL}" '`'
-            echo "- Artifact root: \`${E2E_ARTIFACT_DIR}\`"
-            echo
-            if [ -d "${E2E_ARTIFACT_DIR}" ]; then
-              echo "### Captured Files"
-              find "${E2E_ARTIFACT_DIR}" -type f | sort | sed "s#${E2E_ARTIFACT_DIR}/#- #"
-            else
-              echo "No fixture artifacts were captured."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]
+          plan_path = root / "run-plan.json"
+          print("## Vitest E2E Scenarios")
+          print()
+          print("- Project: `e2e-scenarios-live`")
+          print(f"- Scenario: `{os.environ['SCENARIO_ID']}`")
+          print(f"- Label: `{os.environ['SCENARIO_LABEL']}`")
+          print(f"- Artifact root: `{root}`")
+          print()
+          print("| Scenario | Manifest | Expected state | Suites | Phases |")
+          print("| --- | --- | --- | --- | --- |")
+          if plan_path.exists():
+              plan = json.loads(plan_path.read_text(encoding="utf-8"))
+              suites = ", ".join(plan.get("suiteIds") or []) or "(none)"
+              phases = ", ".join(plan.get("phases") or []) or "(none)"
+              print(
+                  "| "
+                  f"`{plan.get('scenarioId') or os.environ['SCENARIO_ID']}` | "
+                  f"`{plan.get('manifestPath') or 'not-yet-defined'}` | "
+                  f"`{plan.get('expectedStateId') or 'not-yet-defined'}` | "
+                  f"{suites} | {phases} |"
+              )
+          else:
+              print(
+                  "| "
+                  f"`{os.environ['SCENARIO_ID']}` | `(missing run-plan.json)` | "
+                  "`(missing run-plan.json)` | `(missing)` | `(missing)` |"
+              )
+          PY
 
       - name: Upload Vitest E2E artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-vitest-scenarios-${{ matrix.id }}
-          path: e2e-artifacts/vitest/${{ matrix.id }}/
+          path: |
+            e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json
+            e2e-artifacts/vitest/${{ matrix.id }}/scenario.json
+            e2e-artifacts/vitest/${{ matrix.id }}/scenario-result.json
+            e2e-artifacts/vitest/${{ matrix.id }}/environment.result.json
+            e2e-artifacts/vitest/${{ matrix.id }}/onboarding.result.json
+            e2e-artifacts/vitest/${{ matrix.id }}/state-validation.result.json
+            e2e-artifacts/vitest/${{ matrix.id }}/actions/
+            e2e-artifacts/vitest/${{ matrix.id }}/logs/
+            e2e-artifacts/vitest/${{ matrix.id }}/shell/
           include-hidden-files: false
           if-no-files-found: ignore
+          retention-days: 14
+
+  # Free-standing live tests under test/e2e-scenario/live/ that don't fit the
+  # registry-driven steady-state probe model. Each gets a discrete job here
+  # because the matrix above only runs registry-scenarios.test.ts. Modeled on
+  # #5049's free-standing pattern.
+  openshell-version-pin-vitest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openshell-version-pin
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run OpenShell version-pin live test
+        # Migrated from test/e2e/test-openshell-version-pin.sh. Hermetic
+        # installer-script behavioral test — no real network, no real install.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/openshell-version-pin.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenShell version-pin artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-openshell-version-pin
+          path: e2e-artifacts/vitest/openshell-version-pin/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14

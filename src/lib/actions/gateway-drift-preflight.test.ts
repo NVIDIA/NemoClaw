@@ -265,6 +265,8 @@ describe("gateway drift preflight for maintenance actions", () => {
       [{ name: "alpha", provider: "nvidia-prod", model: "nemotron" }],
       new Set(["alpha"]),
       expect.any(Function),
+      // #5026: the running NemoClaw build is passed so image drift is detected.
+      expect.objectContaining({ currentNemoclawVersion: expect.any(String) }),
     );
   });
 

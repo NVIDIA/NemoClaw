@@ -475,6 +475,65 @@ async function checkChannelAddConflict(
   return false;
 }
 
+// Gateway-scoped Slack Socket Mode conflict (#4953): even with a distinct Slack
+// app/token, only one sandbox per OpenShell gateway reliably receives Socket
+// Mode events. Runs AFTER `checkChannelAddConflict` so the credential axis —
+// which catches a *shared* token and stays accurate across gateways — is
+// reported first; this axis then catches the distinct-token, same-gateway case
+// instead of letting it become a silent black hole. Returns true to PROCEED,
+// false to abort. Fail-soft: a detection error must not crash the add or bypass
+// `--force`, so it is swallowed (the credential axis already ran its guarded
+// check). Only meaningful for Slack; other channels proceed unchanged.
+async function checkSlackSocketModeGatewayConflict(
+  sandboxName: string,
+  channelName: string,
+  force: boolean,
+): Promise<boolean> {
+  if (channelName !== "slack") return true;
+  let conflictMessages: string[] = [];
+  try {
+    const applier = require("../../messaging/applier") as typeof import("../../messaging/applier");
+    const { BASE_GATEWAY_NAME } =
+      require("../../onboard/gateway-binding") as typeof import("../../onboard/gateway-binding");
+    // `channels add` registers the Slack provider on the default `nemoclaw`
+    // gateway — applyChannelAddToGatewayAndRegistry → recoverNamedGatewayRuntime
+    // selects `nemoclaw` regardless of the sandbox's recorded gateway. Detect
+    // conflicts on the gateway the add actually mutates so the check matches the
+    // provider registration and cannot leave a false negative (#4953).
+    const gatewayName = BASE_GATEWAY_NAME;
+    conflictMessages = applier
+      .findSlackSocketModeGatewayConflicts(
+        sandboxName,
+        gatewayName,
+        registry.listSandboxes().sandboxes,
+      )
+      .map(({ sandbox }) => applier.formatSlackSocketModeConflictMessage(sandbox));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`  ${YW}⚠${R} Could not verify Slack Socket Mode gateway conflicts: ${message}`);
+    return true;
+  }
+  if (conflictMessages.length === 0) return true;
+
+  for (const message of conflictMessages) {
+    console.log(`  ${YW}⚠${R} ${message}`);
+  }
+  if (force) {
+    console.log("  --force: proceeding despite the Slack Socket Mode gateway conflict above.");
+    return true;
+  }
+  if (isNonInteractive()) {
+    console.error(
+      `  Aborting: only one sandbox per gateway can receive Slack Socket Mode events. Run \`${CLI_NAME} <sandbox> channels remove slack\` on the other sandbox, onboard this sandbox on a separate gateway (set NEMOCLAW_GATEWAY_PORT), or re-run with --force.`,
+    );
+    process.exit(1);
+  }
+  const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
+  if (answer === "y" || answer === "yes") return true;
+  console.log("  Aborting channel add.");
+  return false;
+}
+
 // Push channel tokens to the OpenShell gateway and add the channel to the
 // sandbox registry's messagingChannels list. Done eagerly at `channels
 // add` time (not deferred to rebuild) because the host-side credential
@@ -1061,6 +1120,11 @@ export async function addSandboxChannel(
   const plan = await planSandboxChannelAdd(sandboxName, canonical, agent);
   const acquired = collectManifestCredentials(manifest);
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
+    return; // user aborted; nothing registered or widened
+  }
+  // Credential axis passed; now the gateway-scoped Slack Socket Mode axis (#4953)
+  // catches the distinct-token, same-gateway case the credential check cannot.
+  if (!(await checkSlackSocketModeGatewayConflict(sandboxName, canonical, force))) {
     return; // user aborted; nothing registered or widened
   }
   assertAddChannelPlanActive(sandboxName, manifest, plan);

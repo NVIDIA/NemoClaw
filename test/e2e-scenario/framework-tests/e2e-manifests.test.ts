@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 
-import { compileRunPlans } from "../scenarios/compiler.ts";
 import { loadManifest, loadManifestsFromDir, validateManifest } from "../scenarios/manifests.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 
@@ -70,16 +69,14 @@ describe("NemoClawInstance manifests", () => {
     expect(missingManifests, `missing manifest files: ${missingManifests.join(", ")}`).toEqual([]);
   });
 
-  it("plan only output should show resolved manifest setup and onboarding choices", () => {
-    const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
+  it("registry scenario manifest paths resolve setup and onboarding choices", () => {
+    const scenario = listScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
 
-    expect(plan.manifestPath).toBe("test/e2e-scenario/manifests/openclaw-nvidia.yaml");
-    expect(plan.manifestPath).toBeDefined();
-    expect(plan.manifest).toEqual(
-      loadManifest(path.join(REPO_ROOT, plan.manifestPath as string)).document,
-    );
-    expect(plan.manifest?.spec.setup.install.source).toBe("repo-current");
-    expect(plan.manifest?.spec.onboarding.agent).toBe("openclaw");
-    expect(plan.manifest?.spec.onboarding.provider).toBe("nvidia");
+    expect(scenario).toBeTruthy();
+    expect(scenario!.manifestPath).toBe("test/e2e-scenario/manifests/openclaw-nvidia.yaml");
+    const manifest = loadManifest(path.join(REPO_ROOT, scenario!.manifestPath as string)).document;
+    expect(manifest.spec.setup.install.source).toBe("repo-current");
+    expect(manifest.spec.onboarding.agent).toBe("openclaw");
+    expect(manifest.spec.onboarding.provider).toBe("nvidia");
   });
 });

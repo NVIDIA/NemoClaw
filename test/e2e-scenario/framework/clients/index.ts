@@ -7,6 +7,8 @@ export { HostCliClient } from "./host.ts";
 export {
   ProviderClient,
   trustedProviderEndpoint,
+  type ProviderJsonRequestOptions,
+  type ProviderJsonResponse,
   type TrustedProviderEndpoint,
 } from "./provider.ts";
 export { SandboxClient, validateSandboxName } from "./sandbox.ts";

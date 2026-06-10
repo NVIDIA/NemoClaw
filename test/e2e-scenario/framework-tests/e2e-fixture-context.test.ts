@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { ArtifactSink } from "../framework/artifacts.ts";
+import { ArtifactSink, createArtifactSink } from "../framework/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../framework/cleanup.ts";
 import { test as e2eTest } from "../framework/e2e-test.ts";
 import { SecretStore } from "../framework/secrets.ts";
@@ -48,6 +48,70 @@ describe("E2E fixture primitives", () => {
       expect(() => artifacts.pathFor("../escape.txt")).toThrow(/escapes root/);
       expect(() => artifacts.pathFor(path.join(tmp, "absolute.txt"))).toThrow(/must be relative/);
     } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("live scenario artifacts match the workflow upload allowlist paths", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-live-artifacts-"));
+    const previousArtifactDir = process.env.E2E_ARTIFACT_DIR;
+    const scenarioId = "ubuntu-repo-cloud-openclaw";
+    const artifactParent = path.join(tmp, "e2e-artifacts", "vitest");
+    const allowlistedFiles = [
+      "run-plan.json",
+      "scenario.json",
+      "scenario-result.json",
+      "environment.result.json",
+      "onboarding.result.json",
+      "state-validation.result.json",
+    ];
+    const shellEvidenceFiles = [
+      "shell/command-evidence.result.json",
+      "shell/command-evidence.stdout.txt",
+      "shell/command-evidence.stderr.txt",
+    ];
+
+    try {
+      process.env.E2E_ARTIFACT_DIR = artifactParent;
+      const artifacts = createArtifactSink(scenarioId, tmp);
+      await artifacts.ensureRoot();
+
+      expect(artifacts.rootDir).toBe(path.resolve(artifactParent, scenarioId));
+      for (const file of allowlistedFiles) {
+        await artifacts.writeJson(file, { scenarioId, file });
+      }
+      const controller = new AbortController();
+      const shellProbe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+      const shellResult = await shellProbe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", "console.log('shell evidence')"],
+          reason: "verify workflow allowlist preserves command evidence",
+        }),
+        { artifactName: "command-evidence", timeoutMs: 5_000 },
+      );
+
+      expect(shellResult.exitCode).toBe(0);
+
+      for (const file of allowlistedFiles) {
+        expect(fs.existsSync(path.join(artifactParent, scenarioId, file))).toBe(true);
+      }
+      for (const file of shellEvidenceFiles) {
+        expect(fs.existsSync(path.join(artifactParent, scenarioId, file))).toBe(true);
+      }
+      expect(
+        fs.existsSync(path.join(artifactParent, scenarioId, scenarioId, "run-plan.json")),
+      ).toBe(false);
+    } finally {
+      if (previousArtifactDir === undefined) {
+        delete process.env.E2E_ARTIFACT_DIR;
+      } else {
+        process.env.E2E_ARTIFACT_DIR = previousArtifactDir;
+      }
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
