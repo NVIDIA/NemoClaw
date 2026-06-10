@@ -235,6 +235,29 @@ describe("onboarding phase fixture", () => {
     expect(cleanup.calls).toEqual([]);
   });
 
+  it("tolerates current missing-sandbox cleanup wording", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(42, "provider rejected credential"));
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+      cleanup,
+    );
+
+    await expect(onboard.from(ready(), { sandboxName: "e2e-missing" })).rejects.toThrow(
+      /cloud-openclaw onboarding failed/,
+    );
+
+    runner.enqueue(
+      shellResult(
+        1,
+        "Sandbox 'e2e-missing' does not exist.\nRun 'nemoclaw onboard' to create one.",
+      ),
+    );
+    await expect(cleanup.calls[0]?.run()).resolves.toBeUndefined();
+  });
+
   it("registers sandbox cleanup after successful cloud OpenClaw onboarding", async () => {
     const runner = new FakeRunner();
     runner.enqueue(shellResult(0, "onboarded\n"));
