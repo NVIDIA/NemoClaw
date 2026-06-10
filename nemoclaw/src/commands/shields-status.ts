@@ -11,7 +11,37 @@
 import type { PluginCommandResult } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 
-export function slashShieldsStatus(): PluginCommandResult {
+export function slashShieldsStatus(arg?: string): PluginCommandResult {
+  const trimmed = (arg ?? "").trim();
+
+  if (trimmed === "up" || trimmed === "down") {
+    return {
+      text: [
+        `**Shields ${trimmed}** is host-only.`,
+        "",
+        "Sandbox shields can only be raised or lowered from the host CLI:",
+        "",
+        "```",
+        `nemoclaw <name> shields ${trimmed}`,
+        "```",
+        "",
+        "Inside the sandbox, `/nemoclaw shields` is read-only. Use `/nemoclaw shields` or `/nemoclaw shields status` to see the current state.",
+      ].join("\n"),
+    };
+  }
+
+  if (trimmed !== "" && trimmed !== "status") {
+    return {
+      text: [
+        `**Unknown argument:** \`${trimmed}\``,
+        "",
+        "Usage: `/nemoclaw shields [status]`",
+        "",
+        "Shields can only be raised or lowered from the host CLI: `nemoclaw <name> shields up|down`.",
+      ].join("\n"),
+    };
+  }
+
   const state = loadState();
 
   if (!state.shieldsDown) {

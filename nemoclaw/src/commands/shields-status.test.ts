@@ -131,4 +131,49 @@ describe("commands/shields-status", () => {
     expect(result.text).toContain("not specified");
     expect(result.text).toContain("permissive");
   });
+
+  it("treats an empty string argument as a read-only status request", () => {
+    const result = slashShieldsStatus("");
+    expect(result.text).toContain("Shields: UP");
+  });
+
+  it("treats whitespace-only argument as a read-only status request", () => {
+    const result = slashShieldsStatus("   ");
+    expect(result.text).toContain("Shields: UP");
+  });
+
+  it("treats explicit `status` argument as a read-only status request", () => {
+    const result = slashShieldsStatus("status");
+    expect(result.text).toContain("Shields: UP");
+  });
+
+  it("returns a host-only guidance message for `down`", () => {
+    const result = slashShieldsStatus("down");
+    expect(result.text).toContain("Shields down");
+    expect(result.text).toContain("host-only");
+    expect(result.text).toContain("nemoclaw <name> shields down");
+    expect(mockedLoadState).not.toHaveBeenCalled();
+  });
+
+  it("returns a host-only guidance message for `up`", () => {
+    const result = slashShieldsStatus("up");
+    expect(result.text).toContain("Shields up");
+    expect(result.text).toContain("host-only");
+    expect(result.text).toContain("nemoclaw <name> shields up");
+    expect(mockedLoadState).not.toHaveBeenCalled();
+  });
+
+  it("returns an `Unknown argument` message for an unrecognised sub-argument", () => {
+    const result = slashShieldsStatus("abcxyz");
+    expect(result.text).toContain("Unknown argument");
+    expect(result.text).toContain("abcxyz");
+    expect(result.text).toContain("/nemoclaw shields [status]");
+    expect(mockedLoadState).not.toHaveBeenCalled();
+  });
+
+  it("trims surrounding whitespace before classifying the sub-argument", () => {
+    const result = slashShieldsStatus("  down  ");
+    expect(result.text).toContain("Shields down");
+    expect(result.text).toContain("host-only");
+  });
 });
