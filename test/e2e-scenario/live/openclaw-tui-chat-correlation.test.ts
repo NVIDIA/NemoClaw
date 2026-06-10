@@ -35,6 +35,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { buildAvailabilityProbeEnv } from "../framework/availability-env.ts";
 import { expect, test } from "../framework/e2e-test.ts";
 import type { NemoClawInstance } from "../framework/phases/onboarding.ts";
 import type { SandboxClient } from "../framework/clients/sandbox.ts";
@@ -384,6 +385,7 @@ async function ensureSandboxGatewayRunning(
   ].join(" ");
   const result = await sandbox.execShell(sandboxName, healthScript, {
     artifactName: "ensure-sandbox-gateway-running",
+    env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
   if (result.exitCode !== 0) {
@@ -406,6 +408,7 @@ async function runLiveIssue2603Repro(
   writeFileSync(localScript, buildLiveReproScript(), "utf8");
   try {
     const upload = await sandbox.upload(sandboxName, localScript, remoteScript, {
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
     if (upload.exitCode !== 0) {
@@ -422,6 +425,7 @@ async function runLiveIssue2603Repro(
       `TOKEN=$(node -e "console.log(${tokenExpression})"); node ${remoteScript} "$TOKEN" ${sessionKey}`,
       {
         artifactName: "live-issue2603-repro",
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 180_000,
       },
     );
@@ -480,8 +484,15 @@ test(
     // Assertion: openclaw-version-pinned. The regression target only
     // reproduces against the 2026.5.27 build; if the sandbox installed
     // a different version, the rest of the test is meaningless.
+    //
+    // Every sandbox.* call must pass `env: buildAvailabilityProbeEnv()`:
+    // ShellProbe.run spawns with an empty env when none is provided,
+    // and openshell needs PATH (~/.local/bin on Ubuntu runners) to
+    // resolve. Phase fixtures (state-validation, runtime, lifecycle)
+    // all follow this same convention.
     const versionResult = await sandbox.exec(instance.sandboxName, ["openclaw", "--version"], {
       artifactName: "openclaw-version-pinned",
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
     expect(versionResult.exitCode).toBe(0);
