@@ -89,6 +89,9 @@ const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
 const {
+  reportProviderSelectionFailure,
+}: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
+const {
   promptForInferenceProviderSelection,
 }: typeof import("./onboard/provider-selection-prompt") = require("./onboard/provider-selection-prompt");
 const {
@@ -4152,43 +4155,12 @@ async function setupNim(
           readRecordedModel,
         });
         if (providerSelection.kind === "failure") {
-          switch (providerSelection.reason.kind) {
-            case "wsl-recorded-ollama-windows-host":
-              console.error(
-                `  Recorded provider '${providerSelection.reason.recordedProvider}' (WSL Ollama) is not available in this environment.`,
-              );
-              console.error(
-                "  Hint: Windows-host Ollama is reachable here; re-run with NEMOCLAW_PROVIDER=ollama to use it explicitly.",
-              );
-              break;
-            case "recorded-provider-unavailable":
-              console.error(
-                `  Recorded provider '${providerSelection.reason.recordedProvider}' is not available in this environment.`,
-              );
-              console.error(
-                "  Set NEMOCLAW_PROVIDER explicitly, or restore the missing local-inference dependency.",
-              );
-              if (providerSelection.reason.windowsHostKey) {
-                console.error(
-                  `  Hint: Windows-host Ollama is available here — re-run with NEMOCLAW_PROVIDER=${providerSelection.reason.windowsHostKey} to use it.`,
-                );
-              }
-              break;
-            case "unsupported-windows-host-ollama":
-              rejectWindowsHostOllama(providerSelection.reason.providerKey, isWindowsHostOllama);
-              break;
-            case "hermes-provider-unavailable":
-              console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
-              console.error(
-                "  Re-run with `nemohermes onboard` or `nemoclaw onboard --agent hermes`.",
-              );
-              break;
-            case "requested-provider-unavailable":
-              console.error(
-                `  Requested provider '${providerSelection.reason.providerKey}' is not available in this environment.`,
-              );
-              break;
-          }
+          reportProviderSelectionFailure({
+            reason: providerSelection.reason,
+            isWindowsHostOllama,
+            rejectWindowsHostOllama,
+            writeError: (message) => console.error(message),
+          });
           process.exit(1);
         }
         selected = providerSelection.selected;
