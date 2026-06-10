@@ -68,8 +68,7 @@ function resolveInvokedCliName(): string {
 export function getAgentBranding(
   agentName: string | null | undefined = process.env.NEMOCLAW_AGENT,
 ): AgentBranding {
-  const product =
-    AGENT_PRODUCT_BRANDING[agentName || DEFAULT_AGENT] ?? DEFAULT_PRODUCT_BRANDING;
+  const product = AGENT_PRODUCT_BRANDING[agentName || DEFAULT_AGENT] ?? DEFAULT_PRODUCT_BRANDING;
   return {
     cli: resolveInvokedCliName(),
     ...product,

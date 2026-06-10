@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import os from "node:os";
-import path from "node:path";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -26,13 +24,10 @@ import {
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
-import {
-  ensureOllamaAuthProxy,
-  probeOllamaAuthProxyHealth,
-} from "../../inference/ollama/proxy";
+import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
-import { ROOT, shellQuote } from "../../runner";
+import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
   isTerminalSandboxPhase,
@@ -46,17 +41,18 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
-import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
+import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} from "./connect-autopair-budget";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
-import {
-  applyOpenShellVmDnsMonkeypatch,
-  shouldApplyVmDnsMonkeypatch,
-} from "./vm-dns-monkeypatch";
+import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
@@ -98,10 +94,7 @@ export type SandboxInferenceRouteRepairResult = {
 
 export type SandboxInferenceRouteRepairDeps = {
   isRepairDisabled?: () => boolean;
-  probe: (
-    sandboxName: string,
-    options?: InferenceRouteProbeOptions,
-  ) => SandboxInferenceRouteProbe;
+  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
   shouldApplyVmDnsMonkeypatch: (sb: SandboxEntry | null) => boolean;
   applyVmDnsMonkeypatch: (
     sandboxName: string,
@@ -125,15 +118,8 @@ export type ManagedInferenceRouteResetDeps = {
     options: { quiet?: boolean },
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
-  probe: (
-    sandboxName: string,
-    options?: InferenceRouteProbeOptions,
-  ) => SandboxInferenceRouteProbe;
-  printUnrecoverableInferenceRoute: (
-    sandboxName: string,
-    sb: SandboxEntry,
-    detail: string,
-  ) => void;
+  probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
+  printUnrecoverableInferenceRoute: (sandboxName: string, sb: SandboxEntry, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -177,7 +163,9 @@ export function parseSandboxConnectArgs(
     }
     switch (arg) {
       case "--dangerously-skip-permissions":
-        console.error("  --dangerously-skip-permissions was removed; use shields commands instead.");
+        console.error(
+          "  --dangerously-skip-permissions was removed; use shields commands instead.",
+        );
         printSandboxConnectHelp(sandboxName);
         process.exit(1);
         break;
@@ -206,6 +194,10 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
+    // path (#4504): the gateway is up, so deterministically clear any pending
+    // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
+    runConnectAutoPairApprovalPass(sandboxName);
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -217,6 +209,8 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.recovered) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Same defense-in-depth approval after a recovery (#4504); best-effort.
+    runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
@@ -249,10 +243,7 @@ function isBlockingGatewayLifecycle(
   return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
 }
 
-function failConnectReadinessGatewayUnavailable(
-  sandboxName: string,
-  detailOutput = "",
-): never {
+function failConnectReadinessGatewayUnavailable(sandboxName: string, detailOutput = ""): never {
   console.error("");
   console.error(
     `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
@@ -314,7 +305,7 @@ function probeSandboxInferenceRoute(
         [
           "OUT=/tmp/nemoclaw-inference-route-probe.out",
           "HTTP_CODE=$(curl -sk -o \"$OUT\" -w '%{http_code}' --connect-timeout 3 --max-time 8 https://inference.local/v1/models 2>/dev/null) || HTTP_CODE=000",
-          "case \"$HTTP_CODE\" in 000|5*) printf 'BROKEN %s ' \"$HTTP_CODE\"; head -c 160 \"$OUT\" 2>/dev/null || true ;; *) printf 'OK %s' \"$HTTP_CODE\" ;; esac",
+          'case "$HTTP_CODE" in 000|5*) printf \'BROKEN %s \' "$HTTP_CODE"; head -c 160 "$OUT" 2>/dev/null || true ;; *) printf \'OK %s\' "$HTTP_CODE" ;; esac',
         ].join("; "),
       ],
       { ignoreError: true, timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS },
@@ -329,11 +320,13 @@ function probeSandboxInferenceRoute(
     sleepSync(delayMs);
   }
 
-  return lastProbe ?? {
-    healthy: false,
-    broken: false,
-    detail: "inference route probe did not run",
-  };
+  return (
+    lastProbe ?? {
+      healthy: false,
+      broken: false,
+      detail: "inference route probe did not run",
+    }
+  );
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
@@ -349,15 +342,7 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {
-  const args = [
-    "inference",
-    "set",
-    "--provider",
-    provider,
-    "--model",
-    model,
-    "--no-verify",
-  ];
+  const args = ["inference", "set", "--provider", provider, "--model", model, "--no-verify"];
   if (["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)) {
     args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
   }
@@ -404,10 +389,12 @@ export function repairSandboxInferenceRouteWithDeps(
         );
       }
       const patch = deps.applyVmDnsMonkeypatch(sandboxName, sb);
-      const patchedProbe = patch.ok ? deps.probe(sandboxName, {
-        attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
-        delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
-      }) : null;
+      const patchedProbe = patch.ok
+        ? deps.probe(sandboxName, {
+            attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
+            delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
+          })
+        : null;
       if (patchedProbe?.healthy) {
         if (!quiet) {
           log("  inference.local route repaired.");
@@ -420,9 +407,7 @@ export function repairSandboxInferenceRouteWithDeps(
       }
       if (!quiet) {
         if (!patch.ok && patch.reason) {
-          error(
-            `  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`,
-          );
+          error(`  Warning: OpenShell VM DNS monkeypatch did not apply: ${patch.reason}`);
         } else if (patchedProbe?.broken) {
           error(
             "  Warning: OpenShell VM DNS monkeypatch completed but inference.local is still unavailable.",
@@ -433,7 +418,9 @@ export function repairSandboxInferenceRouteWithDeps(
 
     if (!quiet) {
       log("");
-      log(`  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`);
+      log(
+        `  inference.local is unavailable inside '${sandboxName}'. Reapplying OpenShell inference route...`,
+      );
     }
     const finalProbe = deps.reapplyVmInferenceRoute(sandboxName, sb);
     if (!quiet) {
@@ -752,146 +739,27 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
-// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
-// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
-// approving allowlisted requests in slow-mode for hours after startup; this
-// pass covers the case where the watcher has exited or is otherwise stuck
-// when the user runs `nemoclaw <sandbox> connect`. The script sources
-// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
-// in-sandbox `openclaw devices list` invocation targets the running gateway
-// with its token. Approvals then use OpenClaw's local fallback by removing
-// OPENCLAW_GATEWAY_URL only from the child env, and apply the same allowlist
-// as the startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
-// modes. Unknown clients are ignored, not approved.
-//
-// Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
-// semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
-// scope-upgrade can request the upgraded scopes for its own connection and
-// return the pending-scope failure it is trying to resolve. Remove this local
-// fallback path when OpenClaw approve can complete scope upgrades through the
-// gateway using only operator.pairing.
-//
-// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
-// unreachable) are swallowed: the connect flow must not be blocked by a
-// best-effort approval. Internal timeouts (2s list + 1s x MAX_APPROVALS
-// attempts) fit within the outer spawnSync cap, so a partial-completion
-// mid-loop kill cannot strand allowlisted requests within a normal batch.
-const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
-const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
-const CONNECT_AUTO_PAIR_POLICY_PATH = path.join(
-  ROOT,
-  "scripts",
-  "lib",
-  "openclaw_device_approval_policy.py",
-);
+// Connect/probe/finalization budget for the shared auto-pair approval pass
+// (#4504). The realistic case here is a single pending CLI/webchat scope
+// upgrade, so MAX_APPROVALS is 1 and the approve timeout matches the in-sandbox
+// watcher's RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh). The outer spawnSync cap
+// (15s) exceeds the internal worst case (2s list + 10s × 1 = 12s) plus
+// shell/python startup so a legitimate slow approve is never SIGKILLed mid-loop
+// and the allowlisted request is never stranded. Constants live in the
+// dependency-free ./connect-autopair-budget leaf so tests can assert the
+// invariant on the real values without importing this heavy module. The doctor
+// recovery surface (#4616) keeps the wider default budget in ./auto-pair-approval.
+const CONNECT_AUTO_PAIR_BUDGET = {
+  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} as const;
 
-function readConnectAutoPairPolicyModule(): string | null {
-  try {
-    return readFileSync(CONNECT_AUTO_PAIR_POLICY_PATH, "utf-8");
-  } catch {
-    // The approval pass is best-effort, so a packaging/layout regression must
-    // not block connect. Build-context and package `files` coverage keep this
-    // helper present in supported installs.
-    return null;
-  }
-}
-
-function runConnectAutoPairApprovalPass(sandboxName: string): void {
-  const approvalPolicyModule = readConnectAutoPairPolicyModule();
-  if (!approvalPolicyModule) {
-    return;
-  }
-  const approvalPolicyModuleB64 = Buffer.from(approvalPolicyModule, "utf-8").toString("base64");
-  const script = `
-PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
-[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
-command -v openclaw >/dev/null 2>&1 || exit 0
-command -v python3 >/dev/null 2>&1 || exit 0
-OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
-import base64
-import json
-import os
-import subprocess
-import sys
-
-try:
-    policy_source = base64.b64decode(
-        os.environ.get('NEMOCLAW_APPROVAL_POLICY_B64', ''), validate=True,
-    ).decode('utf-8')
-    policy_globals = {}
-    exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
-    approval_request_decision = policy_globals['approval_request_decision']
-    gateway_approval_env = policy_globals['gateway_approval_env']
-except Exception:
-    sys.exit(0)
-
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
-
-try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=2,
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(0)
-if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(0)
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
-    sys.exit(0)
-if not isinstance(data, dict):
-    sys.exit(0)
-pending = data.get('pending')
-if not isinstance(pending, list):
-    sys.exit(0)
-approved_count = 0
-attempted_count = 0
-seen_request_ids = set()
-for device in pending:
-    if attempted_count >= MAX_APPROVALS:
-        break
-    if not isinstance(device, dict):
-        continue
-    request_id = device.get('requestId')
-    if not request_id or request_id in seen_request_ids:
-        continue
-    decision = approval_request_decision(device)
-    if not decision['allowed']:
-        continue
-    seen_request_ids.add(request_id)
-    approve_env = gateway_approval_env(os.environ)
-    attempted_count += 1
-    try:
-        approve_proc = subprocess.run(
-            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=1, env=approve_env,
-        )
-        if approve_proc.returncode == 0:
-            approved_count += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        continue
-PYAPPROVE
-exit 0
-`;
-  try {
-    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
-    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
-    // startup slack) so a wedged sandbox can never block the connect flow.
-    spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-      {
-        cwd: ROOT,
-        env: process.env,
-        stdio: ["ignore", "ignore", "ignore"],
-        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
-      },
-    );
-  } catch {
-    /* defense-in-depth — never throw from the connect path */
-  }
+// Thin wrapper so the connect/probe/finalization surfaces share one budget
+// without each caller restating it. Best-effort; never throws (#4263/#4504).
+export function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
 }
 
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
@@ -1117,7 +985,9 @@ export async function connectSandbox(
   // slow-mode keepalive, a brief approval pass before opening SSH
   // catches any pending allowlisted CLI/webchat scope upgrades that
   // piled up between startup and now (e.g., watcher crashed, watcher
-  // deadline exhausted, multi-sandbox gateway contention).
+  // deadline exhausted, multi-sandbox gateway contention). The same pass
+  // is reachable without SSH via `doctor --fix` for dashboard-only users
+  // (#4616). Uses the tight connect budget (#4504).
   runConnectAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox

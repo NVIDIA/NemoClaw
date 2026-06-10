@@ -151,7 +151,9 @@ describe("CLI dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-channels-missing-"));
     writeSandboxRegistry(home);
 
-    const startMissing = runWithEnv("sandbox channels start does-not-exist telegram", { HOME: home });
+    const startMissing = runWithEnv("sandbox channels start does-not-exist telegram", {
+      HOME: home,
+    });
     const stopMissing = runWithEnv("sandbox channels stop does-not-exist telegram", { HOME: home });
 
     expect(startMissing.code).toBe(1);

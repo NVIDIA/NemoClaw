@@ -4,10 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
-import {
-  filterEnabledChannelsByAgent,
-  resolveQrSelectedChannels,
-} from "./messaging-state";
+import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./messaging-state";
 
 function agent(messagingPlatforms: string[]): AgentDefinition {
   return { messagingPlatforms } as unknown as AgentDefinition;
@@ -15,9 +12,9 @@ function agent(messagingPlatforms: string[]): AgentDefinition {
 
 describe("filterEnabledChannelsByAgent", () => {
   it("drops channels not declared by the agent manifest", () => {
-    expect(
-      filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent(["telegram"])),
-    ).toEqual(["telegram"]);
+    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent(["telegram"]))).toEqual([
+      "telegram",
+    ]);
   });
 
   it("keeps every channel when the agent declares no supported list", () => {

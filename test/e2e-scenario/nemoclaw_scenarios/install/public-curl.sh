@@ -16,10 +16,6 @@ _E2E_INST_CURL_RUNTIME_LIB="$(cd "${_E2E_INST_CURL_DIR}/../../runtime/lib" && pw
 
 e2e_install_curl() {
   e2e_env_trace "install-curl"
-  if e2e_env_is_dry_run; then
-    echo "[dry-run] install-curl (skipped)"
-    return 0
-  fi
   local url="${E2E_INSTALLER_URL:-https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/install.sh}"
   local sha256="${E2E_INSTALLER_SHA256:-}"
   local tmp

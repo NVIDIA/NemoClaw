@@ -80,52 +80,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          node-version: "22"
-          cache: npm
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
 
-      - name: Install hadolint
-        run: |
-          HADOLINT_VERSION="v2.14.0"
-          HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
-          curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
-          EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
-          ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
-          [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
-          chmod +x /usr/local/bin/hadolint
-
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-
-      - name: Validate config schemas
-        run: npm run validate:configs
-
-      - name: Run static hook checks
-        run: |
-          npx prek run --all-files --stage pre-push \
-            --skip tsc-plugin \
-            --skip tsc-js \
-            --skip tsc-cli \
-            --skip version-tag-sync \
-            --skip test-cli \
-            --skip test-plugin \
-            --skip source-shape-test-budget \
-            --skip test-file-size-budget \
-            --skip test-skills-yaml
-
-      - name: Run source-shape budget
-        run: npm run source-shape:check
-
-      - name: Run test file size budget
-        run: npm run test-size:check
-
-      - name: Run skills YAML tests
-        run: npx vitest run test/skills-frontmatter.test.ts
-
-      - name: Verify platform matrix is in sync
-        run: python3 scripts/generate-platform-docs.py --check
+      - name: Run static checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-static-checks
 
   build-typecheck:
     needs: changes
@@ -138,36 +109,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          node-version: "22"
-          cache: npm
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
 
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
+      - name: Run build and type checks
+        uses: ./.trusted-ci-actions/.github/actions/ci-build-typecheck
 
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Build CLI TypeScript modules
-        run: npm run build:cli
-
-      - name: Typecheck CLI + tests
-        run: npm run typecheck:cli
-
-      - name: Typecheck plugin
-        run: cd nemoclaw && npx tsc --noEmit --incremental
-
-      - name: Typecheck JavaScript config
-        run: npx tsc -p jsconfig.json
-
-      - name: Verify package version matches git tags
-        run: bash scripts/check-version-tag-sync.sh
-
-  cli-tests:
+  installer-integration:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -178,47 +138,133 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Detect trusted installer integration action
+        id: trusted-installer-integration
+        shell: bash
+        run: |
+          if [ -f .trusted-ci-actions/.github/actions/ci-installer-integration/action.yaml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run installer integration tests
+        if: ${{ steps.trusted-installer-integration.outputs.available == 'true' }}
+        uses: ./.trusted-ci-actions/.github/actions/ci-installer-integration
+
+      - name: Setup Node.js for installer integration
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
           cache: npm
 
-      - name: Install dependencies
+      - name: Install installer integration dependencies
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
         run: |
           npm install --ignore-scripts
           cd nemoclaw && npm install --ignore-scripts
 
-      - name: Build TypeScript plugin
-        run: cd nemoclaw && npm run build
-
-      - name: Run CLI coverage
+      - name: Build installer integration artifacts
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
         run: |
-          node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
           npm run build:cli
-          npx tsx scripts/check-dist-sourcemaps.ts dist
-          npx vitest run --project cli \
-            --reporter=github-actions \
-            --reporter=json \
-            --outputFile.json=coverage/cli/vitest-results.json \
-            --coverage \
-            --coverage.reporter=text-summary \
-            --coverage.reporter=json-summary \
-            --coverage.reportsDirectory=coverage/cli \
-            --coverage.include="bin/**/*.js" \
-            --coverage.include="dist/lib/**/*.js" \
-            --coverage.exclude="test/**/*.js" \
-            --coverage.exclude="test/**/*.ts"
-          npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
+          cd nemoclaw && npm run build
 
-      - name: Upload CLI Vitest timing report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Run installer integration tests (bootstrap)
+        if: ${{ steps.trusted-installer-integration.outputs.available != 'true' }}
+        shell: bash
+        run: CI=true npx vitest run --project installer-integration
+
+  cli-test-shards:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          name: cli-vitest-results
-          path: coverage/cli/vitest-results.json
-          if-no-files-found: warn
-          retention-days: 14
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Run CLI coverage shard
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
+        with:
+          shard: ${{ matrix.shard }}
+          shard-count: "5"
+
+  cli-tests:
+    needs:
+      - changes
+      - cli-test-shards
+    if: ${{ always() && needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify CLI shards completed
+        env:
+          CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+        run: |
+          if [ "$CLI_SHARD_RESULT" != "success" ]; then
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
+
+      - name: Merge CLI coverage
+        uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
+        with:
+          shard-count: "5"
 
   plugin-tests:
     needs: changes
@@ -231,27 +277,23 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - name: Checkout trusted CI actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm install --ignore-scripts
-          cd nemoclaw && npm install --ignore-scripts
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-ci-actions
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-static-checks
+            .github/actions/ci-build-typecheck
+            .github/actions/ci-cli-coverage-shard
+            .github/actions/ci-cli-coverage-merge
+            .github/actions/ci-plugin-coverage
+            .github/actions/ci-installer-integration
+          sparse-checkout-cone-mode: false
 
       - name: Run plugin coverage
-        run: |
-          npx vitest run --project plugin \
-            --coverage \
-            --coverage.reporter=text-summary \
-            --coverage.reporter=json-summary \
-            --coverage.reportsDirectory=coverage/plugin \
-            --coverage.include="nemoclaw/src/**/*.ts" \
-            --coverage.exclude="**/*.test.ts"
-          npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
+        uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
 
   test-e2e-ollama-proxy:
     needs: changes
@@ -277,6 +319,7 @@ jobs:
       - docs-only-checks
       - static-checks
       - build-typecheck
+      - installer-integration
       - cli-tests
       - plugin-tests
       - test-e2e-ollama-proxy
@@ -291,6 +334,7 @@ jobs:
           DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
+          INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
@@ -324,6 +368,7 @@ jobs:
             allow_success_or_skipped "docs-only-checks" "$DOCS_ONLY_RESULT"
             require_success "static-checks" "$STATIC_RESULT"
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
             require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
@@ -331,6 +376,7 @@ jobs:
             require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
             allow_success_or_skipped "static-checks" "$STATIC_RESULT"
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
+            allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
             allow_success_or_skipped "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"

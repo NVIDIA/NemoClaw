@@ -57,9 +57,7 @@ function hasArg(cmd: string | string[], arg: string): boolean {
 function hasCurlTimeoutArgs(cmd: string | string[]): boolean {
   if (!Array.isArray(cmd)) {
     return (
-      cmd.includes("curl") &&
-      cmd.includes("--connect-timeout 5") &&
-      cmd.includes("--max-time 5")
+      cmd.includes("curl") && cmd.includes("--connect-timeout 5") && cmd.includes("--max-time 5")
     );
   }
   const connectTimeout = cmd.indexOf("--connect-timeout");
@@ -539,10 +537,7 @@ describe("nim", () => {
       // selector can size against currently free memory, not just total.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA GB300, 284208, 280000\n";
         }
         return "";
@@ -566,10 +561,7 @@ describe("nim", () => {
     it("aggregates fields and populates gpus for N homogeneous GPUs on the primary path", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA H100 80GB HBM3, 81920, 81000\nNVIDIA H100 80GB HBM3, 81920, 60000\n";
         }
         return "";
@@ -600,10 +592,7 @@ describe("nim", () => {
       // comma" regressions.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA RTX A,B, 81920, 80000\n";
         }
         return "";
@@ -630,10 +619,7 @@ describe("nim", () => {
     it("drops name and populates gpus breakdown on mixed-model hosts (regression #2669)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887, 90000\nNVIDIA GB300, 256703, 250000\n";
         }
         return "";
@@ -673,10 +659,7 @@ describe("nim", () => {
     ])("rejects denylisted placeholder name %s on generic firmware", (placeholder) => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return `${placeholder}, 65471, 65000\n`;
         }
         return "";
@@ -699,10 +682,7 @@ describe("nim", () => {
     it("rejects the whole probe when any row is denylisted on generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "JMJWOA-Generic-GPU, 65471, 65000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         return "";
@@ -820,10 +800,7 @@ describe("nim", () => {
     it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         return "";
@@ -850,10 +827,7 @@ describe("nim", () => {
     it("rejects when /proc/driver/nvidia/ probe throws on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         return "";
@@ -885,10 +859,7 @@ describe("nim", () => {
     it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         return "";
@@ -923,10 +894,7 @@ describe("nim", () => {
     it("trusts x86_64 generic firmware even when /proc/driver/nvidia/ is absent", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         return "";
@@ -958,10 +926,7 @@ describe("nim", () => {
     it("rejects denylisted names on x86_64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "JMJWOA-Generic-GPU, 65471, 65000\n";
         }
         return "";
@@ -987,10 +952,7 @@ describe("nim", () => {
     it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "JMJWOA-Generic-GPU, 131072, 12000\n";
         }
         return "";
@@ -1021,10 +983,7 @@ describe("nim", () => {
     it("accepts placeholder names when firmware confirms NVIDIA platform (#3510)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "JMJWOA-Generic-GPU, 131072, 12000\n";
         }
         return "";
@@ -1051,7 +1010,8 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
         if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA GB10";
-        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:         131072       10240       90000        1024       30832      119808\nSwap:             0           0           0";
+        if (cmd[0] === "free" && cmd[1] === "-m")
+          return "              total        used        free      shared  buff/cache   available\nMem:         131072       10240       90000        1024       30832      119808\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1156,7 +1116,8 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
         if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Jetson AGX Orin";
-        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
+        if (cmd[0] === "free" && cmd[1] === "-m")
+          return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1287,10 +1248,7 @@ describe("nim", () => {
       // surfacing it; available is dropped so callers fall back to total.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
+        if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
           return "NVIDIA H100 80GB HBM3, 81920, [N/A]\n";
         }
         return "";
@@ -1346,7 +1304,8 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
         if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Xavier";
-        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:           4096        1024        2048         256       1024        2816\nSwap:             0           0           0";
+        if (cmd[0] === "free" && cmd[1] === "-m")
+          return "              total        used        free      shared  buff/cache   available\nMem:           4096        1024        2048         256       1024        2816\nSwap:             0           0           0";
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1452,10 +1411,12 @@ describe("nim", () => {
   describe("groupGpusByName", () => {
     it("preserves first-appearance order across distinct names", () => {
       expect(
-        nim.groupGpusByName([
-          { name: "NVIDIA RTX PRO 6000 Blackwell Max-Q", memoryMB: 97887 },
-          { name: "NVIDIA GB300", memoryMB: 256703 },
-        ]).map((g: { name: string }) => g.name),
+        nim
+          .groupGpusByName([
+            { name: "NVIDIA RTX PRO 6000 Blackwell Max-Q", memoryMB: 97887 },
+            { name: "NVIDIA GB300", memoryMB: 256703 },
+          ])
+          .map((g: { name: string }) => g.name),
       ).toEqual(["NVIDIA RTX PRO 6000 Blackwell Max-Q", "NVIDIA GB300"]);
     });
 
@@ -1521,9 +1482,7 @@ describe("nim", () => {
         perGpuMB: 81920,
         nimCapable: true,
       });
-      expect(lines).toEqual([
-        "NVIDIA GPU detected (2x NVIDIA H100 80GB HBM3, 163840 MB)",
-      ]);
+      expect(lines).toEqual(["NVIDIA GPU detected (2x NVIDIA H100 80GB HBM3, 163840 MB)"]);
     });
 
     // Regression #2669: this is the case the previous fix missed entirely.
@@ -1598,7 +1557,8 @@ describe("nim", () => {
       };
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models"))
+          return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1616,7 +1576,8 @@ describe("nim", () => {
     it("bounds curl health probes with connect and total timeouts", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models"))
+          return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1668,8 +1629,7 @@ describe("nim", () => {
         const runCalls = run.mock.calls.map(([c]: [string | string[]]) => c);
         expect(
           inspectCalls.some(
-            (c) =>
-              c[0] === "docker" && c.includes("inspect") && c.includes("nemoclaw-nim-test"),
+            (c) => c[0] === "docker" && c.includes("inspect") && c.includes("nemoclaw-nim-test"),
           ),
         ).toBe(true);
         expect(
@@ -1717,7 +1677,10 @@ describe("nim", () => {
 
     it("passes NGC_API_KEY and NIM_NGC_API_KEY through spawn env, not argv", () => {
       const run = vi.fn();
-      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""), run);
+      const { nimModule, restore } = loadNimWithMockedRunner(
+        vi.fn(() => ""),
+        run,
+      );
       try {
         nimModule.startNimContainerByName(
           "nemoclaw-nim-test",
@@ -1746,7 +1709,10 @@ describe("nim", () => {
       process.env.NGC_API_KEY = "nvapi-env-ngc";
       delete process.env.NVIDIA_API_KEY;
       const run = vi.fn();
-      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""), run);
+      const { nimModule, restore } = loadNimWithMockedRunner(
+        vi.fn(() => ""),
+        run,
+      );
       try {
         nimModule.startNimContainerByName(
           "nemoclaw-nim-test",
@@ -1771,7 +1737,10 @@ describe("nim", () => {
       delete process.env.NGC_API_KEY;
       process.env.NVIDIA_API_KEY = "nvapi-env-nvidia";
       const run = vi.fn();
-      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""), run);
+      const { nimModule, restore } = loadNimWithMockedRunner(
+        vi.fn(() => ""),
+        run,
+      );
       try {
         nimModule.startNimContainerByName(
           "nemoclaw-nim-test",
@@ -1793,7 +1762,10 @@ describe("nim", () => {
       delete process.env.NGC_API_KEY;
       delete process.env.NVIDIA_API_KEY;
       const run = vi.fn();
-      const { nimModule, restore } = loadNimWithMockedRunner(vi.fn(() => ""), run);
+      const { nimModule, restore } = loadNimWithMockedRunner(
+        vi.fn(() => ""),
+        run,
+      );
       try {
         nimModule.startNimContainerByName(
           "nemoclaw-nim-test",
@@ -1817,7 +1789,8 @@ describe("nim", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
-        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models"))
+          return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1833,9 +1806,7 @@ describe("nim", () => {
           state: "running",
         });
         expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(false);
-        expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
-          true,
-        );
+        expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(true);
         expect(commands.some((c) => c[0] === "curl" && hasCurlTimeoutArgs(c))).toBe(true);
         expect(
           timeoutForCommand(
@@ -1846,7 +1817,8 @@ describe("nim", () => {
         expect(
           timeoutForCommand(
             runCapture,
-            (c) => Array.isArray(c) && c[0] === "curl" && c.includes("http://127.0.0.1:9000/v1/models"),
+            (c) =>
+              Array.isArray(c) && c[0] === "curl" && c.includes("http://127.0.0.1:9000/v1/models"),
           ),
         ).toBe(6000);
       } finally {
@@ -1860,7 +1832,8 @@ describe("nim", () => {
           if (!Array.isArray(cmd)) throw new Error("expected argv array");
           if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
           if (cmd[0] === "docker" && cmd.includes("port")) return mapping;
-          if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models")) return '{"data":[]}';
+          if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:9000/v1/models"))
+            return '{"data":[]}';
           return "";
         });
         const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1869,11 +1842,14 @@ describe("nim", () => {
           const st = nimModule.nimStatusByName("foo");
           const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
 
-          expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+          expect(st).toMatchObject({
+            running: true,
+            healthy: true,
+            container: "foo",
+            state: "running",
+          });
           expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
-          expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(
-            true,
-          );
+          expect(commands.some((c) => c.includes("http://127.0.0.1:9000/v1/models"))).toBe(true);
           expect(
             timeoutForCommand(
               runCapture,
@@ -1897,7 +1873,8 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "docker" && cmd.includes("inspect")) return "running";
         if (cmd[0] === "docker" && cmd.includes("port")) return "";
-        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:8000/v1/models")) return '{"data":[]}';
+        if (cmd[0] === "curl" && hasArg(cmd, "http://127.0.0.1:8000/v1/models"))
+          return '{"data":[]}';
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
@@ -1906,11 +1883,14 @@ describe("nim", () => {
         const st = nimModule.nimStatusByName("foo");
         const commands = runCapture.mock.calls.map(([c]: [string | string[]]) => c);
 
-        expect(st).toMatchObject({ running: true, healthy: true, container: "foo", state: "running" });
+        expect(st).toMatchObject({
+          running: true,
+          healthy: true,
+          container: "foo",
+          state: "running",
+        });
         expect(commands.some((c) => c[0] === "docker" && c.includes("port"))).toBe(true);
-        expect(commands.some((c) => c.includes("http://127.0.0.1:8000/v1/models"))).toBe(
-          true,
-        );
+        expect(commands.some((c) => c.includes("http://127.0.0.1:8000/v1/models"))).toBe(true);
       } finally {
         restore();
       }
@@ -1926,7 +1906,12 @@ describe("nim", () => {
 
       try {
         const st = nimModule.nimStatusByName("foo");
-        expect(st).toMatchObject({ running: false, healthy: false, container: "foo", state: "exited" });
+        expect(st).toMatchObject({
+          running: false,
+          healthy: false,
+          container: "foo",
+          state: "exited",
+        });
         expect(
           timeoutForCommand(
             runCapture,
@@ -1967,7 +1952,9 @@ describe("nim", () => {
       const origHomedir = os.homedir;
       os.homedir = () => "/mock-home";
       if (config === null) {
-        fs.readFileSync = () => { throw new Error("ENOENT"); };
+        fs.readFileSync = () => {
+          throw new Error("ENOENT");
+        };
       } else {
         fs.readFileSync = (p: string, ...args: unknown[]) => {
           if (typeof p === "string" && p.includes(".docker/config.json")) return config;
@@ -1981,7 +1968,9 @@ describe("nim", () => {
     }
 
     it("returns true when credHelpers has nvcr.io", () => {
-      const restore = mockDockerConfig(JSON.stringify({ credHelpers: { "nvcr.io": "secretservice" } }));
+      const restore = mockDockerConfig(
+        JSON.stringify({ credHelpers: { "nvcr.io": "secretservice" } }),
+      );
       try {
         expect(nim.isNgcLoggedIn()).toBe(true);
       } finally {
@@ -1990,7 +1979,9 @@ describe("nim", () => {
     });
 
     it("returns true when auths has nvcr.io with auth field", () => {
-      const restore = mockDockerConfig(JSON.stringify({ auths: { "nvcr.io": { auth: "dXNlcjpwYXNz" } } }));
+      const restore = mockDockerConfig(
+        JSON.stringify({ auths: { "nvcr.io": { auth: "dXNlcjpwYXNz" } } }),
+      );
       try {
         expect(nim.isNgcLoggedIn()).toBe(true);
       } finally {
@@ -2057,9 +2048,7 @@ describe("nim", () => {
     });
 
     it("returns false when credsStore is set but no nvcr.io marker (not logged in)", () => {
-      const restore = mockDockerConfig(
-        JSON.stringify({ credsStore: "desktop", auths: {} }),
-      );
+      const restore = mockDockerConfig(JSON.stringify({ credsStore: "desktop", auths: {} }));
       try {
         expect(nim.isNgcLoggedIn()).toBe(false);
       } finally {

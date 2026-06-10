@@ -15,20 +15,23 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
     load: vi.fn(() => session),
     activeSandbox: vi.fn(() => ({ messagingChannels: ["telegram"], disabledChannels: null })),
     mergeChannels: vi.fn(
-      (
-        selected: string[],
-        recorded: string[],
-        active: string[] | null | undefined,
-      ) => (selected.length > 0 ? selected : active ?? recorded),
+      (selected: string[], recorded: string[], active: string[] | null | undefined) =>
+        selected.length > 0 ? selected : (active ?? recorded),
     ),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (
         _sandboxName: string,
-        options: Parameters<PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]>[1],
+        options: Parameters<
+          PoliciesStateOptions<Agent, WebSearchConfig>["deps"]["preparePolicyPresetResumeSelection"]
+        >[1],
       ) => ({
-        policyPresets: (options.recordedPolicyPresets ?? []).filter((name) => name !== "unsupported"),
-        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes("unsupported"),
+        policyPresets: (options.recordedPolicyPresets ?? []).filter(
+          (name) => name !== "unsupported",
+        ),
+        recordedPolicyPresetsNeedReconcile: (options.recordedPolicyPresets ?? []).includes(
+          "unsupported",
+        ),
         disabledMessagingPolicyPresetApplied: false,
       }),
     ),

@@ -169,24 +169,17 @@ describe("docker helpers", () => {
   });
 
   it("removes only volumes returned by the prefix probe", () => {
-    runCaptureMock.mockReturnValue("openshell-cluster-nemoclaw\nopenshell-cluster-nemoclaw-cache\n");
+    runCaptureMock.mockReturnValue(
+      "openshell-cluster-nemoclaw\nopenshell-cluster-nemoclaw-cache\n",
+    );
 
     const removed = dockerRemoveVolumesByPrefix("  openshell-cluster-nemoclaw  ", {
       ignoreError: true,
     });
 
-    expect(removed).toEqual([
-      "openshell-cluster-nemoclaw",
-      "openshell-cluster-nemoclaw-cache",
-    ]);
+    expect(removed).toEqual(["openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw-cache"]);
     expect(runMock).toHaveBeenCalledWith(
-      [
-        "docker",
-        "volume",
-        "rm",
-        "openshell-cluster-nemoclaw",
-        "openshell-cluster-nemoclaw-cache",
-      ],
+      ["docker", "volume", "rm", "openshell-cluster-nemoclaw", "openshell-cluster-nemoclaw-cache"],
       { ignoreError: true },
     );
   });
@@ -201,9 +194,9 @@ describe("docker helpers", () => {
       throw new Error("docker unavailable");
     });
 
-    expect(dockerRemoveVolumesByPrefix("openshell-cluster-nemoclaw", { ignoreError: true })).toEqual(
-      [],
-    );
+    expect(
+      dockerRemoveVolumesByPrefix("openshell-cluster-nemoclaw", { ignoreError: true }),
+    ).toEqual([]);
     expect(runMock).not.toHaveBeenCalled();
   });
 

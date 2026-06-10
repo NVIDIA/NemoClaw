@@ -17,11 +17,6 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 echo "platform-wsl:wsl-smoke"
 e2e_context_require E2E_PLATFORM_OS E2E_SANDBOX_NAME
 
-if e2e_env_is_dry_run; then
-  echo "[dry-run] would run WSL-specific smoke checks"
-  exit 0
-fi
-
 os="$(e2e_context_get E2E_PLATFORM_OS)"
 if [[ "${os}" != "wsl" ]]; then
   echo "platform-wsl: E2E_PLATFORM_OS should be 'wsl', got '${os}'" >&2

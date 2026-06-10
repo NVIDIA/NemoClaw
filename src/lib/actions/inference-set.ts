@@ -47,7 +47,6 @@ export interface InferenceSetResult {
 
 type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
 
-
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -270,6 +269,9 @@ export function patchHermesInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const upstream = ensureObject(config, "_nemoclaw_upstream");
+  upstream.provider = provider;
+  upstream.model = model;
   const modelConfig = ensureObject(config, "model");
   modelConfig.default = model;
   modelConfig.base_url = route.inferenceBaseUrl;
@@ -440,7 +442,13 @@ export async function runInferenceSet(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
-  const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, patched.route, deps);
+  const sessionUpdated = updateMatchingOnboardSession(
+    sandboxName,
+    provider,
+    model,
+    patched.route,
+    deps,
+  );
 
   deps.appendAuditEntry({
     action: "inference_set",

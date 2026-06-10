@@ -176,7 +176,9 @@ function applyRecoveredDefault(
 
 export async function recoverRegistryEntries({
   requestedSandboxName = null,
-}: { requestedSandboxName?: string | null } = {}) {
+}: {
+  requestedSandboxName?: string | null;
+} = {}) {
   const current = registry.listSandboxes();
   const session = onboardSession.loadSession();
   const recoveryCheck = shouldRecoverRegistryEntries(current, session, requestedSandboxName);

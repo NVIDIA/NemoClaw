@@ -35,9 +35,7 @@ export interface InstallOllamaMacOSResult {
  * dropped `brew upgrade ollama` would leave the host on the stale daemon
  * and the subsequent version probe would still find the old binary.
  */
-export function installOllamaOnMacOS(
-  opts: InstallOllamaMacOSOptions,
-): InstallOllamaMacOSResult {
+export function installOllamaOnMacOS(opts: InstallOllamaMacOSOptions): InstallOllamaMacOSResult {
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
   const runImpl = opts.runImpl ?? run;

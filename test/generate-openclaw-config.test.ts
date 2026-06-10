@@ -284,9 +284,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toContain(
       "https://nemoclaw0-xxx.brevlab.com:18789",
     );
-    expect(config.gateway.controlUi.allowedOrigins).toContain(
-      "https://nemoclaw0-xxx.brevlab.com",
-    );
+    expect(config.gateway.controlUi.allowedOrigins).toContain("https://nemoclaw0-xxx.brevlab.com");
   });
 
   it("includes only loopback origin for loopback URL", () => {
@@ -424,7 +422,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("keeps groupPolicy open with no groups stanza when requireMention is false (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
-    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: false })).toString("base64");
+    const telegramConfig = Buffer.from(JSON.stringify({ requireMention: false })).toString(
+      "base64",
+    );
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
@@ -1024,7 +1024,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({
       NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra()]),
     });
-    const defaultEntries = config.agents.list.filter((entry: { default?: boolean }) => entry.default === true);
+    const defaultEntries = config.agents.list.filter(
+      (entry: { default?: boolean }) => entry.default === true,
+    );
     expect(defaultEntries).toHaveLength(1);
     expect(defaultEntries[0].id).toBe("main");
     expect(config.agents.list[0].id).toBe("main");
@@ -1067,7 +1069,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("rejects extras with relative paths", () => {
     expectBuildConfigError(
-      { NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ workspace: "workspace-research" })]) },
+      {
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
+          makeExtra({ workspace: "workspace-research" }),
+        ]),
+      },
       /must be an absolute path/,
     );
   });
@@ -1132,9 +1138,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects extras that lack a tools policy", () => {
     expectBuildConfigError(
       {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ tools: undefined }),
-        ]),
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ tools: undefined })]),
       },
       /\.tools must be an object/,
     );
@@ -1154,9 +1158,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects extras whose subagents.maxSpawnDepth is missing or invalid", () => {
     expectBuildConfigError(
       {
-        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([
-          makeExtra({ subagents: undefined }),
-        ]),
+        NEMOCLAW_EXTRA_AGENTS_JSON_B64: extraAgentsB64([makeExtra({ subagents: undefined })]),
       },
       /\.subagents must be an object/,
     );
@@ -1520,33 +1522,25 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("rejects model-specific setup manifests without a known agent", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "openclaw/missing-agent.json",
-      {
-        id: "missing-agent",
-        description: "Invalid manifest",
-        match: { modelIds: ["test-model"] },
-        effects: { openclawCompat: {} },
-      },
-    );
+    const registryDir = writeRegistryManifest(blueprintDir, "openclaw/missing-agent.json", {
+      id: "missing-agent",
+      description: "Invalid manifest",
+      match: { modelIds: ["test-model"] },
+      effects: { openclawCompat: {} },
+    });
 
     expectBuildConfigError(
       { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir },
       "field 'agent' is required",
     );
 
-    const unknownRegistryDir = writeRegistryManifest(
-      blueprintDir,
-      "openclaw/unknown-agent.json",
-      {
-        id: "unknown-agent",
-        agent: "sidecar",
-        description: "Invalid manifest",
-        match: { modelIds: ["test-model"] },
-        effects: { openclawCompat: {} },
-      },
-    );
+    const unknownRegistryDir = writeRegistryManifest(blueprintDir, "openclaw/unknown-agent.json", {
+      id: "unknown-agent",
+      agent: "sidecar",
+      description: "Invalid manifest",
+      match: { modelIds: ["test-model"] },
+      effects: { openclawCompat: {} },
+    });
     fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "missing-agent.json"));
 
     expectBuildConfigError(
@@ -1563,17 +1557,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     );
 
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "openclaw/empty-match.json",
-      {
-        id: "empty-match",
-        agent: "openclaw",
-        description: "Invalid match",
-        match: {},
-        effects: { openclawCompat: {} },
-      },
-    );
+    const registryDir = writeRegistryManifest(blueprintDir, "openclaw/empty-match.json", {
+      id: "empty-match",
+      agent: "openclaw",
+      description: "Invalid match",
+      match: {},
+      effects: { openclawCompat: {} },
+    });
 
     expectBuildConfigError(
       { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir },
@@ -1706,7 +1696,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
     ];
 
     for (const testCase of cases) {
-      const blueprintDir = path.join(tmpDir, `fixture-blueprint-${testCase.name.replaceAll(" ", "-")}`);
+      const blueprintDir = path.join(
+        tmpDir,
+        `fixture-blueprint-${testCase.name.replaceAll(" ", "-")}`,
+      );
       const registryDir = writeRegistryManifest(
         blueprintDir,
         "openclaw/manifest.json",
@@ -1718,17 +1711,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("rejects unknown OpenClaw effect keys and missing plugin source paths", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "openclaw/bad-effect.json",
-      {
-        id: "bad-effect",
-        agent: "openclaw",
-        description: "Invalid OpenClaw effect",
-        match: { modelIds: ["test-model"] },
-        effects: { hermesCompat: {} },
-      },
-    );
+    const registryDir = writeRegistryManifest(blueprintDir, "openclaw/bad-effect.json", {
+      id: "bad-effect",
+      agent: "openclaw",
+      description: "Invalid OpenClaw effect",
+      match: { modelIds: ["test-model"] },
+      effects: { hermesCompat: {} },
+    });
 
     expectBuildConfigError(
       { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir },
@@ -1811,21 +1800,17 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("rejects conflicting OpenClaw compat effects and duplicate plugin ids", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
     fs.mkdirSync(path.join(blueprintDir, "openclaw-plugins", "fixture"), { recursive: true });
-    const registryDir = writeRegistryManifest(
-      blueprintDir,
-      "openclaw/conflicting-compat.json",
-      {
-        id: "conflicting-compat",
-        agent: "openclaw",
-        description: "Conflicting compat",
-        match: { modelIds: ["test-model"] },
-        effects: {
-          openclawCompat: {
-            supportsStore: true,
-          },
+    const registryDir = writeRegistryManifest(blueprintDir, "openclaw/conflicting-compat.json", {
+      id: "conflicting-compat",
+      agent: "openclaw",
+      description: "Conflicting compat",
+      match: { modelIds: ["test-model"] },
+      effects: {
+        openclawCompat: {
+          supportsStore: true,
         },
       },
-    );
+    });
 
     expectBuildConfigError(
       {

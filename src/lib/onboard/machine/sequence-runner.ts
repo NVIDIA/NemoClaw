@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OnboardMachineRunnerOptions, OnboardStateHandlerResult } from "./runner";
-import { runOnboardMachine, type OnboardMachineRunnerRuntime, type OnboardStateHandlers } from "./runner";
+import {
+  runOnboardMachine,
+  type OnboardMachineRunnerRuntime,
+  type OnboardStateHandlers,
+} from "./runner";
 import type { OnboardNonTerminalMachineState } from "./types";
 
 export interface OnboardSequencePhaseResult<Context> {
@@ -12,7 +16,9 @@ export interface OnboardSequencePhaseResult<Context> {
 
 export interface OnboardSequencePhase<Context> {
   state: OnboardNonTerminalMachineState;
-  run(context: Context): Promise<OnboardSequencePhaseResult<Context>> | OnboardSequencePhaseResult<Context>;
+  run(
+    context: Context,
+  ): Promise<OnboardSequencePhaseResult<Context>> | OnboardSequencePhaseResult<Context>;
 }
 
 export interface OnboardSequenceRunnerOptions<Context> {
@@ -21,6 +27,7 @@ export interface OnboardSequenceRunnerOptions<Context> {
   phases: readonly OnboardSequencePhase<Context>[];
   maxTransitions?: OnboardMachineRunnerOptions<Context>["maxTransitions"];
   sequenceOwnership?: OnboardMachineRunnerOptions<Context>["sequenceOwnership"];
+  stopStates?: OnboardMachineRunnerOptions<Context>["stopStates"];
 }
 
 export class DuplicateOnboardSequencePhaseError extends Error {
@@ -63,6 +70,7 @@ export async function runOnboardSequenceWithRunner<Context>({
   phases,
   maxTransitions,
   sequenceOwnership,
+  stopStates,
 }: OnboardSequenceRunnerOptions<Context>) {
   let pendingContext = initialContext;
   return runOnboardMachine({
@@ -70,6 +78,7 @@ export async function runOnboardSequenceWithRunner<Context>({
     runtime,
     maxTransitions,
     sequenceOwnership,
+    stopStates,
     handlers: buildOnboardSequenceHandlers(phases, (context) => {
       pendingContext = context;
     }),

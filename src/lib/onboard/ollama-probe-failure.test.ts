@@ -45,7 +45,9 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
         errLines.some((l) =>
-          l.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy"),
+          l.includes(
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
+          ),
         ),
       ).toBe(true);
     } finally {
@@ -73,9 +75,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
         ),
       ).toThrow(/process\.exit:1/);
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        errLines.some((l) => l.includes("Aborting: Ollama daemon is unhealthy")),
-      ).toBe(true);
+      expect(errLines.some((l) => l.includes("Aborting: Ollama daemon is unhealthy"))).toBe(true);
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();
@@ -97,11 +97,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       );
       expect(action).toBe("back-to-selection");
       const logLines = logSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        logLines.some((l) =>
-          l.includes("Ollama itself appears unavailable"),
-        ),
-      ).toBe(true);
+      expect(logLines.some((l) => l.includes("Ollama itself appears unavailable"))).toBe(true);
       expect(
         logLines.some((l) =>
           l.includes("Returning to provider selection; choose a non-Ollama provider"),
@@ -127,13 +123,9 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       );
       expect(action).toBe("continue");
       const logLines = logSpy.mock.calls.map((c) => String(c[0]));
-      expect(
-        logLines.some((l) => l.includes("Choose a different Ollama model")),
-      ).toBe(true);
+      expect(logLines.some((l) => l.includes("Choose a different Ollama model"))).toBe(true);
       // Daemon-escape hint MUST NOT appear in the non-daemon path.
-      expect(
-        logLines.some((l) => l.includes("Ollama itself appears unavailable")),
-      ).toBe(false);
+      expect(logLines.some((l) => l.includes("Ollama itself appears unavailable"))).toBe(false);
     } finally {
       errSpy.mockRestore();
       logSpy.mockRestore();

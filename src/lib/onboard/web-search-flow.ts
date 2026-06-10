@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { AgentDefinition } from "../agent/defs";
@@ -10,13 +13,19 @@ import { BRAVE_API_KEY_ENV } from "../inference/web-search";
 import { ROOT } from "../runner";
 import { classifyValidationFailure } from "../validation";
 import { getTransportRecoveryMessage } from "../validation-recovery";
-import { BACK_TO_SELECTION, type BackToSelection, isBackToSelection } from "./credential-navigation";
+import {
+  BACK_TO_SELECTION,
+  type BackToSelection,
+  isBackToSelection,
+} from "./credential-navigation";
 import { exitOnboardFromPrompt, isAffirmativeAnswer } from "./prompt-helpers";
 import type { ValidationFailureLike } from "./types";
 import { agentSupportsWebSearch } from "./web-search-support";
 import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } from "./web-search-verify";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
+const BRAVE_CURL_CONFIG_PREFIX = "nemoclaw-brave-probe";
+const BRAVE_API_KEY_LINE_BREAK_MESSAGE = "Brave Search API key must not contain line breaks.";
 
 export interface WebSearchFlowDeps {
   prompt(question: string, options?: { secret?: boolean }): Promise<string>;
@@ -30,7 +39,9 @@ export interface WebSearchFlowHelpers {
   validateBraveSearchApiKey(apiKey: string): CurlProbeResult;
   promptBraveSearchRecovery(validation: ValidationFailureLike): Promise<"retry" | "skip">;
   promptBraveSearchApiKey(): Promise<string | BackToSelection>;
-  ensureValidatedBraveSearchCredential(nonInteractive?: boolean): Promise<string | BackToSelection | null>;
+  ensureValidatedBraveSearchCredential(
+    nonInteractive?: boolean,
+  ): Promise<string | BackToSelection | null>;
   configureWebSearch(
     existingConfig?: WebSearchConfig | null,
     agent?: AgentDefinition | null,
@@ -43,23 +54,71 @@ export interface WebSearchFlowHelpers {
 }
 
 export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFlowHelpers {
-  function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
-    return runCurlProbe([
+  function escapeCurlConfigValue(value: string): string {
+    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  }
+
+  function braveCurlConfig(apiKey: string): string {
+    const tokenHeader = escapeCurlConfigValue(`X-Subscription-Token: ${apiKey}`);
+    return [
+      'header = "Accept: application/json"',
+      'header = "Accept-Encoding: gzip"',
+      `header = "${tokenHeader}"`,
+      "",
+    ].join("\n");
+  }
+
+  function writeBraveCurlConfig(apiKey: string): { configPath: string; cleanup: () => void } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${BRAVE_CURL_CONFIG_PREFIX}-`));
+    const configPath = path.join(dir, "curl.conf");
+    try {
+      fs.writeFileSync(configPath, braveCurlConfig(apiKey), { mode: 0o600 });
+    } catch (error) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      throw error;
+    }
+    return {
+      configPath,
+      cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+    };
+  }
+
+  function braveSearchArgs(configPath: string): string[] {
+    return [
       "-sS",
       "--compressed",
-      "-H",
-      "Accept: application/json",
-      "-H",
-      "Accept-Encoding: gzip",
-      "-H",
-      `X-Subscription-Token: ${apiKey}`,
+      "--config",
+      configPath,
       "--get",
       "--data-urlencode",
       "q=ping",
       "--data-urlencode",
       "count=1",
       "https://api.search.brave.com/res/v1/web/search",
-    ]);
+    ];
+  }
+
+  function invalidBraveSearchApiKey(message: string): CurlProbeResult {
+    return {
+      ok: false,
+      httpStatus: 0,
+      curlStatus: 0,
+      body: "",
+      stderr: "",
+      message,
+    };
+  }
+
+  function validateBraveSearchApiKey(apiKey: string): CurlProbeResult {
+    if (/[\r\n]/.test(apiKey)) {
+      return invalidBraveSearchApiKey(BRAVE_API_KEY_LINE_BREAK_MESSAGE);
+    }
+    const { configPath, cleanup } = writeBraveCurlConfig(apiKey);
+    try {
+      return runCurlProbe(braveSearchArgs(configPath), { trustedConfigFiles: [configPath] });
+    } finally {
+      cleanup();
+    }
   }
 
   async function promptBraveSearchRecovery(
@@ -75,7 +134,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       console.log("  Brave Search validation did not succeed.");
     }
 
-    const answer = (await deps.prompt("  Type 'retry', 'skip', or 'exit' [retry]: ")).trim().toLowerCase();
+    const answer = (await deps.prompt("  Type 'retry', 'skip', or 'exit' [retry]: "))
+      .trim()
+      .toLowerCase();
     if (answer === "skip") return "skip";
     if (answer === "exit" || answer === "quit") {
       exitOnboardFromPrompt();
@@ -170,7 +231,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     dockerfilePathOverride: string | null = null,
   ): Promise<WebSearchConfig | null> {
     if (!agentSupportsWebSearch(agent, dockerfilePathOverride, ROOT)) {
-      deps.note(`  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`);
+      deps.note(
+        `  Web search is not yet supported by ${agent?.displayName ?? "this agent"}. Skipping.`,
+      );
       return null;
     }
 
@@ -180,7 +243,8 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
 
     if (deps.isNonInteractive()) {
       const braveApiKey =
-        getCredential(BRAVE_API_KEY_ENV) || normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
+        getCredential(BRAVE_API_KEY_ENV) ||
+        normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
       if (!braveApiKey) {
         return null;
       }

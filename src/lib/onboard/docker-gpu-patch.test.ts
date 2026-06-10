@@ -17,6 +17,7 @@ import {
   collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
   detectSandboxFallbackDns,
+  detectTegraDeviceGroupGids,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
   getDockerGpuPatchNetworkMode,
@@ -27,10 +28,7 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
 import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
-import {
-  getSandboxFailurePhase,
-  isSandboxReady,
-} from "../../../dist/lib/state/gateway";
+import { getSandboxFailurePhase, isSandboxReady } from "../../../dist/lib/state/gateway";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -301,10 +299,7 @@ describe("docker-gpu-patch", () => {
 
   it("maps default and explicit GPU devices to Docker --gpus values", () => {
     expect(buildDockerGpuMode("gpus").args).toEqual(["--gpus", "all"]);
-    expect(buildDockerGpuMode("gpus", "nvidia.com/gpu=0").args).toEqual([
-      "--gpus",
-      "device=0",
-    ]);
+    expect(buildDockerGpuMode("gpus", "nvidia.com/gpu=0").args).toEqual(["--gpus", "device=0"]);
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
   });
 
@@ -390,6 +385,8 @@ describe("docker-gpu-patch", () => {
         dockerCapture: vi.fn(() => ""),
         dockerRun,
         dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
       },
     );
 
@@ -428,13 +425,17 @@ describe("docker-gpu-patch", () => {
     expect(dockerCapture).not.toHaveBeenCalled();
   });
 
-  it("tries CDI only when Docker reports readable NVIDIA CDI specs", () => {
+  it("prefers CDI only when Docker reports readable NVIDIA CDI specs", () => {
     expect(buildDockerGpuModeCandidates("all", { cdiAvailable: false }).map((m) => m.kind)).toEqual(
       ["gpus", "nvidia-runtime"],
     );
-    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual(
-      ["gpus", "nvidia-runtime", "cdi"],
-    );
+    // When a CDI spec is present, CDI is preferred first (see #4948); --gpus
+    // and the NVIDIA runtime remain as fallbacks.
+    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual([
+      "cdi",
+      "gpus",
+      "nvidia-runtime",
+    ]);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-cdi-"));
     try {
@@ -457,11 +458,8 @@ describe("docker-gpu-patch", () => {
     // case: `docker info` returns an empty CDISpecDirs list, but Docker is
     // still reading specs from its well-known default /etc/cdi. The detector
     // should mirror Docker's behavior and surface cdi as available so the
-    // candidate list keeps `cdi` for fallback after `--gpus all` trips the
-    // AMD-CDI bug.
-    const readDir = vi.fn((dirPath: string) =>
-      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
-    );
+    // candidate list prefers `cdi` ahead of `--gpus all` on CDI hosts (#4948).
+    const readDir = vi.fn((dirPath: string) => (dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null));
     const readFile = vi.fn((filePath: string) =>
       filePath === "/etc/cdi/nvidia.yaml"
         ? "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n"
@@ -503,12 +501,8 @@ describe("docker-gpu-patch", () => {
   });
 
   it("does not re-scan a directory that docker info already reported", () => {
-    const readDir = vi.fn((dirPath: string) =>
-      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
-    );
-    const readFile = vi.fn(() =>
-      "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n",
-    );
+    const readDir = vi.fn((dirPath: string) => (dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null));
+    const readFile = vi.fn(() => "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n");
     dockerReportsNvidiaCdiDevices({
       dockerCapture: vi.fn(() => JSON.stringify(["/etc/cdi"])),
       readDir,
@@ -544,6 +538,8 @@ describe("docker-gpu-patch", () => {
         runOpenshell,
         sleep: vi.fn(),
         now: () => new Date("2026-05-12T00:00:00Z"),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
       },
     );
 
@@ -800,6 +796,123 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
   });
 });
 
+// Jetson `/dev/nvmap` group-permission propagation (#4231). The reporter's
+// Jetson Orin sandbox saw the GPU devices mounted but CUDA failed with
+// `NvRmMemInitNvmap ... Permission denied` / `cuInit(0)=999` because the
+// sandbox user (uid/gid 998) was not in the `video` group that owns
+// `/dev/nvmap` (`crw-rw---- root video`). The Jetson recreate must grant that
+// group via `--group-add` so CUDA can initialize.
+describe("Jetson /dev/nvmap group propagation (#4231)", () => {
+  it("returns the owning GID(s) of present Tegra device nodes, skipping missing and root-owned", () => {
+    const deviceGids: Record<string, number> = {
+      "/dev/nvmap": 44, // root video
+      "/dev/nvhost-ctrl": 44,
+      "/dev/nvhost-gpu": 0, // root root — skipped (root already has access)
+      "/dev/nvgpu/igpu0/ctrl": 110, // render
+      // every other Tegra node is absent on this host
+    };
+    const gids = detectTegraDeviceGroupGids({
+      statDeviceGid: (p: string) => (p in deviceGids ? deviceGids[p] : null),
+    });
+    // Deduped, sorted numerically, root (0) and missing nodes excluded.
+    expect(gids).toEqual(["44", "110"]);
+  });
+
+  it("returns no GIDs when no Tegra device nodes are present (non-Jetson host)", () => {
+    expect(detectTegraDeviceGroupGids({ statDeviceGid: () => null })).toEqual([]);
+  });
+
+  it("emits --group-add for extraGroupGids and dedupes against existing GroupAdd", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.GroupAdd = ["44"]; // baseline already carries video
+    const args = buildDockerGpuCloneRunArgs(
+      inspect,
+      buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }),
+      { extraGroupGids: ["44", "110"] },
+    );
+    // `44` is added exactly once (baseline + extra deduped); `110` added.
+    expect(args.filter((arg, i) => args[i - 1] === "--group-add" && arg === "44").length).toBe(1);
+    expect(args).toEqual(expect.arrayContaining(["--group-add", "110"]));
+  });
+
+  it("does not add --group-add when extraGroupGids is absent", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.GroupAdd = [];
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+    expect(args).not.toEqual(expect.arrayContaining(["--group-add"]));
+  });
+
+  it("plumbs detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspectFixture()]);
+      if (args[0] === "info") return "";
+      return "";
+    });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
+
+    recreateOpenShellDockerSandboxWithGpu(
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
+      {
+        dockerCapture,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-05-15T00:00:00Z"),
+        detectSandboxFallbackDns: () => null,
+        detectTegraDeviceGroupGids: detectTegraDeviceGroupGidsStub,
+      },
+    );
+
+    expect(detectTegraDeviceGroupGidsStub).toHaveBeenCalled();
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      expect.arrayContaining(["--group-add", "44"]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("does not add Tegra device GIDs for the generic (non-Jetson) backend", () => {
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return "old-container-id\n";
+      if (args[0] === "inspect") return JSON.stringify([inspectFixture()]);
+      if (args[0] === "info") return "";
+      return "";
+    });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
+
+    recreateOpenShellDockerSandboxWithGpu(
+      { sandboxName: "alpha", timeoutSecs: 1, backend: "generic" },
+      {
+        dockerCapture,
+        dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        runOpenshell: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-05-15T00:00:00Z"),
+        detectSandboxFallbackDns: () => null,
+        detectTegraDeviceGroupGids: detectTegraDeviceGroupGidsStub,
+      },
+    );
+
+    // Generic backend never queries Tegra device groups and never emits the
+    // extra --group-add (inspectFixture has no baseline GroupAdd).
+    expect(detectTegraDeviceGroupGidsStub).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["--group-add", "44"]),
+      expect.anything(),
+    );
+  });
+});
+
 // Regression coverage for NemoClaw issue #4316: the Docker GPU patch path
 // must distinguish "sandbox never became executable" (Error phase / dead
 // container) from "GPU proof failed inside an executable sandbox", and the
@@ -809,8 +922,9 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("detects terminal failure phases in `openshell sandbox list` output", () => {
     const errorList = "my-sandbox   Error   2s ago";
     expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
-    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox"))
-      .toBe("CrashLoopBackOff");
+    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox")).toBe(
+      "CrashLoopBackOff",
+    );
     expect(getSandboxFailurePhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe("Failed");
 
     expect(getSandboxFailurePhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBeNull();
@@ -819,10 +933,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   });
 
   it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
-    const outputs = [
-      "my-sandbox   Provisioning   1s ago",
-      "my-sandbox   Error          3s ago",
-    ];
+    const outputs = ["my-sandbox   Provisioning   1s ago", "my-sandbox   Error          3s ago"];
     let i = 0;
     const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
     const sleep = vi.fn();
@@ -856,14 +967,9 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     // fast-fail intent is preserved when the operator opts out of the
     // debounce.
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
-    const listOutputs = [
-      "alpha   Provisioning   1s ago",
-      "alpha   Error          3s ago",
-    ];
+    const listOutputs = ["alpha   Provisioning   1s ago", "alpha   Error          3s ago"];
     let i = 0;
-    const runCaptureOpenshell = vi.fn(
-      () => listOutputs[Math.min(i++, listOutputs.length - 1)],
-    );
+    const runCaptureOpenshell = vi.fn(() => listOutputs[Math.min(i++, listOutputs.length - 1)]);
     const sleep = vi.fn();
 
     const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
@@ -1133,9 +1239,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       // helper level (printDockerGpuPatchFailureAndExit must not pass
       // `dockerCapture: undefined`). Here we just confirm collect() invokes
       // the supplied dockerCapture for ps/inspect.
-      expect(
-        dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps"),
-      ).toBe(true);
+      expect(dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps")).toBe(true);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1165,9 +1269,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(snapshot.patchedContainerState).toBeNull();
     // The `--format '{{json .State}}'` invocation should not have happened.
     expect(
-      dockerCapture.mock.calls.some(
-        ([args]) => args[0] === "inspect" && args[1] === "--format",
-      ),
+      dockerCapture.mock.calls.some(([args]) => args[0] === "inspect" && args[1] === "--format"),
     ).toBe(false);
   });
 

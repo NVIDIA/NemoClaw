@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert";
+import { createServer, type AddressInfo } from "node:net";
 import { afterEach, describe, it } from "vitest";
-import {
-  buildLoopbackProbeEnv,
-  sleepMs,
-  sleepSeconds,
-} from "../src/lib/core/wait.js";
+import { buildLoopbackProbeEnv, sleepMs, sleepSeconds, waitForPort } from "../src/lib/core/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {
@@ -104,5 +101,38 @@ describe("buildLoopbackProbeEnv (#4181)", () => {
     assert.ok(parts.has("internal-host"), env.NO_PROXY);
     assert.ok(parts.has("localhost"), env.NO_PROXY);
     assert.ok(parts.has("127.0.0.1"), env.NO_PROXY);
+  });
+});
+
+describe("waitForPort (#4974)", () => {
+  // Regression for #4974: onboarding probed TCP ports by shelling out to `nc`,
+  // which is not installed on many hosts (minimal Linux distros such as CachyOS,
+  // and Windows). When nc was missing, every probe failed silently and
+  // onboarding aborted with a misleading "did not become ready within timeout".
+  // The probe must succeed with no external tools available on PATH.
+  it("returns true for a listening port without any external tool on PATH", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    const originalPath = process.env.PATH;
+    try {
+      // Emptying PATH hides nc (and every other binary). process.execPath is an
+      // absolute path, so the Node-based probe still runs.
+      process.env.PATH = "";
+      assert.strictEqual(waitForPort(port, 2), true);
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("returns false when no service is listening", async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // The port is now closed; the probe should give up within the timeout.
+    assert.strictEqual(waitForPort(port, 1), false);
   });
 });

@@ -55,19 +55,12 @@ export function reportDockerDriverGatewayStartFailure(
   { exitOnFailure }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const tail = fs.existsSync(logPath)
-    ? fs
-        .readFileSync(logPath, "utf-8")
-        .split("\n")
-        .filter(Boolean)
-        .slice(-20)
-        .join("\n")
+    ? fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean).slice(-20).join("\n")
     : "";
 
   console.error("  Docker-driver gateway failed to start.");
   if (childExit.exited) {
-    console.error(
-      `  Gateway process ${childExit.describeExit()} before becoming ready.`,
-    );
+    console.error(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
   }
   if (tail) {
     console.error("  Gateway log tail:");

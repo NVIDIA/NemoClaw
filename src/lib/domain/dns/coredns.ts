@@ -11,7 +11,10 @@ export function dockerHostRuntime(dockerHost: string | undefined): ContainerRunt
   ) {
     return "colima";
   }
-  if (dockerHost.includes("/podman/machine/podman.sock") || dockerHost.includes("/podman/podman.sock")) {
+  if (
+    dockerHost.includes("/podman/machine/podman.sock") ||
+    dockerHost.includes("/podman/podman.sock")
+  ) {
     return "podman";
   }
   if (dockerHost.includes("/.docker/run/docker.sock")) return "docker-desktop";
@@ -23,7 +26,8 @@ export function firstNonLoopbackNameserver(resolvConf: string): string | null {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const [kind, value] = trimmed.split(/\s+/);
-    const isLoopback = value === "::1" || value === "localhost" || Boolean(value?.startsWith("127."));
+    const isLoopback =
+      value === "::1" || value === "localhost" || Boolean(value?.startsWith("127."));
     if (kind === "nameserver" && value && !isLoopback) return value;
   }
   return null;

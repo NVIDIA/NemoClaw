@@ -78,7 +78,10 @@ function loadPersistedProxyToken(): string | null {
 }
 
 function curlAuthHeaderConfig(token: string): string {
-  const escaped = String(token).replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escaped = String(token)
+    .replace(/[\r\n]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
   return `header = "Authorization: Bearer ${escaped}"\n`;
 }
 
@@ -105,7 +108,11 @@ function runCurlWithAuthConfig(args: string[], endpoint: string, token: string |
   return spawnSync("curl", curlArgs, options);
 }
 
-function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: string | null = null): string {
+function runCurlCaptureWithAuthConfig(
+  args: string[],
+  endpoint: string,
+  token: string | null = null,
+): string {
   const result = runCurlWithAuthConfig(args, endpoint, token);
   return result.status === 0 ? String(result.stdout || "") : "";
 }
@@ -202,15 +209,7 @@ function startOllamaAuthProxy(): boolean {
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--max-time",
-      "3",
-    ],
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3"],
     `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
     token,
   );
@@ -307,17 +306,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   }
 
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-    ],
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "3", "--max-time", "5"],
     endpoint,
     token,
   );
@@ -393,7 +382,7 @@ async function promptOllamaModel(
   const options = usingInstalled ? installedFitting : bootstrap;
   const defaultModelCandidate = getDefaultOllamaModel(gpu);
   const defaultModel = isExcluded(defaultModelCandidate)
-    ? options[0] ?? defaultModelCandidate
+    ? (options[0] ?? defaultModelCandidate)
     : defaultModelCandidate;
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
@@ -507,7 +496,6 @@ function pullOllamaModelViaHttp(model) {
 
     // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
     // the model id is normalized before being serialized as JSON request data.
-    // lgtm[js/file-access-to-http]
     const proc = spawn(
       "curl",
       [
@@ -521,6 +509,7 @@ function pullOllamaModelViaHttp(model) {
         "-H",
         "Content-Type: application/json",
         "-d",
+        // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
         body,
         url,
       ],
@@ -699,7 +688,9 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
     /* fall through */
   }
   const reply = await prompt(`${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `);
-  const v = String(reply ?? "").trim().toLowerCase();
+  const v = String(reply ?? "")
+    .trim()
+    .toLowerCase();
   if (v === "y" || v === "yes") return true;
   if (v === "n" || v === "no") return false;
   return defaultIsYes;
@@ -709,8 +700,8 @@ function printToolsIncompatibleWarning(model: string): void {
   console.log("");
   console.log(`  ⚠ Ollama model '${model}' does not advertise the 'tools' capability.`);
   console.log("    NemoClaw agents need tool-calling for file operations, web search, and");
-  console.log("    running commands. This model will likely fail with \"400 ... does not");
-  console.log("    support tools\" at first prompt.");
+  console.log('    running commands. This model will likely fail with "400 ... does not');
+  console.log('    support tools" at first prompt.');
   console.log("    Inspect a model's capabilities with `ollama show <model>` and pick");
   console.log("    one whose list includes 'tools'.");
 }
