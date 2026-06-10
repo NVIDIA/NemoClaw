@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-
+import type { CaptureOpenshellResult } from "./adapters/openshell/client";
+import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
+import { resolveOpenshell } from "./adapters/openshell/resolve";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
 import { getLiveGatewayInference } from "./inference/live";
 import type { GatewayHealth, MessagingBridgeHealth, ShowStatusCommandDeps } from "./inventory";
-import { backfillMessagingChannels, findAllOverlaps } from "./messaging/applier";
-import type { CaptureOpenshellResult } from "./adapters/openshell/client";
-import { captureOpenshellCommand, stripAnsi } from "./adapters/openshell/client";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import {
+  backfillMessagingChannels,
+  detectAllSlackSocketModeGatewayOverlaps,
+  findAllOverlaps,
+} from "./messaging/applier";
 import * as registry from "./state/registry";
-import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
 
@@ -102,7 +105,24 @@ function backfillAndFindOverlaps(rootDir: string) {
   // registry write throws, so any failure yields an empty overlap list.
   try {
     backfillMessagingChannels(registry, makeConflictProbe(rootDir));
-    return findAllOverlaps(registry);
+    // Report both conflict axes independently and without deduping. They are
+    // distinct, both-true facts: a shared messaging credential conflicts on any
+    // gateway (the gateway-independent, more actionable signal), while two Slack
+    // sandboxes on one gateway conflict even with distinct tokens (#4953). A
+    // pair that hits both genuinely has two problems, so surfacing both avoids
+    // masking the credential warning behind the gateway one.
+    const credentialOverlaps = findAllOverlaps(registry);
+    const slackGatewayOverlaps = detectAllSlackSocketModeGatewayOverlaps(
+      registry.listSandboxes().sandboxes,
+    );
+    return [
+      ...credentialOverlaps,
+      ...slackGatewayOverlaps.map((o) => ({
+        channel: "slack",
+        sandboxes: o.sandboxes,
+        reason: "slack-socket-mode-gateway" as const,
+      })),
+    ];
   } catch {
     return [];
   }
