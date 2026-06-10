@@ -65,14 +65,22 @@ else
   echo "ERROR: Cannot find repo root."
   exit 1
 fi
+unset _script_dir _candidate
 cd "$REPO" || {
   echo "ERROR: Cannot cd into repo root '$REPO'."
   exit 1
 }
 
+E2E_DIR="${REPO}/test/e2e"
 SANDBOX="${NEMOCLAW_SANDBOX_NAME:-e2e-cron-preflight}"
 MODEL="${NEMOCLAW_CRON_PREFLIGHT_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
 WAIT_TIMEOUT="${NEMOCLAW_CRON_PREFLIGHT_WAIT:-90s}"
+INSTALL_LOG="/tmp/nemoclaw-e2e-cron-preflight-install.log"
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "${E2E_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "${E2E_DIR}/lib/install-path-refresh.sh"
 
 # ── Prereqs ──
 section "Prerequisites"
@@ -108,45 +116,42 @@ if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
 fi
 pass "prerequisites satisfied"
 
-CREATED_SANDBOX=0
+# ── Install NemoClaw + onboard sandbox ──
+section "Install NemoClaw + onboard sandbox '$SANDBOX'"
+export NEMOCLAW_SANDBOX_NAME="$SANDBOX"
+export NEMOCLAW_RECREATE_SANDBOX="${NEMOCLAW_RECREATE_SANDBOX:-1}"
+export NEMOCLAW_PROVIDER="${NEMOCLAW_PROVIDER:-build}"
+export NEMOCLAW_MODEL="${NEMOCLAW_MODEL:-$MODEL}"
 
-# shellcheck disable=SC2317,SC2329 # invoked via trap
-cleanup() {
-  if [ "${NEMOCLAW_CRON_PREFLIGHT_KEEP:-0}" = "1" ]; then
-    info "NEMOCLAW_CRON_PREFLIGHT_KEEP=1 set; leaving sandbox $SANDBOX in place"
-    return
-  fi
-  if [ "$CREATED_SANDBOX" != "1" ]; then
-    info "sandbox $SANDBOX was pre-existing and not recreated; leaving it alone"
-    return
-  fi
-  info "destroying sandbox $SANDBOX"
-  nemoclaw "$SANDBOX" destroy --yes >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
+info "Installing NemoClaw via install.sh --non-interactive..."
+bash install.sh --non-interactive --yes-i-accept-third-party-software >"$INSTALL_LOG" 2>&1 &
+install_pid=$!
+tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
+tail_pid=$!
+wait "$install_pid"
+install_exit=$?
+kill "$tail_pid" 2>/dev/null || true
+wait "$tail_pid" 2>/dev/null || true
 
-# ── Onboard ──
-section "Onboard sandbox '$SANDBOX'"
-if [ "${NEMOCLAW_RECREATE_SANDBOX:-0}" = "1" ]; then
-  info "NEMOCLAW_RECREATE_SANDBOX=1 set; destroying existing sandbox first"
-  nemoclaw "$SANDBOX" destroy --yes >/dev/null 2>&1 || true
-  CREATED_SANDBOX=1
-fi
+nemoclaw_refresh_install_env
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+# shellcheck source=/dev/null
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nemoclaw_ensure_local_bin_on_path
 
-NEMOCLAW_SANDBOX_NAME="$SANDBOX" \
-  NEMOCLAW_PROVIDER=build \
-  NEMOCLAW_MODEL="$MODEL" \
-  nemoclaw onboard \
-  --non-interactive \
-  --yes-i-accept-third-party-software 2>&1 | sed 's/^/    /'
-ONBOARD_RC=${PIPESTATUS[0]}
-if [ "$ONBOARD_RC" -ne 0 ]; then
-  fail "onboard exited $ONBOARD_RC"
-  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
+if [ "$install_exit" -ne 0 ]; then
+  fail "install.sh failed (exit $install_exit)"
+  tail -30 "$INSTALL_LOG"
   exit 1
 fi
-CREATED_SANDBOX=1
-pass "onboard completed"
+pass "NemoClaw installed + sandbox onboarded"
+
+command -v nemoclaw >/dev/null 2>&1 || {
+  fail "nemoclaw not on PATH after install"
+  exit 1
+}
+
+register_sandbox_for_teardown "$SANDBOX"
 
 # ── Schedule cron job ──
 section "Schedule isolated agentTurn cron job"
