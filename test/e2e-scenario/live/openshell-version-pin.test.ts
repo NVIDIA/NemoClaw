@@ -26,59 +26,59 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-test(
-  "openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.44 end-to-end",
-  async ({ artifacts }) => {
-    await artifacts.writeJson("scenario.json", {
-      id: "openshell-version-pin",
-      runner: "vitest",
-      boundary: "installer-script-unit",
-      regressionTarget: "#3474",
-    });
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.44 end-to-end", async ({
+  artifacts,
+}) => {
+  await artifacts.writeJson("scenario.json", {
+    id: "openshell-version-pin",
+    runner: "vitest",
+    boundary: "installer-script-unit",
+    regressionTarget: "#3474",
+  });
 
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
-    try {
-      const fakeBin = path.join(tmp, "bin");
-      const downloadLog = path.join(tmp, "downloads.log");
-      fs.mkdirSync(fakeBin);
-      fs.writeFileSync(downloadLog, "");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
+  try {
+    const fakeBin = path.join(tmp, "bin");
+    const downloadLog = path.join(tmp, "downloads.log");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(downloadLog, "");
 
-      // Force Linux/x86_64 asset selection regardless of host arch (legacy
-      // script is dispatched on ubuntu-latest via regression-e2e.yaml).
-      writeExecutable(
-        path.join(fakeBin, "uname"),
-        `#!/usr/bin/env bash
+    // Force Linux/x86_64 asset selection regardless of host arch (legacy
+    // script is dispatched on ubuntu-latest via regression-e2e.yaml).
+    writeExecutable(
+      path.join(fakeBin, "uname"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
-      );
+    );
 
-      // Sticky openshell at the too-new version we expect the installer to replace.
-      writeExecutable(
-        path.join(fakeBin, "openshell"),
-        `#!/usr/bin/env bash
+    // Sticky openshell at the too-new version we expect the installer to replace.
+    writeExecutable(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.45"; exit 0; fi
 # request-body-credential-rewrite websocket-credential-rewrite
 exit 0`,
-      );
+    );
 
-      // Helper binaries exist so the only reason to reinstall is the too-new
-      // version, not missing Docker-driver helpers.
-      writeExecutable(
-        path.join(fakeBin, "openshell-gateway"),
-        `#!/usr/bin/env bash
+    // Helper binaries exist so the only reason to reinstall is the too-new
+    // version, not missing Docker-driver helpers.
+    writeExecutable(
+      path.join(fakeBin, "openshell-gateway"),
+      `#!/usr/bin/env bash
 exit 0`,
-      );
-      writeExecutable(
-        path.join(fakeBin, "openshell-sandbox"),
-        `#!/usr/bin/env bash
+    );
+    writeExecutable(
+      path.join(fakeBin, "openshell-sandbox"),
+      `#!/usr/bin/env bash
 exit 0`,
-      );
+    );
 
-      // gh succeeds and writes fake archives + matching sha256 checksum files
-      // into the requested --dir. The checksums are real digests of the fake
-      // archives so install-openshell.sh's `sha256sum -c` step passes.
-      writeExecutable(
-        path.join(fakeBin, "gh"),
-        `#!/usr/bin/env bash
+    // gh succeeds and writes fake archives + matching sha256 checksum files
+    // into the requested --dir. The checksums are real digests of the fake
+    // archives so install-openshell.sh's `sha256sum -c` step passes.
+    writeExecutable(
+      path.join(fakeBin, "gh"),
+      `#!/usr/bin/env bash
 set -euo pipefail
 write_asset() {
   local asset_name="$1"
@@ -137,14 +137,14 @@ if [ "\${1:-}" = "release" ] && [ "\${2:-}" = "download" ]; then
   exit 0
 fi
 exit 1`,
-      );
+    );
 
-      // curl mirror of the gh stub for the curl fallback download path. Logs
-      // every invocation to DOWNLOAD_LOG so we can assert which release tag
-      // was requested.
-      writeExecutable(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
+    // curl mirror of the gh stub for the curl fallback download path. Logs
+    // every invocation to DOWNLOAD_LOG so we can assert which release tag
+    // was requested.
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
 set -euo pipefail
 write_asset() {
   local asset_name="$1"
@@ -196,14 +196,14 @@ case "$(basename "$out")" in
     write_asset "$(basename "$out")" "$out"
     ;;
 esac`,
-      );
+    );
 
-      // tar stub: write the corresponding binary into the -C outdir. Each
-      // binary reports 0.0.44 + carries the messaging-rewrite capability
-      // marker so the post-install feature probe passes.
-      writeExecutable(
-        path.join(fakeBin, "tar"),
-        `#!/usr/bin/env bash
+    // tar stub: write the corresponding binary into the -C outdir. Each
+    // binary reports 0.0.44 + carries the messaging-rewrite capability
+    // marker so the post-install feature probe passes.
+    writeExecutable(
+      path.join(fakeBin, "tar"),
+      `#!/usr/bin/env bash
 set -euo pipefail
 outdir=""
 prev=""
@@ -227,58 +227,57 @@ if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.44"; exit 0; fi
 exit 0
 EOS
 chmod 755 "$outdir/$name"`,
-      );
+    );
 
-      // The capability probe shells out to `strings` against the installed
-      // openshell binary. Our fake openshell binaries are scripts whose
-      // contents already include the marker comments, so cat-ing them
-      // satisfies the probe.
-      writeExecutable(
-        path.join(fakeBin, "strings"),
-        `#!/usr/bin/env bash
+    // The capability probe shells out to `strings` against the installed
+    // openshell binary. Our fake openshell binaries are scripts whose
+    // contents already include the marker comments, so cat-ing them
+    // satisfies the probe.
+    writeExecutable(
+      path.join(fakeBin, "strings"),
+      `#!/usr/bin/env bash
 cat "$@" 2>/dev/null || true`,
-      );
+    );
 
-      const result = spawnSync("bash", [INSTALL_SCRIPT], {
-        env: {
-          ...process.env,
-          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-        },
-        encoding: "utf8",
-      });
+    const result = spawnSync("bash", [INSTALL_SCRIPT], {
+      env: {
+        ...process.env,
+        NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+      },
+      encoding: "utf8",
+    });
 
-      // Persist the install transcript so failures can be diagnosed without
-      // re-running the test.
-      await artifacts.writeText("install-openshell.stdout", result.stdout ?? "");
-      await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
-      await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
+    // Persist the install transcript so failures can be diagnosed without
+    // re-running the test.
+    await artifacts.writeText("install-openshell.stdout", result.stdout ?? "");
+    await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
+    await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
 
-      // Assertion 1: installer-exits-zero — the happy path completes (no
-      // "above the maximum" hard-fail before download).
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    // Assertion 1: installer-exits-zero — the happy path completes (no
+    // "above the maximum" hard-fail before download).
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
-      // Assertion 2: download-log-contains-v0.0.44 — pinned release tag was
-      // requested from the release host.
-      const downloads = fs.readFileSync(downloadLog, "utf-8");
-      expect(downloads).toContain("v0.0.44");
+    // Assertion 2: download-log-contains-v0.0.44 — pinned release tag was
+    // requested from the release host.
+    const downloads = fs.readFileSync(downloadLog, "utf-8");
+    expect(downloads).toContain("v0.0.44");
 
-      // Assertion 3: download-log-excludes-v0.0.45 — the too-new sticky
-      // version is never re-fetched.
-      expect(downloads).not.toContain("v0.0.45");
+    // Assertion 3: download-log-excludes-v0.0.45 — the too-new sticky
+    // version is never re-fetched.
+    expect(downloads).not.toContain("v0.0.45");
 
-      // Assertion 4: replaced-openshell-reports-0.0.44 — the binary on disk in
-      // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN
-      // resolved there and it is writable) was overwritten with the pinned
-      // 0.0.44 build.
-      const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
-        encoding: "utf8",
-      });
-      expect(replacedVersion.status).toBe(0);
-      expect(replacedVersion.stdout).toContain("0.0.44");
-      expect(replacedVersion.stdout).not.toContain("0.0.45");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  },
-);
+    // Assertion 4: replaced-openshell-reports-0.0.44 — the binary on disk in
+    // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN
+    // resolved there and it is writable) was overwritten with the pinned
+    // 0.0.44 build.
+    const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
+      encoding: "utf8",
+    });
+    expect(replacedVersion.status).toBe(0);
+    expect(replacedVersion.stdout).toContain("0.0.44");
+    expect(replacedVersion.stdout).not.toContain("0.0.45");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
