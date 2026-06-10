@@ -164,11 +164,7 @@ describe("E2E migration inventory deletion gates", () => {
     for (const entry of inventory.entries) {
       expect(statuses.has(entry.status)).toBe(true);
       expect(entry.legacyScript).not.toBe("");
-      if (entry.status === "retired") {
-        expect(repoPathExists(entry.legacyScript)).toBe(false);
-      } else {
-        expect(repoPathExists(entry.legacyScript)).toBe(true);
-      }
+      expect(repoPathExists(entry.legacyScript)).toBe(true);
       expect(legacyScripts.has(entry.legacyScript)).toBe(false);
       legacyScripts.add(entry.legacyScript);
       expect(entry.domain).not.toBe("");
@@ -192,28 +188,11 @@ describe("E2E migration inventory deletion gates", () => {
   it("covers every current direct legacy shell entrypoint", () => {
     const inventory = loadInventory();
     const inventoriedShellScripts = inventory.entries
-      .filter((entry) => entry.status !== "retired")
       .map((entry) => entry.legacyScript)
       .filter((legacyScript) => /^test\/e2e\/test-.+\.sh$/.test(legacyScript))
       .sort();
 
     expect(inventoriedShellScripts).toEqual(listLegacyShellEntrypoints());
-  });
-
-  it("retains deletion evidence for retired direct legacy shell entrypoints", () => {
-    const inventory = loadInventory();
-    const retiredShellScripts = inventory.entries.filter(
-      (entry) => entry.status === "retired" && /^test\/e2e\/test-.+\.sh$/.test(entry.legacyScript),
-    );
-
-    expect(retiredShellScripts.length).toBeGreaterThan(0);
-    for (const entry of retiredShellScripts) {
-      expect(repoPathExists(entry.legacyScript)).toBe(false);
-      expect(entry.retiredReason).not.toBe("");
-      expect(entry.deletionReady).toBe(true);
-      expect(entry.deletionApprovalIssue).toMatch(/^#(?:4357|5098)$/);
-      expect(entry.notes).not.toBe("");
-    }
   });
 
   it("covers legacy scenario runner internal surfaces by path", () => {

@@ -3,13 +3,13 @@
   "version": 1,
   "statusValues": ["not-migrated", "bridge-probe", "covered", "retired"],
   "deletionReadiness": {
-    "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 or #5098 records an explicit retirement decision.",
+    "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 records an explicit retirement decision.",
     "requires": [
       "same relevant CI lane or approved replacement lane",
       "required secrets, skips, and runner requirements preserved",
       "artifact and failure evidence at least as useful as the legacy script",
       "migration status set to covered or retired",
-      "approval recorded through #4357 or #5098"
+      "approval recorded through #4357"
     ]
   },
   "entries": [
@@ -265,18 +265,6 @@
       "retiredReason": "",
       "deletionReady": false,
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
-    },
-    {
-      "legacyScript": "test/e2e/test-docker-unreachable-gateway-start.sh",
-      "domain": "sandbox-lifecycle",
-      "ownerIssue": "#4355",
-      "status": "retired",
-      "targetVitestScenarios": [],
-      "bridgeProbes": [],
-      "retiredReason": "Replaced by focused Vitest caller-level coverage in test/onboard-gateway-docker-unreachable.test.ts plus helper-level coverage in src/lib/onboard/gateway-start-failure-integration.test.ts; legacy regression workflow lane removed in #5119.",
-      "deletionReady": true,
-      "deletionApprovalIssue": "#5098",
-      "notes": "Former #2347 regression script. PR #5109 added helper-level coverage; PR #5119 adds caller-level PATH-shimmed startGateway coverage for exit 1, Docker recovery guidance, no health polling/status/info probes after gateway start, and no generic diagnostics/cleanup before deleting the shell script and regression-e2e lane. Issue #5113 re-scoped the final missing contract to this process-level assertion."
     },
     {
       "legacyScript": "test/e2e/test-docs-validation.sh",
