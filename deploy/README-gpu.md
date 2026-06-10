@@ -125,9 +125,6 @@ Override host port: `LOCAL_PORT=8082 ./scripts/install-hpa.sh`
 
 Optional autoscaling demo:
 
-```bash
-./scripts/hpa-load-test.sh
-
 
 <img width="1888" height="826" alt="Screenshot 2026-06-09 at 7 02 00 PM" src="https://github.com/user-attachments/assets/4aa98eb1-58bd-4256-8539-df6f617d3016" />
 
@@ -135,7 +132,8 @@ Optional autoscaling demo:
 <img width="1400" height="204" alt="Screenshot 2026-06-09 at 3 22 51 PM" src="https://github.com/user-attachments/assets/5772ad1a-4765-4684-b34f-3a8674e2d277" />
 
 
-
+```bash
+./scripts/hpa-load-test.sh
 
 ./scripts/hpa-reset.sh
 ```
