@@ -145,9 +145,7 @@ describe("openclaw-build-messaging-plugins.py", () => {
       "npm:@openclaw/slack@2026.5.22",
       "npm:@openclaw/brave-plugin@2026.5.22",
     ]);
-    expect(payload.doctorEnv.BRAVE_API_KEY).toBe(
-      "openshell:resolve:env:BRAVE_API_KEY",
-    );
+    expect(payload.doctorEnv.BRAVE_API_KEY).toBe("openshell:resolve:env:BRAVE_API_KEY");
   });
 
   it("does not install the Brave plugin when web search is disabled", () => {
