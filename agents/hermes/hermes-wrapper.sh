@@ -41,7 +41,10 @@ if [ "${1:-}" = "gateway" ]; then
   # closed if no trusted interpreter is found.
   PYTHON3=""
   for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
-    if [ -x "$_candidate" ]; then PYTHON3="$_candidate"; break; fi
+    if [ -x "$_candidate" ]; then
+      PYTHON3="$_candidate"
+      break
+    fi
   done
   if [ -z "$PYTHON3" ]; then
     echo "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard" >&2

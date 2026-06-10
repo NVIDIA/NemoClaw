@@ -17,7 +17,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.sh");
-const VALIDATOR = path.join(import.meta.dirname, "..", "agents", "hermes", "validate-env-secret-boundary.py");
+const VALIDATOR = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function python3Available(): boolean {
   try {
