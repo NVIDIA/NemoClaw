@@ -127,11 +127,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
 
     expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
 
-    expect(message.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(message.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
     expect(message.content.every((block: any) => typeof block.arguments === "string")).toBe(true);
   });
 
@@ -240,11 +236,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
 
     expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
 
-    expect(message.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(message.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
     expect(JSON.stringify(message)).not.toContain("hostname; date; uptime");
   });
 
@@ -267,12 +259,9 @@ describe("nemoclaw Kimi inference compat plugin", () => {
       "toolCall",
       "toolCall",
     ]);
-    expect(message.content.filter((block: any) => block.type === "toolCall").map(toolCommand)).toEqual([
-      "hostname",
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(
+      message.content.filter((block: any) => block.type === "toolCall").map(toolCommand),
+    ).toEqual(["hostname", "hostname", "date", "uptime"]);
     expect(JSON.stringify(message)).not.toContain("hostname; date; uptime");
   });
 
@@ -307,10 +296,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     const nonExec = toolMessage("hostname; date; uptime", { name: "write" });
     const multipleToolCalls = {
       ...toolMessage("hostname; date; uptime"),
-      content: [
-        toolMessage("hostname").content[0],
-        toolMessage("date").content[0],
-      ],
+      content: [toolMessage("hostname").content[0], toolMessage("date").content[0]],
     };
     const malformedArgs = toolMessage("hostname; date; uptime", {
       arguments: JSON.stringify({ command: "hostname; date; uptime", extra: true }),
@@ -429,22 +415,10 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     for await (const event of stream) events.push(event);
     const result = await stream.result();
 
-    expect(events[0].partial.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(events[0].partial.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
     expect(JSON.parse(events[0].delta).command).toBe("hostname");
-    expect(events[1].message.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
-    expect(result.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(events[1].message.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
+    expect(result.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
   });
 
   it("rewrites object tool-call deltas at their content index without retaining compound commands", () => {
@@ -466,11 +440,7 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     expect(plugin.__testing.rewriteSafeCombinedExecToolCallInEvent(event)).toBe(true);
 
     expect(event.delta).toEqual({ command: "uptime" });
-    expect(event.partial.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(event.partial.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
     expect(toolCommand(event.toolCall)).toBe("uptime");
     expect(JSON.stringify(event)).not.toContain("hostname; date; uptime");
   });
@@ -499,16 +469,8 @@ describe("nemoclaw Kimi inference compat plugin", () => {
 
     expect(plugin.__testing.rewriteSafeCombinedExecToolCallInEvent(event)).toBe(true);
 
-    expect(event.partial.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
-    expect(event.message.content.map(toolCommand)).toEqual([
-      "hostname",
-      "date",
-      "uptime",
-    ]);
+    expect(event.partial.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
+    expect(event.message.content.map(toolCommand)).toEqual(["hostname", "date", "uptime"]);
     expect(event.delta).toEqual({ command: "date" });
     expect(toolCommand(event.toolCall)).toBe("date");
     expect(JSON.stringify(event)).not.toContain("hostname; date");

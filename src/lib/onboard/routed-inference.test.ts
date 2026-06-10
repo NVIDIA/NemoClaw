@@ -85,10 +85,15 @@ describe("upsertRoutedProvider (#4564)", () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
-    const result = upsertRoutedProvider("nvidia-router", "http://localhost:4000/v1", "NVIDIA_API_KEY", {
-      upsertProvider,
-      hydrateCredentialEnv,
-    });
+    const result = upsertRoutedProvider(
+      "nvidia-router",
+      "http://localhost:4000/v1",
+      "NVIDIA_API_KEY",
+      {
+        upsertProvider,
+        hydrateCredentialEnv,
+      },
+    );
 
     expect(result.ok).toBe(true);
     expect(result.endpointUrl).toBe("http://host.openshell.internal:4000/v1");
@@ -125,10 +130,15 @@ describe("upsertRoutedProvider (#4564)", () => {
     const upsertProvider = vi.fn(() => ({ ok: false, message: "boom", status: 3 }));
     const hydrateCredentialEnv = vi.fn(() => "nvapi-secret");
 
-    const result = upsertRoutedProvider("nvidia-router", "http://localhost:4000/v1", "NVIDIA_API_KEY", {
-      upsertProvider,
-      hydrateCredentialEnv,
-    });
+    const result = upsertRoutedProvider(
+      "nvidia-router",
+      "http://localhost:4000/v1",
+      "NVIDIA_API_KEY",
+      {
+        upsertProvider,
+        hydrateCredentialEnv,
+      },
+    );
 
     expect(result.ok).toBe(false);
     expect(result.result.message).toBe("boom");

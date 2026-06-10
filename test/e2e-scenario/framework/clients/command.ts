@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ShellProbeResult, ShellProbeRunOptions, TrustedShellCommand } from "../shell-probe.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../shell-probe.ts";
 
 export interface CommandRunner {
   run(command: TrustedShellCommand, options?: ShellProbeRunOptions): Promise<ShellProbeResult>;

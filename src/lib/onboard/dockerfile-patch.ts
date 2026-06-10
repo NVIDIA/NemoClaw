@@ -285,9 +285,7 @@ export function patchStagedDockerfile(
   // the single source of truth for validation errors.
   const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
   if (extraAgentsRaw && extraAgentsRaw.trim()) {
-    const encoded = sanitizeDockerArg(
-      Buffer.from(extraAgentsRaw, "utf8").toString("base64"),
-    );
+    const encoded = sanitizeDockerArg(Buffer.from(extraAgentsRaw, "utf8").toString("base64"));
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=.*$/m,
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,

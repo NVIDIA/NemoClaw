@@ -23,10 +23,28 @@ function runScenarioCli(args: string[]) {
 
 describe("deterministic scenario registry", () => {
   it("should reject duplicate scenario IDs", () => {
-    const first = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml").build();
-    const second = scenario("duplicate-id").manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml").build();
+    const first = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .build();
+    const second = scenario("duplicate-id")
+      .manifest("test/e2e-scenario/manifests/hermes-nvidia.yaml")
+      .build();
 
     expect(() => buildScenarioRegistry([first, second])).toThrow(/duplicate-id/);
+  });
+
+  it("should reject scenario IDs that are unsafe for workflow regex filters and artifact paths", () => {
+    const unsafe = scenario("bad.id")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .build();
+
+    expect(() => buildScenarioRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
+
+    const result = runScenarioCli(["--scenarios", "../escape", "--plan-only"]);
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(
+      /Selected scenario ID '\.\.\/escape' is not safe/,
+    );
   });
 
   it("should return actionable unknown scenario error", () => {

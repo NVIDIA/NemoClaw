@@ -48,7 +48,10 @@ function readRegularFileNoFollow(filePath: string): string | null {
 }
 
 function writeFileAtomically(filePath: string, contents: string): void {
-  const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  const tmpPath = join(
+    dirname(filePath),
+    `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
+  );
   writeFileSync(tmpPath, contents, { mode: 0o600 });
   renameSync(tmpPath, filePath);
 }
@@ -210,5 +213,9 @@ export function isSensitiveFile(filename: string): boolean {
 export function shouldScanSnapshotFileForCredentials(filename: string): boolean {
   const normalizedBasename = basename(filename).toLowerCase();
   if (SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES.has(normalizedBasename)) return false;
-  return normalizedBasename === ".env" || normalizedBasename.endsWith(".env") || normalizedBasename.endsWith(".json");
+  return (
+    normalizedBasename === ".env" ||
+    normalizedBasename.endsWith(".env") ||
+    normalizedBasename.endsWith(".json")
+  );
 }

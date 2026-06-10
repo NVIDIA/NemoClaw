@@ -358,8 +358,7 @@ export function isDockerUnderProvisioned(
 ): boolean {
   const cpuLow = typeof cpus === "number" && cpus < MIN_RECOMMENDED_DOCKER_CPUS;
   const memLow =
-    typeof memTotalBytes === "number" &&
-    memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
+    typeof memTotalBytes === "number" && memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
   return cpuLow || memLow;
 }
 
@@ -854,10 +853,7 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         title,
         kind: "sudo",
         reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
-        commands: buildContainerToolkitBootstrapCommands(
-          assessment.packageManager,
-          repairCommands,
-        ),
+        commands: buildContainerToolkitBootstrapCommands(assessment.packageManager, repairCommands),
         blocking: true,
       });
     }
@@ -1532,7 +1528,9 @@ function captureProbeExecution(
 }
 
 function probeCombinedOutput(execution: ReturnType<typeof normalizeProbeExecution>): string {
-  return [execution.stdout, execution.stderr].filter((part) => String(part || "").trim()).join("\n");
+  return [execution.stdout, execution.stderr]
+    .filter((part) => String(part || "").trim())
+    .join("\n");
 }
 
 function outputTail(output: string, maxLength = 400): string {

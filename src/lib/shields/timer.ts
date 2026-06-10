@@ -328,9 +328,4 @@ if (require.main === module) {
   main();
 }
 
-export {
-  markerMatchesCurrentTimer,
-  parseTimerArgs,
-  readTimerMarker,
-  runRestoreTimer,
-};
+export { markerMatchesCurrentTimer, parseTimerArgs, readTimerMarker, runRestoreTimer };

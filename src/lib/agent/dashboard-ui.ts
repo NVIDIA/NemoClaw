@@ -29,12 +29,7 @@ function readObject(record: ManifestRecordLike, key: string): ManifestRecordLike
 }
 
 function isValidPort(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 1024 &&
-    value <= 65535
-  );
+  return typeof value === "number" && Number.isInteger(value) && value >= 1024 && value <= 65535;
 }
 
 export function readDashboardUi(record: ManifestRecordLike): AgentDashboardUi | null {

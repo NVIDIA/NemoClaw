@@ -258,18 +258,18 @@ describe("mutable agent config permissions", () => {
       (command) => command[0] === "sh" && command[1] === "-c",
     );
     expect(
-      shellInvocations.some((command) =>
-        command.includes("/sandbox/.openclaw") &&
-        command.includes("sandbox:sandbox") &&
-        command.includes("g+rwX,o-rwx") &&
-        command.includes("2770") &&
-        command.includes("workspace"),
+      shellInvocations.some(
+        (command) =>
+          command.includes("/sandbox/.openclaw") &&
+          command.includes("sandbox:sandbox") &&
+          command.includes("g+rwX,o-rwx") &&
+          command.includes("2770") &&
+          command.includes("workspace"),
       ),
     ).toBe(true);
     expect(
       shellInvocations.some(
-        (command) =>
-          typeof command[2] === "string" && command[2].includes('workspace-*'),
+        (command) => typeof command[2] === "string" && command[2].includes("workspace-*"),
       ),
     ).toBe(true);
   });
@@ -440,8 +440,8 @@ process.stdout.write(JSON.stringify(calls));
         command.includes("go-w") &&
         command.includes("755"),
     );
-    const stripSetgidIndex = commands.findIndex((command) =>
-      command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
+    const stripSetgidIndex = commands.findIndex(
+      (command) => command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
     );
     expect(stateDirLockIndex).toBeGreaterThan(-1);
     expect(stripSetgidIndex).toBeGreaterThan(stateDirLockIndex);

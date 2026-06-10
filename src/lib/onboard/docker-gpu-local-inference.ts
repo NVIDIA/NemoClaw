@@ -147,7 +147,9 @@ export type DockerGpuSandboxInferenceVerification =
     };
 
 /** The runtime inference route to probe for a provider (local providers only). */
-export function getSandboxRuntimeInferenceEndpoint(provider: string | null | undefined): string | null {
+export function getSandboxRuntimeInferenceEndpoint(
+  provider: string | null | undefined,
+): string | null {
   return isLocalInferenceProvider(provider) ? SANDBOX_RUNTIME_INFERENCE_ENDPOINT : null;
 }
 

@@ -266,9 +266,7 @@ describe("MessagingSetupApplier", () => {
   });
 
   it("redacts OpenShell provider failure output", async () => {
-    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, [
-      "telegram",
-    ]);
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, ["telegram"]);
     const runOpenshell: MessagingOpenShellRunner = (args) => {
       if (args[0] === "provider" && args[1] === "get") {
         return { status: 1 };
@@ -323,15 +321,7 @@ describe("MessagingSetupApplier", () => {
     });
 
     expect(calls.map((call) => call.args)).toEqual([
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        "demo",
-        "--",
-        "cat",
-        "/sandbox/.openclaw/openclaw.json",
-      ],
+      ["sandbox", "exec", "--name", "demo", "--", "cat", "/sandbox/.openclaw/openclaw.json"],
       [
         "sandbox",
         "exec",
@@ -513,13 +503,11 @@ describe("MessagingSetupApplier", () => {
       },
     });
 
-    expect(JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts.json"] ?? "[]")).toEqual(
-      ["wechat-account"],
-    );
+    expect(JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts.json"] ?? "[]")).toEqual([
+      "wechat-account",
+    ]);
     expect(
-      JSON.parse(
-        files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}",
-      ),
+      JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}"),
     ).toMatchObject({
       token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
       baseUrl: "https://ilinkai.wechat.example",

@@ -14,8 +14,7 @@
 import { spawn } from "node:child_process";
 
 export const DEFAULT_PORTAL_BASE_URL = "https://portal.nousresearch.com";
-export const DEFAULT_INFERENCE_BASE_URL =
-  "https://inference-api.nousresearch.com/v1";
+export const DEFAULT_INFERENCE_BASE_URL = "https://inference-api.nousresearch.com/v1";
 export const DEFAULT_CLIENT_ID = "hermes-cli";
 export const DEFAULT_SCOPE = "inference:mint_agent_key";
 
@@ -115,14 +114,8 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 function clampInterval(value: unknown): number {
-  const n =
-    typeof value === "number" && Number.isFinite(value)
-      ? value
-      : POLL_INTERVAL_MIN_SECONDS;
-  return Math.min(
-    POLL_INTERVAL_MAX_SECONDS,
-    Math.max(POLL_INTERVAL_MIN_SECONDS, n),
-  );
+  const n = typeof value === "number" && Number.isFinite(value) ? value : POLL_INTERVAL_MIN_SECONDS;
+  return Math.min(POLL_INTERVAL_MAX_SECONDS, Math.max(POLL_INTERVAL_MIN_SECONDS, n));
 }
 
 function createRequestTimeout(timeoutMs: number | undefined): {
@@ -211,8 +204,7 @@ export async function pollForToken(
   const portalBaseUrl = opts.portalBaseUrl ?? DEFAULT_PORTAL_BASE_URL;
   const clientId = opts.clientId ?? DEFAULT_CLIENT_ID;
   const log = opts.log ?? ((line: string) => console.error(line));
-  const deadline =
-    now() + (opts.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const deadline = now() + (opts.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
   let interval = clampInterval(deviceCode.interval);
   let lastWaitLog = 0;
 
@@ -259,10 +251,7 @@ export async function pollForToken(
         interval = clampInterval(interval + 5);
         continue;
       case "access_denied":
-        throw new OAuthError(
-          "access_denied",
-          "user denied the authorization request",
-        );
+        throw new OAuthError("access_denied", "user denied the authorization request");
       case "expired_token":
         throw new OAuthTimeoutError();
       default:
@@ -301,8 +290,7 @@ export async function refreshAccessTokenWithRefreshToken(
     }
     throw new OAuthError(
       errorPayload.error ?? `refresh_failed_http_${resp.status}`,
-      errorPayload.error_description ??
-        `refresh-token grant returned HTTP ${resp.status}`,
+      errorPayload.error_description ?? `refresh-token grant returned HTTP ${resp.status}`,
     );
   }
 
@@ -350,8 +338,7 @@ export async function mintAgentKeyWithAccessToken(
     }
     throw new OAuthError(
       errorPayload.error ?? `agent_key_failed_http_${resp.status}`,
-      errorPayload.error_description ??
-        `agent-key mint returned HTTP ${resp.status}`,
+      errorPayload.error_description ?? `agent-key mint returned HTTP ${resp.status}`,
     );
   }
 
@@ -365,16 +352,13 @@ export async function mintAgentKeyWithAccessToken(
   return payload;
 }
 
-export async function runDeviceCodeFlow(
-  opts: DeviceCodeFlowOptions = {},
-): Promise<TokenResponse> {
+export async function runDeviceCodeFlow(opts: DeviceCodeFlowOptions = {}): Promise<TokenResponse> {
   const log = opts.log ?? ((line: string) => console.error(line));
 
   log("");
   log("  Requesting device code from portal.nousresearch.com...");
   const deviceCode = await requestDeviceCode(opts);
-  const verificationUri =
-    deviceCode.verification_uri_complete ?? deviceCode.verification_uri;
+  const verificationUri = deviceCode.verification_uri_complete ?? deviceCode.verification_uri;
 
   log("");
   log("  Hermes Provider OAuth");

@@ -94,7 +94,9 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
   if (!text) return text;
   let out = text;
   if (explicitValues) {
-    const values = [...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0))];
+    const values = [
+      ...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0)),
+    ];
     values.sort((a, b) => b.length - a.length);
     for (const value of values) {
       out = out.split(value).join(EXPLICIT_REDACTED);

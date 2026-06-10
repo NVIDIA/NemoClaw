@@ -13,7 +13,11 @@ import {
   normalizeInstallerProvider,
   type InstallerProvider,
 } from "../../domain/installer/provider";
-import { resolveInstallerVersion, resolveInstallRef, type InstallerRefEnv } from "../../domain/installer/ref";
+import {
+  resolveInstallerVersion,
+  resolveInstallRef,
+  type InstallerRefEnv,
+} from "../../domain/installer/ref";
 import { checkInstallerRuntime, type RuntimeCheckResult } from "../../domain/installer/version";
 
 export interface InstallerPlanEnv extends InstallerRefEnv {
@@ -82,7 +86,9 @@ export function buildInstallerPlan(options: BuildInstallerPlanOptions = {}): Ins
           linkTargetsWritable: options.npmTargetState
             ? npmLinkTargetsWritable(options.npmPrefix, options.npmTargetState)
             : null,
-          pathWithGlobalBin: globalBin ? pathWithPrependedEntries(env.PATH ?? "", [globalBin]) : null,
+          pathWithGlobalBin: globalBin
+            ? pathWithPrependedEntries(env.PATH ?? "", [globalBin])
+            : null,
           prefix: options.npmPrefix.trim(),
         }
       : null,
@@ -94,12 +100,17 @@ export function buildInstallerPlan(options: BuildInstallerPlanOptions = {}): Ins
     },
     runtime:
       options.nodeVersion && options.npmVersion
-        ? checkInstallerRuntime({ nodeVersion: options.nodeVersion, npmVersion: options.npmVersion })
+        ? checkInstallerRuntime({
+            nodeVersion: options.nodeVersion,
+            npmVersion: options.npmVersion,
+          })
         : null,
   };
 }
 
-export function normalizeInstallerEnv(env: InstallerPlanEnv): Pick<InstallerPlan, "installRef" | "provider"> {
+export function normalizeInstallerEnv(
+  env: InstallerPlanEnv,
+): Pick<InstallerPlan, "installRef" | "provider"> {
   const plan = buildInstallerPlan({ env });
   return { installRef: plan.installRef, provider: plan.provider };
 }
