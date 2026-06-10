@@ -28,7 +28,9 @@ export interface VllmModelPromptOptions {
 }
 
 function getNavigationChoice(value = ""): "back" | "exit" | null {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "back") return "back";
   if (normalized === "exit" || normalized === "quit") return "exit";
   return null;

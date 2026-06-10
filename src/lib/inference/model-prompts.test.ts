@@ -11,10 +11,7 @@ import {
   promptRemoteModel,
   promptVllmModel,
 } from "../../../dist/lib/inference/model-prompts";
-import {
-  VLLM_MODELS,
-  modelsForPlatform,
-} from "../../../dist/lib/inference/vllm-models";
+import { VLLM_MODELS, modelsForPlatform } from "../../../dist/lib/inference/vllm-models";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];
@@ -242,39 +239,40 @@ describe("promptVllmModel", () => {
 
   it("returns the profile default when the user presses Enter", async () => {
     const promptFn = promptSequence([""]);
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine: vi.fn(), env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(sparkDefault);
   });
 
   it("annotates the default as recommended and shows the HF id on a second line", async () => {
     const promptFn = promptSequence([""]);
     const writeLine = vi.fn();
-    await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine, env: {} as NodeJS.ProcessEnv },
-    );
+    await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine,
+      env: {} as NodeJS.ProcessEnv,
+    });
     const lines = writeLine.mock.calls.map((args) => String(args[0]));
     expect(lines).toContain("  vLLM models for DGX Spark:");
-    expect(lines.some((line) => line.includes(sparkDefault.label) && line.includes("recommended, default"))).toBe(true);
+    expect(
+      lines.some(
+        (line) => line.includes(sparkDefault.label) && line.includes("recommended, default"),
+      ),
+    ).toBe(true);
     expect(lines).toContain(`       ${sparkDefault.id}`);
   });
 
   it("renders the default first followed by registry order", async () => {
     const promptFn = promptSequence([""]);
     const writeLine = vi.fn();
-    await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine, env: {} as NodeJS.ProcessEnv },
-    );
+    await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine,
+      env: {} as NodeJS.ProcessEnv,
+    });
     const numbered = writeLine.mock.calls
       .map((args) => String(args[0]))
       .filter((line) => /^ {4}\d+\) /.test(line));
@@ -287,12 +285,11 @@ describe("promptVllmModel", () => {
 
   it("returns a non-default registry entry when the user picks its number", async () => {
     const promptFn = promptSequence(["2"]);
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine: vi.fn(), env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).not.toEqual(sparkDefault);
     expect(sparkModels).toContainEqual(result);
   });
@@ -300,12 +297,12 @@ describe("promptVllmModel", () => {
   it("re-prompts when the user enters a number outside the menu", async () => {
     const promptFn = promptSequence(["99", ""]);
     const errorLine = vi.fn();
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine: vi.fn(), errorLine, env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      errorLine,
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(sparkDefault);
     expect(errorLine).toHaveBeenCalledWith(
       expect.stringMatching(/Pick a number between 1 and \d+/),
@@ -315,12 +312,12 @@ describe("promptVllmModel", () => {
   it("rejects malformed input like '2abc' instead of silently treating it as 2", async () => {
     const promptFn = promptSequence(["2abc", " 1x ", ""]);
     const errorLine = vi.fn();
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine: vi.fn(), errorLine, env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      errorLine,
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(sparkDefault);
     const messages = errorLine.mock.calls.map((args) => String(args[0]));
     expect(messages.filter((m) => /Pick a number between 1 and \d+/.test(m))).toHaveLength(2);
@@ -335,12 +332,12 @@ describe("promptVllmModel", () => {
     })();
     const promptFn = promptSequence([String(orderedGatedPosition), ""]);
     const errorLine = vi.fn();
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      { promptFn, writeLine: vi.fn(), errorLine, env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      errorLine,
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(sparkDefault);
     const messages = errorLine.mock.calls.map((args) => String(args[0]));
     expect(messages.some((m) => /gated on Hugging Face/.test(m))).toBe(true);
@@ -350,27 +347,21 @@ describe("promptVllmModel", () => {
     const ordered = [sparkDefault, ...sparkModels.filter((m) => m.id !== sparkDefault.id)];
     const gatedPosition = ordered.findIndex((m) => m.id === gatedModel.id) + 1;
     const promptFn = promptSequence([String(gatedPosition)]);
-    const result = await promptVllmModel(
-      "DGX Spark",
-      sparkModels,
-      sparkDefault,
-      {
-        promptFn,
-        writeLine: vi.fn(),
-        env: { HUGGING_FACE_HUB_TOKEN: "hf_abc" } as NodeJS.ProcessEnv,
-      },
-    );
+    const result = await promptVllmModel("DGX Spark", sparkModels, sparkDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      env: { HUGGING_FACE_HUB_TOKEN: "hf_abc" } as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(gatedModel);
   });
 
   it("returns BACK_TO_SELECTION when the user types back", async () => {
     const promptFn = promptSequence(["back"]);
-    const result = await promptVllmModel(
-      "DGX Station",
-      stationModels,
-      stationDefault,
-      { promptFn, writeLine: vi.fn(), env: {} as NodeJS.ProcessEnv },
-    );
+    const result = await promptVllmModel("DGX Station", stationModels, stationDefault, {
+      promptFn,
+      writeLine: vi.fn(),
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(result).toEqual(BACK_TO_SELECTION);
   });
 });
