@@ -12,17 +12,21 @@ import { runCapture, runShell } from "../runner";
 import { getGpuIndicesByName } from "./nim";
 import {
   VLLM_MODELS,
-  assertGatedModelAccess,
   buildVllmServeCommand,
-  selectVllmModelFromEnv,
   type VllmModelDef,
+  type VllmPlatform,
 } from "./vllm-models";
+import { resolveVllmInstallModel } from "./vllm-prompt";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
 export interface VllmProfile {
   name: string; // human label, e.g. "DGX Spark"
+  // Platform key matched against `VllmModelDef.platforms` when the picker
+  // filters the registry. Decoupled from `name` so future user-facing label
+  // tweaks don't change which models are offered.
+  platform: VllmPlatform;
   image: string; // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
   // because Spark/Station can host larger recipes, but generic discrete-GPU
@@ -116,6 +120,7 @@ export function buildHfTokenForwardEnv(
 
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
+  platform: "spark",
   image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
@@ -135,6 +140,7 @@ const SPARK_PROFILE: VllmProfile = {
 // DGX Station.
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
+  platform: "station",
   image: VLLM_IMAGES.ngc2605Post1,
   defaultModel: qwen27bFP8Model(),
   containerName: "nemoclaw-vllm",
@@ -165,6 +171,7 @@ const STATION_PROFILE: VllmProfile = {
 // most GPUs.
 const GENERIC_LINUX_PROFILE: VllmProfile = {
   name: "Linux + NVIDIA GPU",
+  platform: "linux",
   image: VLLM_IMAGES.ngc2603Post1,
   defaultModel: nemotronNanoModel(),
   containerName: "nemoclaw-vllm",
@@ -492,27 +499,21 @@ export async function installVllm(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
-  // Resolve the model to serve: `NEMOCLAW_VLLM_MODEL` override if set, else
-  // the per-platform profile default. The generic-Linux profile defaults to
-  // Nemotron-Nano-4B for VRAM headroom; Station to Qwen3.6-27B; Spark to the
-  // Qwen3.6-35B-A3B NVFP4 checkpoint.
-  // Validate gated-model access (HF_TOKEN required for models like
-  // DeepSeek-R1 Distill 70B) before touching docker so the user does not
-  // burn a multi-minute pull on a 401.
-  let model: VllmModelDef;
-  try {
-    model = selectVllmModelFromEnv() ?? profile.defaultModel;
-    assertGatedModelAccess(model);
-  } catch (err) {
-    console.error(`  vLLM install failed: ${(err as Error).message}`);
-    return { ok: false };
-  }
+  // Model selection lives in `resolveVllmInstallModel` so this entry point
+  // stays focused on the docker side effects. Gated-model access is checked
+  // there before any docker work happens.
+  const resolved = await resolveVllmInstallModel(profile, {
+    nonInteractive: opts.nonInteractive,
+    promptFn: opts.promptFn,
+  });
+  if (!resolved) return { ok: false };
+  const { model, source: modelSource } = resolved;
 
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
   console.log(`    Image: ${profile.image}`);
   console.log(
-    `    Model: ${model.id}${model.id === profile.defaultModel.id ? "" : " (NEMOCLAW_VLLM_MODEL override)"}`,
+    `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
   );
   if (!opts.hasImage) console.log("    Image download on first run, cached after");
   console.log("    Model download on first run, cached after");

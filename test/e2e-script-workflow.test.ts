@@ -1,11 +1,185 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
+
+// Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
+// top-level shell suite frozen so new coverage starts in the newer E2E surface
+// unless maintainers intentionally update this allowlist.
+const LEGACY_E2E_SHELL_ALLOWLIST = [
+  "test/e2e/test-agent-turn-latency-e2e.sh",
+  "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
+  "test/e2e/test-brave-search-e2e.sh",
+  "test/e2e/test-channels-add-remove.sh",
+  "test/e2e/test-channels-stop-start.sh",
+  "test/e2e/test-cloud-inference-e2e.sh",
+  "test/e2e/test-cloud-onboard-e2e.sh",
+  "test/e2e/test-common-egress-agent-e2e.sh",
+  "test/e2e/test-concurrent-gateway-ports.sh",
+  "test/e2e/test-credential-migration.sh",
+  "test/e2e/test-credential-sanitization.sh",
+  "test/e2e/test-cron-preflight-inference-local-e2e.sh",
+  "test/e2e/test-dashboard-remote-bind.sh",
+  "test/e2e/test-device-auth-health.sh",
+  "test/e2e/test-diagnostics.sh",
+  "test/e2e/test-docs-validation.sh",
+  "test/e2e/test-double-onboard.sh",
+  "test/e2e/test-full-e2e.sh",
+  "test/e2e/test-gateway-drift-preflight.sh",
+  "test/e2e/test-gateway-health-honest.sh",
+  "test/e2e/test-gpu-double-onboard.sh",
+  "test/e2e/test-gpu-e2e.sh",
+  "test/e2e/test-hermes-discord-e2e.sh",
+  "test/e2e/test-hermes-e2e.sh",
+  "test/e2e/test-hermes-inference-switch.sh",
+  "test/e2e/test-hermes-root-entrypoint-smoke.sh",
+  "test/e2e/test-hermes-sandbox-secret-boundary.sh",
+  "test/e2e/test-hermes-slack-e2e.sh",
+  "test/e2e/test-inference-routing.sh",
+  "test/e2e/test-issue-2478-crash-loop-recovery.sh",
+  "test/e2e/test-issue-4434-tui-unreachable-inference.sh",
+  "test/e2e/test-issue-4462-scope-upgrade-approval.sh",
+  "test/e2e/test-jetson-nvmap-gpu.sh",
+  "test/e2e/test-kimi-inference-compat.sh",
+  "test/e2e/test-launchable-smoke.sh",
+  "test/e2e/test-messaging-compatible-endpoint.sh",
+  "test/e2e/test-messaging-providers.sh",
+  "test/e2e/test-model-router-provider-routed-inference.sh",
+  "test/e2e/test-network-policy.sh",
+  "test/e2e/test-ollama-auth-proxy-e2e.sh",
+  "test/e2e/test-onboard-inference-smoke.sh",
+  "test/e2e/test-onboard-negative-paths.sh",
+  "test/e2e/test-onboard-repair.sh",
+  "test/e2e/test-onboard-resume.sh",
+  "test/e2e/test-openclaw-discord-pairing.sh",
+  "test/e2e/test-openclaw-inference-switch.sh",
+  "test/e2e/test-openclaw-plugin-runtime-exdev.sh",
+  "test/e2e/test-openclaw-skill-cli-e2e.sh",
+  "test/e2e/test-openclaw-slack-pairing.sh",
+  "test/e2e/test-openclaw-tui-chat-correlation.sh",
+  "test/e2e/test-openshell-gateway-upgrade.sh",
+  "test/e2e/test-openshell-version-pin.sh",
+  "test/e2e/test-overlayfs-autofix.sh",
+  "test/e2e/test-rebuild-hermes.sh",
+  "test/e2e/test-rebuild-openclaw.sh",
+  "test/e2e/test-runtime-overrides.sh",
+  "test/e2e/test-sandbox-operations.sh",
+  "test/e2e/test-sandbox-rebuild.sh",
+  "test/e2e/test-sandbox-survival.sh",
+  "test/e2e/test-sessions-agents-cli.sh",
+  "test/e2e/test-shields-config.sh",
+  "test/e2e/test-skill-agent-e2e.sh",
+  "test/e2e/test-snapshot-commands.sh",
+  "test/e2e/test-spark-install.sh",
+  "test/e2e/test-state-backup-restore.sh",
+  "test/e2e/test-strict-tool-call-probe.sh",
+  "test/e2e/test-telegram-injection.sh",
+  "test/e2e/test-token-rotation.sh",
+  "test/e2e/test-tunnel-lifecycle.sh",
+  "test/e2e/test-upgrade-stale-sandbox.sh",
+  "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+  "test/e2e/test-whatsapp-qr-compact-e2e.sh",
+];
+
+// Scheduled nightly wiring is frozen separately: retiring a nightly-wired legacy
+// script should remove it from nightly and this allowlist in the same PR that
+// deletes the script.
+const NIGHTLY_E2E_SCRIPT_ALLOWLIST = [
+  "test/e2e/test-agent-turn-latency-e2e.sh",
+  "test/e2e/test-bedrock-runtime-compatible-anthropic.sh",
+  "test/e2e/test-brave-search-e2e.sh",
+  "test/e2e/test-channels-add-remove.sh",
+  "test/e2e/test-channels-stop-start.sh",
+  "test/e2e/test-cloud-inference-e2e.sh",
+  "test/e2e/test-cloud-onboard-e2e.sh",
+  "test/e2e/test-common-egress-agent-e2e.sh",
+  "test/e2e/test-concurrent-gateway-ports.sh",
+  "test/e2e/test-credential-migration.sh",
+  "test/e2e/test-credential-sanitization.sh",
+  "test/e2e/test-cron-preflight-inference-local-e2e.sh",
+  "test/e2e/test-device-auth-health.sh",
+  "test/e2e/test-diagnostics.sh",
+  "test/e2e/test-docs-validation.sh",
+  "test/e2e/test-double-onboard.sh",
+  "test/e2e/test-full-e2e.sh",
+  "test/e2e/test-gpu-double-onboard.sh",
+  "test/e2e/test-gpu-e2e.sh",
+  "test/e2e/test-hermes-discord-e2e.sh",
+  "test/e2e/test-hermes-e2e.sh",
+  "test/e2e/test-hermes-inference-switch.sh",
+  "test/e2e/test-hermes-root-entrypoint-smoke.sh",
+  "test/e2e/test-hermes-sandbox-secret-boundary.sh",
+  "test/e2e/test-hermes-slack-e2e.sh",
+  "test/e2e/test-inference-routing.sh",
+  "test/e2e/test-issue-2478-crash-loop-recovery.sh",
+  "test/e2e/test-issue-4434-tui-unreachable-inference.sh",
+  "test/e2e/test-issue-4462-scope-upgrade-approval.sh",
+  "test/e2e/test-jetson-nvmap-gpu.sh",
+  "test/e2e/test-kimi-inference-compat.sh",
+  "test/e2e/test-launchable-smoke.sh",
+  "test/e2e/test-messaging-compatible-endpoint.sh",
+  "test/e2e/test-messaging-providers.sh",
+  "test/e2e/test-network-policy.sh",
+  "test/e2e/test-onboard-negative-paths.sh",
+  "test/e2e/test-onboard-repair.sh",
+  "test/e2e/test-onboard-resume.sh",
+  "test/e2e/test-openclaw-discord-pairing.sh",
+  "test/e2e/test-openclaw-inference-switch.sh",
+  "test/e2e/test-openclaw-skill-cli-e2e.sh",
+  "test/e2e/test-openclaw-slack-pairing.sh",
+  "test/e2e/test-openclaw-tui-chat-correlation.sh",
+  "test/e2e/test-openshell-gateway-upgrade.sh",
+  "test/e2e/test-overlayfs-autofix.sh",
+  "test/e2e/test-rebuild-hermes.sh",
+  "test/e2e/test-rebuild-openclaw.sh",
+  "test/e2e/test-runtime-overrides.sh",
+  "test/e2e/test-sandbox-operations.sh",
+  "test/e2e/test-sandbox-survival.sh",
+  "test/e2e/test-sessions-agents-cli.sh",
+  "test/e2e/test-shields-config.sh",
+  "test/e2e/test-skill-agent-e2e.sh",
+  "test/e2e/test-snapshot-commands.sh",
+  "test/e2e/test-state-backup-restore.sh",
+  "test/e2e/test-telegram-injection.sh",
+  "test/e2e/test-token-rotation.sh",
+  "test/e2e/test-tunnel-lifecycle.sh",
+  "test/e2e/test-upgrade-stale-sandbox.sh",
+  "test/e2e/test-vm-driver-privileged-exec-routing.sh",
+];
+
+function listLegacyE2eShellScripts(): string[] {
+  return readdirSync(new URL("./e2e/", import.meta.url))
+    .filter((name) => /^test-.*\.sh$/.test(name))
+    .map((name) => `test/e2e/${name}`)
+    .sort();
+}
+
+function collectLegacyE2eShellScriptRefs(value: unknown): string[] {
+  const scripts = new Set<string>();
+  const visit = (node: unknown): void => {
+    if (typeof node === "string") {
+      for (const match of node.matchAll(/test\/e2e\/test-[A-Za-z0-9_.-]+\.sh/g)) {
+        scripts.add(match[0] ?? "");
+      }
+      scripts.delete("");
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (node && typeof node === "object") {
+      for (const item of Object.values(node)) visit(item);
+    }
+  };
+
+  visit(value);
+  return [...scripts].sort();
+}
 
 describe("E2E reusable workflow contract", () => {
   const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
@@ -30,6 +204,19 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.run).toContain("test/e2e/*.sh");
     expect(runStep?.run).toContain('bash "$E2E_SCRIPT"');
     expect(runStep?.run).not.toContain('bash "${{ inputs.script }}"');
+  });
+
+  it("keeps the top-level legacy E2E bash script set frozen", () => {
+    expect(listLegacyE2eShellScripts()).toEqual(LEGACY_E2E_SHELL_ALLOWLIST);
+  });
+
+  it("keeps scheduled nightly legacy E2E script wiring frozen and file-backed", () => {
+    const nightlyScripts = collectLegacyE2eShellScriptRefs(nightlyWorkflow.jobs);
+
+    expect(nightlyScripts).toEqual(NIGHTLY_E2E_SCRIPT_ALLOWLIST);
+    for (const script of nightlyScripts) {
+      expect(existsSync(new URL(`../${script}`, import.meta.url)), script).toBe(true);
+    }
   });
 
   it("passes only named secrets to reusable nightly jobs", () => {

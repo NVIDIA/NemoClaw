@@ -149,7 +149,7 @@ assert_runtime_layout() {
 assert_gateway_process() {
   local container="$1"
   assert_container_sh "$container" "Hermes gateway process is not running as gateway user" \
-    "ps -eo user=,args= | awk '\$1 == \"gateway\" && index(\$0, \"hermes gateway run\") { found = 1 } END { exit found ? 0 : 1 }'"
+    "ps -eo user=,args= | awk '\$1 == \"gateway\" && (index(\$0, \"hermes gateway run\") || index(\$0, \"hermes.real gateway run\")) { found = 1 } END { exit found ? 0 : 1 }'"
   assert_container_sh "$container" "start log does not show gateway privilege separation" \
     "grep -F \"hermes gateway launched as 'gateway' user\" /tmp/nemoclaw-start.log"
 }

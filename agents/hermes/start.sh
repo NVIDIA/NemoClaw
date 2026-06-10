@@ -304,7 +304,7 @@ cmdline_is_hermes_gateway() {
   local cmdline=" $1 "
 
   case "$cmdline" in
-    *"/hermes gateway run "* | *" hermes gateway run "*) return 0 ;;
+    *"/hermes gateway run "* | *" hermes gateway run "* | *"/hermes.real gateway run "* | *" hermes.real gateway run "*) return 0 ;;
   esac
   return 1
 }
