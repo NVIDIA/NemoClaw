@@ -8,6 +8,7 @@ import {
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  modelsForPlatform,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
 } from "../../../dist/lib/inference/vllm-models";
@@ -185,6 +186,42 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--pipeline-parallel-size 1");
     expect(cmd).toContain("--data-parallel-size 1");
     expect(cmd).not.toContain("--gpu-memory-utilization 0.85");
+  });
+});
+
+describe("modelsForPlatform", () => {
+  it("returns the Spark-runnable subset for DGX Spark", () => {
+    const slugs = modelsForPlatform("spark").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).not.toContain("deepseek-v4-flash");
+  });
+
+  it("returns the Station-runnable subset for DGX Station", () => {
+    const slugs = modelsForPlatform("station").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).toContain("deepseek-v4-flash");
+    expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+  });
+
+  it("omits arch-specific entries from the generic Linux profile", () => {
+    const slugs = modelsForPlatform("linux").map((m) => m.envValue);
+    expect(slugs).toContain("qwen3.6-27b");
+    expect(slugs).toContain("nemotron-3-nano-4b");
+    expect(slugs).toContain("deepseek-r1-distill-70b");
+    expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
+    expect(slugs).not.toContain("deepseek-v4-flash");
+  });
+
+  it("preserves registry order so callers can stably mark the recommended entry", () => {
+    const registryOrder = VLLM_MODELS.filter((m) => m.platforms.includes("spark")).map(
+      (m) => m.envValue,
+    );
+    expect(modelsForPlatform("spark").map((m) => m.envValue)).toEqual(registryOrder);
   });
 });
 
