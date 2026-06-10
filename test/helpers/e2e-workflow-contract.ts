@@ -39,7 +39,7 @@ export type RunnerWorkflow = {
       inputs?: Record<string, { default?: unknown }>;
     };
   };
-  "true"?: {
+  true?: {
     workflow_call?: {
       inputs?: Record<string, { default?: unknown }>;
     };
@@ -52,6 +52,7 @@ export type RunnerWorkflow = {
 };
 
 export type CompositeAction = {
+  inputs?: Record<string, { default?: unknown }>;
   runs: {
     steps: WorkflowStep[];
   };

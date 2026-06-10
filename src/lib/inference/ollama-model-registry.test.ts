@@ -102,9 +102,9 @@ describe("fittableOllamaModelTags", () => {
   });
 
   it("uses totalMemoryMB when availableMemoryMB is absent so legacy detection still works", () => {
-    expect(
-      fittableOllamaModelTags({ type: "nvidia", totalMemoryMB: 131_072 }).length,
-    ).toBe(OLLAMA_MODEL_REGISTRY.length);
+    expect(fittableOllamaModelTags({ type: "nvidia", totalMemoryMB: 131_072 }).length).toBe(
+      OLLAMA_MODEL_REGISTRY.length,
+    );
   });
 });
 

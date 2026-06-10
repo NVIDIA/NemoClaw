@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import os from "node:os";
 
 import type { SandboxLogsOptions } from "./log-options";
@@ -46,7 +45,9 @@ export function exitCodeFromSignal(signal: NodeJS.Signals | null): number {
   return signalNumber ? 128 + signalNumber : 1;
 }
 
-export function normalizeSandboxLogsOptions(options: SandboxLogsOptions | boolean): SandboxLogsOptions {
+export function normalizeSandboxLogsOptions(
+  options: SandboxLogsOptions | boolean,
+): SandboxLogsOptions {
   if (typeof options === "boolean") {
     return { follow: options, lines: DEFAULT_SANDBOX_LOG_LINES, since: null };
   }
@@ -84,12 +85,10 @@ export function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOp
   return args;
 }
 
-
 // Tail-merge helpers (closes #4100)
 
 const EPOCH_TIMESTAMP_RE = /^\[(\d+)(?:\.(\d+))?\]/;
-const ISO_TIMESTAMP_RE =
-  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/;
+const ISO_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/;
 const LINE_SPLIT_RE = /\r?\n/;
 const NEWLINE = "\n";
 
@@ -142,10 +141,7 @@ interface ScoredLine {
  *
  * When maxLines is non-positive, all merged lines are returned.
  */
-export function mergeTailLogLines(
-  sources: ReadonlyArray<string>,
-  maxLines: number,
-): string {
+export function mergeTailLogLines(sources: ReadonlyArray<string>, maxLines: number): string {
   const scored: ScoredLine[] = [];
   for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
     const raw = sources[sourceIndex] ?? "";

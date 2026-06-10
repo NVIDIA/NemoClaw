@@ -509,18 +509,8 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
   });
 
   it.each([
-    [
-      "base image",
-      DOCKERFILE_BASE,
-      "# Baseline health check.",
-      undefined,
-    ],
-    [
-      "test image",
-      DOCKERFILE_SANDBOX,
-      "# Test image: no long-running service",
-      "ENTRYPOINT",
-    ],
+    ["base image", DOCKERFILE_BASE, "# Baseline health check.", undefined],
+    ["test image", DOCKERFILE_SANDBOX, "# Test image: no long-running service", "ENTRYPOINT"],
   ])("keeps %s non-service probe runtime-only", (_label, imagePath, startMarker, endMarker) => {
     const imageDefinition = fs.readFileSync(imagePath, "utf-8");
     const command = dockerHealthCommandBetween(imageDefinition, startMarker, endMarker);
@@ -792,9 +782,7 @@ describe("sandbox provisioning: base runtime tools", () => {
       expect(calls).toContain("apt-mark manual procps e2fsprogs");
       expect(calls).toContain("apt-get autoremove --purge -y");
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain(
-        "apt-get install -y --no-install-recommends procps=2:4.0.4-9",
-      );
+      expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.4-9");
       expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11");
       expect(result.stdout).toContain("procps test version");
     } finally {

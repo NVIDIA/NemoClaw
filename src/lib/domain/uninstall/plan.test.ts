@@ -60,12 +60,20 @@ describe("uninstall plan", () => {
         deleteModels: true,
         gatewayName: "custom",
         keepOpenShell: true,
-        shim: { kind: "preserve-foreign-file", reason: "regular file is not an installer-managed shim", remove: false },
+        shim: {
+          kind: "preserve-foreign-file",
+          reason: "regular file is not an installer-managed shim",
+          remove: false,
+        },
       }),
     );
 
-    expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-docker-volume", name: "openshell-cluster-custom" }]));
-    expect(actions).toEqual(expect.arrayContaining([{ kind: "delete-ollama-model", name: "nemotron-3-super:120b" }]));
+    expect(actions).toEqual(
+      expect.arrayContaining([{ kind: "delete-docker-volume", name: "openshell-cluster-custom" }]),
+    );
+    expect(actions).toEqual(
+      expect.arrayContaining([{ kind: "delete-ollama-model", name: "nemotron-3-super:120b" }]),
+    );
     expect(actions).toEqual(
       expect.arrayContaining([
         {
@@ -78,7 +86,9 @@ describe("uninstall plan", () => {
       ]),
     );
     expect(actions).toEqual(
-      expect.arrayContaining([{ kind: "preserve-shim", reason: "regular file is not an installer-managed shim" }]),
+      expect.arrayContaining([
+        { kind: "preserve-shim", reason: "regular file is not an installer-managed shim" },
+      ]),
     );
   });
 });

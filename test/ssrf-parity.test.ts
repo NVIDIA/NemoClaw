@@ -86,7 +86,9 @@ describe("private-networks.yaml schema", () => {
       ...doc.ipv6.map((e) => `cidr:${e.address}/${String(e.prefix)}`),
       ...doc.names.map((e) => `name:${e.name}`),
     ];
-    expect(fingerprint(cliHelper.getNetworkEntries())).toEqual(fingerprint(pluginHelper.getNetworkEntries()));
+    expect(fingerprint(cliHelper.getNetworkEntries())).toEqual(
+      fingerprint(pluginHelper.getNetworkEntries()),
+    );
   });
 
   it("requires a non-empty purpose on every entry", () => {

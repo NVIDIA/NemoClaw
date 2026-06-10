@@ -106,7 +106,11 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   if (/Connection reset by peer/i.test(text)) {
     return { kind: "image_transfer_reset", uploadedToGateway };
   }
-  if (/invalid peer certificate|BadSignature|handshake verification failed|certificate verify failed|SSL certificate problem|x509: certificate|unknown authority/i.test(text)) {
+  if (
+    /invalid peer certificate|BadSignature|handshake verification failed|certificate verify failed|SSL certificate problem|x509: certificate|unknown authority/i.test(
+      text,
+    )
+  ) {
     return { kind: "tls_cert_mismatch", uploadedToGateway };
   }
   // Misleading "container does not exist" 404 raised while OpenShell streams the
@@ -148,9 +152,7 @@ export function planSandboxCreateRecovery(
 ): SandboxCreateRecoveryPlan {
   return {
     arm64ImageRefWorkaround:
-      failure.kind === "image_upload_container_missing" &&
-      platform === "linux" &&
-      arch === "arm64",
+      failure.kind === "image_upload_container_missing" && platform === "linux" && arch === "arm64",
   };
 }
 

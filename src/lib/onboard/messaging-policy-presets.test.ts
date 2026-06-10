@@ -51,9 +51,11 @@ describe("messaging policy presets", () => {
   });
 
   it("preserves non-required policy presets when a same-named channel is disabled", () => {
-    expect(
-      pruneDisabledMessagingPolicyPresets(["telegram", "npm", "pypi"], ["telegram"]),
-    ).toEqual(["telegram", "npm", "pypi"]);
+    expect(pruneDisabledMessagingPolicyPresets(["telegram", "npm", "pypi"], ["telegram"])).toEqual([
+      "telegram",
+      "npm",
+      "pypi",
+    ]);
   });
 
   it("detects applied policy presets for disabled messaging channels", () => {
@@ -70,11 +72,7 @@ describe("messaging policy presets", () => {
       ),
     ).toEqual(["npm", "github"]);
     expect(
-      mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
-        ["npm"],
-        ["npm", "github"],
-        ["slack"],
-      ),
+      mergeAppliedPolicyPresetsForDisabledMessagingCleanup(["npm"], ["npm", "github"], ["slack"]),
     ).toEqual(["npm"]);
   });
 });

@@ -16,7 +16,9 @@ import {
   shouldUseContainerizedGateway,
 } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
 
-function withTempBinaries<T>(fn: (paths: { dir: string; gatewayBin: string; sandboxBin: string }) => T): T {
+function withTempBinaries<T>(
+  fn: (paths: { dir: string; gatewayBin: string; sandboxBin: string }) => T,
+): T {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-launch-"));
   const gatewayBin = path.join(dir, "openshell-gateway");
   const sandboxBin = path.join(dir, "openshell-sandbox");
@@ -142,9 +144,7 @@ describe("docker-driver-gateway-launch", () => {
     expect(toml).toContain('compute_drivers = ["docker"]');
     expect(toml).toContain('grpc_endpoint = "http://127.0.0.1:8080"');
     expect(toml).toContain('network_name = "openshell-docker"');
-    expect(toml).toContain(
-      'supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.44"',
-    );
+    expect(toml).toContain('supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.44"');
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 

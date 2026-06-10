@@ -6,9 +6,7 @@
 #
 # Negative-state probe. Asserts that no sandbox was created by a
 # scenario whose expected_state declares sandbox.expected=absent
-# (preflight failure, onboarding failures). Typed replacement for
-# the legacy run-scenario.sh inline check
-# `openshell sandbox list | grep -Fq "${sandbox_name}"`.
+# (preflight failure, onboarding failures).
 
 set -euo pipefail
 

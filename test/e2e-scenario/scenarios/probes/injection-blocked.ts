@@ -59,7 +59,10 @@ function uniqueMarkerPath(): string {
 
 export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise<ProbeOutcome> => {
   if (!ctx.sandboxName) {
-    return { status: "failed", message: "injectionBlockedProbe: E2E_SANDBOX_NAME missing in context.env" };
+    return {
+      status: "failed",
+      message: "injectionBlockedProbe: E2E_SANDBOX_NAME missing in context.env",
+    };
   }
 
   const markerPath = uniqueMarkerPath();
@@ -92,17 +95,16 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
   // string must NOT use $() inside the literal; the host-side bash
   // wrapper passes the script verbatim and the sandbox shell reads
   // the payload as data.
-  const echoResult = await runSandboxCmd(
-    ctx,
-    ["sh", "-c", 'MSG=$(cat); printf "%s\n" "$MSG"'],
-    { perCallSeconds: PER_CALL_SECONDS, stdin: payload },
-  );
+  const echoResult = await runSandboxCmd(ctx, ["sh", "-c", 'MSG=$(cat); printf "%s\n" "$MSG"'], {
+    perCallSeconds: PER_CALL_SECONDS,
+    stdin: payload,
+  });
   evidence.echoExitCode = echoResult.exitCode;
   evidence.echoStdoutTail = echoResult.stdout;
   evidence.echoStderrTail = echoResult.stderr;
 
   if (echoResult.exitCode !== 0) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       classifier: echoResult.signal === "SIGTERM" ? "gateway-transient" : undefined,
@@ -112,7 +114,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
 
   evidence.payloadPreservedLiterally = echoResult.stdout.includes(payload);
   if (!evidence.payloadPreservedLiterally) {
-    writeProbeEvidence(ctx.evidencePath, evidence);
+    writeProbeEvidence(ctx, evidence);
     return {
       status: "failed",
       message: `injectionBlockedProbe: payload was not preserved literally; stdout tail: ${echoResult.stdout.slice(-300)}`,
@@ -139,7 +141,7 @@ export const injectionBlockedProbe: ProbeFn = async (ctx: ProbeContext): Promise
     perCallSeconds: PER_CALL_SECONDS,
   });
 
-  writeProbeEvidence(ctx.evidencePath, evidence);
+  writeProbeEvidence(ctx, evidence);
 
   if (!evidence.markerAbsent) {
     return {

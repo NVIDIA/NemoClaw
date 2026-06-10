@@ -25,9 +25,8 @@ type SlackBuilder = {
 };
 
 const require = createRequire(import.meta.url);
-const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } = require(
-  "../scripts/scorecard/build-slack-blocks.ts",
-) as SlackBuilder;
+const { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor } =
+  require("../scripts/scorecard/build-slack-blocks.ts") as SlackBuilder;
 
 function renderBlocks(data: ScorecardData): TestSlackBlock[] {
   return buildBlocks(data);
@@ -218,16 +217,12 @@ describe("buildBlocks — selective dispatch", () => {
 
 describe("buildBlocks — manual full run with actor", () => {
   it("appends actor suffix in the run-mode context line", () => {
-    const blocks = renderBlocks(
-      makeData({ runMode: "Manual full run", actor: "hple" }),
-    );
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "hple" }));
     expect(elementText(blocks[0], 0)).toContain("Manual full run (by *hple*)");
   });
 
   it("omits actor suffix when actor is empty", () => {
-    const blocks = renderBlocks(
-      makeData({ runMode: "Manual full run", actor: "" }),
-    );
+    const blocks = renderBlocks(makeData({ runMode: "Manual full run", actor: "" }));
     expect(elementText(blocks[0], 0)).toBe("*Run mode:* Manual full run");
   });
 });
@@ -240,9 +235,9 @@ describe("buildFallbackText", () => {
   });
 
   it("renders manual full title with 🛠 prefix + actor", () => {
-    expect(
-      buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" })),
-    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*");
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "hunglp6d" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full by hunglp6d · May 25*",
+    );
   });
 
   it("renders selective title with 🛠 prefix + actor", () => {
@@ -259,9 +254,9 @@ describe("buildFallbackText", () => {
   });
 
   it("omits 'by <actor>' when actor empty on manual full", () => {
-    expect(
-      buildFallbackText(makeData({ runMode: "Manual full run", actor: "" })),
-    ).toBe("🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*");
+    expect(buildFallbackText(makeData({ runMode: "Manual full run", actor: "" }))).toBe(
+      "🌅 *NemoClaw Nightly Scorecard · 🛠 Manual full · May 25*",
+    );
   });
 
   it("uses the same title regardless of run outcome (within same runMode)", () => {

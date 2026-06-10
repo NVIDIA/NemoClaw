@@ -48,7 +48,9 @@ describe("gateway-binding resolver (#4422)", () => {
 });
 
 describe("docker-driver compat container is gateway-port scoped (#4422)", () => {
-  function withTempState<T>(fn: (paths: { gatewayBin: string; sandboxBin: string; stateDir: string }) => T): T {
+  function withTempState<T>(
+    fn: (paths: { gatewayBin: string; sandboxBin: string; stateDir: string }) => T,
+  ): T {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-binding-"));
     const gatewayBin = path.join(dir, "openshell-gateway");
     const sandboxBin = path.join(dir, "openshell-sandbox");

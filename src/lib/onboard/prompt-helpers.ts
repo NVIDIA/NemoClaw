@@ -89,7 +89,11 @@ export async function promptYesNoOrDefault(
 ): Promise<boolean> {
   const fullQuestion = `${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `;
   const nonInteractive = deps.isNonInteractive();
-  const input = nonInteractive ? (envVar ? process.env[envVar] : null) : await deps.prompt(fullQuestion);
+  const input = nonInteractive
+    ? envVar
+      ? process.env[envVar]
+      : null
+    : await deps.prompt(fullQuestion);
 
   const value = String(input ?? "")
     .trim()

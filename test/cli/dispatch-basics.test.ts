@@ -65,6 +65,61 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it(
+    "start does not prompt for NVIDIA_API_KEY before launching local services",
+    testTimeoutOptions(35_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const markerFile = path.join(home, "start-args");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "bash"),
+        [
+          "#!/bin/sh",
+          `marker_file=${JSON.stringify(markerFile)}`,
+          'printf \'%s\\n\' "$@" > "$marker_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "start",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NVIDIA_API_KEY: "",
+          TELEGRAM_BOT_TOKEN: "",
+        },
+        30000,
+      );
+
+      expect(r.code).toBe(0);
+      expect(r.out).not.toContain("NVIDIA API Key required");
+      // Services module now runs in-process (no bash shelling)
+      expect(r.out).toContain("NemoClaw Services");
+    },
+  );
+
   it("help exits 0 and shows sections", () => {
     const r = run("help");
     expect(r.code).toBe(0);
@@ -263,9 +318,7 @@ describe("CLI dispatch", () => {
       expect(out).toMatch(/gated on Hugging Face/);
       expect(out).toMatch(/HF_TOKEN/);
       expect(out).toMatch(/HUGGING_FACE_HUB_TOKEN/);
-      expect(out).toContain(
-        "NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path",
-      );
+      expect(out).toContain("NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path");
       const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
       expect(calls).not.toMatch(/\bsandbox\s+(get|connect|list)\b/);
     } finally {
@@ -294,5 +347,4 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Command order is: nemoclaw <sandbox-name> connect");
     expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
   });
-
 });

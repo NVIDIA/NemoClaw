@@ -29,8 +29,12 @@ describe("getActiveChannelIdsFromPlan", () => {
         makePlan("sb", { disabledChannels: ["telegram"], channels: [tgChannel(true, false)] }),
       ),
     ).toEqual([]);
-    expect(getActiveChannelIdsFromPlan(makePlan("sb", { channels: [tgChannel(true, true)] }))).toEqual([]);
-    expect(getActiveChannelIdsFromPlan(makePlan("sb", { channels: [tgChannel(false, false)] }))).toEqual([]);
+    expect(
+      getActiveChannelIdsFromPlan(makePlan("sb", { channels: [tgChannel(true, true)] })),
+    ).toEqual([]);
+    expect(
+      getActiveChannelIdsFromPlan(makePlan("sb", { channels: [tgChannel(false, false)] })),
+    ).toEqual([]);
   });
 });
 
@@ -108,7 +112,9 @@ describe("planToConflictChannelRequests", () => {
         }),
       ),
     ).toEqual([]);
-    expect(planToConflictChannelRequests(makePlan("sb", { credentialBindings: [tgBinding("hash-tg")] }))).toEqual([]);
+    expect(
+      planToConflictChannelRequests(makePlan("sb", { credentialBindings: [tgBinding("hash-tg")] })),
+    ).toEqual([]);
     expect(
       planToConflictChannelRequests(
         makePlan("sb", {

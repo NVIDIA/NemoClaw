@@ -126,29 +126,31 @@ gating, and retry/flake classification.
 
 ## How to run
 
+The TypeScript runner is the canonical entrypoint. There is one execution
+mode — live — and `--plan-only` is for local debug only (it must not appear
+in any CI workflow).
+
 ```bash
-# YAML/shell scenario runner
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --validate-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id>
-
-# Suite runner against an existing scenario context
-bash test/e2e-scenario/runtime/run-suites.sh <suite-id> [<suite-id>...]
-
-# Scenario metadata coverage report
-bash test/e2e-scenario/runtime/coverage-report.sh
-
-# Typed scenario registry / workflow dry-run path
+# List canonical scenario ids
 npx tsx test/e2e-scenario/scenarios/run.ts --list
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
+
+# Emit the GitHub Actions fan-out matrix payload
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+
+# Execute one or more scenarios live
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id[,id...]>
+
+# Local debug only: print the compiled plan without executing
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
+
+# Opt-in Vitest live scenario path
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
 ```
 
 Override the runtime context directory with `E2E_CONTEXT_DIR=<path>` (default
-`.e2e/`, gitignored). The shell scenario runner and suites communicate through
-`$E2E_CONTEXT_DIR/context.env`; suites should not rediscover setup state.
+`.e2e/`, gitignored). Suites communicate through `$E2E_CONTEXT_DIR/context.env`;
+suites should not rediscover setup state.
 
 ## Repository layout
 
@@ -171,11 +173,7 @@ test/e2e-scenario/
     platform/
     security/
     sandbox/
-  runtime/                           # Shell runner, suite runner, resolver, coverage report, shared libs
-    run-scenario.sh
-    run-suites.sh
-    coverage-report.sh
-    resolver/
+  runtime/                           # Shared shell helper libs sourced by validation_suites
     lib/
 ```
 
@@ -185,6 +183,8 @@ test/e2e-scenario/
   manually selected scenario IDs.
 - `.github/workflows/e2e-scenarios-all.yaml` fans out typed scenario dry-runs
   from the typed registry matrix.
+- `.github/workflows/e2e-vitest-scenarios.yaml` runs the opt-in Vitest live
+  scenario project and uploads non-hidden `e2e-artifacts/vitest/` fixture artifacts.
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
   `regression-e2e.yaml` still run legacy live E2E scripts during the migration.
@@ -199,6 +199,13 @@ not in repo-local checklists. The parent architecture issue is #3588. Active
 audit-coverage work is tracked by the #4347–#4357 issue set, with focused
 follow-ups such as #4378 for specific drift fixes. The execution-model decision
 is tracked in #4941.
+
+The narrow repo-local exception is
+`test/e2e-scenario/migration/legacy-inventory.json`, a machine-readable deletion
+gate for direct legacy `test/e2e/test-*.sh` entrypoints and explicit bridge
+entrypoints. It should prevent accidental deletions, not become a parallel
+status table. Remove it after #4357 completes final legacy E2E reconciliation,
+or keep it only as an audit artifact if maintainers still need that record.
 
 The old workflow-level parity report has been removed. Use scenario framework
 tests, the coverage report, PR review, and the audit issues to decide what to

@@ -4,7 +4,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { PhaseActionResult, PhaseResult, RunContext, RunPlan, RunPlanPhase } from "../types.ts";
+import type {
+  PhaseActionResult,
+  PhaseResult,
+  RunContext,
+  RunPlan,
+  RunPlanPhase,
+} from "../types.ts";
 import { seedContextEnv } from "./context.ts";
 import { EnvironmentOrchestrator } from "./environment.ts";
 import { LifecycleOrchestrator } from "./lifecycle.ts";
@@ -79,8 +85,7 @@ export class ScenarioRunner {
     // if the plan declared expectedFailure, evaluate the matcher and
     // append a synthetic phase result. Positive scenarios are
     // unaffected. Side-effect verification stays the responsibility of
-    // the runtime control group's required pending step (kept red
-    // until the probe lands); the matcher only judges phase + errorClass.
+    // the state-validation phase; the matcher only judges phase + errorClass.
     if (plan.expectedFailure) {
       const contractResult = evaluateNegativeContract(plan, results);
       const synthetic = negativeContractPhaseResult(contractResult);

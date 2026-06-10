@@ -19,9 +19,7 @@ import type {
  * messaging registry fields are no longer supported. Returns `null` when the
  * entry has neither shape.
  */
-export function resolveActiveChannelsFromEntry(
-  entry: ConflictRegistryEntry,
-): string[] | null {
+export function resolveActiveChannelsFromEntry(entry: ConflictRegistryEntry): string[] | null {
   if (entry.messaging?.plan) {
     return getActiveChannelIdsFromPlan(entry.messaging.plan);
   }
@@ -51,10 +49,7 @@ function resolveChannelHashesFromEntry(
  * Disabled channels must not block another sandbox from claiming the same
  * token: the bridge is paused so the credential is not in use.
  */
-export function hasStoredChannelInEntry(
-  entry: ConflictRegistryEntry,
-  channel: string,
-): boolean {
+export function hasStoredChannelInEntry(entry: ConflictRegistryEntry, channel: string): boolean {
   return resolveActiveChannelsFromEntry(entry)?.includes(channel) ?? false;
 }
 

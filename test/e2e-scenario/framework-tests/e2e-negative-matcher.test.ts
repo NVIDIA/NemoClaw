@@ -13,6 +13,7 @@ import {
 } from "../scenarios/orchestrators/negative-matcher.ts";
 import { ScenarioRunner } from "../scenarios/orchestrators/runner.ts";
 import { listScenarios } from "../scenarios/registry.ts";
+import { planFailed } from "../scenarios/run.ts";
 import type {
   ExpectedFailureContract,
   PhaseName,
@@ -59,7 +60,14 @@ function phaseResult(
     phase,
     status: opts.status ?? "passed",
     actions: opts.failedActionId
-      ? [{ id: opts.failedActionId, status: "failed", durationMs: 1, message: opts.failedActionMessage }]
+      ? [
+          {
+            id: opts.failedActionId,
+            status: "failed",
+            durationMs: 1,
+            message: opts.failedActionMessage,
+          },
+        ]
       : [],
     assertions: opts.failedAssertionId
       ? [
@@ -72,6 +80,35 @@ function phaseResult(
           },
         ]
       : [],
+  };
+}
+
+function passedNegativeContractPhase(): PhaseResult {
+  return {
+    phase: "negative-contract",
+    status: "passed",
+    actions: [],
+    assertions: [
+      {
+        id: "negative-contract.match",
+        status: "passed",
+        attempts: 1,
+        durationMs: 0,
+        message: "matched",
+      },
+    ],
+  };
+}
+
+function stateValidationResult(
+  status: PhaseResult["status"],
+  actionIds: string[] = ["state-validation.gateway-absent", "state-validation.sandbox-absent"],
+): PhaseResult {
+  return {
+    phase: "state-validation",
+    status,
+    actions: actionIds.map((id) => ({ id, status: "passed", durationMs: 1 })),
+    assertions: [],
   };
 }
 
@@ -125,6 +162,72 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
     expect(result.matched).toBe(false);
     expect(result.outcome).toBe("no-failure-observed");
     expect(result.message).toMatch(/all phases passed/);
+  });
+
+  it("matches when a passed expected-failure assertion handled the failure", () => {
+    const plan = planWithExpectedFailure({
+      phase: "preflight",
+      errorClass: "docker-missing",
+      forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+    });
+    const results: PhaseResult[] = [
+      phaseResult("environment", { status: "passed" }),
+      {
+        phase: "onboarding",
+        status: "passed",
+        actions: [
+          {
+            id: "onboarding.profile.cloud-openclaw-no-docker",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        assertions: [
+          {
+            id: "onboarding.preflight.expected-failed",
+            status: "passed",
+            attempts: 1,
+            durationMs: 1,
+          },
+        ],
+      },
+      phaseResult("state-validation", { status: "passed" }),
+    ];
+
+    const result = evaluateNegativeContract(plan, results);
+    expect(result.matched).toBe(true);
+    expect(result.outcome).toBe("matched");
+    expect(result.observed).toMatchObject({
+      failedPhase: "onboarding",
+      handledAssertionId: "onboarding.preflight.expected-failed",
+    });
+  });
+
+  it("matches handled expected-failure actions using scenario error-class aliases", () => {
+    const plan = planWithExpectedFailure({
+      phase: "onboarding",
+      errorClass: "invalid-nvidia-api-key",
+    });
+    const results: PhaseResult[] = [
+      {
+        phase: "onboarding",
+        status: "passed",
+        actions: [
+          {
+            id: "onboarding.profile.cloud-openclaw-invalid-nvidia-key",
+            status: "passed",
+            durationMs: 1,
+          },
+        ],
+        assertions: [],
+      },
+    ];
+
+    const result = evaluateNegativeContract(plan, results);
+    expect(result.matched).toBe(true);
+    expect(result.observed.handledActionId).toBe(
+      "onboarding.profile.cloud-openclaw-invalid-nvidia-key",
+    );
   });
 
   it("fails when the wrong phase failed", () => {
@@ -206,7 +309,10 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
   });
 
   it("throws if invoked for a plan without expectedFailure", () => {
-    const plan: RunPlan = { ...planWithExpectedFailure({ phase: "onboarding", errorClass: "x" }), expectedFailure: undefined };
+    const plan: RunPlan = {
+      ...planWithExpectedFailure({ phase: "onboarding", errorClass: "x" }),
+      expectedFailure: undefined,
+    };
     expect(() => evaluateNegativeContract(plan, [])).toThrow(/no expectedFailure declared/);
   });
 
@@ -228,14 +334,44 @@ describe("evaluateNegativeContract - phase + errorClass matching", () => {
   });
 });
 
+describe("negative plan exit-code contract", () => {
+  const plan = planWithExpectedFailure({
+    phase: "preflight",
+    errorClass: "docker-missing",
+    forbiddenSideEffects: ["gateway-started", "sandbox-created"],
+  });
+
+  it("passes when negative contract and forbidden-side-effect probes pass", () => {
+    expect(planFailed(plan, [passedNegativeContractPhase(), stateValidationResult("passed")])).toBe(
+      false,
+    );
+  });
+
+  it("fails when state-validation is missing", () => {
+    expect(planFailed(plan, [passedNegativeContractPhase()])).toBe(true);
+  });
+
+  it("fails when state-validation is skipped", () => {
+    expect(
+      planFailed(plan, [passedNegativeContractPhase(), stateValidationResult("skipped")]),
+    ).toBe(true);
+  });
+
+  it("fails when a declared forbidden-side-effect probe did not run", () => {
+    expect(
+      planFailed(plan, [
+        passedNegativeContractPhase(),
+        stateValidationResult("passed", ["state-validation.gateway-absent"]),
+      ]),
+    ).toBe(true);
+  });
+});
+
 describe("ScenarioRunner appends negative-contract phase", () => {
   it("invokes matcher and appends a passing synthetic phase when contract matched", async () => {
     const ctx = freshCtx();
     try {
-      const fakePhase = (
-        phase: PhaseName,
-        outcome: PhaseResult,
-      ) => ({
+      const fakePhase = (phase: PhaseName, outcome: PhaseResult) => ({
         run: async (
           _ctx: RunContext,
           _runPhase: RunPlanPhase,
@@ -244,7 +380,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
       });
 
       const runner = new ScenarioRunner({
-        environment: fakePhase("environment", { phase: "environment", status: "passed", actions: [], assertions: [] }),
+        environment: fakePhase("environment", {
+          phase: "environment",
+          status: "passed",
+          actions: [],
+          assertions: [],
+        }),
         onboarding: fakePhase("onboarding", {
           phase: "onboarding",
           status: "failed",
@@ -258,7 +399,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
           ],
           assertions: [],
         }),
-        runtime: fakePhase("runtime", { phase: "runtime", status: "passed", actions: [], assertions: [] }),
+        runtime: fakePhase("runtime", {
+          phase: "runtime",
+          status: "passed",
+          actions: [],
+          assertions: [],
+        }),
       });
 
       const plan = planWithExpectedFailure({ phase: "preflight", errorClass: "docker-missing" });
@@ -300,7 +446,12 @@ describe("ScenarioRunner appends negative-contract phase", () => {
           ],
           assertions: [],
         }),
-        onboarding: fakePhase({ phase: "onboarding", status: "skipped", actions: [], assertions: [] }),
+        onboarding: fakePhase({
+          phase: "onboarding",
+          status: "skipped",
+          actions: [],
+          assertions: [],
+        }),
         runtime: fakePhase({ phase: "runtime", status: "skipped", actions: [], assertions: [] }),
       });
 
@@ -352,21 +503,18 @@ describe("ScenarioRunner appends negative-contract phase", () => {
   });
 });
 
-describe("registry contract: every negative scenario opts into the side-effect probe", () => {
-  it("scenario.expectedFailure implies the runtime no-side-effects required pending step", () => {
+describe("registry contract: negative scenarios use typed state-validation side-effect probes", () => {
+  it("scenario.expectedFailure does not inject the legacy runtime no-side-effects pending step", () => {
     const negatives = listScenarios().filter((scenario) => scenario.expectedFailure);
     expect(negatives.length).toBeGreaterThan(0);
     for (const scenario of negatives) {
-      const runtimeGroups = scenario.assertionGroups.filter((group) => group.phase === "runtime");
-      const hasProbeStep = runtimeGroups.some((group) =>
-        group.steps.some(
-          (step) =>
-            step.id === "runtime.expected-failure.no-side-effects" &&
-            step.implementation?.kind === "pending" &&
-            step.required === true,
-        ),
+      const hasLegacyPendingStep = scenario.assertionGroups.some((group) =>
+        group.steps.some((step) => step.id === "runtime.expected-failure.no-side-effects"),
       );
-      expect(hasProbeStep, `scenario ${scenario.id} must include the required side-effect pending step`).toBe(true);
+      expect(
+        hasLegacyPendingStep,
+        `scenario ${scenario.id} must rely on state-validation, not the legacy pending step`,
+      ).toBe(false);
     }
   });
 });
