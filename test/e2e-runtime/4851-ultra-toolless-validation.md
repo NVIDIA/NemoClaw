@@ -20,7 +20,7 @@ This runbook is the maintained runtime-validation path. Anyone reviewing #4851 a
 ## Prerequisites
 
 - An NVIDIA API key with access to `nvidia/nemotron-3-ultra-550b-a55b` (build.nvidia.com → API Keys).
-- `node >= 18` and `curl`. Any Linux or macOS host works — this validates upstream model behavior, not local sandbox runtime.
+- `node >= 18`, `curl`, and `jq` (the scenarios below pipe responses through `jq` for readable parsing). Any Linux or macOS host works — this validates upstream model behavior, not local sandbox runtime.
 
 Export the key once for the session:
 
@@ -107,8 +107,98 @@ Expected (`#4851` acceptance):
 
 This satisfies the issue's "Expected Result, Option A" (`Model explains it lacks a file-write tool and shows the full code the user would need to run manually`).
 
-## Last live verification
+## Sanitized acceptance transcript
 
-- 2026-06-09 — verified by @cjagwani on a GCP Brev box against `integrate.api.nvidia.com`. Baseline scenario returned 1-char content; Scenario C returned 501-char content with heredoc + run command. Captured in [PR #5085 body](https://github.com/NVIDIA/NemoClaw/pull/5085).
+The transcript below was captured by @cjagwani on 2026-06-09 against `integrate.api.nvidia.com` from a GCP Brev box. Reproduces the bug behavior in Scenarios A/B and the fix behavior in Scenario C. Use this as the durable acceptance baseline; new runs that differ structurally should update this section (and the dated entry below) rather than the unit tests.
 
-When you run this runbook, add a dated entry to the list above so the next reviewer can see how recently the upstream behavior was last confirmed.
+### Scenario A (baseline) — 2026-06-09
+
+```text
+finish_reason:     stop
+prompt_tokens:     35
+completion_tokens: 117
+reasoning_chars:   184
+content_chars:     1
+content:           " "
+```
+
+Reasoning content (the model plans 3 steps but emits none of them in `content`):
+
+```text
+The user wants me to:
+1. Create a file called hello.py in /tmp
+2. Put a hello world script in it
+3. Run it
+
+I'll use the write tool to create the file and then the bash tool to run it.
+```
+
+### Scenario B (force_nonempty_content only) — 2026-06-09
+
+```text
+finish_reason:     stop
+prompt_tokens:     35
+completion_tokens: 131
+reasoning_chars:   184
+content_chars:     1
+content:           " "
+```
+
+Same baseline failure mode — the kwarg alone doesn't address #4851.
+
+### Scenario C (full preload mutation) — 2026-06-09
+
+```text
+finish_reason:     stop
+prompt_tokens:     75
+completion_tokens: 187
+reasoning_chars:   241
+content_chars:     501
+```
+
+Content (full text):
+
+```markdown
+I'll provide you with the commands to create and run the hello world script manually.
+
+## Create the file
+
+```bash
+cat > /tmp/hello.py << 'EOF'
+#!/usr/bin/env python3
+
+def main():
+    print("Hello, World!")
+
+if __name__ == "__main__":
+    main()
+EOF
+```
+
+## Make it executable (optional)
+
+```bash
+chmod +x /tmp/hello.py
+```
+
+## Run it
+
+```bash
+python3 /tmp/hello.py
+```
+
+**Expected output:**
+```
+Hello, World!
+```
+
+You can copy and paste these commands into your terminal to create and run the script.
+```
+
+This satisfies the issue's Option A acceptance condition: model explains it lacks file-write/execute tools and shows the complete code the user would need to run manually, with all 3 planned steps present in `content`.
+
+## Live verification log
+
+- 2026-06-09 — verified by @cjagwani on a GCP Brev box against `integrate.api.nvidia.com`. Numbers and content above match this run.
+
+When you re-run this runbook, add a dated entry here so the next reviewer can see how recently the upstream behavior was last confirmed. If the response shape differs materially from the sanitized transcript above, update both this log and the transcript.
