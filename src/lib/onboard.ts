@@ -4171,12 +4171,6 @@ async function setupNim(
                 );
               }
               break;
-            case "ambiguous-recorded-vllm":
-              console.error(
-                "  Recorded provider 'vllm-local' is ambiguous (could be standalone vLLM or Local NIM).",
-              );
-              console.error("  Set NEMOCLAW_PROVIDER explicitly (vllm or nim-local) and re-run.");
-              break;
             case "unsupported-windows-host-ollama":
               rejectWindowsHostOllama(providerSelection.reason.providerKey, isWindowsHostOllama);
               break;

@@ -16,9 +16,6 @@ export type ProviderSelectionFailureReason =
       windowsHostKey: string | null;
     }
   | {
-      kind: "ambiguous-recorded-vllm";
-    }
-  | {
       kind: "unsupported-windows-host-ollama";
       providerKey: string;
     }
@@ -120,11 +117,6 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       providerKey = recoveredKey;
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
-    } else if (recordedProvider === "vllm-local") {
-      return {
-        kind: "failure",
-        reason: { kind: "ambiguous-recorded-vllm" },
-      };
     } else {
       providerKey = "build";
     }
