@@ -13,6 +13,8 @@ import {
   wslDockerDesktopGpuCompatibilityRemediationLines,
 } from "./wsl-docker-desktop-gpu";
 
+export { formatSandboxGpuPassthroughNote } from "./sandbox-gpu-notes";
+
 const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
 export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
@@ -84,25 +86,6 @@ export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
     for (const error of config.errors) console.error(`  ✗ ${error}`);
     process.exit(1);
   }
-}
-
-export function formatSandboxGpuPassthroughNote(options: {
-  hostGpuPlatform?: string | null;
-  resumeHasResolvedGpuIntent?: boolean;
-  recordedGpuPassthroughBeforePreflight?: boolean;
-  requestedGpuPassthrough?: boolean;
-  sandboxGpuMode?: string | null;
-}): string {
-  if (options.hostGpuPlatform === "jetson") {
-    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
-  }
-  if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
-    return "  [resume] Continuing GPU passthrough from the saved onboarding session.";
-  }
-  if (options.requestedGpuPassthrough || options.sandboxGpuMode === "1") {
-    return "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.";
-  }
-  return "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.";
 }
 
 export function parseDockerRuntimeNames(value: string | null | undefined): string[] {

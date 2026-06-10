@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-
 import type { GatewayReuseState } from "../../state/gateway";
+import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
 import type { OnboardFlowContext } from "./flow-context";
 import { runInitialOnboardFlowSequence } from "./flow-slices";
-import { handleGatewayState, type GatewayStateOptions } from "./handlers/gateway";
+import { type GatewayStateOptions, handleGatewayState } from "./handlers/gateway";
 import {
   handlePreflightState,
   type PreflightSandboxGpuConfig,
@@ -60,25 +60,6 @@ export interface InitialOnboardFlowPhaseOptions<
 function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
   if (Array.isArray(result)) return result as readonly OnboardStateResult[];
   return [result as OnboardStateResult];
-}
-
-function formatSandboxGpuPassthroughNote(options: {
-  hostGpuPlatform?: string | null;
-  resumeHasResolvedGpuIntent?: boolean;
-  recordedGpuPassthroughBeforePreflight?: boolean;
-  requestedGpuPassthrough?: boolean;
-  sandboxGpuMode?: string | null;
-}): string {
-  if (options.hostGpuPlatform === "jetson") {
-    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
-  }
-  if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
-    return "  [resume] Continuing GPU passthrough from the saved onboarding session.";
-  }
-  if (options.requestedGpuPassthrough || options.sandboxGpuMode === "1") {
-    return "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.";
-  }
-  return "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.";
 }
 
 function emitPreflightGpuNote<Gpu, Config extends PreflightSandboxGpuConfig>(options: {
@@ -220,6 +201,8 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   const initialRuntimeSession = await options.runtime.session();
   // Keep resume on the compatibility path for now: resume intentionally re-runs
   // preflight/gateway backstops even when the saved machine is already ahead.
+  // Remove this fallback only after resume repairs are modeled as strict FSM
+  // transitions that preserve these safety checks before later phases run.
   if (
     !options.resume &&
     (initialRuntimeSession.machine.state === "init" ||

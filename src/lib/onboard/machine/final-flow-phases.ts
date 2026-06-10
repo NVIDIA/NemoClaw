@@ -9,13 +9,13 @@ import {
   createOpenclawSetupPhase,
   createPoliciesPhase,
 } from "./flow-phases/agent-policy-finalization";
-import { handleAgentSetupState, type AgentSetupStateOptions } from "./handlers/agent-setup";
-import { handleFinalizationState, type FinalizationStateOptions } from "./handlers/finalization";
+import { runFinalOnboardFlowSequence } from "./flow-slices";
+import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
+import { type FinalizationStateOptions, handleFinalizationState } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
-import { runFinalOnboardFlowSequence } from "./flow-slices";
 
 export interface FinalOnboardFlowPhaseOptions<
   Context extends OnboardFlowContext,
@@ -132,10 +132,18 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<void> {
   const finalRuntimeSession = await options.runtime.session();
-  // Keep resume on the compatibility path for now: persisted sessions may
-  // still need to re-run agent setup, policy reconciliation, or final
-  // verification even when the saved machine state is ahead. Remove this
-  // fallback once those repair checks are first-class resumable FSM states.
+  // Keep resume and ahead-state sessions on the compatibility path for now.
+  // The persisted invalid states for this slice are "policies", "finalizing",
+  // and "post_verify": a previous run may have advanced `session.machine`
+  // there via legacy step helpers, but resume still needs to re-run branch
+  // setup/readiness, policy reconciliation, and final verification. Those
+  // legacy helpers remain a second machine snapshot writer in
+  // OnboardRuntimeBoundary/recordStateResultWithStepCompatibility, so this
+  // slice cannot make those persisted states impossible at the source without
+  // changing the broader step persistence contract. Remove this fallback once
+  // final-phase repair checks are first-class resumable FSM states, or once
+  // legacy step helpers no longer advance `session.machine` and handler FSM
+  // results are the sole transition source.
   if (
     !options.resume &&
     (finalRuntimeSession.machine.state === "openclaw" ||

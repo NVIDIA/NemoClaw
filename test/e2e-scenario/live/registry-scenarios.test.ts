@@ -68,8 +68,12 @@ for (const scenario of listScenarios()) {
       // whitelisted profile (see SUPPORTED_LIFECYCLES in
       // runtime-support.ts). Today only `post-reboot-recovery` is
       // wired, and it dispatches through `LifecyclePhaseFixture` to
-      // mutate host state (gateway runtime, Docker container) before
-      // the state-validation probes assert preservation invariants.
+      // `docker stop` the labeled sandbox container and invoke
+      // `nemoclaw <name> status` before the state-validation probes
+      // assert host-side preservation invariants. The gateway is
+      // left healthy; see `scenarios/baseline.ts` and the fixture
+      // doc for why a real gateway restart can't be expressed from
+      // `ubuntu-latest`.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       const profile = scenario.environment.lifecycle;
       if (profile) {

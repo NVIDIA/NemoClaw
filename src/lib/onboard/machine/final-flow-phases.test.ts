@@ -2,20 +2,115 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import type { DashboardDeliveryChain } from "../../dashboard/contract";
+import {
+  createSession,
+  filterSafeUpdates,
+  MACHINE_SNAPSHOT_VERSION,
+  normalizeSession,
+  type Session,
+  type SessionUpdates,
+} from "../../state/onboard-session";
 import type { VerifyDeploymentResult } from "../../verify-deployment";
-import type { OnboardFlowContext } from "./flow-context";
+import { OnboardRuntimeBoundary } from "../runtime-boundary";
+import type { OnboardMachineEvent } from "./events";
 import { createFinalOnboardFlowPhases, runFinalOnboardFlowSlice } from "./final-flow-phases";
+import type { OnboardFlowContext } from "./flow-context";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
+import type { OnboardMachineState } from "./types";
 
 type Agent = { name: string };
+type RecorderOverrides = {
+  loadSession?: () => Session | null;
+  updateSession?: (mutator: (session: Session) => Session | void) => Session;
+  recordStepSkipped?: (stepName: string) => Promise<Session>;
+  recordStateSkipped?: (
+    state: OnboardMachineState,
+    metadata?: Record<string, unknown> | null,
+  ) => Promise<Session>;
+  startRecordedStep?: (
+    stepName: string,
+    updates?: {
+      sandboxName?: string | null;
+      provider?: string | null;
+      model?: string | null;
+      policyPresets?: string[] | null;
+    },
+  ) => Promise<void>;
+  recordStepComplete?: (stepName: string, updates?: SessionUpdates) => Promise<Session>;
+  recordPostVerifyStarted?: () => Promise<Session>;
+};
+
+function cloneSession(session: Session): Session {
+  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+}
 
 function sessionWithUpdates(updates: SessionUpdates = {}): Session {
   const session = createSession();
   Object.assign(session, updates);
   if (updates.metadata) session.metadata = { ...session.metadata, ...updates.metadata };
   return session;
+}
+
+function sessionAt(state: OnboardMachineState): Session {
+  return createSession({
+    sandboxName: "my-sandbox",
+    provider: "nim",
+    model: "nvidia/test",
+    machine: {
+      version: MACHINE_SNAPSHOT_VERSION,
+      state,
+      stateEnteredAt: "2026-06-10T00:00:00.000Z",
+      revision: 0,
+    },
+  });
+}
+
+function createRuntimeHarness(initialSession: Session) {
+  let session = cloneSession(initialSession);
+  const events: OnboardMachineEvent[] = [];
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    const current = cloneSession(session);
+    session = cloneSession(mutator(current) ?? current);
+    return cloneSession(session);
+  };
+  const deps: OnboardRuntimeDeps = {
+    loadSession: () => cloneSession(session),
+    createSession,
+    saveSession: (next) => {
+      session = cloneSession(next);
+      return cloneSession(session);
+    },
+    updateSession,
+    markStepStarted: () => cloneSession(session),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepSkipped: () => cloneSession(session),
+    markStepFailed: () => cloneSession(session),
+    markStepFailedRecordOnly: () => cloneSession(session),
+    completeSession: (updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        current.status = "complete";
+        current.resumable = false;
+        return current;
+      }),
+    filterSafeUpdates,
+    emitEvent: (event) => events.push(event),
+    now: () => "2026-06-10T00:00:00.000Z",
+  };
+  const boundary = new OnboardRuntimeBoundary({
+    toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+    maybeForceE2eStepFailure: () => undefined,
+    createRuntime: () => new OnboardRuntime(deps),
+  });
+  return {
+    boundary,
+    events,
+    getSession: () => cloneSession(session),
+  };
 }
 
 function context(
@@ -48,7 +143,11 @@ function context(
   };
 }
 
-function createPhases(branchState: "agent_setup" | "openclaw", order: string[] = []) {
+function createPhases(
+  branchState: "agent_setup" | "openclaw",
+  order: string[] = [],
+  recorders: RecorderOverrides = {},
+) {
   return createFinalOnboardFlowPhases<
     OnboardFlowContext<Agent | null>,
     DashboardDeliveryChain,
@@ -61,22 +160,24 @@ function createPhases(branchState: "agent_setup" | "openclaw", order: string[] =
       }),
       agentSetupContext: () => ({}),
       ensureAgentDashboardForward: vi.fn(() => 45123),
-      recordStepSkipped: vi.fn(async () => createSession()),
+      recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
       isOpenclawReady: () => false,
       skippedStepMessage: vi.fn(),
-      recordStateSkipped: vi.fn(async () => createSession()),
-      startRecordedStep: vi.fn(async () => undefined),
+      recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
+      startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
       setupOpenclaw: vi.fn(async () => {
         order.push("openclaw");
       }),
       syncNemoClawConfigInSandbox: vi.fn(),
-      recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
-        sessionWithUpdates(updates),
-      ),
+      recordStepComplete:
+        recorders.recordStepComplete ??
+        vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
+          sessionWithUpdates(updates),
+        ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
     },
     policiesDeps: {
-      loadSession: () => createSession(),
+      loadSession: recorders.loadSession ?? (() => createSession()),
       getActiveSandbox: () => null,
       mergePolicyMessagingChannels: (selected) => selected,
       verifyCompatibleEndpointSandboxSmoke: vi.fn(),
@@ -87,16 +188,19 @@ function createPhases(branchState: "agent_setup" | "openclaw", order: string[] =
       }),
       arePolicyPresetsApplied: () => false,
       skippedStepMessage: vi.fn(),
-      recordStateSkipped: vi.fn(async () => createSession()),
-      startRecordedStep: vi.fn(async () => undefined),
+      recordStateSkipped: recorders.recordStateSkipped ?? vi.fn(async () => createSession()),
+      startRecordedStep: recorders.startRecordedStep ?? vi.fn(async () => undefined),
       setupPoliciesWithSelection: vi.fn(async () => {
         order.push("policies");
         return ["balanced"];
       }),
-      updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
-      recordStepComplete: vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
-        sessionWithUpdates(updates),
-      ),
+      updateSession:
+        recorders.updateSession ?? vi.fn((mutator) => mutator(createSession()) ?? createSession()),
+      recordStepComplete:
+        recorders.recordStepComplete ??
+        vi.fn(async (_stepName: string, updates: SessionUpdates = {}) =>
+          sessionWithUpdates(updates),
+        ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
       persistAppliedPolicyPresets: vi.fn(),
     },
@@ -113,7 +217,8 @@ function createPhases(branchState: "agent_setup" | "openclaw", order: string[] =
       setDefaultSandbox: vi.fn(() => {
         order.push("set-default");
       }),
-      recordPostVerifyStarted: vi.fn(async () => createSession()),
+      recordPostVerifyStarted:
+        recorders.recordPostVerifyStarted ?? vi.fn(async () => createSession()),
       toSessionUpdates: (updates) => updates as NonNullable<SessionUpdates>,
       removeLegacyCredentialsFile: vi.fn(),
       cleanupStaleHostFiles: vi.fn(),
@@ -214,5 +319,83 @@ describe("final onboard flow phases", () => {
 
     expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
     expect(recorded).toEqual(["policies", "finalizing", "complete"]);
+  });
+
+  it("uses the strict final runner for fresh OpenClaw sessions with a real runtime boundary", async () => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt("openclaw"));
+    const recorders = harness.boundary.recorders();
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
+    });
+    const compatibilityRecorder = vi.fn(recorders.recordStateResultWithStepCompatibility);
+
+    await runFinalOnboardFlowSlice({
+      context: context({ session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      resume: false,
+      recordStateResult: compatibilityRecorder,
+    });
+
+    expect(compatibilityRecorder).not.toHaveBeenCalled();
+    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(harness.getSession()).toMatchObject({
+      status: "complete",
+      sandboxName: "my-sandbox",
+      provider: "nim",
+      model: "nvidia/test",
+      machine: { state: "complete" },
+    });
+  });
+
+  it.each([
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("keeps persisted %s sessions on the compatibility path with the real runtime boundary", async (initialState) => {
+    const order: string[] = [];
+    const harness = createRuntimeHarness(sessionAt(initialState));
+    const recorders = harness.boundary.recorders();
+    const phases = createPhases("openclaw", order, {
+      loadSession: harness.getSession,
+      recordStepSkipped: recorders.recordStepSkipped,
+      recordStateSkipped: recorders.recordStateSkipped,
+      startRecordedStep: recorders.startRecordedStep,
+      recordStepComplete: recorders.recordStepComplete,
+      recordPostVerifyStarted: recorders.recordPostVerifyStarted,
+    });
+    const compatibilityRecorder = vi.fn(recorders.recordStateResultWithStepCompatibility);
+
+    await runFinalOnboardFlowSlice({
+      context: context({ session: harness.getSession() }),
+      runtime: harness.boundary.getRuntime(),
+      phases,
+      resume: false,
+      recordStateResult: compatibilityRecorder,
+    });
+
+    expect(compatibilityRecorder).toHaveBeenCalled();
+    expect(order).toEqual(["openclaw", "policies", "disarm", "set-default", "verify"]);
+    expect(harness.getSession()).toMatchObject({
+      status: "complete",
+      sandboxName: "my-sandbox",
+      provider: "nim",
+      model: "nvidia/test",
+      machine: { state: "complete" },
+    });
+
+    const skippedTargets = harness.events
+      .filter((event) => event.type === "state.result.skipped")
+      .map((event) => event.metadata.targetState);
+    expect(skippedTargets).toContain("policies");
+    if (initialState !== "policies") {
+      expect(skippedTargets).toContain("finalizing");
+    }
   });
 });
