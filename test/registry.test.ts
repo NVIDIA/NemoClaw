@@ -18,37 +18,6 @@ const registry = require("../dist/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
-function makeMessagingState(channels: string[] = ["telegram"], disabledChannels: string[] = []) {
-  const disabled = new Set(disabledChannels);
-  return {
-    schemaVersion: 1,
-    plan: {
-      schemaVersion: 1,
-      sandboxName: "s1",
-      agent: "openclaw",
-      workflow: "onboard",
-      channels: channels.map((channelId) => ({
-        channelId,
-        displayName: channelId,
-        authMode: "token-paste",
-        active: !disabled.has(channelId),
-        selected: true,
-        configured: true,
-        disabled: disabled.has(channelId),
-        inputs: [],
-        hooks: [],
-      })),
-      disabledChannels,
-      credentialBindings: [],
-      networkPolicy: { presets: [], entries: [] },
-      agentRender: [],
-      buildSteps: [],
-      stateUpdates: [],
-      healthChecks: [],
-    },
-  };
-}
-
 beforeEach(() => {
   if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
 });
@@ -227,21 +196,26 @@ describe("registry", () => {
     expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
   });
 
-  it("stores messaging plan at registration time", () => {
-    const messaging = makeMessagingState(["telegram"]);
-    messaging.plan.sandboxName = "messaging";
+  it("stores messaging channel config at registration time", () => {
     registry.registerSandbox({
       name: "messaging",
-      messaging,
+      messagingChannels: ["telegram"],
+      messagingChannelConfig: {
+        TELEGRAM_ALLOWED_IDS: "123,456",
+        TELEGRAM_REQUIRE_MENTION: "1",
+      },
     });
 
     const sb = registry.getSandbox("messaging");
-    expect(sb.messaging.plan.channels[0].channelId).toBe("telegram");
-    expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
+    expect(sb.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.messaging.messaging.plan.channels[0].channelId).toBe("telegram");
-    expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
-    expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
+    expect(data.sandboxes.messaging.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
   });
 
   it("imageTag defaults to null when not provided", () => {
@@ -265,10 +239,7 @@ describe("registry", () => {
   });
 
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
-    registry.registerSandbox({
-      name: "s1",
-      messaging: makeMessagingState(["telegram", "discord"]),
-    });
+    registry.registerSandbox({ name: "s1" });
     expect(registry.getDisabledChannels("s1")).toEqual([]);
 
     expect(registry.setChannelDisabled("s1", "telegram", true)).toBe(true);
@@ -281,33 +252,32 @@ describe("registry", () => {
     expect(registry.getDisabledChannels("s1")).toEqual(["discord"]);
   });
 
-  it("setChannelDisabled clears messaging plan disabledChannels when empty", () => {
-    registry.registerSandbox({ name: "s1", messaging: makeMessagingState(["telegram"]) });
+  it("setChannelDisabled clears the disabledChannels field when empty", () => {
+    registry.registerSandbox({ name: "s1" });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.setChannelDisabled("s1", "telegram", false);
     const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
-    expect(persisted.sandboxes.s1.messaging.plan.disabledChannels).toEqual([]);
   });
 
-  it("updateSandbox can clear messaging state when explicitly set to undefined", () => {
-    registry.registerSandbox({ name: "s1", messaging: makeMessagingState(["telegram"]) });
+  it("updateSandbox clears disabledChannels when explicitly set to undefined", () => {
+    registry.registerSandbox({ name: "s1" });
     registry.setChannelDisabled("s1", "telegram", true);
-    expect(registry.updateSandbox("s1", { messaging: undefined })).toBe(true);
+    expect(registry.updateSandbox("s1", { disabledChannels: undefined })).toBe(true);
     const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(persisted.sandboxes.s1.messaging).toBeUndefined();
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
   });
 
   it("setChannelDisabled returns false when sandbox is missing", () => {
     expect(registry.setChannelDisabled("missing", "telegram", true)).toBe(false);
   });
 
-  it("registerSandbox preserves paused channels through messaging plan when re-registering", () => {
-    registry.registerSandbox({ name: "s1", messaging: makeMessagingState(["telegram"]) });
+  it("registerSandbox preserves disabledChannels when re-registering", () => {
+    registry.registerSandbox({ name: "s1" });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.registerSandbox({
       name: "s1",
-      messaging: registry.getSandbox("s1").messaging,
+      disabledChannels: registry.getDisabledChannels("s1"),
     });
     expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
   });

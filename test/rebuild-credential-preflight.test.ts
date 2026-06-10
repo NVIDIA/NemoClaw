@@ -18,7 +18,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { makeMessagingPlan } from "./helpers/messaging-plan-fixtures";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -51,7 +50,7 @@ function createFixture(opts: {
   providerSelectionStatus?: string;
   agent?: string | null;
   hermesAuthMethod?: string | null;
-  registryMessagingChannels?: string[] | null;
+  messagingChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
 }) {
@@ -63,7 +62,7 @@ function createFixture(opts: {
     providerSelectionStatus = "complete",
     agent = null,
     hermesAuthMethod = null,
-    registryMessagingChannels = null,
+    messagingChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
   } = opts;
@@ -85,18 +84,7 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
-          messaging: registryMessagingChannels
-            ? {
-                schemaVersion: 1,
-                plan: makeMessagingPlan(
-                  sandboxName,
-                  registryMessagingChannels,
-                  [],
-                  agent ?? "openclaw",
-                  "rebuild",
-                ),
-              }
-            : undefined,
+          messagingChannels,
         },
       },
     }),
@@ -128,7 +116,7 @@ function createFixture(opts: {
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingPlan: null,
+      messagingChannels: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: {
@@ -364,7 +352,7 @@ describe("Issue #2273: atomic rebuild", () => {
     }, () => {
       const f = createFixture({
         agent: "hermes",
-        registryMessagingChannels: ["discord"],
+        messagingChannels: ["discord"],
         credentialEnv: "NVIDIA_API_KEY",
         savedCredential: {
           key: "NVIDIA_API_KEY",
@@ -380,9 +368,7 @@ describe("Issue #2273: atomic rebuild", () => {
         fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
       );
       expect(session.agent).toBe("hermes");
-      expect(
-        session.messagingPlan.channels.map((channel: { channelId: string }) => channel.channelId),
-      ).toEqual(["discord"]);
+      expect(session.messagingChannels).toEqual(["discord"]);
     });
 
     it("aborts rebuild before backup when forced Hermes base image build fails", {

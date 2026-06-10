@@ -2,26 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeMessagingState } from "../../../test/helpers/messaging-plan-fixtures";
 
 import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
   showStatusCommand,
-  type SandboxEntry,
 } from "./index";
-
-function withMessaging(
-  sandbox: Omit<SandboxEntry, "messaging">,
-  channels: readonly string[],
-  disabledChannels: readonly string[] = [],
-): SandboxEntry {
-  return {
-    ...sandbox,
-    messaging: makeMessagingState(sandbox.name, channels, disabledChannels),
-  };
-}
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {
@@ -365,7 +352,13 @@ describe("inventory commands", () => {
       .mockReturnValue([{ channel: "telegram", conflicts: 7 }]);
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [withMessaging({ name: "alpha", model: "m" }, ["telegram"])],
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            messagingChannels: ["telegram"],
+          },
+        ],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,
@@ -408,8 +401,8 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          withMessaging({ name: "alice", model: "m" }, ["telegram"]),
-          withMessaging({ name: "bob", model: "m" }, ["telegram"]),
+          { name: "alice", model: "m", messagingChannels: ["telegram"] },
+          { name: "bob", model: "m", messagingChannels: ["telegram"] },
         ],
         defaultSandbox: "alice",
       }),
@@ -433,8 +426,8 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          withMessaging({ name: "alice", model: "m" }, ["telegram"]),
-          withMessaging({ name: "bob", model: "m" }, ["telegram"]),
+          { name: "alice", model: "m", messagingChannels: ["telegram"] },
+          { name: "bob", model: "m", messagingChannels: ["telegram"] },
         ],
         defaultSandbox: "alice",
       }),
@@ -466,7 +459,14 @@ describe("inventory commands", () => {
       );
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [withMessaging({ name: "alpha", model: "m", agent: "hermes" }, ["telegram"])],
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            messagingChannels: ["telegram"],
+            agent: "hermes",
+          },
+        ],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,
@@ -489,7 +489,13 @@ describe("inventory commands", () => {
     const readGatewayLog = vi.fn();
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [withMessaging({ name: "alpha", model: "m" }, ["telegram"])],
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "m",
+            messagingChannels: ["telegram"],
+          },
+        ],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => null,

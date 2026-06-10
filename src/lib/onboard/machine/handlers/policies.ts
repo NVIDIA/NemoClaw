@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
-import {
-  getActiveChannelsFromPlan,
-  getDisabledChannelsFromPlan,
-} from "../../messaging-plan-session";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 // Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
@@ -23,7 +18,8 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
-  messaging?: { plan: SandboxMessagingPlan } | null;
+  messagingChannels?: string[] | null;
+  disabledChannels?: string[] | null;
 }
 
 export interface PolicyResumeSelection {
@@ -137,16 +133,15 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan) ?? [];
+  const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
+    ? latestSession.messagingChannels
+    : [];
   const activeSandbox = deps.getActiveSandbox(sandboxName);
-  const activeSandboxPlan = activeSandbox?.messaging?.plan;
-  const activeMessagingChannels = getActiveChannelsFromPlan(activeSandboxPlan);
-  const disabledChannels = getDisabledChannelsFromPlan(activeSandboxPlan);
   const policyMessagingChannels = deps.mergePolicyMessagingChannels(
     selectedMessagingChannels,
     recordedMessagingChannels,
-    activeMessagingChannels,
-    disabledChannels,
+    activeSandbox?.messagingChannels,
+    activeSandbox?.disabledChannels,
   );
   deps.verifyCompatibleEndpointSandboxSmoke({
     sandboxName,
@@ -160,7 +155,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
     recordedPolicyPresets,
-    disabledChannels,
+    disabledChannels: activeSandbox?.disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
@@ -215,7 +210,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         ? recordedPolicyPresetsForSupport
         : null,
       enabledChannels: policyMessagingChannels,
-      disabledChannels,
+      disabledChannels: activeSandbox?.disabledChannels,
       webSearchConfig,
       provider,
       // selectOnboardAgent returns null for the default OpenClaw path (no

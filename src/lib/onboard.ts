@@ -401,8 +401,6 @@ const {
 }: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
 const messagingConfig: typeof import("./onboard/messaging-config") = require("./onboard/messaging-config");
-const messagingPlanSession: typeof import("./onboard/messaging-plan-session") =
-  require("./onboard/messaging-plan-session");
 const {
   detectMessagingCredentialRotation,
   getMessagingChannelForEnvKey,
@@ -413,8 +411,8 @@ const {
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
+  persistMessagingChannelConfigToSession,
 } = messagingConfig;
-const { getActiveChannelsFromPlan } = messagingPlanSession;
 const sandboxAgent: typeof import("./onboard/sandbox-agent") = require("./onboard/sandbox-agent");
 const sandboxLifecycle: typeof import("./onboard/sandbox-lifecycle") = require("./onboard/sandbox-lifecycle");
 const sandboxRegistryMetadata: typeof import("./onboard/sandbox-registry-metadata") = require("./onboard/sandbox-registry-metadata");
@@ -2925,8 +2923,17 @@ async function createSandbox(
   const hasPlanCredentials =
     currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
   if (hasPlanCredentials) {
-    const { findChannelConflictsFromPlan } =
-      require("./messaging/applier") as typeof import("./messaging/applier");
+    const {
+      backfillMessagingChannels,
+      findChannelConflictsFromPlan,
+      createMessagingConflictProbe,
+    } = require("./messaging/applier") as typeof import("./messaging/applier");
+    const probe = createMessagingConflictProbe({
+      checkGatewayLiveness: () =>
+        runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
+      providerExists: (name) => providerExistsInGateway(name),
+    });
+    backfillMessagingChannels(registry, probe);
     const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan!, registry);
     if (conflicts.length > 0) {
       for (const { channel, sandbox, reason } of conflicts) {
@@ -3564,6 +3571,7 @@ async function createSandbox(
         ? { requireMention: telegramConfig.requireMention as boolean }
         : null;
     current.wechatConfig = toSessionWechatConfig(wechatConfig);
+    current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
@@ -3882,7 +3890,16 @@ async function createSandbox(
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
     policies: initialSandboxPolicy.appliedPresets,
+    // Persist the operator's configured channel set, not the post-disabled-filter
+    // active set. After `channels stop X` + rebuild, activeMessagingChannels drops
+    // X, but X is still configured — losing it here means a later `channels start
+    // X` has nothing to re-enable (the next rebuild sees an empty channel set and
+    // never reattaches the gateway bridge). See #3381.
+    messagingChannels:
+      enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
+    messagingChannelConfig: messagingChannelConfig || undefined,
     messaging: messagingState,
+    disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
     ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
     dashboardPort: actualDashboardPort,
@@ -4537,9 +4554,10 @@ async function setupNim(
           // Check raw process.env — the override must apply before resolving from credentials.json.
           const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
           if (_providerKeyHint && credentialEnv) {
-            // check-direct-credential-env-ignore -- intentional: checking raw env before applying NEMOCLAW_PROVIDER_KEY override
-            const existingCredentialValue = process.env[credentialEnv] ?? "";
-            const existingCredentialKey = normalizeCredentialValue(existingCredentialValue);
+            const existingCredentialKey = normalizeCredentialValue(
+              // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
+              process.env[credentialEnv] ?? "",
+            );
             if (!existingCredentialKey) {
               process.env[credentialEnv] = _providerKeyHint;
             }
@@ -5409,7 +5427,7 @@ function getRecordedMessagingChannelsForResume(
 ): string[] | null {
   return getRecordedMessagingChannelsForResumeFromState({
     resume,
-    sessionMessagingChannels: getActiveChannelsFromPlan(session?.messagingPlan),
+    sessionMessagingChannels: session?.messagingChannels,
     sandboxName,
     channels: MESSAGING_CHANNELS,
     getCredential,
@@ -6596,6 +6614,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           getStoredMessagingChannelConfig,
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
+          persistMessagingChannelConfigToSession,
           getSandboxReuseState,
           computeTelegramRequireMention,
           hasSandboxGpuDrift,
@@ -6610,8 +6629,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           configureWebSearch,
           startRecordedStep,
           getRecordedMessagingChannelsForResume,
-          getSandboxMessagingChannels: (name) => registry.getConfiguredMessagingChannels(name),
+          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
           setupMessagingChannels,
+          readMessagingChannelConfigFromEnv,
           readMessagingPlanFromEnv,
           writePlanToEnv,
           getRegistrySandboxMessagingPlan,

@@ -3,7 +3,6 @@
 
 import { CLI_NAME } from "../cli/branding";
 import type { GatewayInference } from "../inference/config";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { redactFull } from "../security/redact";
 import { resolveDefaultSandboxName } from "../tunnel/service-command";
 
@@ -19,7 +18,7 @@ export interface SandboxEntry {
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[] | null;
-  messaging?: { plan: SandboxMessagingPlan } | null;
+  messagingChannels?: string[] | null;
   agent?: string | null;
   dashboardPort?: number | null;
 }
@@ -154,15 +153,6 @@ export interface StatusReport {
   gatewayHealth: GatewayHealth | null;
   sandboxes: StatusSandboxRow[];
   services: StatusServiceRow[];
-}
-
-function activeMessagingChannels(entry: SandboxEntry | null | undefined): string[] {
-  const plan = entry?.messaging?.plan;
-  if (!plan) return [];
-  const disabled = new Set(plan.disabledChannels);
-  return plan.channels
-    .filter((channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId))
-    .map((channel) => channel.channelId);
 }
 
 function safeStatusString(value: string | null | undefined): string | null {
@@ -499,12 +489,13 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   }
 
   if (deps.checkMessagingBridgeHealth && resolvedDefault) {
-    // Re-fetch after overlap detection so this health check observes the latest
-    // registry snapshot.
+    // Re-fetch: backfillAndFindOverlaps above may have populated
+    // messagingChannels for the default sandbox on first run after upgrade,
+    // and the original `sandboxes` snapshot is stale.
     const refreshed = deps.listSandboxes().sandboxes;
     const defaultEntry = refreshed.find((sb) => sb.name === resolvedDefault);
-    const channels = activeMessagingChannels(defaultEntry);
-    if (channels.length > 0) {
+    const channels = defaultEntry?.messagingChannels;
+    if (Array.isArray(channels) && channels.length > 0) {
       const degraded = deps.checkMessagingBridgeHealth(resolvedDefault, channels);
       if (degraded.length > 0) {
         log("");

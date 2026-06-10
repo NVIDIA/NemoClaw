@@ -87,7 +87,8 @@ export type WhatsappProbeInput = {
   // Whether the whatsapp preset's network policy is loaded on the gateway,
   // or null when the gateway could not be reached.
   presetOnGateway: boolean | null;
-  // Whether the whatsapp channel is recorded in the registry messaging plan.
+  // Whether the whatsapp channel is recorded in the registry's
+  // messagingChannels list.
   channelEnabledInRegistry: boolean;
 };
 
@@ -306,7 +307,7 @@ function configCoverageSignal(input: WhatsappProbeInput): DiagnosticSignal {
     return {
       label: "Channel registration",
       severity: "fail",
-      detail: "whatsapp is not in the sandbox messaging plan",
+      detail: "whatsapp is not in the sandbox messagingChannels list",
       hint: "run `nemoclaw <sandbox> channels add whatsapp` before pairing",
     };
   }

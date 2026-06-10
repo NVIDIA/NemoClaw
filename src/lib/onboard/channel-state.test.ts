@@ -3,60 +3,39 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { resolveDisabledChannels } from "./channel-state";
 
-function plan(sandboxName: string, disabledChannels: readonly string[]): SandboxMessagingPlan {
-  return {
-    schemaVersion: 1,
-    sandboxName,
-    agent: "openclaw",
-    workflow: "rebuild",
-    channels: [],
-    disabledChannels,
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
 describe("onboard channel state helpers", () => {
-  it("prefers disabledChannels from a matching env plan", () => {
+  it("prefers disabledChannels from the onboard session mirror", () => {
     const getRegistryDisabledChannels = vi.fn(() => ["discord"]);
 
     expect(
       resolveDisabledChannels("alpha", {
-        readMessagingPlanFromEnv: () => plan("alpha", ["telegram"]),
-        loadSession: () => null,
+        loadSession: () => ({ disabledChannels: ["telegram"] }),
         getRegistryDisabledChannels,
       }),
     ).toEqual(["telegram"]);
     expect(getRegistryDisabledChannels).not.toHaveBeenCalled();
   });
 
-  it("falls back to a matching session plan when env has no matching plan", () => {
-    const getRegistryDisabledChannels = vi.fn(() => ["discord"]);
-
+  it("falls back to the registry when the session has no mirror", () => {
     expect(
       resolveDisabledChannels("alpha", {
-        readMessagingPlanFromEnv: () => plan("other", ["slack"]),
-        loadSession: () => ({ sandboxName: "alpha", messagingPlan: plan("alpha", ["telegram"]) }),
-        getRegistryDisabledChannels,
-      }),
-    ).toEqual(["telegram"]);
-    expect(getRegistryDisabledChannels).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the registry when no matching plan exists", () => {
-    expect(
-      resolveDisabledChannels("alpha", {
-        readMessagingPlanFromEnv: () => null,
-        loadSession: () => ({ sandboxName: "other", messagingPlan: plan("other", []) }),
+        loadSession: () => ({ disabledChannels: null }),
         getRegistryDisabledChannels: (sandboxName) => (sandboxName === "alpha" ? ["discord"] : []),
       }),
     ).toEqual(["discord"]);
+  });
+
+  it("treats an empty session mirror as authoritative", () => {
+    const getRegistryDisabledChannels = vi.fn(() => ["telegram"]);
+
+    expect(
+      resolveDisabledChannels("alpha", {
+        loadSession: () => ({ disabledChannels: [] }),
+        getRegistryDisabledChannels,
+      }),
+    ).toEqual([]);
+    expect(getRegistryDisabledChannels).not.toHaveBeenCalled();
   });
 });

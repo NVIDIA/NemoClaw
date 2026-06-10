@@ -625,6 +625,7 @@ describe("MessagingWorkflowPlanner", () => {
           agent: "openclaw",
           sandboxEntry: {
             name: "demo",
+            messagingChannels: ["telegram"],
             messaging: {
               schemaVersion: 1,
               plan: existingPlan,
@@ -656,6 +657,7 @@ describe("MessagingWorkflowPlanner", () => {
       agent: "openclaw",
       sandboxEntry: {
         name: "demo",
+        messagingChannels: ["telegram"],
       },
     });
 

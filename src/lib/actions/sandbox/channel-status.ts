@@ -353,9 +353,7 @@ function buildWhatsappProbeInput(
   }
 
   const entry = deps.getSandbox(sandboxName);
-  const channelEnabledInRegistry = registry
-    .getConfiguredMessagingChannelsFromEntry(entry)
-    .includes("whatsapp");
+  const channelEnabledInRegistry = (entry?.messagingChannels ?? []).includes("whatsapp");
 
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const presetInRegistry = appliedPresets.includes("whatsapp");
@@ -442,8 +440,8 @@ function buildBasicChannelReport(
   deps: Required<StatusDeps>,
 ): ChannelStatusReport {
   const entry = deps.getSandbox(sandboxName);
-  const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
-  const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
+  const enabled = (entry?.messagingChannels ?? []).includes(channelName);
+  const disabled = (entry?.disabledChannels ?? []).includes(channelName);
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const presetInRegistry = appliedPresets.includes(channelName);
   const signals: DiagnosticSignal[] = [];
@@ -525,12 +523,11 @@ export async function showSandboxChannelStatus(
 
   let channelName = channelArg;
   if (!channelName) {
-    const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(entry);
-    const enabled = configuredChannels.filter((name: string) => name === "whatsapp");
+    const enabled = (entry.messagingChannels ?? []).filter((name: string) => name === "whatsapp");
     if (enabled.length > 0) {
       channelName = "whatsapp";
-    } else if (configuredChannels.length > 0) {
-      channelName = configuredChannels[0];
+    } else if ((entry.messagingChannels ?? []).length > 0) {
+      channelName = entry.messagingChannels?.[0];
     } else {
       channelName = "whatsapp";
     }
@@ -554,7 +551,7 @@ export async function showSandboxChannelStatus(
 
   const agent = deps.loadAgent(entry.agent || "openclaw");
 
-  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
+  const disabledChannels = new Set(entry.disabledChannels ?? []);
   const channelIsPaused = disabledChannels.has(channelName);
 
   let report: ChannelStatusReport;

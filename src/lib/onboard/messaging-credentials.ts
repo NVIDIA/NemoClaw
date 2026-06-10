@@ -37,7 +37,7 @@ export function getRecordedMessagingChannelsForResume({
     channels,
     (envKey: string) =>
       Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
-    registry.getConfiguredMessagingChannels.bind(registry),
+    registry.getSandbox.bind(registry),
     registry.getDisabledChannels.bind(registry),
     providerExistsInGateway,
     isNonInteractive(),

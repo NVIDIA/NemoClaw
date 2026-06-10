@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 import { createBuiltInChannelManifestRegistry } from "../channels";
 import { MessagingWorkflowPlanner } from "../compiler";
 import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../hooks";
+import type { ChannelHookSpec } from "../manifest";
 import type {
-  ChannelHookSpec,
   MessagingAgentId,
   MessagingSerializableObject,
   SandboxMessagingPlan,
@@ -126,23 +126,17 @@ describe("MessagingSetupApplier", () => {
     const repeated = { value: "same" };
     const planWithAlias = {
       ...plan,
-      channels: plan.channels.map((channel) =>
-        channel.channelId === "telegram"
-          ? {
-              ...channel,
-              inputs: [
-                ...channel.inputs,
-                {
-                  channelId: "telegram",
-                  inputId: "alias-test",
-                  kind: "config",
-                  required: false,
-                  value: [repeated, repeated],
-                },
-              ],
-            }
-          : channel,
-      ),
+      agentRender: [
+        {
+          channelId: "telegram",
+          kind: "json-fragment",
+          agent: "openclaw",
+          target: "openclaw.json",
+          path: "x",
+          value: [repeated, repeated],
+          templateRefs: [],
+        },
+      ],
     } satisfies SandboxMessagingPlan;
     const env: NodeJS.ProcessEnv = {};
 
@@ -151,9 +145,9 @@ describe("MessagingSetupApplier", () => {
     const decoded = MessagingSetupApplier.readPlanFromEnv({ env });
     expect(env[MESSAGING_SETUP_APPLIER_ENV_KEY]).toBeTruthy();
     expect(decoded?.sandboxName).toBe("demo");
-    expect(decoded?.channels[0]?.inputs.at(-1)).toMatchObject({
+    expect(decoded?.agentRender[0]).toMatchObject({
       channelId: "telegram",
-      inputId: "alias-test",
+      kind: "json-fragment",
     });
 
     const cyclic = { ...plan } as Record<string, unknown>;
@@ -587,7 +581,7 @@ describe("MessagingSetupApplier", () => {
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
-  it("rejects tampered JSON render paths before applying agent config", async () => {
+  it("rejects prototype-polluting JSON render paths", async () => {
     const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
       "telegram",
     ]);
@@ -614,11 +608,11 @@ describe("MessagingSetupApplier", () => {
 
     await expect(
       MessagingSetupApplier.applyAgentConfigAtOpenShell(unsafePlan, { runOpenshell }),
-    ).rejects.toThrow("render entry is not declared by the channel manifest");
+    ).rejects.toThrow("Messaging render path rejected unsafe object key '__proto__'");
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
-  it("rejects tampered render targets before applying agent config", async () => {
+  it("rejects render targets outside the selected agent config root", async () => {
     const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
       "telegram",
     ]);
@@ -629,12 +623,12 @@ describe("MessagingSetupApplier", () => {
       return { status: 0 };
     };
     const unsafeTargets = [
-      "/tmp/openclaw.json",
-      "~/.openclaw/../openclaw.json",
-      "~/.hermes/config.yaml",
+      { target: "/tmp/openclaw.json", error: "must stay inside /sandbox/.openclaw" },
+      { target: "~/.openclaw/../openclaw.json", error: "must not traverse directories" },
+      { target: "~/.hermes/config.yaml", error: "Cannot apply Hermes messaging target" },
     ];
 
-    for (const target of unsafeTargets) {
+    for (const { target, error } of unsafeTargets) {
       const unsafePlan = {
         ...plan,
         agentRender: [
@@ -652,7 +646,7 @@ describe("MessagingSetupApplier", () => {
 
       await expect(
         MessagingSetupApplier.applyAgentConfigAtOpenShell(unsafePlan, { runOpenshell }),
-      ).rejects.toThrow("render entry is not declared by the channel manifest");
+      ).rejects.toThrow(error);
     }
   });
 
