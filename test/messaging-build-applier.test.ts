@@ -349,6 +349,51 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("rejects post-agent-install render targets that escape the agent root", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-render-target-escape-"));
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      channels: [{ channelId: "telegram", active: true }],
+      credentialBindings: [],
+      agentRender: [
+        {
+          channelId: "telegram",
+          agent: "openclaw",
+          target: "~/.openclaw/../escaped.json",
+          kind: "json-fragment",
+          path: "channels.telegram.enabled",
+          value: true,
+        },
+      ],
+      buildSteps: [],
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        ["--experimental-strip-types", SCRIPT_PATH, "--agent", "openclaw", "--phase", "post-agent-install"],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: process.env.PATH || "/usr/bin:/bin",
+            HOME: tmp,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("must stay inside");
+      expect(fs.existsSync(path.join(tmp, "escaped.json"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("applies Hermes messaging render to config.yaml and .env in post-agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-render-"));
     try {
@@ -357,6 +402,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
       fs.writeFileSync(
         path.join(hermesDir, "config.yaml"),
         [
+          "# Managed by NemoClaw - Hermes configuration",
+          "# Upstream provider: openai",
+          "# OpenShell rewrites model.base_url to the upstream endpoint at request time.",
           "_config_version: 12",
           "platform_toolsets:",
           "  api_server:",

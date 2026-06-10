@@ -237,9 +237,6 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-// ═══════════════════════════════════════════════════════════════════
-// Phase 1: Extraction — behavior-preserving tests
-// ═══════════════════════════════════════════════════════════════════
 describe("generate-openclaw-config.mts: config generation", () => {
   it("generates valid JSON with minimal env vars", () => {
     const config = runConfigScript();
@@ -1842,9 +1839,6 @@ describe("generate-openclaw-config.mts: config generation", () => {
   });
 });
 
-// ═══════════════════════════════════════════════════════════════════
-// Phase 2: Auto-disable device auth for non-loopback URLs
-// ═══════════════════════════════════════════════════════════════════
 describe("generate-openclaw-config.mts: non-loopback auto-disable device auth", () => {
   it("auto-disables device auth for Brev Launchable URL", () => {
     const config = runConfigScript({

@@ -379,20 +379,32 @@ function resolveAgentRenderTarget(
   options: { readonly homeDir?: string } = {},
 ): string {
   const home = options.homeDir ?? homedir();
+  const agentRoot = agent === "hermes" ? join(home, ".hermes") : join(home, ".openclaw");
+  const normalizedRoot = resolve(agentRoot);
   if (agent === "openclaw" && target === "openclaw.json") {
-    return join(home, ".openclaw", "openclaw.json");
+    return join(agentRoot, "openclaw.json");
   }
+  let relativePath: string | null = null;
   if (target.startsWith("~/.openclaw/")) {
     if (agent !== "openclaw") {
       throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
     }
-    return join(home, ".openclaw", target.slice("~/.openclaw/".length));
+    relativePath = target.slice("~/.openclaw/".length);
   }
   if (target.startsWith("~/.hermes/")) {
     if (agent !== "hermes") {
       throw new MessagingBuildApplierError(`Messaging render target ${target} does not match ${agent}.`);
     }
-    return join(home, ".hermes", target.slice("~/.hermes/".length));
+    relativePath = target.slice("~/.hermes/".length);
+  }
+  if (relativePath !== null) {
+    const resolvedTarget = resolve(agentRoot, relativePath);
+    if (resolvedTarget !== normalizedRoot && !resolvedTarget.startsWith(`${normalizedRoot}${sep}`)) {
+      throw new MessagingBuildApplierError(
+        `Messaging render target ${target} must stay inside ${agentRoot}.`,
+      );
+    }
+    return resolvedTarget;
   }
   throw new MessagingBuildApplierError(`Unsupported messaging render target ${target}.`);
 }
@@ -688,8 +700,7 @@ function parseGeneratedYamlObject(existing: string | undefined, target: string):
   const lines = existing
     .split(/\r?\n/)
     .map((line, index): GeneratedYamlLine | null => {
-      const trimmed = line.trim();
-      if (trimmed.length === 0 || trimmed.startsWith("#")) return null;
+      if (isIgnorableGeneratedYamlLine(line)) return null;
       const indent = line.match(/^ */)?.[0].length ?? 0;
       return { indent, text: line.slice(indent), lineNumber: index + 1 };
     })
@@ -700,6 +711,11 @@ function parseGeneratedYamlObject(existing: string | undefined, target: string):
     throw new MessagingBuildApplierError(`Messaging YAML target ${target} must contain an object.`);
   }
   return parsed as JsonObject;
+}
+
+function isIgnorableGeneratedYamlLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.length === 0 || trimmed.startsWith("#") || trimmed === "---" || trimmed === "...";
 }
 
 function parseGeneratedYamlBlock(
