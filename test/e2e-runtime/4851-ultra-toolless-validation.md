@@ -158,7 +158,7 @@ content_chars:     501
 
 Content (full text):
 
-```markdown
+````markdown
 I'll provide you with the commands to create and run the hello world script manually.
 
 ## Create the file
@@ -188,12 +188,13 @@ python3 /tmp/hello.py
 ```
 
 **Expected output:**
-```
+
+```text
 Hello, World!
 ```
 
 You can copy and paste these commands into your terminal to create and run the script.
-```
+````
 
 This satisfies the issue's Option A acceptance condition: model explains it lacks file-write/execute tools and shows the complete code the user would need to run manually, with all 3 planned steps present in `content`.
 
