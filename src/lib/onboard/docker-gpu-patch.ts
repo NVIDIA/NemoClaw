@@ -16,13 +16,15 @@ import {
 } from "../adapters/docker";
 import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import {
-  type DockerGpuSupervisorReconnectDeps,
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  type DockerGpuSupervisorReconnectDeps,
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+
+export type { DockerGpuSupervisorReconnectDeps };
 export {
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
@@ -30,7 +32,6 @@ export {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 };
-export type { DockerGpuSupervisorReconnectDeps };
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -500,11 +501,18 @@ export function buildDockerGpuModeCandidates(
   if (options.backend === "jetson") {
     return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
   }
-  const candidates = [
-    buildDockerGpuMode("gpus", device),
-    buildDockerGpuMode("nvidia-runtime", device),
-  ];
+  // When the host advertises an NVIDIA CDI spec, prefer the CDI mode
+  // (`--device nvidia.com/gpu=all`) ahead of --gpus. OpenShell's gateway owns
+  // supervisor GPU injection and wires Docker-CDI hosts from that spec; this
+  // NemoClaw patch only chooses the recreate mode while matching that source
+  // boundary. On Docker-CDI hosts `docker create --gpus all` is accepted (the
+  // create-only probe passes), but the legacy --gpus injection diverges from
+  // gateway wiring and the supervisor never reconnects (#4948). Keep --gpus
+  // and the NVIDIA runtime as fallbacks until OpenShell exposes an
+  // authoritative GPU mode contract that can replace CDI-spec probing.
+  const candidates: DockerGpuPatchMode[] = [];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
+  candidates.push(buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device));
   return candidates;
 }
 

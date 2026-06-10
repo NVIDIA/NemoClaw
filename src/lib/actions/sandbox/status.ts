@@ -290,6 +290,16 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       );
       console.log("");
     }
+    if ("recoveredSandbox" in lookup && lookup.recoveredSandbox) {
+      const via =
+        "recoverySandboxVia" in lookup && lookup.recoverySandboxVia
+          ? ` via ${lookup.recoverySandboxVia}`
+          : "";
+      console.log(
+        `  Recovered sandbox '${sandboxName}' from Docker${via}; OpenShell now sees it as live.`,
+      );
+      console.log("");
+    }
     console.log(lookup.output);
     if (phase && phase !== "Ready") {
       // A non-ready, non-terminal phase can mean two very different things. If
