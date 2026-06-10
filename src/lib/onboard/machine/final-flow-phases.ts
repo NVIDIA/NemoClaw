@@ -91,7 +91,10 @@ export function createFinalOnboardFlowPhases<
       deps: options.policiesDeps,
     });
     return {
-      context: { session: policiesResult.session } as Partial<Context>,
+      context: {
+        session: policiesResult.session,
+        selectedMessagingChannels: policiesResult.selectedMessagingChannels,
+      } as Partial<Context>,
       result: policiesResult.stateResult,
     };
   });
@@ -145,6 +148,21 @@ function withAfterPoliciesResultApplied(
   };
 }
 
+function withContextObserver<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+  onContextUpdated: ((context: Context) => void) | undefined,
+): readonly OnboardSequencePhase<Context>[] {
+  if (!onContextUpdated) return phases;
+  return phases.map((phase) => ({
+    ...phase,
+    async run(context) {
+      const result = await phase.run(context);
+      onContextUpdated(result.context);
+      return result;
+    },
+  }));
+}
+
 export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -152,6 +170,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
   afterPoliciesResultApplied?(): void;
+  onContextUpdated?(context: Context): void;
 }): Promise<void> {
   const finalRuntimeSession = await options.runtime.session();
   // Keep resume and ahead-state sessions on the compatibility path for now.
@@ -174,7 +193,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
     await runFinalOnboardFlowSequence({
       context: options.context,
       runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
-      phases: options.phases,
+      phases: withContextObserver(options.phases, options.onContextUpdated),
     });
     return;
   }
@@ -187,5 +206,6 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
       if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
     }
     context = phaseResult.context;
+    options.onContextUpdated?.(context);
   }
 }

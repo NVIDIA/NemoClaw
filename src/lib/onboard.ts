@@ -6676,7 +6676,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const hermesToolGateways = coreContext.hermesToolGateways;
     const nimContainer = coreContext.nimContainer;
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    selectedMessagingChannels = coreContext.selectedMessagingChannels;
     const webSearchSupported = coreContext.webSearchSupported;
 
     const finalFlowContext: CoreOnboardFlowContext = {
@@ -6691,9 +6690,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       hermesToolGateways,
       nimContainer,
       webSearchConfig,
-      selectedMessagingChannels,
+      selectedMessagingChannels: coreContext.selectedMessagingChannels,
       webSearchSupported,
     };
+    let liveFinalFlowContext = finalFlowContext;
 
     const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
       CoreOnboardFlowContext,
@@ -6792,7 +6792,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             },
             captureForwardList: () =>
               runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
+            getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) =>
               providerExistsInGateway(providerName),
           });
@@ -6816,6 +6816,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       recordStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
+      },
+      onContextUpdated: (context) => {
+        liveFinalFlowContext = context;
       },
     });
     traceCompleted = true;
