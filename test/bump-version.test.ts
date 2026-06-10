@@ -17,7 +17,9 @@ describe("bump-version docs URL helpers", () => {
     const result = rewriteDocsPublicUrls(content, "https://docs.nvidia.com/nemoclaw/0.0.61");
 
     expect(result.count).toBe(3);
-    expect(result.updated).toContain("https://docs.nvidia.com/nemoclaw/0.0.61/get-started/quickstart");
+    expect(result.updated).toContain(
+      "https://docs.nvidia.com/nemoclaw/0.0.61/get-started/quickstart",
+    );
     expect(result.updated).toContain("https://docs.nvidia.com/nemoclaw/0.0.61?view=all#install");
     expect(result.updated).toContain("https://docs.nvidia.com/nemoclaw/0.0.61/)");
     expect(result.updated).toContain("https://docs.nvidia.com/nemoclaw/api/reference");

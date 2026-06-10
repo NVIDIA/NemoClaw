@@ -113,7 +113,11 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             "_nemoclaw_restore_mutable_config_perms",
           ].join("\n"),
         ],
-        { encoding: "utf-8", timeout: 5000, env: { ...process.env, OPENCLAW_STATE_DIR: configDir } },
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+        },
       );
 
       expect(result.status).toBe(0);
@@ -144,7 +148,11 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             "_nemoclaw_restore_mutable_config_perms",
           ].join("\n"),
         ],
-        { encoding: "utf-8", timeout: 5000, env: { ...process.env, OPENCLAW_STATE_DIR: configDir } },
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+        },
       );
 
       expect(result.status).toBe(0);
@@ -172,7 +180,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             // Intercept `command openclaw ...` (the guard's terminal call) to
             // simulate `doctor --fix`: tighten perms, then exit nonzero — the
             // EACCES-on-.bashrc case the reporter hit.
-            'command() {',
+            "command() {",
             '  if [ "${1:-}" = "openclaw" ]; then',
             '    chmod 700 "$OPENCLAW_STATE_DIR";',
             '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
@@ -185,7 +193,11 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             'echo "GUARD_EXIT:$?"',
           ].join("\n"),
         ],
-        { encoding: "utf-8", timeout: 5000, env: { ...process.env, OPENCLAW_STATE_DIR: configDir } },
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+        },
       );
 
       expect(result.status).toBe(0);
@@ -214,7 +226,7 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
           "-c",
           [
             "set -e",
-            'command() {',
+            "command() {",
             '  if [ "${1:-}" = "openclaw" ]; then',
             '    chmod 700 "$OPENCLAW_STATE_DIR";',
             '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
@@ -227,7 +239,11 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             'echo "UNREACHABLE_UNDER_ERREXIT"',
           ].join("\n"),
         ],
-        { encoding: "utf-8", timeout: 5000, env: { ...process.env, OPENCLAW_STATE_DIR: configDir } },
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+        },
       );
 
       // Script aborts on the nonzero return (errexit), so the echo never runs...
@@ -258,7 +274,11 @@ describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
             "_nemoclaw_restore_mutable_config_perms",
           ].join("\n"),
         ],
-        { encoding: "utf-8", timeout: 5000, env: { ...process.env, OPENCLAW_STATE_DIR: configDir } },
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+        },
       );
 
       expect(result.status).toBe(0);

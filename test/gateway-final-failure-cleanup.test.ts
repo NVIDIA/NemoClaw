@@ -19,8 +19,7 @@ function isOnboardGatewayFailureInternals(
   value: object | null,
 ): value is OnboardGatewayFailureInternals {
   return (
-    value !== null &&
-    typeof Reflect.get(value, "handleFinalGatewayStartFailure") === "function"
+    value !== null && typeof Reflect.get(value, "handleFinalGatewayStartFailure") === "function"
   );
 }
 

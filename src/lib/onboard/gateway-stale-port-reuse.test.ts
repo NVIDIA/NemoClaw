@@ -137,7 +137,9 @@ describe("applyHealthyPortReuse", () => {
     expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], { ignoreError: true });
     expect(checkPortAvailable).toHaveBeenCalledWith(8080, undefined);
     const messages = log.mock.calls.map((c) => c[0]);
-    expect(messages).toContain("  Gateway metadata is stale (container not running). Cleaning up...");
+    expect(messages).toContain(
+      "  Gateway metadata is stale (container not running). Cleaning up...",
+    );
     expect(messages).toContain("  ✓ Port 8080 available (OpenShell gateway)");
   });
 

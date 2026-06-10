@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
@@ -59,13 +58,8 @@ export type DoctorReport = {
   checks: DoctorCheck[];
 };
 
-function pushInferenceHealthCheck(
-  checks: DoctorCheck[],
-  probe: ProviderHealthStatus,
-): void {
-  const label = probe.probeLabel
-    ? `Provider health (${probe.probeLabel})`
-    : "Provider health";
+function pushInferenceHealthCheck(checks: DoctorCheck[], probe: ProviderHealthStatus): void {
+  const label = probe.probeLabel ? `Provider health (${probe.probeLabel})` : "Provider health";
   if (!probe.probed) {
     checks.push({ group: "Inference", label, status: "info", detail: probe.detail });
     return;
@@ -197,7 +191,9 @@ function dockerInspectGateway(
     label: "Docker container",
     status: running && healthOk ? "ok" : "fail",
     detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
-    hint: running ? undefined : "restart the gateway with `openshell gateway start --name nemoclaw`",
+    hint: running
+      ? undefined
+      : "restart the gateway with `openshell gateway start --name nemoclaw`",
   });
 
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
@@ -391,7 +387,10 @@ function channelRuntimeDoctorCheck(
     // Surface that as a warn so a stale rebuild isn't masked by an
     // unreadable log (CodeRabbit on PR #4182). The log-unavailable
     // warning below still runs when configMissing is empty.
-    const { missing: configMissing } = compareChannelSets(enabledChannels, runtime.configuredChannels);
+    const { missing: configMissing } = compareChannelSets(
+      enabledChannels,
+      runtime.configuredChannels,
+    );
     if (configMissing.length > 0) {
       return {
         group: "Messaging",
@@ -524,12 +523,16 @@ export async function runSandboxDoctor(
   const unknown = args.filter((arg) => !["--json", "--fix", "--help", "-h"].includes(arg));
   if (helpRequested) {
     console.log(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
-    console.log(`  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`);
+    console.log(
+      `  --fix   Restore the mutable OpenClaw config permission contract if it was tightened,`,
+    );
     console.log(`          and approve pending allowlisted dashboard/CLI tool-scope upgrades`);
     return;
   }
   if (unknown.length > 0) {
-    console.error(`  Unknown doctor argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`);
+    console.error(
+      `  Unknown doctor argument${unknown.length === 1 ? "" : "s"}: ${unknown.join(" ")}`,
+    );
     console.error(`  Usage: ${CLI_NAME} <name> doctor [--json] [--fix]`);
     process.exit(1);
   }
@@ -540,7 +543,9 @@ export async function runSandboxDoctor(
   // to repair.
   if (wantsFix && asJson) {
     console.error(`  ${CLI_NAME} doctor: --fix cannot be combined with --json`);
-    console.error(`  Run \`${CLI_NAME} ${sandboxName} doctor --json\` to detect, then \`${CLI_NAME} ${sandboxName} doctor --fix\` to repair`);
+    console.error(
+      `  Run \`${CLI_NAME} ${sandboxName} doctor --json\` to detect, then \`${CLI_NAME} ${sandboxName} doctor --fix\` to repair`,
+    );
     process.exit(1);
   }
 

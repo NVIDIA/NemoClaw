@@ -37,7 +37,8 @@ function errorMessage(error: unknown): string {
 }
 
 function supportedRuntime(runtime: string): DockerRuntimeExpectation {
-  const expectation = DOCKER_RUNTIME_EXPECTATIONS[runtime as keyof typeof DOCKER_RUNTIME_EXPECTATIONS];
+  const expectation =
+    DOCKER_RUNTIME_EXPECTATIONS[runtime as keyof typeof DOCKER_RUNTIME_EXPECTATIONS];
   if (!expectation) {
     throw new Error(`Unsupported scenario runtime '${runtime}'.`);
   }
@@ -79,7 +80,10 @@ export class EnvironmentPhaseFixture {
     return result;
   }
 
-  private async probeDocker(runtime: string, expectation: DockerRuntimeExpectation): Promise<DockerRuntimeReady> {
+  private async probeDocker(
+    runtime: string,
+    expectation: DockerRuntimeExpectation,
+  ): Promise<DockerRuntimeReady> {
     try {
       const result = await this.host.command("docker", ["info"], {
         artifactName: `runtime-docker-info-${artifactLabel(runtime)}`,

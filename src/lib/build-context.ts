@@ -112,12 +112,16 @@ export function printSandboxCreateRecoveryHints(
     );
     console.error("        OpenShell large-tar upload path failing, not a missing gateway.");
     if (arm64ImageRefWorkaround) {
-      console.error("  This is a known limitation on Linux ARM64 (aarch64). Workaround without rebuilding:");
+      console.error(
+        "  This is a known limitation on Linux ARM64 (aarch64). Workaround without rebuilding:",
+      );
     } else {
       console.error("  Workaround without rebuilding the image:");
     }
     console.error("    1. Start a local registry the gateway can reach:");
-    console.error("         docker run -d -p 5000:5000 --restart=always --name registry registry:2");
+    console.error(
+      "         docker run -d -p 5000:5000 --restart=always --name registry registry:2",
+    );
     const sourceRef = builtRef ?? "<built-image>";
     const registryRef = `localhost:5000/${sourceRef}`;
     // OpenShell builds the sandbox image with whichever builder the host uses
@@ -139,17 +143,31 @@ export function printSandboxCreateRecoveryHints(
     // available, fall back to describing the one-token swap.
     if (createArgs && createArgs.length > 0) {
       console.error("    3. Re-create the sandbox from that image ref. This is the create command");
-      console.error("       NemoClaw ran, with --from swapped to the pushed image. Replace the policy");
-      console.error("       placeholder with your policy file (onboard's was a temporary file) and the");
-      console.error("       runtime env placeholder with the env NemoClaw set (dashboard port, proxy):");
+      console.error(
+        "       NemoClaw ran, with --from swapped to the pushed image. Replace the policy",
+      );
+      console.error(
+        "       placeholder with your policy file (onboard's was a temporary file) and the",
+      );
+      console.error(
+        "       runtime env placeholder with the env NemoClaw set (dashboard port, proxy):",
+      );
       console.error(`         ${reconstructImageRefCreateCommand(createArgs, registryRef)}`);
     } else {
       console.error("    3. Re-run the sandbox create OpenShell just attempted, but replace the");
-      console.error(`       \`--from <…/Dockerfile>\` argument with \`--from ${registryRef}\` (this skips`);
-      console.error("       the tar upload). Keep every other flag NemoClaw used — the providers, any");
-      console.error("       GPU/resource flags, and the trailing `-- env … nemoclaw-start` command.");
+      console.error(
+        `       \`--from <…/Dockerfile>\` argument with \`--from ${registryRef}\` (this skips`,
+      );
+      console.error(
+        "       the tar upload). Keep every other flag NemoClaw used — the providers, any",
+      );
+      console.error(
+        "       GPU/resource flags, and the trailing `-- env … nemoclaw-start` command.",
+      );
     }
-    console.error(`  If you would rather let NemoClaw rebuild and retry from scratch: ${CLI_NAME} onboard --resume`);
+    console.error(
+      `  If you would rather let NemoClaw rebuild and retry from scratch: ${CLI_NAME} onboard --resume`,
+    );
     return;
   }
   if (failure.kind === "image_transfer_timeout") {

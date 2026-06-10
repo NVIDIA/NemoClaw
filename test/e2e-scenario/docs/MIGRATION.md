@@ -118,25 +118,24 @@ When moving behavior from a legacy E2E script into the scenario framework:
    scripts.
 7. Add framework tests that prevent the typed registry, YAML aliases, workflow
    routes, manifests, suites, and runner behavior from drifting.
-8. Leave legacy executable scripts in place until #4357 records deletion
-   readiness.
+8. Leave legacy executable scripts in place until deletion readiness is
+   recorded in the owning issue or PR. The bash scenario entrypoints
+   (`runtime/run-scenario.sh`, `runtime/run-suites.sh`) and the YAML resolver
+   tree are already gone — the TypeScript runner is the sole canonical
+   executor.
 
 ## Useful commands
 
 ```bash
-# Typed registry inventory and dry-run path
+# Typed registry inventory and execution
 npx tsx test/e2e-scenario/scenarios/run.ts --list
 npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id[,id...]>
+
+# Local debug only: print the compiled plan without executing
 npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
 
-# YAML/shell resolver and live runner path
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
-bash test/e2e-scenario/runtime/run-scenario.sh <id>
-
-# Metadata and framework validation
-bash test/e2e-scenario/runtime/coverage-report.sh
+# Framework tests
 npx vitest run --project e2e-scenario-framework --silent=false --reporter=default
 
 # Opt-in live Vitest scenarios

@@ -29,23 +29,15 @@ export function isTruthyEnv(value: string | undefined): boolean {
   }
 }
 
-function parsePortEnv(
-  env: NodeJS.ProcessEnv,
-  name: string,
-  fallback: number,
-): number {
+function parsePortEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   if (!/^\d+$/.test(raw.trim())) {
-    throw new Error(
-      `Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`,
-    );
+    throw new Error(`Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`);
   }
   const parsed = Number(raw.trim());
   if (parsed < 1024 || parsed > 65535) {
-    throw new Error(
-      `Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`,
-    );
+    throw new Error(`Invalid port: ${name}="${raw}" must be an integer between 1024 and 65535`);
   }
   return parsed;
 }

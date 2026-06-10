@@ -47,9 +47,7 @@ describe("repo skill markdown files", () => {
 
     it(`does not include generated SPDX comments for ${relPath}`, () => {
       const raw = fs.readFileSync(markdownFile, "utf8");
-      expect(raw.includes("<!-- SPDX-"), `${relPath} should not include SPDX comments`).toBe(
-        false,
-      );
+      expect(raw.includes("<!-- SPDX-"), `${relPath} should not include SPDX comments`).toBe(false);
     });
   }
 

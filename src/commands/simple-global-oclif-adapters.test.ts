@@ -28,7 +28,9 @@ const mocks = vi.hoisted(() => {
   }
 
   return {
-    buildVersionedUninstallUrl: vi.fn((version: string) => `https://example.test/${version}/uninstall.sh`),
+    buildVersionedUninstallUrl: vi.fn(
+      (version: string) => `https://example.test/${version}/uninstall.sh`,
+    ),
     fetchGatewayAuthTokenFromSandbox: vi.fn(() => "token"),
     getVersion: vi.fn(() => "1.2.3"),
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
@@ -69,7 +71,9 @@ vi.mock("../lib/actions/global", () => ({
   showRootHelp: mocks.showRootHelp,
   showVersion: mocks.showVersion,
 }));
-vi.mock("../lib/adapters/openshell/client", () => ({ captureOpenshellCommand: mocks.captureOpenshellCommand }));
+vi.mock("../lib/adapters/openshell/client", () => ({
+  captureOpenshellCommand: mocks.captureOpenshellCommand,
+}));
 vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
 vi.mock("../lib/tunnel/services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
@@ -85,8 +89,12 @@ vi.mock("../lib/core/version", () => ({ getVersion: mocks.getVersion }));
 
 import DebugCliCommand from "./debug";
 import DeployCliCommand from "./deploy";
-import DashboardUrlCliCommand, { setDashboardUrlRuntimeBridgeFactoryForTest } from "./sandbox/dashboard-url";
-import GatewayTokenCliCommand, { setGatewayTokenRuntimeBridgeFactoryForTest } from "./sandbox/gateway/token";
+import DashboardUrlCliCommand, {
+  setDashboardUrlRuntimeBridgeFactoryForTest,
+} from "./sandbox/dashboard-url";
+import GatewayTokenCliCommand, {
+  setGatewayTokenRuntimeBridgeFactoryForTest,
+} from "./sandbox/gateway/token";
 import DeprecatedStartCommand from "./start";
 import DeprecatedStopCommand from "./stop";
 import RootHelpCommand from "./root/help";
@@ -103,12 +111,18 @@ describe("simple global oclif adapters", () => {
   });
 
   it("maps debug and deploy parser output to actions", async () => {
-    await DebugCliCommand.run(["--quick", "--output", "/tmp/debug.tar.gz", "--sandbox", "alpha"], rootDir);
+    await DebugCliCommand.run(
+      ["--quick", "--output", "/tmp/debug.tar.gz", "--sandbox", "alpha"],
+      rootDir,
+    );
     await DeployCliCommand.run(["gpu-alpha"], rootDir);
 
     expect(mocks.runDebugCommandWithOptions).toHaveBeenCalledWith(
       { quick: true, output: "/tmp/debug.tar.gz", sandboxName: "alpha" },
-      expect.objectContaining({ getDefaultSandbox: expect.any(Function), runDebug: expect.any(Function) }),
+      expect.objectContaining({
+        getDefaultSandbox: expect.any(Function),
+        runDebug: expect.any(Function),
+      }),
     );
     expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
   });

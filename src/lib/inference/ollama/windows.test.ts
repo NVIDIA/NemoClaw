@@ -13,7 +13,10 @@ function commandText(command: string | string[]): string {
   return Array.isArray(command) ? command.join(" ") : String(command);
 }
 
-function loadWindowsOllamaWithMocks(run: ReturnType<typeof vi.fn>, runCapture: ReturnType<typeof vi.fn>) {
+function loadWindowsOllamaWithMocks(
+  run: ReturnType<typeof vi.fn>,
+  runCapture: ReturnType<typeof vi.fn>,
+) {
   const runner = require(RUNNER_PATH);
   const originalRun = runner.run;
   const originalRunCapture = runner.runCapture;
@@ -82,9 +85,9 @@ describe("Windows Ollama helper", () => {
     expect(launchScripts[0]).toContain(watcherPath);
     expect(launchScripts[1]).toContain(installedPath);
     expect(launchScripts[1]).toContain("-ArgumentList 'serve'");
-    expect(launchScripts.some((script) => script.includes("Start-Process -FilePath ollama.exe"))).toBe(
-      false,
-    );
+    expect(
+      launchScripts.some((script) => script.includes("Start-Process -FilePath ollama.exe")),
+    ).toBe(false);
     expect(stopCommands[0]).toContain("Get-Process 'ollama app'");
     expect(stopCommands[1]).toContain("Get-Process ollama");
   });

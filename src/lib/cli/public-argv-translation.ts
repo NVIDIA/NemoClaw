@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getRegisteredOclifCommandMetadata, getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
+import {
+  getRegisteredOclifCommandMetadata,
+  getRegisteredOclifCommandsMetadata,
+} from "./oclif-metadata";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
 export type NativeArgvTranslation = {
@@ -125,13 +128,11 @@ function nativeSandboxParentArgv(
     }
     return nativeArgv(`sandbox:${action}`, ["--help"], ["sandbox", action, "--help"]);
   }
-  return nativeArgv(`sandbox:${action}:${subcommand}`, [sandboxName, ...actionArgs.slice(1)], [
-    "sandbox",
-    action,
-    subcommand,
-    sandboxName,
-    ...actionArgs.slice(1),
-  ]);
+  return nativeArgv(
+    `sandbox:${action}:${subcommand}`,
+    [sandboxName, ...actionArgs.slice(1)],
+    ["sandbox", action, subcommand, sandboxName, ...actionArgs.slice(1)],
+  );
 }
 
 export function translatePublicGlobalArgv(cmd: string, args: string[]): PublicTranslationResult {
@@ -168,7 +169,10 @@ export function translatePublicSandboxArgv(
     return nativeArgv(route.commandId, [sandboxName, ...remainingArgs]);
   }
 
-  if (parentSubcommands(action).size > 0 && (actionArgs.length === 0 || !parentSubcommands(action).has(actionArgs[0]))) {
+  if (
+    parentSubcommands(action).size > 0 &&
+    (actionArgs.length === 0 || !parentSubcommands(action).has(actionArgs[0]))
+  ) {
     if (actionArgs.length === 0 && isNonStrictRegisteredParent(action)) {
       return nativeArgv(`sandbox:${action}`, [sandboxName]);
     }

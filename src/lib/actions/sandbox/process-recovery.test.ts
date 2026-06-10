@@ -7,7 +7,8 @@ import { describe, it, expect } from "vitest";
 import { probeSandboxInferenceGatewayHealth } from "../../../../dist/lib/actions/sandbox/process-recovery";
 
 describe("probeSandboxInferenceGatewayHealth — #3265 gateway-chain subprobe", () => {
-  const makeExec = (stdout: string, status = 0) =>
+  const makeExec =
+    (stdout: string, status = 0) =>
     async () => ({ status, stdout, stderr: "" });
 
   it("reports healthy on any HTTP response (including 401) because the routing chain is up", async () => {

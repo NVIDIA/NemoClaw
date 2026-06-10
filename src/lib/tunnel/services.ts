@@ -153,7 +153,11 @@ function extractTryCloudflareUrl(log: string): string | null {
 
 function formatNamedTunnelUrl(hostname: string): string | null {
   const normalized = hostname.trim().replace(/\.$/, "").toLowerCase();
-  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(normalized)) {
+  if (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(
+      normalized,
+    )
+  ) {
     return null;
   }
   return `https://${normalized}`;
@@ -204,7 +208,10 @@ function extractNamedCloudflareUrl(log: string, dashboardPort: number): string |
   }
 
   const port = String(dashboardPort).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const servicePattern = new RegExp(`\\\\"service\\\\"\\s*:\\s*\\\\"http://localhost:${port}/?\\\\"`, "g");
+  const servicePattern = new RegExp(
+    `\\\\"service\\\\"\\s*:\\s*\\\\"http://localhost:${port}/?\\\\"`,
+    "g",
+  );
   for (const line of log.split(/\r?\n/)) {
     for (const serviceMatch of line.matchAll(servicePattern)) {
       const prefix = line.slice(0, serviceMatch.index ?? 0);
@@ -255,7 +262,8 @@ export function readCloudflaredState(pidDir: string): CloudflaredState {
 
 function writePid(pidDir: string, name: string, pid: number): void {
   const pidFile = join(pidDir, `${name}.pid`);
-  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+  const flags =
+    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
   const fd = openSync(pidFile, flags, 0o600);
   try {
     fchmodSync(fd, 0o600);
@@ -517,22 +525,13 @@ type StopAttemptResult = ReturnType<typeof spawnSync>;
 
 function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult | null {
   const podsResult = dockerSpawnSync(
-    [
-      "exec",
-      GATEWAY_CLUSTER_CONTAINER,
-      "kubectl",
-      "get",
-      "pods",
-      "-n",
-      "openshell",
-      "-o",
-      "name",
-    ],
+    ["exec", GATEWAY_CLUSTER_CONTAINER, "kubectl", "get", "pods", "-n", "openshell", "-o", "name"],
     { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
   );
   if (podsResult.status !== 0 || !podsResult.stdout) return null;
 
-  const podOutput = typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
+  const podOutput =
+    typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
   const pod = podOutput
     .split(/\r?\n/)
     .map((line: string) => line.trim())
@@ -634,7 +633,11 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   // No host-side bridge processes are needed. See: PR #1081.
 
   // cloudflared tunnel
-  const tunnelToken = (opts.cloudflareTunnelToken ?? process.env.CLOUDFLARE_TUNNEL_TOKEN ?? "").trim();
+  const tunnelToken = (
+    opts.cloudflareTunnelToken ??
+    process.env.CLOUDFLARE_TUNNEL_TOKEN ??
+    ""
+  ).trim();
   try {
     execSync("command -v cloudflared", {
       stdio: ["ignore", "ignore", "ignore"],

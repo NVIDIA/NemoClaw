@@ -13,13 +13,9 @@
  * unparseable, so it is redirected to stderr, where it stays visible to a
  * human without corrupting the machine output.
  */
-export async function withStdoutRedirectedToStderr<T>(
-  fn: () => Promise<T>,
-): Promise<T> {
+export async function withStdoutRedirectedToStderr<T>(fn: () => Promise<T>): Promise<T> {
   const originalStdoutWrite = process.stdout.write;
-  process.stdout.write = process.stderr.write.bind(
-    process.stderr,
-  ) as typeof process.stdout.write;
+  process.stdout.write = process.stderr.write.bind(process.stderr) as typeof process.stdout.write;
   try {
     return await fn();
   } finally {

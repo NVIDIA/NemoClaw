@@ -108,78 +108,87 @@ describe("custom Dockerfile build context filter", () => {
 });
 
 describe("onboard custom Dockerfile", () => {
-  it("uses the custom Dockerfile parent directory as build context when --from is given", testTimeoutOptions(60_000), async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "create-sandbox-from.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it(
+    "uses the custom Dockerfile parent directory as build context when --from is given",
+    testTimeoutOptions(60_000),
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "create-sandbox-from.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      );
 
-    // Create a minimal custom Dockerfile in a temporary directory
-    const customBuildDir = path.join(tmpDir, "custom-image");
-    fs.mkdirSync(customBuildDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(customBuildDir, "Dockerfile"),
-      [
-        "FROM ubuntu:22.04",
-        "ARG NEMOCLAW_MODEL=nvidia/nemotron-super-49b-v1",
-        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
-        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-super-49b-v1",
-        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
-        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
-        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
-        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
-        "ARG NEMOCLAW_BUILD_ID=default",
-        "RUN echo done",
-      ].join("\n"),
-    );
-    fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
-    fs.writeFileSync(path.join(customBuildDir, "large.bin"), "small file with large mocked stat");
-    fs.mkdirSync(path.join(customBuildDir, "ignored-by-dockerignore"), { recursive: true });
-    fs.writeFileSync(
-      path.join(customBuildDir, "ignored-by-dockerignore", "ignored.txt"),
-      "skip me via .dockerignore",
-    );
-    fs.writeFileSync(path.join(customBuildDir, "ignored.log"), "skip me via glob");
-    fs.writeFileSync(path.join(customBuildDir, "keep.log"), "keep me via negation");
-    fs.writeFileSync(
-      path.join(customBuildDir, ".dockerignore"),
-      [
-        "ignored-by-dockerignore/",
-        "*.log",
-        "!keep.log",
-        // NemoClaw's secret denylist must still win over .dockerignore negation.
-        "!secrets/token.txt",
-      ].join("\n"),
-    );
-    fs.mkdirSync(path.join(customBuildDir, "node_modules", "pkg"), { recursive: true });
-    fs.writeFileSync(path.join(customBuildDir, "node_modules", "pkg", "ignored.txt"), "skip me");
-    fs.mkdirSync(path.join(customBuildDir, ".ssh"), { recursive: true });
-    fs.writeFileSync(path.join(customBuildDir, ".ssh", "id_ed25519"), "fake test key");
-    fs.mkdirSync(path.join(customBuildDir, ".aws"), { recursive: true });
-    fs.writeFileSync(path.join(customBuildDir, ".aws", "credentials"), "fake test credentials");
-    fs.mkdirSync(path.join(customBuildDir, "secrets"), { recursive: true });
-    fs.writeFileSync(path.join(customBuildDir, "secrets", "token.txt"), "fake test token");
-    fs.writeFileSync(path.join(customBuildDir, ".env.local"), "EXAMPLE=fake");
-    fs.writeFileSync(
-      path.join(customBuildDir, ".npmrc"),
-      "registry=https://registry.example.test\n",
-    );
-    fs.writeFileSync(path.join(customBuildDir, "model.pem"), "fake test certificate");
-    fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
+      // Create a minimal custom Dockerfile in a temporary directory
+      const customBuildDir = path.join(tmpDir, "custom-image");
+      fs.mkdirSync(customBuildDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(customBuildDir, "Dockerfile"),
+        [
+          "FROM ubuntu:22.04",
+          "ARG NEMOCLAW_MODEL=nvidia/nemotron-super-49b-v1",
+          "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+          "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-super-49b-v1",
+          "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+          "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+          "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+          "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+          "ARG NEMOCLAW_BUILD_ID=default",
+          "RUN echo done",
+        ].join("\n"),
+      );
+      fs.writeFileSync(path.join(customBuildDir, "extra.txt"), "extra build context file");
+      fs.writeFileSync(path.join(customBuildDir, "large.bin"), "small file with large mocked stat");
+      fs.mkdirSync(path.join(customBuildDir, "ignored-by-dockerignore"), { recursive: true });
+      fs.writeFileSync(
+        path.join(customBuildDir, "ignored-by-dockerignore", "ignored.txt"),
+        "skip me via .dockerignore",
+      );
+      fs.writeFileSync(path.join(customBuildDir, "ignored.log"), "skip me via glob");
+      fs.writeFileSync(path.join(customBuildDir, "keep.log"), "keep me via negation");
+      fs.writeFileSync(
+        path.join(customBuildDir, ".dockerignore"),
+        [
+          "ignored-by-dockerignore/",
+          "*.log",
+          "!keep.log",
+          // NemoClaw's secret denylist must still win over .dockerignore negation.
+          "!secrets/token.txt",
+        ].join("\n"),
+      );
+      fs.mkdirSync(path.join(customBuildDir, "node_modules", "pkg"), { recursive: true });
+      fs.writeFileSync(path.join(customBuildDir, "node_modules", "pkg", "ignored.txt"), "skip me");
+      fs.mkdirSync(path.join(customBuildDir, ".ssh"), { recursive: true });
+      fs.writeFileSync(path.join(customBuildDir, ".ssh", "id_ed25519"), "fake test key");
+      fs.mkdirSync(path.join(customBuildDir, ".aws"), { recursive: true });
+      fs.writeFileSync(path.join(customBuildDir, ".aws", "credentials"), "fake test credentials");
+      fs.mkdirSync(path.join(customBuildDir, "secrets"), { recursive: true });
+      fs.writeFileSync(path.join(customBuildDir, "secrets", "token.txt"), "fake test token");
+      fs.writeFileSync(path.join(customBuildDir, ".env.local"), "EXAMPLE=fake");
+      fs.writeFileSync(
+        path.join(customBuildDir, ".npmrc"),
+        "registry=https://registry.example.test\n",
+      );
+      fs.writeFileSync(path.join(customBuildDir, "model.pem"), "fake test certificate");
+      fs.writeFileSync(path.join(customBuildDir, "credentials.json"), "{}");
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
 
-    const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
+      const customDockerfilePath = JSON.stringify(path.join(customBuildDir, "Dockerfile"));
 
-    const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -273,55 +282,56 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-    fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-      },
-    });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    assert.equal(payload.sandboxName, "my-assistant");
-    assert.match(result.stdout, /Using custom Dockerfile:/);
-    assert.match(result.stdout, /Docker build context:/);
-    assert.match(result.stdout, /Docker build context:.*custom-image/);
-    assert.match(result.stderr, /WARN: build context contains about 101\.0 MB/);
-    assert.equal(
-      payload.hasExtraFile,
-      true,
-      "extra.txt from custom build context should be staged",
-    );
-    assert.deepEqual(payload.stagedIgnoredFiles, {
-      nodeModules: false,
-      ssh: false,
-      aws: false,
-      secrets: false,
-      env: false,
-      npmrc: false,
-      pem: false,
-      credentialsJson: false,
-    });
-    assert.deepEqual(payload.stagedDockerignoreFiles, {
-      ignoredDir: false,
-      ignoredLog: false,
-      keepLog: true,
-      negatedSecret: false,
-    });
-  });
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      assert.equal(payload.sandboxName, "my-assistant");
+      assert.match(result.stdout, /Using custom Dockerfile:/);
+      assert.match(result.stdout, /Docker build context:/);
+      assert.match(result.stdout, /Docker build context:.*custom-image/);
+      assert.match(result.stderr, /WARN: build context contains about 101\.0 MB/);
+      assert.equal(
+        payload.hasExtraFile,
+        true,
+        "extra.txt from custom build context should be staged",
+      );
+      assert.deepEqual(payload.stagedIgnoredFiles, {
+        nodeModules: false,
+        ssh: false,
+        aws: false,
+        secrets: false,
+        env: false,
+        npmrc: false,
+        pem: false,
+        credentialsJson: false,
+      });
+      assert.deepEqual(payload.stagedDockerignoreFiles, {
+        ignoredDir: false,
+        ignoredLog: false,
+        keepLog: true,
+        negatedSecret: false,
+      });
+    },
+  );
 
   it("exits with an error when the --from Dockerfile path does not exist", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -331,8 +341,12 @@ const { createSandbox } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -392,8 +406,12 @@ const { createSandbox } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -452,8 +470,12 @@ const { createSandbox } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const ignoredDir = path.join(tmpDir, "node_modules", "pkg");
 
     fs.mkdirSync(ignoredDir, { recursive: true });
@@ -515,8 +537,12 @@ const { createSandbox } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const customBuildDir = path.join(tmpDir, "custom-image");
 
     fs.mkdirSync(customBuildDir, { recursive: true });
@@ -599,5 +625,4 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(payload.removed, true, result.stdout);
     assert.match(payload.message, /simulated custom context copy failure/);
   });
-
 });

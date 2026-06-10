@@ -25,7 +25,11 @@ export interface NpmLinkOrShimDeps {
   mktemp?: (dir: string) => string;
   readFile?: (filePath: string) => string;
   rename?: (from: string, to: string) => void;
-  run?: (command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv }) => ProcessResult;
+  run?: (
+    command: string,
+    args: string[],
+    options: { cwd?: string; env?: NodeJS.ProcessEnv },
+  ) => ProcessResult;
   unlink?: (filePath: string) => void;
   writeFile?: (filePath: string, contents: string) => void;
 }
@@ -98,7 +102,10 @@ function safeRead(readFile: (filePath: string) => string, filePath: string): str
   }
 }
 
-function findNodePath(env: NodeJS.ProcessEnv, deps: Required<Pick<NpmLinkOrShimDeps, "commandPath" | "isExecutable">>): string | null {
+function findNodePath(
+  env: NodeJS.ProcessEnv,
+  deps: Required<Pick<NpmLinkOrShimDeps, "commandPath" | "isExecutable">>,
+): string | null {
   for (const candidate of [env.NEMOCLAW_NODE, env.NODE]) {
     if (candidate && deps.isExecutable(candidate)) return candidate;
   }
@@ -121,27 +128,27 @@ export function runNpmLinkOrShim(
 
   const logError = deps.logError ?? ((message: string) => console.error(message));
   const exists = deps.exists ?? ((filePath: string) => fs.existsSync(filePath));
-  const isExecutable = deps.isExecutable ?? ((filePath: string) => {
-    try {
-      fs.accessSync(filePath, fs.constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+  const isExecutable =
+    deps.isExecutable ??
+    ((filePath: string) => {
+      try {
+        fs.accessSync(filePath, fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   const readFile = deps.readFile ?? ((filePath: string) => fs.readFileSync(filePath, "utf-8"));
-  const writeFile = deps.writeFile ?? ((filePath: string, contents: string) => fs.writeFileSync(filePath, contents));
+  const writeFile =
+    deps.writeFile ??
+    ((filePath: string, contents: string) => fs.writeFileSync(filePath, contents));
   const mkdir = deps.mkdir ?? ((dir: string) => fs.mkdirSync(dir, { recursive: true }));
   const chmod = deps.chmod ?? ((filePath: string, mode: number) => fs.chmodSync(filePath, mode));
   const rename = deps.rename ?? ((from: string, to: string) => fs.renameSync(from, to));
   const unlink = deps.unlink ?? ((filePath: string) => fs.rmSync(filePath, { force: true }));
   const mktemp =
     deps.mktemp ??
-    ((dir: string) =>
-      path.join(
-        dir,
-        `nemoclaw.tmp.${process.pid}.${Date.now()}.${randomUUID()}`,
-      ));
+    ((dir: string) => path.join(dir, `nemoclaw.tmp.${process.pid}.${Date.now()}.${randomUUID()}`));
   const run = deps.run ?? defaultRun;
   const commandPath = deps.commandPath ?? defaultCommandPath;
 
@@ -156,7 +163,11 @@ export function runNpmLinkOrShim(
   const linkResult = run("npm", ["link"], { cwd: repoRoot, env: installEnv });
   if (linkResult.status === 0) return { status: 0 };
 
-  for (const line of formatNpmLinkFailure(`${linkResult.stdout}${linkResult.stderr}`, { home, repoRoot })) logError(line);
+  for (const line of formatNpmLinkFailure(`${linkResult.stdout}${linkResult.stderr}`, {
+    home,
+    repoRoot,
+  }))
+    logError(line);
 
   const nodePath = findNodePath(installEnv, { commandPath, isExecutable });
   if (!nodePath) {
@@ -168,7 +179,9 @@ export function runNpmLinkOrShim(
   if (exists(shimPath)) {
     const classification = classifyDevShim(safeRead(readFile, shimPath));
     if (classification === "foreign") {
-      logError(`[nemoclaw] ${shimPathDisplay} already exists and is not managed by NemoClaw; not overwriting.`);
+      logError(
+        `[nemoclaw] ${shimPathDisplay} already exists and is not managed by NemoClaw; not overwriting.`,
+      );
       logError("[nemoclaw] Move it aside and re-run 'npm install' to install the dev shim.");
       return { shimPath, status: 1 };
     }
@@ -183,7 +196,10 @@ export function runNpmLinkOrShim(
     rename(shimTmp, shimPath);
     shimTmp = null;
   } catch (error) {
-    const reason = error instanceof Error && "code" in error && typeof error.code === "string" ? ` (${error.code})` : "";
+    const reason =
+      error instanceof Error && "code" in error && typeof error.code === "string"
+        ? ` (${error.code})`
+        : "";
     logError(`[nemoclaw] shim creation failed${reason}; check permissions for ${shimDirDisplay}`);
     return { shimPath, status: 1 };
   } finally {
@@ -198,7 +214,7 @@ export function runNpmLinkOrShim(
   logError(`[nemoclaw] Created user-local shim at ${shimPathDisplay}`);
   if (!pathContainsDirectory(env.PATH, shimDir)) {
     logError(`[nemoclaw] ${shimDirDisplay} is not on PATH. Add it to your shell profile, e.g.:`);
-    logError('[nemoclaw]   echo \'export PATH="$HOME/.local/bin:$PATH"\' >> ~/.bashrc');
+    logError("[nemoclaw]   echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> ~/.bashrc");
   }
   return { shimPath, status: 0 };
 }

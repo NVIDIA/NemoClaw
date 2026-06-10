@@ -177,6 +177,44 @@ describe("runOnboardMachine", () => {
     expect(init).not.toHaveBeenCalled();
   });
 
+  it("stops before configured non-terminal states without requiring a handler", async () => {
+    const runtime = createRuntime();
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      stopStates: ["provider_selection"],
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => advanceTo("gateway"),
+        gateway: () => advanceTo("provider_selection"),
+      },
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+
+  it("stops between results from a multi-result handler", async () => {
+    const runtime = createRuntime();
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      stopStates: ["inference"],
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => advanceTo("gateway"),
+        gateway: () => advanceTo("provider_selection"),
+        provider_selection: () => [
+          advanceTo("inference", { metadata: { state: "provider_selection" } }),
+          advanceTo("sandbox", { metadata: { state: "inference" } }),
+        ],
+      },
+    });
+
+    expect(result.session.machine.state).toBe("inference");
+  });
+
   it("propagates runtime transition errors without updating context", async () => {
     const runtime = createRuntime();
     const updateContext = vi.fn(({ context }) => context);

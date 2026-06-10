@@ -45,11 +45,7 @@ esac
 }
 
 /** Execute the resolver in an isolated PATH with the fake dpkg shim first. */
-function runResolver(
-  availableVersions: string,
-  minVersion = "2026.5.1",
-  overrideVersion?: string,
-) {
+function runResolver(availableVersions: string, minVersion = "2026.5.1", overrideVersion?: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-resolver-"));
   const fakeBin = path.join(tmp, "bin");
   fs.mkdirSync(fakeBin);

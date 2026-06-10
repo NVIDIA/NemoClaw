@@ -68,17 +68,18 @@ describe("Slack token validation", () => {
     expect(fs.existsSync(configPath)).toBe(false);
   });
 
-  it.each(["invalid_auth", "token_revoked", "not_authed"])(
-    "rejects bot token error %s",
-    (error) => {
-      vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
+  it.each([
+    "invalid_auth",
+    "token_revoked",
+    "not_authed",
+  ])("rejects bot token error %s", (error) => {
+    vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
 
-      const result = validateSlackBotToken("xoxb-bad-bot");
+    const result = validateSlackBotToken("xoxb-bad-bot");
 
-      expect(result).toMatchObject({ ok: false, kind: "rejected", tokenKind: "bot", error });
-      if (!result.ok) expect(result.message).toContain(error);
-    },
-  );
+    expect(result).toMatchObject({ ok: false, kind: "rejected", tokenKind: "bot", error });
+    if (!result.ok) expect(result.message).toContain(error);
+  });
 
   it("validates app tokens with apps.connections.open", () => {
     vi.mocked(runCurlProbe).mockReturnValue(
@@ -90,22 +91,21 @@ describe("Slack token validation", () => {
     expect(curlArgs().join("\n")).not.toContain("xapp-valid-app");
   });
 
-  it.each(["invalid_auth", "missing_scope", "not_allowed_token_type"])(
-    "rejects app token error %s",
-    (error) => {
-      vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
+  it.each([
+    "invalid_auth",
+    "missing_scope",
+    "not_allowed_token_type",
+  ])("rejects app token error %s", (error) => {
+    vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
 
-      const result = validateSlackAppToken("xapp-bad-app");
+    const result = validateSlackAppToken("xapp-bad-app");
 
-      expect(result).toMatchObject({ ok: false, kind: "rejected", tokenKind: "app", error });
-      if (!result.ok) expect(result.message).toContain(error);
-    },
-  );
+    expect(result).toMatchObject({ ok: false, kind: "rejected", tokenKind: "app", error });
+    if (!result.ok) expect(result.message).toContain(error);
+  });
 
   it("returns the first rejected credential when validating a bot/app pair", () => {
-    vi.mocked(runCurlProbe).mockReturnValue(
-      probe('{"ok":false,"error":"invalid_auth"}'),
-    );
+    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":false,"error":"invalid_auth"}'));
 
     expect(
       validateSlackCredentials({ botToken: "xoxb-bad-bot", appToken: "xapp-not-checked" }),
@@ -139,21 +139,19 @@ describe("Slack token validation", () => {
     expect(vi.mocked(runCurlProbe)).not.toHaveBeenCalled();
   });
 
-  it.each(["ratelimited", "request_timeout"])(
-    "treats documented transient Slack API error %s as indeterminate",
-    (error) => {
-      vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
+  it.each([
+    "ratelimited",
+    "request_timeout",
+  ])("treats documented transient Slack API error %s as indeterminate", (error) => {
+    vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
 
-      const result = validateSlackBotToken("xoxb-transient-bot");
+    const result = validateSlackBotToken("xoxb-transient-bot");
 
-      expect(result).toMatchObject({ ok: false, kind: "indeterminate", error });
-    },
-  );
+    expect(result).toMatchObject({ ok: false, kind: "indeterminate", error });
+  });
 
   it("does not treat undocumented Slack API errors as transient based only on the error body", () => {
-    vi.mocked(runCurlProbe).mockReturnValue(
-      probe('{"ok":false,"error":"internal_error"}'),
-    );
+    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":false,"error":"internal_error"}'));
 
     const result = validateSlackBotToken("xoxb-internal-error");
 
@@ -187,5 +185,4 @@ describe("Slack token validation", () => {
     expect(result).toMatchObject({ ok: false, kind: "indeterminate", tokenKind: "bot" });
     if (!result.ok) expect(result.message).not.toContain(token);
   });
-
 });

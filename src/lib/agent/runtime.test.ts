@@ -129,7 +129,9 @@ describe("buildRecoveryScript", () => {
     });
     expect(script).toContain(". /tmp/nemoclaw-proxy-env.sh");
     expect(script).toContain("/usr/local/bin/hermes");
-    expect(script).toContain('"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open');
+    expect(script).toContain(
+      '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open',
+    );
     expect(script).not.toContain("--tui");
   });
 

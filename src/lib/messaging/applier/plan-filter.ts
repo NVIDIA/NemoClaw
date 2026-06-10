@@ -7,13 +7,10 @@ import type {
   SandboxMessagingPlan,
 } from "../manifest";
 
-export function enabledPlanChannels(
-  plan: SandboxMessagingPlan,
-): SandboxMessagingChannelPlan[] {
+export function enabledPlanChannels(plan: SandboxMessagingPlan): SandboxMessagingChannelPlan[] {
   const disabled = disabledPlanChannelIds(plan);
   return plan.channels.filter(
-    (channel) =>
-      channel.active && !channel.disabled && !disabled.has(channel.channelId),
+    (channel) => channel.active && !channel.disabled && !disabled.has(channel.channelId),
   );
 }
 
