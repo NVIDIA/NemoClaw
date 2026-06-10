@@ -335,9 +335,21 @@ ws.on("open", async () => {
 
     const sentRuns = [];
     const messages = [
-      ["A2603", "A2603-REPLY", "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else."],
-      ["B2603", "B2603-REPLY", "B2603: Second task. Reply exactly B2603-REPLY and nothing else."],
-      ["C2603", "C2603-REPLY", "C2603: Third task. Reply exactly C2603-REPLY and nothing else."],
+      [
+        "A2603",
+        "A2603-REPLY",
+        "A2603: First task. Reply exactly A2603-REPLY and nothing else. Do not use tools.",
+      ],
+      [
+        "B2603",
+        "B2603-REPLY",
+        "B2603: Second task. Reply exactly B2603-REPLY and nothing else. Do not use tools.",
+      ],
+      [
+        "C2603",
+        "C2603-REPLY",
+        "C2603: Third task. Reply exactly C2603-REPLY and nothing else. Do not use tools.",
+      ],
     ];
 
     for (const [promptToken, replyToken, message] of messages) {
