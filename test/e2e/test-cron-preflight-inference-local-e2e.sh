@@ -170,6 +170,14 @@ PROBE_SRC=$(
   cat <<'PROBE_JS'
 const fs = require("node:fs");
 const path = require("node:path");
+const url = require("node:url");
+
+const AUDIT_CONTEXT = "cron-model-provider-preflight";
+const EXPORT_NAME = "preflightCronModelProvider";
+const DIST_ROOTS = [
+  "/usr/local/lib/node_modules/openclaw/dist",
+  "/usr/lib/node_modules/openclaw/dist",
+];
 
 function isManagedLocalProvider(provider) {
   if (!provider || typeof provider.baseUrl !== "string") return false;
@@ -181,21 +189,74 @@ function isManagedLocalProvider(provider) {
   }
 }
 
+function findPreflightModule(root) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!(full.endsWith(".js") || full.endsWith(".mjs") || full.endsWith(".cjs"))) continue;
+      let body;
+      try {
+        body = fs.readFileSync(full, "utf8");
+      } catch {
+        continue;
+      }
+      if (body.includes(AUDIT_CONTEXT) && body.includes(EXPORT_NAME)) {
+        return full;
+      }
+    }
+  }
+  return null;
+}
+
 (async () => {
-  const distRoot = "/usr/local/lib/node_modules/openclaw/dist";
-  const preflightModule = path.join(
-    distRoot,
-    "cron",
-    "isolated-agent",
-    "model-preflight.runtime.js",
-  );
-  if (!fs.existsSync(preflightModule)) {
-    console.error(JSON.stringify({ error: "preflight-module-missing", path: preflightModule }));
+  let target = null;
+  const scanned = [];
+  for (const root of DIST_ROOTS) {
+    if (!fs.existsSync(root)) continue;
+    scanned.push(root);
+    target = findPreflightModule(root);
+    if (target) break;
+  }
+  if (!target) {
+    console.error(JSON.stringify({ error: "preflight-source-not-found", scanned }));
     process.exit(3);
   }
-  const { preflightCronModelProvider } = require(preflightModule);
+
+  let mod;
+  try {
+    mod = await import(url.pathToFileURL(target).href);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        error: "preflight-import-threw",
+        target,
+        message: String(err && err.stack ? err.stack : err),
+      }),
+    );
+    process.exit(3);
+  }
+  const preflightCronModelProvider = mod[EXPORT_NAME];
   if (typeof preflightCronModelProvider !== "function") {
-    console.error(JSON.stringify({ error: "preflight-export-missing" }));
+    console.error(
+      JSON.stringify({
+        error: "preflight-export-missing",
+        target,
+        exports: Object.keys(mod),
+      }),
+    );
     process.exit(3);
   }
 
@@ -204,7 +265,9 @@ function isManagedLocalProvider(provider) {
   try {
     cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
   } catch (err) {
-    console.error(JSON.stringify({ error: "config-read-failed", configPath, message: String(err) }));
+    console.error(
+      JSON.stringify({ error: "config-read-failed", configPath, message: String(err) }),
+    );
     process.exit(3);
   }
 
@@ -228,10 +291,17 @@ function isManagedLocalProvider(provider) {
       provider: providerKey,
       model: modelKey,
     });
-    console.log(JSON.stringify({ providerKey, modelKey, baseUrl: providerCfg.baseUrl, result }));
+    console.log(
+      JSON.stringify({ providerKey, modelKey, baseUrl: providerCfg.baseUrl, target, result }),
+    );
     process.exit(result && result.status === "available" ? 0 : 1);
   } catch (err) {
-    console.error(JSON.stringify({ error: "preflight-threw", message: String(err && err.stack ? err.stack : err) }));
+    console.error(
+      JSON.stringify({
+        error: "preflight-threw",
+        message: String(err && err.stack ? err.stack : err),
+      }),
+    );
     process.exit(2);
   }
 })();
