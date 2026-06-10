@@ -21,6 +21,8 @@ const STACK_TRACE_PATTERNS = [/(^|\s)(TypeError|ReferenceError|SyntaxError):/m, 
 
 process.env.NEMOCLAW_CLI_BIN ??= path.join(REPO_ROOT, "bin", "nemoclaw.js");
 
+const liveTest = process.env.NEMOCLAW_RUN_E2E_SCENARIOS === "1" ? test : test.skip;
+
 function resultText(result: { stdout: string; stderr: string }): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -72,79 +74,77 @@ async function cleanupInvalidKeyState(host: HostCliClient, sandboxName: string):
   fs.rmSync(SESSION_FILE, { force: true });
 }
 
-test("onboard invalid NVIDIA key exits cleanly without a stack trace", async ({
-  artifacts,
-  cleanup,
-  host,
-  skip,
-}) => {
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "prereq-docker-info-onboard-invalid-key",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  if (docker.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required to reach the live onboard invalid-key validation path: ${resultText(docker)}`,
-      );
+liveTest(
+  "onboard invalid NVIDIA key exits cleanly without a stack trace",
+  async ({ artifacts, cleanup, host, skip }) => {
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "prereq-docker-info-onboard-invalid-key",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    if (docker.exitCode !== 0) {
+      if (process.env.GITHUB_ACTIONS === "true") {
+        throw new Error(
+          `Docker is required to reach the live onboard invalid-key validation path: ${resultText(docker)}`,
+        );
+      }
+      skip("Docker is required to reach the live onboard invalid-key validation path");
     }
-    skip("Docker is required to reach the live onboard invalid-key validation path");
-  }
 
-  expect(
-    fs.existsSync(CLI_DIST_ENTRYPOINT),
-    "run `npm run build:cli` before live repo CLI scenarios",
-  ).toBe(true);
+    expect(
+      fs.existsSync(CLI_DIST_ENTRYPOINT),
+      "run `npm run build:cli` before live repo CLI scenarios",
+    ).toBe(true);
 
-  const sandboxName = `e2e-invalid-key-${process.pid}`;
-  cleanup.add(`remove invalid-key onboard residue for ${sandboxName}`, async () => {
+    const sandboxName = `e2e-invalid-key-${process.pid}`;
+    cleanup.add(`remove invalid-key onboard residue for ${sandboxName}`, async () => {
+      await cleanupInvalidKeyState(host, sandboxName);
+    });
     await cleanupInvalidKeyState(host, sandboxName);
-  });
-  await cleanupInvalidKeyState(host, sandboxName);
 
-  await artifacts.writeJson("scenario.json", {
-    id: "onboard-invalid-nvidia-key",
-    runner: "vitest",
-    boundary: "direct-cli-onboard",
-    legacySource: "test/e2e/test-onboard-negative-paths.sh",
-    contract: [
-      "invalid NVIDIA key exits non-zero",
-      "invalid NVIDIA key message is explicit",
-      "invalid NVIDIA key path does not print a JavaScript stack trace",
-    ],
-  });
+    await artifacts.writeJson("scenario.json", {
+      id: "onboard-invalid-nvidia-key",
+      runner: "vitest",
+      boundary: "direct-cli-onboard",
+      legacySource: "test/e2e/test-onboard-negative-paths.sh",
+      contract: [
+        "invalid NVIDIA key exits non-zero",
+        "invalid NVIDIA key message is explicit",
+        "invalid NVIDIA key path does not print a JavaScript stack trace",
+      ],
+    });
 
-  const result = await host.nemoclaw(
-    ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
-    {
-      artifactName: "onboard-invalid-nvidia-key",
-      env: onboardEnv({
-        NEMOCLAW_SANDBOX_NAME: sandboxName,
-        NEMOCLAW_RECREATE_SANDBOX: "1",
-        NEMOCLAW_PROVIDER: "cloud",
-        NEMOCLAW_POLICY_MODE: "skip",
-        NVIDIA_API_KEY: INVALID_NVIDIA_API_KEY,
-      }),
-      redactionValues: [INVALID_NVIDIA_API_KEY],
-      timeoutMs: 5 * 60_000,
-    },
-  );
-  const text = resultText(result);
+    const result = await host.nemoclaw(
+      ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+      {
+        artifactName: "onboard-invalid-nvidia-key",
+        env: onboardEnv({
+          NEMOCLAW_SANDBOX_NAME: sandboxName,
+          NEMOCLAW_RECREATE_SANDBOX: "1",
+          NEMOCLAW_PROVIDER: "cloud",
+          NEMOCLAW_POLICY_MODE: "skip",
+          NVIDIA_API_KEY: INVALID_NVIDIA_API_KEY,
+        }),
+        redactionValues: [INVALID_NVIDIA_API_KEY],
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    const text = resultText(result);
 
-  expect(result.exitCode, text).not.toBe(0);
-  expect(text).toContain("Invalid NVIDIA API key");
-  expect(text).toContain("Must start with nvapi-");
-  expect(hasStackTrace(text), text).toBe(false);
+    expect(result.exitCode, text).not.toBe(0);
+    expect(text).toContain("Invalid NVIDIA API key");
+    expect(text).toContain("Must start with nvapi-");
+    expect(hasStackTrace(text), text).toBe(false);
 
-  await artifacts.writeJson("scenario-result.json", {
-    id: "onboard-invalid-nvidia-key",
-    exitCode: result.exitCode,
-    assertions: {
-      nonZeroExit: result.exitCode !== 0,
-      explicitMessage:
-        text.includes("Invalid NVIDIA API key") && text.includes("Must start with nvapi-"),
-      noStackTrace: !hasStackTrace(text),
-    },
-  });
-});
+    await artifacts.writeJson("scenario-result.json", {
+      id: "onboard-invalid-nvidia-key",
+      exitCode: result.exitCode,
+      assertions: {
+        nonZeroExit: result.exitCode !== 0,
+        explicitMessage:
+          text.includes("Invalid NVIDIA API key") && text.includes("Must start with nvapi-"),
+        noStackTrace: !hasStackTrace(text),
+      },
+    });
+  },
+);
