@@ -382,6 +382,71 @@ RUN set -eu; \
             patch_fail "Patch 4 cannot safely skip"; \
         fi; \
     fi; \
+    # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
+    # Reviewed against openclaw@2026.5.27 dist: the cron isolated-agent preflight \
+    # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
+    # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
+    # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
+    # Default STRICT mode pins DNS for the managed inference hostname \
+    # (`inference.local`), which is intentionally only resolvable through the \
+    # OpenShell L7 proxy — pinned `dns.lookup` therefore fails with EAI_AGAIN and \
+    # the scheduler permanently skips every cron run. Inject \
+    # `mode: "trusted_env_proxy"` so the call uses the env proxy dispatcher; SSRF \
+    # protection is retained through the existing hostname allowlist and the \
+    # proxy's own ACLs. \
+    # \
+    # The patch keys on the co-located shape of the reviewed preflight call: in \
+    # any file that mentions the audit context literal, both the \
+    # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
+    # builder must appear; the audit literal itself must appear exactly once; and \
+    # after patching exactly one patched literal must remain. Any ambiguous \
+    # multi-callsite or mixed patched/unpatched layout fails the image build \
+    # rather than silently widening the rewrite. \
+    # \
+    # Removal condition: drop this block (and any related `OC_VERSION` floor bump) \
+    # once an OpenClaw release sets `mode: "trusted_env_proxy"` directly at the \
+    # preflight call site or otherwise routes the managed inference base URL \
+    # through the env-proxy dispatcher by default. The reviewed shape lives at \
+    # `src/cron/isolated-agent/model-preflight.runtime.ts` in the openclaw repo. \
+    preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
+    if [ -n "$preflight_files" ]; then \
+        patched_preflight=0; \
+        for f in $preflight_files; do \
+            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            [ "${audit_count:-0}" -ge 1 ] \
+                || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
+            [ "${audit_count:-0}" -eq 1 ] \
+                || patch_fail "Patch 6 shape gate: $f has ${audit_count} auditContext literals (expected exactly 1); refusing ambiguous multi-callsite rewrite"; \
+            grep -Fq 'fetchWithSsrFGuard(' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
+            grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
+            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            if [ "${patched_count:-0}" -eq 1 ]; then \
+                echo "INFO: Patch 6 already present in $f"; \
+            elif [ "${patched_count:-0}" -eq 0 ]; then \
+                sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
+                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                [ "${new_patched_count:-0}" -eq 1 ] \
+                    || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
+                patched_preflight=1; \
+            else \
+                patch_fail "Patch 6 shape gate: $f has ${patched_count} already-patched literals (expected 0 or 1); refusing mixed-state rewrite"; \
+            fi; \
+        done; \
+        if [ "$patched_preflight" = "1" ]; then \
+            echo "INFO: Patch 6 applied to OpenClaw ${OC_VERSION} cron preflight trusted env-proxy"; \
+        fi; \
+    else \
+        preflight_refs="$(grep -RIlE --include='*.js' 'preflightCronModelProvider|probeLocalProviderEndpoint' "$OC_DIST" || true)"; \
+        if [ -z "$preflight_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no cron model-provider preflight; Patch 6 not needed"; \
+        else \
+            echo "ERROR: Patch 6 target missing but cron preflight references remain:" >&2; \
+            printf '%s\n' "$preflight_refs" | head -n 5 >&2; \
+            patch_fail "Patch 6 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
     # OpenClaw's install-safe-path and install-package-dir reject symlinked \
     # directories via lstat. Changing lstat → stat in these two modules lets \

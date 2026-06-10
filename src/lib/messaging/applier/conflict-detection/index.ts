@@ -6,4 +6,5 @@ export * from "./entries";
 export * from "./plan";
 export * from "./probe";
 export * from "./registry";
+export * from "./slack-socket-mode";
 export type * from "./types";
