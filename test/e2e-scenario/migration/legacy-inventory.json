@@ -267,6 +267,18 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
+      "legacyScript": "test/e2e/test-docker-unreachable-gateway-start.sh",
+      "domain": "sandbox-lifecycle",
+      "ownerIssue": "#4355",
+      "status": "retired",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "Replaced by focused Vitest caller-level coverage in test/onboard-gateway-docker-unreachable.test.ts plus helper-level coverage in src/lib/onboard/gateway-start-failure-integration.test.ts; legacy regression workflow lane removed in #5119.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "Former #2347 regression script. PR #5109 added helper-level coverage; PR #5119 adds caller-level PATH-shimmed startGateway coverage for exit 1, Docker recovery guidance, no health polling/status/info probes after gateway start, and no generic diagnostics/cleanup before deleting the shell script and regression-e2e lane. Issue #5113 re-scoped the final missing contract to this process-level assertion."
+    },
+    {
       "legacyScript": "test/e2e/test-docs-validation.sh",
       "domain": "support-diagnostics",
       "ownerIssue": "#4347",
