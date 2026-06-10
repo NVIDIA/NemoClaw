@@ -6,6 +6,25 @@ import type { TierDefinition } from "../policy/tiers";
 
 type PresetWithDescription = { name: string; description?: string };
 type PresetWithAccess = { name: string; access: string };
+type PolicyPromptInput = {
+  isTTY?: boolean;
+  on(event: "data", listener: (key: string) => void): unknown;
+  pause(): unknown;
+  removeListener(event: "data", listener: (key: string) => void): unknown;
+  resume(): unknown;
+  setEncoding(encoding: BufferEncoding): unknown;
+  setRawMode(mode: boolean): unknown;
+  ref?: () => void;
+  unref?: () => void;
+};
+type PolicyPromptOutput = {
+  isTTY?: boolean;
+  write(chunk: string): unknown;
+};
+type PolicyPromptProcessEvents = {
+  once(event: "SIGTERM", listener: () => void): unknown;
+  removeListener(event: "SIGTERM", listener: () => void): unknown;
+};
 
 export interface PolicySelectionPromptDeps {
   tiers: {
@@ -25,6 +44,9 @@ export interface PolicySelectionPromptDeps {
   ): () => void;
   sandboxCancelRollback: Pick<SandboxCancelRollback, "markCancelled">;
   useColor: boolean;
+  stdin?: PolicyPromptInput;
+  stdout?: PolicyPromptOutput;
+  processEvents?: PolicyPromptProcessEvents;
 }
 
 export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDeps): {
@@ -50,6 +72,9 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     sandboxCancelRollback,
     useColor,
   } = deps;
+  const stdin = deps.stdin ?? process.stdin;
+  const stdout = deps.stdout ?? process.stdout;
+  const processEvents = deps.processEvents ?? process;
 
   /**
    * Prompt the user to select a policy tier (restricted / balanced / open).
@@ -75,7 +100,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     const RADIO_OFF = useColor ? "\x1b[2m[ ]\x1b[0m" : "[ ]";
 
     // ── Fallback: non-TTY ─────────────────────────────────────────────
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (!stdin.isTTY || !stdout.isTTY) {
       console.log("");
       console.log("  Policy tier — controls which network presets are enabled:");
       allTiers.forEach((tier) => {
@@ -119,44 +144,44 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       return lines;
     };
 
-    process.stdout.write("\n");
+    stdout.write("\n");
     const initial = renderLines();
-    for (const line of initial) process.stdout.write(`${line}\n`);
+    for (const line of initial) stdout.write(`${line}\n`);
     let lineCount = initial.length;
 
     const redraw = () => {
-      process.stdout.write(`\x1b[${lineCount}A`);
+      stdout.write(`\x1b[${lineCount}A`);
       const lines = renderLines();
-      for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+      for (const line of lines) stdout.write(`\r\x1b[2K${line}\n`);
       lineCount = lines.length;
     };
 
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding("utf8");
+    if (typeof stdin.ref === "function") stdin.ref();
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
 
     return new Promise<string>((resolve) => {
       const cleanup = () => {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
+        stdin.setRawMode(false);
+        stdin.pause();
         // Symmetric with the ref() at the entry; lets the wizard exit
         // naturally if this is the last prompt.
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-        process.stdin.removeListener("data", onData);
-        process.removeListener("SIGTERM", onSigterm);
+        if (typeof stdin.unref === "function") stdin.unref();
+        stdin.removeListener("data", onData);
+        processEvents.removeListener("SIGTERM", onSigterm);
       };
 
       const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-      process.once("SIGTERM", onSigterm);
+      processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
         if (key === "\r" || key === "\n") {
           cleanup();
-          process.stdout.write("\n");
+          stdout.write("\n");
           resolve(allTiers[selectedIdx].name);
         } else if (key === " ") {
           selectedIdx = cursor;
@@ -172,7 +197,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         }
       };
 
-      process.stdin.on("data", onData);
+      stdin.on("data", onData);
     });
   }
 
@@ -239,7 +264,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     }
 
     // ── Fallback: non-TTY ─────────────────────────────────────────────
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (!stdin.isTTY || !stdout.isTTY) {
       console.log("");
       console.log(label);
       ordered.forEach((preset) => {
@@ -295,44 +320,44 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
       return lines;
     };
 
-    process.stdout.write("\n");
+    stdout.write("\n");
     const initial = renderLines();
-    for (const line of initial) process.stdout.write(`${line}\n`);
+    for (const line of initial) stdout.write(`${line}\n`);
     let lineCount = initial.length;
 
     const redraw = () => {
-      process.stdout.write(`\x1b[${lineCount}A`);
+      stdout.write(`\x1b[${lineCount}A`);
       const lines = renderLines();
-      for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+      for (const line of lines) stdout.write(`\r\x1b[2K${line}\n`);
       lineCount = lines.length;
     };
 
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding("utf8");
+    if (typeof stdin.ref === "function") stdin.ref();
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
 
     return new Promise<PresetWithAccess[]>((resolve) => {
       const cleanup = () => {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
+        stdin.setRawMode(false);
+        stdin.pause();
         // Symmetric with the ref() at the entry; lets the wizard exit
         // naturally if this is the last prompt.
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-        process.stdin.removeListener("data", onData);
-        process.removeListener("SIGTERM", onSigterm);
+        if (typeof stdin.unref === "function") stdin.unref();
+        stdin.removeListener("data", onData);
+        processEvents.removeListener("SIGTERM", onSigterm);
       };
 
       const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-      process.once("SIGTERM", onSigterm);
+      processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
         if (key === "\r" || key === "\n") {
           cleanup();
-          process.stdout.write("\n");
+          stdout.write("\n");
           resolve(
             ordered
               .filter((preset) => included.has(preset.name))
@@ -365,7 +390,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         }
       };
 
-      process.stdin.on("data", onData);
+      stdin.on("data", onData);
     });
   }
 
@@ -390,7 +415,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     const GREEN_CHECK = useColor ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
 
     // ── Fallback: non-TTY or redirected stdout (piped input) ──────────
-    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    if (!stdin.isTTY || !stdout.isTTY) {
       console.log("");
       console.log("  Available policy presets:");
       allPresets.forEach((preset) => {
@@ -441,44 +466,44 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
     };
 
     // Initial paint
-    process.stdout.write("\n");
+    stdout.write("\n");
     const initial = renderLines();
-    for (const line of initial) process.stdout.write(`${line}\n`);
+    for (const line of initial) stdout.write(`${line}\n`);
     let lineCount = initial.length;
 
     const redraw = () => {
-      process.stdout.write(`\x1b[${lineCount}A`);
+      stdout.write(`\x1b[${lineCount}A`);
       const lines = renderLines();
-      for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
+      for (const line of lines) stdout.write(`\r\x1b[2K${line}\n`);
       lineCount = lines.length;
     };
 
     // Re-attach stdin to the event loop. A prior prompt cleanup may have
     // unref'd it (sticky), and resume() alone would leave the raw-mode read
     // detached from the loop.
-    if (typeof process.stdin.ref === "function") process.stdin.ref();
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding("utf8");
+    if (typeof stdin.ref === "function") stdin.ref();
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding("utf8");
 
     return new Promise<string[]>((resolve) => {
       const cleanup = () => {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
+        stdin.setRawMode(false);
+        stdin.pause();
         // Symmetric with the ref() at the entry; lets the wizard exit
         // naturally if this is the last prompt.
-        if (typeof process.stdin.unref === "function") process.stdin.unref();
-        process.stdin.removeListener("data", onData);
-        process.removeListener("SIGTERM", onSigterm);
+        if (typeof stdin.unref === "function") stdin.unref();
+        stdin.removeListener("data", onData);
+        processEvents.removeListener("SIGTERM", onSigterm);
       };
 
       const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-      process.once("SIGTERM", onSigterm);
+      processEvents.once("SIGTERM", onSigterm);
 
       const onData = (key: string) => {
         if (key === "\r" || key === "\n") {
           cleanup();
-          process.stdout.write("\n");
+          stdout.write("\n");
           resolve([...selected]);
         } else if (key === "\x03") {
           makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
@@ -502,7 +527,7 @@ export function createPolicySelectionPromptHelpers(deps: PolicySelectionPromptDe
         }
       };
 
-      process.stdin.on("data", onData);
+      stdin.on("data", onData);
     });
   }
 
