@@ -16,9 +16,9 @@
  * rest of this PR.
  *
  * Pattern source-of-truth: src/lib/security/secret-patterns.ts. We
- * import the canonical regex sets and apply them here so fixture-layer
- * redaction stays in lockstep with product-runtime redaction without
- * coupling the fixture layer to product runtime modules.
+ * mirror the canonical regex sources here (validated by parity tests) so
+ * fixture-layer redaction stays in lockstep with product-runtime redaction
+ * without coupling the fixture layer to product runtime modules.
  *
  * Tests:
  *   test/e2e-scenario/support-tests/e2e-redaction-entry.test.ts

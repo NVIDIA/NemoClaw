@@ -26,6 +26,7 @@ interface RootConfig {
 
 const INSTALLER_INTEGRATION_TESTS = [
   "test/install-preflight.test.ts",
+  "test/install-preflight-docker-bootstrap.test.ts",
   "test/install-openshell-version-check.test.ts",
 ];
 const LIVE_E2E_SCENARIO_TESTS = ["test/e2e-scenario/live/**/*.test.ts"];
