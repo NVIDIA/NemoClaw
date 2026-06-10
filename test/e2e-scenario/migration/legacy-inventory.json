@@ -580,7 +580,9 @@
       "ownerIssue": "#4347",
       "status": "bridge-probe",
       "targetVitestScenarios": [],
-      "bridgeProbes": [],
+      "bridgeProbes": [
+        "test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts"
+      ],
       "retiredReason": "",
       "deletionReady": false,
       "notes": "Migration in progress: free-standing live test at test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts; bash wrapper retained until soak (#5049 partial-migration pattern)."
