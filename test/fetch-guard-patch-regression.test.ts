@@ -1316,13 +1316,10 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       );
       const patched = fs.readFileSync(preflightPath, "utf-8");
       expect(
-        patched.match(
-          /mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"/g,
-        )?.length,
+        patched.match(/mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"/g)
+          ?.length,
       ).toBe(1);
-      expect(patched).not.toMatch(
-        /(?<!_proxy", )auditContext: "cron-model-provider-preflight"/,
-      );
+      expect(patched).not.toMatch(/(?<!_proxy", )auditContext: "cron-model-provider-preflight"/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1375,9 +1372,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     try {
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status).toBe(1);
-      expect(patch.stderr).toContain(
-        "Patch 6 shape gate: ",
-      );
+      expect(patch.stderr).toContain("Patch 6 shape gate: ");
       expect(patch.stderr).toContain("no fetchWithSsrFGuard call");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
