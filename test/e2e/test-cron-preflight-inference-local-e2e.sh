@@ -19,7 +19,6 @@
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-cron-preflight)
 #   NEMOCLAW_RECREATE_SANDBOX=1            — destroy + recreate if exists
 #   NEMOCLAW_CRON_PREFLIGHT_MODEL          — cloud model (default: nvidia/nemotron-3-super-120b-a12b)
-#   NEMOCLAW_CRON_PREFLIGHT_WAIT           — --wait-timeout for cron run (default: 90s)
 #   NEMOCLAW_CRON_PREFLIGHT_KEEP=1         — keep the sandbox after the test for inspection
 #
 # Usage:
@@ -74,7 +73,6 @@ cd "$REPO" || {
 E2E_DIR="${REPO}/test/e2e"
 SANDBOX="${NEMOCLAW_SANDBOX_NAME:-e2e-cron-preflight}"
 MODEL="${NEMOCLAW_CRON_PREFLIGHT_MODEL:-nvidia/nemotron-3-super-120b-a12b}"
-WAIT_TIMEOUT="${NEMOCLAW_CRON_PREFLIGHT_WAIT:-90s}"
 INSTALL_LOG="/tmp/nemoclaw-e2e-cron-preflight-install.log"
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -153,70 +151,121 @@ command -v nemoclaw >/dev/null 2>&1 || {
 
 register_sandbox_for_teardown "$SANDBOX"
 
-# Run an openclaw command inside the sandbox with the runtime shell env
-# (/tmp/nemoclaw-proxy-env.sh) sourced first. The non-interactive `exec`
-# path bypasses the system-wide shell hook that sources this file on login,
-# leaving OPENCLAW_GATEWAY_TOKEN unset and forcing the call into a fresh
-# baseline-scope device pair — so privileged operations like `cron add`
-# trip a scope-upgrade approval that never completes in CI. Sourcing it
-# explicitly hands the call the admin token (mirrors connect-shell).
-sandbox_openclaw() {
-  nemoclaw "$SANDBOX" exec -- \
-    sh -c '. /tmp/nemoclaw-proxy-env.sh && exec openclaw "$@"' \
-    nemoclaw-openclaw "$@"
+# ── Probe the cron preflight directly ──
+#
+# The cron CLI surfaces (`openclaw cron add` / `openclaw cron run`) require
+# `operator.admin` scope, which the in-sandbox auto-pair approval sweep
+# deliberately excludes from its allowlist. There is no declarative way for
+# an external CLI to call those RPCs without an interactive scope-upgrade
+# approval, which is plumbing noise for what this test is actually checking.
+#
+# Patch 6 only changes the `fetchWithSsrFGuard` call inside
+# `probeLocalProviderEndpoint`. Invoke that function directly via a node
+# script loaded from the in-sandbox OpenClaw dist instead: the probe asserts
+# the same behaviour (managed inference base URL reachable from cron
+# preflight) without any gateway, scheduler, or device pairing involvement.
+section "Probe cron preflight against managed inference base URL"
+
+PROBE_SRC=$(
+  cat <<'PROBE_JS'
+const fs = require("node:fs");
+const path = require("node:path");
+
+function isManagedLocalProvider(provider) {
+  if (!provider || typeof provider.baseUrl !== "string") return false;
+  try {
+    const host = new URL(provider.baseUrl).hostname.toLowerCase();
+    return host.endsWith(".local") || host === "localhost" || host === "127.0.0.1";
+  } catch {
+    return false;
+  }
 }
 
-# ── Schedule cron job ──
-section "Schedule isolated agentTurn cron job"
-JOB_NAME="preflight-$(date +%s)"
-ADD_OUT="$(sandbox_openclaw cron add \
-  --name "$JOB_NAME" \
-  --agent main \
-  --session isolated \
-  --every 12h \
-  --message "Reply with the single word: ok." \
-  --keep-after-run \
-  --json 2>&1)"
-ADD_RC=$?
-if [ "$ADD_RC" -ne 0 ]; then
-  fail "cron add exited $ADD_RC"
-  printf '%s\n' "$ADD_OUT" | sed 's/^/    /'
-  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
-  exit 1
-fi
+(async () => {
+  const distRoot = "/usr/local/lib/node_modules/openclaw/dist";
+  const preflightModule = path.join(
+    distRoot,
+    "cron",
+    "isolated-agent",
+    "model-preflight.runtime.js",
+  );
+  if (!fs.existsSync(preflightModule)) {
+    console.error(JSON.stringify({ error: "preflight-module-missing", path: preflightModule }));
+    process.exit(3);
+  }
+  const { preflightCronModelProvider } = require(preflightModule);
+  if (typeof preflightCronModelProvider !== "function") {
+    console.error(JSON.stringify({ error: "preflight-export-missing" }));
+    process.exit(3);
+  }
 
-JOB_ID="$(printf '%s' "$ADD_OUT" | jq -r '.id // empty' 2>/dev/null || true)"
-if [ -z "$JOB_ID" ]; then
-  fail "cron add returned no id"
-  printf '%s\n' "$ADD_OUT" | sed 's/^/    /'
-  echo "  Total: $TOTAL  Pass: $PASS  Fail: $FAIL  Skip: $SKIP"
-  exit 1
-fi
-pass "scheduled job $JOB_NAME ($JOB_ID)"
+  const configPath = process.env.OPENCLAW_CONFIG_PATH || "/sandbox/.openclaw/openclaw.json";
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch (err) {
+    console.error(JSON.stringify({ error: "config-read-failed", configPath, message: String(err) }));
+    process.exit(3);
+  }
 
-# ── Force-trigger + wait ──
-section "Force-trigger and wait"
-RUN_OUT="$(sandbox_openclaw cron run "$JOB_ID" \
-  --wait --wait-timeout "$WAIT_TIMEOUT" --json 2>&1)"
-RUN_RC=$?
-info "raw cron run output (rc=$RUN_RC):"
-printf '%s\n' "$RUN_OUT" | sed 's/^/    /'
+  const providers = (cfg.models && cfg.models.providers) || {};
+  const providerKey = Object.keys(providers).find((key) => isManagedLocalProvider(providers[key]));
+  if (!providerKey) {
+    console.error(
+      JSON.stringify({ error: "no-managed-local-provider", providers: Object.keys(providers) }),
+    );
+    process.exit(3);
+  }
+  const providerCfg = providers[providerKey];
+  const modelKey =
+    providerCfg.defaultModel ||
+    (Array.isArray(providerCfg.models) ? providerCfg.models[0] : undefined) ||
+    "ping";
 
-STATUS="$(printf '%s' "$RUN_OUT" | jq -r '.run.status // .status // empty' 2>/dev/null || true)"
-REASON="$(printf '%s' "$RUN_OUT" | jq -r '.run.reason // .reason // ""' 2>/dev/null || true)"
+  try {
+    const result = await preflightCronModelProvider({
+      cfg,
+      provider: providerKey,
+      model: modelKey,
+    });
+    console.log(JSON.stringify({ providerKey, modelKey, baseUrl: providerCfg.baseUrl, result }));
+    process.exit(result && result.status === "available" ? 0 : 1);
+  } catch (err) {
+    console.error(JSON.stringify({ error: "preflight-threw", message: String(err && err.stack ? err.stack : err) }));
+    process.exit(2);
+  }
+})();
+PROBE_JS
+)
+PROBE_B64="$(printf '%s' "$PROBE_SRC" | base64 -w 0)"
 
-# ── Assertions ──
+PROBE_OUT="$(nemoclaw "$SANDBOX" exec -- sh -c "
+. /tmp/nemoclaw-proxy-env.sh
+__probe=\"\$(mktemp /tmp/nemoclaw-preflight-probe.XXXXXX.cjs)\"
+printf %s '$PROBE_B64' | base64 -d > \"\$__probe\"
+node \"\$__probe\"
+__rc=\$?
+rm -f \"\$__probe\"
+exit \"\$__rc\"
+" 2>&1)"
+PROBE_RC=$?
+info "preflight probe output (rc=$PROBE_RC):"
+printf '%s\n' "$PROBE_OUT" | sed 's/^/    /'
+
+STATUS="$(printf '%s' "$PROBE_OUT" | jq -r 'select(.result) | .result.status // empty' 2>/dev/null || true)"
+REASON="$(printf '%s' "$PROBE_OUT" | jq -r 'select(.result) | .result.reason // ""' 2>/dev/null || true)"
+
 section "Assertions"
-if printf '%s' "$REASON" | grep -qi "EAI_AGAIN"; then
+if [ "$PROBE_RC" -ge 2 ]; then
+  fail "probe harness failed (rc=$PROBE_RC); preflight did not run"
+elif printf '%s' "$REASON" | grep -qi "EAI_AGAIN"; then
   fail "preflight raised EAI_AGAIN; reason='$REASON'"
 elif printf '%s' "$REASON" | grep -qi "local provider endpoint is not reachable"; then
   fail "preflight reported endpoint unreachable; reason='$REASON'"
-elif [ "$STATUS" = "skipped" ]; then
-  fail "cron run reported status=skipped; reason='$REASON'"
-elif [ "$STATUS" = "ok" ]; then
-  pass "cron run status=ok"
+elif [ "$STATUS" = "available" ]; then
+  pass "preflight status=available"
 else
-  fail "unexpected cron run status='$STATUS' rc=$RUN_RC reason='$REASON'"
+  fail "unexpected probe status='$STATUS' rc=$PROBE_RC reason='$REASON'"
 fi
 
 section "Summary"
