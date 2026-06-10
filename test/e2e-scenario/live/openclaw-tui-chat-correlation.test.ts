@@ -10,14 +10,15 @@
  *
  *   1. Onboards a fresh cloud OpenClaw sandbox (test-cloud-onboard-e2e.sh).
  *   2. Asserts `openclaw --version` reports the pinned 2026.5.27 build —
- *      the version where #2603 (TUI message disappears after reconnect)
- *      and #3145 (rapid sequential messages duplicate / arrive out of
- *      order) are reproducible.
+ *      the regression-guard version currently carried by the legacy
+ *      workflow after the upstream OpenClaw fix was consumed.
  *   3. Runs `test/openclaw-tui-chat-correlation.test.ts` with
  *      `NEMOCLAW_ISSUE_2603_LIVE=1`, which uploads a websocket repro
  *      driver into the sandbox, replays the three-prompt sequence
- *      against the in-sandbox OpenClaw gateway, and asserts ordered,
- *      non-empty, correlated replies plus ordered, non-duplicated user turns.
+ *      against the in-sandbox OpenClaw gateway, and asserts the protocol
+ *      and history subset: ordered, non-empty, correlated replies plus
+ *      ordered, non-duplicated user turns. It does not claim TUI rendering
+ *      coverage for pending indicators or visible tool-call status.
  *
  * This file ports the live block (the `it.runIf(NEMOCLAW_ISSUE_2603_LIVE)`
  * case) into the typed scenario framework. The three host-side unit
@@ -52,10 +53,11 @@ const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-openclaw-tui-corr";
 
-// The legacy bash script pins 2026.5.27 because that build reproduces
-// #2603 + #3145. Override via env so a future bump (after the OpenClaw
-// fix lands) doesn't require a code edit to point at the next pinned
-// version under regression test.
+// The legacy bash script currently pins 2026.5.27 as the post-fix
+// regression-guard version for #2603 + #3145. Historical buggy builds
+// were older; this live guard asserts the fixed protocol/history contract
+// stays stable on the pinned OpenClaw carried by the retained bash lane.
+// Override via env so future pin bumps do not require a code edit.
 const EXPECTED_OPENCLAW_VERSION =
   process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.5.27";
 
@@ -266,7 +268,8 @@ const WebSocket = openClawRequire("ws");
 
 const token = process.argv[2];
 const sessionKey = process.argv[3];
-const ws = new WebSocket("ws://127.0.0.1:18789/ws", { headers: { Origin: "http://127.0.0.1:18789" } });
+const gatewayPort = process.env.ISSUE2603_GATEWAY_PORT || "18789";
+const ws = new WebSocket("ws://127.0.0.1:" + gatewayPort + "/ws", { headers: { Origin: "http://127.0.0.1:" + gatewayPort } });
 const events = [];
 const pending = new Map();
 let requestId = 0;
@@ -435,7 +438,7 @@ async function runLiveIssue2603Repro(
       "JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json','utf8')).gateway?.auth?.token||''";
     const driver = await sandbox.execShell(
       sandboxName,
-      `TOKEN=$(node -e "console.log(${tokenExpression})"); node ${remoteScript} "$TOKEN" ${sessionKey}`,
+      `TOKEN=$(node -e "console.log(${tokenExpression})"); ISSUE2603_GATEWAY_PORT=${SANDBOX_GATEWAY_PORT} node ${remoteScript} "$TOKEN" ${sessionKey}`,
       {
         artifactName: "live-issue2603-repro",
         env: buildAvailabilityProbeEnv(),
@@ -544,9 +547,11 @@ test(
       2,
     );
 
-    // #2603 contract — every submitted run produces a non-empty final,
-    // every reply correlates to the run that accepted the prompt, and
-    // the observed user turns remain in submitted A/B/C order.
+    // #2603 protocol/history subset — every submitted run produces a
+    // non-empty final, every reply correlates to the run that accepted
+    // the prompt, and observed user turns remain in submitted A/B/C order.
+    // TUI rendering indicators and visible tool-call status are covered
+    // outside this websocket-level migration.
     expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
     expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
     expect(analysis.userTurnOrder, failureSummary).toEqual(

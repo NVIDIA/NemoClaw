@@ -209,10 +209,12 @@ jobs:
 
   # Migrated from test/e2e/test-openclaw-tui-chat-correlation.sh per the
   # #5098 epic (#5049 free-standing pattern, #4347 owner issue). Drives a
-  # real cloud OpenClaw sandbox via openshell + websocket; targets the
-  # #2603 + #3145 chat-correlation regressions on the pinned 2026.5.27
-  # OpenClaw build. Bash workflow remains in nightly-e2e.yaml until soak.
+  # real cloud OpenClaw sandbox via openshell + websocket and asserts the
+  # protocol/history subset of the #2603 + #3145 chat-correlation contract
+  # on the pinned OpenClaw regression-guard build. TUI rendering indicators
+  # and visible tool-call status remain out of scope for this websocket guard.
   openclaw-tui-chat-correlation-vitest:
+    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -264,9 +266,10 @@ jobs:
 
       - name: Run OpenClaw TUI chat correlation live test
         # Onboards a fresh cloud OpenClaw sandbox, asserts the pinned
-        # 2026.5.27 version, drives the websocket repro, and asserts the
-        # #2603 + #3145 correlation contract. Mirrors the legacy
-        # openclaw-tui-chat-correlation-e2e job in nightly-e2e.yaml.
+        # regression-guard version, drives the websocket repro, and asserts
+        # protocol/history ordering and correlation for #2603 + #3145.
+        # TUI rendering indicators and visible tool-call status are outside
+        # this websocket guard's scope.
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
