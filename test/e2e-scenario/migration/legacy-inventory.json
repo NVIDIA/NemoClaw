@@ -492,6 +492,23 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
+      "legacyScript": "test/e2e/test-onboard-inference-smoke.sh",
+      "domain": "inference",
+      "ownerIssue": "#4349",
+      "status": "retired",
+      "targetVitestScenarios": [
+        "test/onboard-inference-smoke.test.ts"
+      ],
+      "bridgeProbes": [],
+      "retiredReason": "Caller-level mock-driven setupInference() guard replaced directly by focused Vitest coverage per #5119 pattern; not a scenario-framework migration target.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "replacementLane": "Default PR CI cli-test-shards / npm test Vitest lane runs test/onboard-inference-smoke.test.ts after npm run build:cli produces dist/lib/onboard.js.",
+      "runnerAndSecretsEvidence": "Legacy lane used ubuntu-latest, Node 22, NEMOCLAW_NON_INTERACTIVE, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE, and no real provider secrets. The replacement subprocess test runs in the standard Node/Vitest PR lane, sets the same non-interactive/third-party env contract in-process, injects BROKEN_API_KEY as a fake local credential, and requires no repository secrets.",
+      "artifactEvidence": "Legacy artifacts uploaded shell/node logs and trace directories on failure. The replacement Vitest assertion failure includes captured stdout/stderr plus the fake curl probe log, preserving provider/model/API-base/credential/upstream-503 evidence without a separate workflow artifact.",
+      "notes": "Replaced by test/onboard-inference-smoke.test.ts. The Vitest subprocess stubs OpenShell and curl, proves setupInference probes /chat/completions, fails closed on upstream HTTP 503, surfaces provider/model/API base/credential diagnostics, and does not print route success after smoke failure. Legacy bash job removed from regression-e2e.yaml. Refs #3253, #4349, #5098, #5119."
+    },
+    {
       "legacyScript": "test/e2e/test-onboard-negative-paths.sh",
       "domain": "smoke-onboarding",
       "ownerIssue": "#4348",

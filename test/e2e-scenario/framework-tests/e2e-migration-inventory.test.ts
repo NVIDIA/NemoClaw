@@ -164,7 +164,11 @@ describe("E2E migration inventory deletion gates", () => {
     for (const entry of inventory.entries) {
       expect(statuses.has(entry.status)).toBe(true);
       expect(entry.legacyScript).not.toBe("");
-      expect(repoPathExists(entry.legacyScript)).toBe(true);
+      if (entry.status === "retired" && entry.deletionReady) {
+        expect(repoPathExists(entry.legacyScript)).toBe(false);
+      } else {
+        expect(repoPathExists(entry.legacyScript)).toBe(true);
+      }
       expect(legacyScripts.has(entry.legacyScript)).toBe(false);
       legacyScripts.add(entry.legacyScript);
       expect(entry.domain).not.toBe("");
@@ -188,6 +192,7 @@ describe("E2E migration inventory deletion gates", () => {
   it("covers every current direct legacy shell entrypoint", () => {
     const inventory = loadInventory();
     const inventoriedShellScripts = inventory.entries
+      .filter((entry) => !(entry.status === "retired" && entry.deletionReady))
       .map((entry) => entry.legacyScript)
       .filter((legacyScript) => /^test\/e2e\/test-.+\.sh$/.test(legacyScript))
       .sort();
