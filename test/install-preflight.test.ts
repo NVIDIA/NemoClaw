@@ -3192,7 +3192,9 @@ exit 99
 
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Docker is reachable even though user 'alice' is not in the docker group/);
+    expect(output).toMatch(
+      /Docker is reachable even though user 'alice' is not in the docker group/,
+    );
     expect(output).toMatch(/DOCKER_HOST/);
     expect(output).toMatch(/660 root docker \/var\/run\/docker\.sock/);
     expect(output).not.toMatch(/newgrp docker/);
