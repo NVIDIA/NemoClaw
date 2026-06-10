@@ -423,6 +423,36 @@ send(JSON.stringify({
   messages: [{ role: 'user', content: 'hi' }],
   tools: [{ type: 'function', function: { name: 'write_file', parameters: {} } }],
 }));
+// case 9: Ultra 550B with bare 'write'/'edit'/'notebook_edit' (mirrors
+// nemoclaw/src/index.ts:WRITE_TOOL_NAMES) — expect NO injection
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [
+    { type: 'function', function: { name: 'write', parameters: {} } },
+    { type: 'function', function: { name: 'edit', parameters: {} } },
+    { type: 'function', function: { name: 'notebook_edit', parameters: {} } },
+  ],
+}));
+// case 10: Ultra 550B with compact-catalog tool_call wrapper — expect NO
+// injection because tool_call can dispatch to real exec/write tools.
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [
+    { type: 'function', function: { name: 'tool_search', parameters: {} } },
+    { type: 'function', function: { name: 'tool_describe', parameters: {} } },
+    { type: 'function', function: { name: 'tool_call', parameters: {} } },
+  ],
+}));
+// case 11: top-level tool.name shape (no nested .function) — CodeRabbit nit.
+// Some callers send { name, parameters } at the top level instead of the
+// OpenAI nested function shape.
+send(JSON.stringify({
+  model: 'nvidia/nemotron-3-ultra-550b-a55b',
+  messages: [{ role: 'user', content: 'hi' }],
+  tools: [{ name: 'bash_execute', parameters: {} }],
+}));
 console.log(JSON.stringify(records));
 `;
 
@@ -432,7 +462,7 @@ console.log(JSON.stringify(records));
     });
     expect(result.status, result.stderr).toBe(0);
     const records = JSON.parse(result.stdout.trim());
-    expect(records).toHaveLength(9);
+    expect(records).toHaveLength(12);
 
     // case 0: system message injected at position 0
     const ultraBare = JSON.parse(records[0].writes.join(""));
@@ -492,6 +522,23 @@ console.log(JSON.stringify(records));
     const ultraWithWriteFile = JSON.parse(records[8].writes.join(""));
     expect(ultraWithWriteFile.messages).toHaveLength(1);
     expect(ultraWithWriteFile.messages[0].role).toBe("user");
+
+    // case 9: bare write/edit/notebook_edit (mirrors WRITE_TOOL_NAMES) — no injection
+    const ultraWithBareWriteEdit = JSON.parse(records[9].writes.join(""));
+    expect(ultraWithBareWriteEdit.messages).toHaveLength(1);
+    expect(ultraWithBareWriteEdit.messages[0].role).toBe("user");
+
+    // case 10: tool_call wrapper present — no injection because it can
+    // dispatch to real exec/write tools
+    const ultraWithToolCall = JSON.parse(records[10].writes.join(""));
+    expect(ultraWithToolCall.messages).toHaveLength(1);
+    expect(ultraWithToolCall.messages[0].role).toBe("user");
+
+    // case 11: top-level tool.name shape (no nested .function) — predicate
+    // handles both shapes per OpenAI / non-OpenAI caller variance
+    const ultraTopLevelName = JSON.parse(records[11].writes.join(""));
+    expect(ultraTopLevelName.messages).toHaveLength(1);
+    expect(ultraTopLevelName.messages[0].role).toBe("user");
   });
 
   it("preload pins path+model as the intended scope boundary (#4851)", () => {

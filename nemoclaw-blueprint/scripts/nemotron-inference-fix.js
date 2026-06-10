@@ -76,9 +76,12 @@
 //   Regression proof: test/nemotron-inference-fix.test.ts covers the
 //   inject/skip branches via the http stub AND a real fetch/undici request
 //   against a local OpenAI-compatible endpoint, asserting both the injected
-//   system message and the refreshed Content-Length. Live curl verification
-//   against integrate.api.nvidia.com (in PR #5085 body) demonstrates the
-//   model-output acceptance criteria from #4851.
+//   system message and the refreshed Content-Length. The runtime model-
+//   output behavior (acceptance criteria from #4851) is validated against
+//   integrate.api.nvidia.com via the checked-in runbook at
+//   test/e2e-runtime/4851-ultra-toolless-validation.md — anyone reviewing
+//   acceptance can re-run it directly. Re-run when this preload changes
+//   or when OpenClaw bumps a version that may shift Ultra's chat template.
 //
 //   Removal condition: remove the TOOL_LESS_SYSTEM_PROMPT_RULES entry for
 //   Ultra 550B once NVB#6272828 ships and a clean Ultra response to the
@@ -132,6 +135,14 @@
   // `command_palette` that contain "create"/"run"/"save"/"command" but don't
   // give the model the ability to write a file or execute a shell command.
   // Match exact known names + the canonical OpenClaw/MCP suffixes.
+  //
+  // The bare `write`, `edit`, and `notebook_edit` names mirror
+  // `nemoclaw/src/index.ts:WRITE_TOOL_NAMES` so this allowlist stays
+  // aligned with the same write-capable surface OpenClaw scans for
+  // secrets. `tool_call` is the OpenClaw compact-catalog wrapper from
+  // `scripts/patch-openclaw-tool-catalog.js` — when it's present we
+  // can't tell from the request alone which underlying tool will be
+  // dispatched, so treat it as execution-capable and skip the nudge.
   var EXECUTION_TOOL_NAMES = new Set([
     'bash',
     'bash_execute',
@@ -142,10 +153,13 @@
     'shell_execute',
     'run_command',
     'run_shell',
+    'write',
     'write_file',
     'file_write',
+    'edit',
     'edit_file',
     'file_edit',
+    'notebook_edit',
     'patch_file',
     'file_patch',
     'create_file',
@@ -153,6 +167,7 @@
     'apply_patch',
     'str_replace_editor',
     'computer',
+    'tool_call',
   ]);
 
   function isExecutionCapableTool(tool) {
