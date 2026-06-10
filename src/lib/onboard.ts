@@ -216,9 +216,11 @@ const {
 const {
   checkOllamaPortsOrWarn,
   resolveOllamaInstallMenuEntry,
-  resolveRunningOllamaMenuEntry,
   assertOllamaUpgradeApplied,
 } = require("./onboard/ollama-install-menu");
+const {
+  buildInferenceProviderMenu,
+}: typeof import("./onboard/provider-menu") = require("./onboard/provider-menu");
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -3944,7 +3946,7 @@ async function createSandbox(
 
 // ── Step 3: Inference selection ──────────────────────────────────
 
-type ProviderChoice = { key: string; label: string };
+type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
@@ -4130,57 +4132,6 @@ async function setupNim(
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
-  const hermesProviderAvailable = agentProviderOptions.includes("hermesProvider");
-  const options: Array<{ key: string; label: string }> = [];
-  options.push({ key: "build", label: "NVIDIA Endpoints" });
-  options.push({ key: "openai", label: "OpenAI" });
-  options.push({ key: "custom", label: "Other OpenAI-compatible endpoint" });
-  options.push({ key: "anthropic", label: "Anthropic" });
-  options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
-  options.push({ key: "gemini", label: "Google Gemini" });
-  const runningOllamaMenu = resolveRunningOllamaMenuEntry({
-    hasOllama,
-    ollamaRunning,
-    ollamaHost,
-    isWsl: isWsl(),
-    ollamaPort: OLLAMA_PORT,
-    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
-      ? ""
-      : windowsHostOllamaDockerRequirement.labelSuffix,
-  });
-  if (runningOllamaMenu) options.push(runningOllamaMenu);
-  if (EXPERIMENTAL && gpu && gpu.nimCapable) {
-    options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
-  }
-  options.push(
-    ...buildVllmMenuEntries({
-      vllmRunning,
-      vllmProfile,
-      experimental: EXPERIMENTAL,
-      platform: gpu?.platform,
-      hasVllmImage,
-    }),
-  );
-  // Skipped when Windows-host already won the cache: the running entry
-  // above already covers that case.
-  if (hasWindowsOllama && !isWindowsHostOllama) {
-    options.push({
-      key: "start-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.startLabel({
-        reachable: windowsOllamaReachable,
-        loopbackOnly: winOllamaLoopbackOnly,
-      }),
-    });
-  }
-  // On WSL, always offer to install Ollama on the Windows host when not
-  // already installed, regardless of WSL Ollama state — users may prefer the
-  // Windows-host instance (GPU access) even with WSL Ollama running.
-  if (isWsl() && !hasWindowsOllama) {
-    options.push({
-      key: "install-windows-ollama",
-      label: windowsHostOllamaDockerRequirement.installLabel,
-    });
-  }
   const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
     hasOllama,
     ollamaRunning,
@@ -4189,18 +4140,38 @@ async function setupNim(
     platform: process.platform,
     isWsl: isWsl(),
   });
-  if (ollamaInstallMenu.entry) options.push(ollamaInstallMenu.entry);
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
-  if (blueprintRouterCfg && blueprintRouterCfg.router?.enabled === true) {
-    options.push({ key: "routed", label: "Model Router (experimental)" });
-  }
-  for (const providerKey of agentProviderOptions) {
-    const remoteConfig = REMOTE_PROVIDER_CONFIG[providerKey];
-    if (!remoteConfig || options.some((option) => option.key === providerKey)) continue;
-    options.push({ key: providerKey, label: remoteConfig.label });
-  }
+  const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
+    remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
+    agentProviderOptions,
+    experimental: EXPERIMENTAL,
+    gpuNimCapable: Boolean(gpu && gpu.nimCapable),
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    ollamaPort: OLLAMA_PORT,
+    isWsl: isWsl(),
+    hasWindowsOllama,
+    isWindowsHostOllama,
+    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
+      ? ""
+      : windowsHostOllamaDockerRequirement.labelSuffix,
+    windowsHostInstallLabel: windowsHostOllamaDockerRequirement.installLabel,
+    windowsHostStartLabel: windowsHostOllamaDockerRequirement.startLabel,
+    windowsOllamaReachable,
+    winOllamaLoopbackOnly,
+    ollamaInstallEntry: ollamaInstallMenu.entry,
+    vllmEntries: buildVllmMenuEntries({
+      vllmRunning,
+      vllmProfile,
+      experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
+      hasVllmImage,
+    }),
+    routedEnabled: blueprintRouterCfg?.router?.enabled === true,
+  });
 
   function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
     return rejectUnsupportedWindowsHostOllama(
