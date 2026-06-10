@@ -611,12 +611,12 @@
       "legacyScript": "test/e2e/test-openshell-version-pin.sh",
       "domain": "sandbox-lifecycle",
       "ownerIssue": "#4355",
-      "status": "bridge-probe",
-      "targetVitestScenarios": ["test/install-openshell-version-check.test.ts"],
+      "status": "covered",
+      "targetVitestScenarios": ["test/e2e-scenario/live/openshell-version-pin.test.ts"],
       "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "In flight: e2e-migrate/test-openshell-version-pin. Migration target is installer-integration Vitest (not e2e-scenario/live/) — see PR body for architectural rationale."
+      "notes": "Covered by free-standing live test (PR #5107). Hermetic installer-script behavioral test — stubs PATH binaries, runs scripts/install-openshell.sh, asserts the four [PASS] outcomes from the legacy bash guard. Not registry-driven; dispatched as a discrete openshell-version-pin-vitest job in e2e-vitest-scenarios.yaml. Bash guard retained in regression-e2e.yaml; deletion is a follow-up PR with #4357 approval."
     },
     {
       "legacyScript": "test/e2e/test-overlayfs-autofix.sh",
