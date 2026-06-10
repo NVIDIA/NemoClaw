@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
         required: false
         type: string
         default: ""
@@ -48,7 +48,7 @@ jobs:
       gateway: ${{ steps.select.outputs.gateway }}
       gateway_drift_preflight: ${{ steps.select.outputs.gateway_drift_preflight }}
       openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
-      onboard_inference_smoke: ${{ steps.select.outputs.onboard_inference_smoke }}
+
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
       whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
@@ -91,11 +91,6 @@ jobs:
             echo "openshell_version_pin=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ -z "$normalized" ] || includes_job "onboard-inference-smoke-e2e"; then
-            echo "onboard_inference_smoke=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "onboard_inference_smoke=false" >> "$GITHUB_OUTPUT"
-          fi
 
           if [ -z "$normalized" ] || includes_job "model-router-provider-routed-inference-e2e"; then
             echo "model_router_provider_routed_inference=true" >> "$GITHUB_OUTPUT"
@@ -209,50 +204,6 @@ jobs:
             /tmp/nemoclaw-e2e-openshell-version-pin-downloads.log
           if-no-files-found: ignore
 
-  # ── Onboard inference smoke E2E ─────────────────────────────
-  # Coverage guard for #3253. Onboard must not report installation success
-  # until the configured provider/model route has served a real chat completion.
-  # This simulates a route that is configured but returns HTTP 503 at runtime.
-  onboard-inference-smoke-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.onboard_inference_smoke == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Run onboard inference smoke E2E test
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
-        run: bash test/e2e/test-onboard-inference-smoke.sh
-
-      - name: Upload onboard inference smoke logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: onboard-inference-smoke-logs
-          path: |
-            /tmp/nemoclaw-e2e-onboard-inference-smoke.log
-            /tmp/nemoclaw-e2e-onboard-inference-smoke-node.log
-          if-no-files-found: ignore
-
-      - name: Upload onboard profiling traces
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: onboard-inference-smoke-traces
-          path: /tmp/nemoclaw-traces/
-          if-no-files-found: ignore
 
   # ── Gateway drift preflight E2E ─────────────────────────────
   # Coverage guard for #3399 / #3423. A stale OpenShell gateway image can

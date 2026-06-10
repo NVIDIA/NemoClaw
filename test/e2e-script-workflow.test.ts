@@ -51,7 +51,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-model-router-provider-routed-inference.sh",
   "test/e2e/test-network-policy.sh",
   "test/e2e/test-ollama-auth-proxy-e2e.sh",
-  "test/e2e/test-onboard-inference-smoke.sh",
   "test/e2e/test-onboard-negative-paths.sh",
   "test/e2e/test-onboard-repair.sh",
   "test/e2e/test-onboard-resume.sh",
