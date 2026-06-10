@@ -200,6 +200,71 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("sandbox client wraps multi-line bash via execShell", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.execShell("assistant", "TOKEN=$(read-token); node /tmp/repro.cjs \"$TOKEN\"");
+
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: [
+        "sandbox",
+        "exec",
+        "assistant",
+        "--",
+        "sh",
+        "-lc",
+        "TOKEN=$(read-token); node /tmp/repro.cjs \"$TOKEN\"",
+      ],
+      options: { artifactName: "sandbox-exec-shell-assistant" },
+    });
+  });
+
+  it("sandbox client rejects flag-shaped sandbox names before execShell", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(() => sandbox.execShell("--bad", "echo ok")).toThrow(/sandbox name is invalid/);
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("sandbox client uploads files to the sandbox via openshell sandbox upload", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.upload("assistant", "/host/path/script.cjs", "/tmp/script.cjs");
+
+    expect(runner.calls[0]).toEqual({
+      command: "openshell",
+      args: ["sandbox", "upload", "assistant", "/host/path/script.cjs", "/tmp/script.cjs"],
+      options: { artifactName: "sandbox-upload-assistant" },
+    });
+  });
+
+  it("sandbox client rejects flag-shaped sandbox names before upload", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await expect(() => sandbox.upload("--bad", "/a", "/b")).toThrow(/sandbox name is invalid/);
+    expect(runner.calls).toEqual([]);
+  });
+
+  it("sandbox client preserves caller-provided probe options through upload", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.upload("assistant", "/a", "/b", {
+      artifactName: "custom-upload",
+      timeoutMs: 30000,
+    });
+
+    expect(runner.calls[0]?.options).toEqual({
+      artifactName: "custom-upload",
+      timeoutMs: 30000,
+    });
+  });
+
   it("provider client parses JSON from curl output", async () => {
     const runner = new FakeRunner();
     runner.stdout = JSON.stringify({ ok: true });

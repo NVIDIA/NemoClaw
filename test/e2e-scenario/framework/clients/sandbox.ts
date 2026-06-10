@@ -56,6 +56,38 @@ export class SandboxClient {
     });
   }
 
+  // Convenience wrapper for running a multi-line bash script in a sandbox.
+  // Equivalent to `openshell sandbox exec <name> -- sh -lc "<script>"`. Used
+  // by free-standing live tests that need to run bespoke shell pipelines
+  // (e.g. starting an in-sandbox gateway, reading config files via node -e)
+  // without manually wiring `["sh", "-lc", script]` argv at every call site.
+  execShell(
+    name: string,
+    script: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    return this.openshell(["sandbox", "exec", name, "--", "sh", "-lc", script], {
+      artifactName: `sandbox-exec-shell-${name}`,
+      ...options,
+    });
+  }
+
+  // Uploads a host-side file into the sandbox at the given remote path.
+  // Wraps `openshell sandbox upload <name> <localPath> <remotePath>`.
+  upload(
+    name: string,
+    localPath: string,
+    remotePath: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
+    validateSandboxName(name);
+    return this.openshell(["sandbox", "upload", name, localPath, remotePath], {
+      artifactName: `sandbox-upload-${name}`,
+      ...options,
+    });
+  }
+
   async expectRunning(name: string, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     const result = await this.status(name, options);
     assertExitZero(result, `openshell sandbox status ${name}`);
