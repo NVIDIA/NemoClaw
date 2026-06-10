@@ -25,8 +25,43 @@ export interface TrustedProviderEndpointOptions {
   allowedHosts?: readonly string[];
 }
 
+export interface ProviderJsonRequestOptions extends ShellProbeRunOptions {
+  readonly body?: string;
+  readonly curlMaxTimeSeconds?: number;
+  readonly headers?: readonly string[];
+}
+
+export interface ProviderJsonResponse<T = unknown> {
+  readonly json: T;
+  readonly result: ShellProbeResult;
+}
+
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal"]);
+
+function validateCurlMaxTimeSeconds(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("provider request curlMaxTimeSeconds must be a finite positive number");
+  }
+  return String(value);
+}
+
+function validateCurlHeader(header: string): string {
+  if (/[\r\n]/.test(header)) {
+    throw new Error("provider request header must not contain CR or LF");
+  }
+  if (header.trimStart().startsWith("@")) {
+    throw new Error("provider request header must not use curl @file syntax");
+  }
+  return header;
+}
+
+function validateCurlBody(body: string): string {
+  if (body.trimStart().startsWith("@")) {
+    throw new Error("provider request body must not use curl @file syntax");
+  }
+  return body;
+}
 
 function queryRedactionValues(url: URL): string[] {
   const values = new Set<string>();
@@ -158,12 +193,13 @@ export class ProviderClient {
 
   private curl(
     endpoint: TrustedProviderEndpoint,
+    args: readonly string[],
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     return this.runner.run(
       trustedShellCommand({
         command: "curl",
-        args: ["-fsS", endpoint.url],
+        args: [...args, endpoint.url],
         reason: "fetch trusted provider endpoint",
       }),
       {
@@ -174,16 +210,35 @@ export class ProviderClient {
     );
   }
 
+  async requestJson<T = unknown>(
+    endpoint: TrustedProviderEndpoint,
+    options: ProviderJsonRequestOptions = {},
+  ): Promise<ProviderJsonResponse<T>> {
+    const { body, curlMaxTimeSeconds, headers, ...runOptions } = options;
+    const args = ["-fsS"];
+    if (curlMaxTimeSeconds !== undefined) {
+      args.push("--max-time", validateCurlMaxTimeSeconds(curlMaxTimeSeconds));
+    }
+    for (const header of headers ?? []) {
+      args.push("-H", validateCurlHeader(header));
+    }
+    if (body !== undefined) {
+      args.push("--data-raw", validateCurlBody(body));
+    }
+    const result = await this.curl(endpoint, args, runOptions);
+    assertExitZero(result, `curl ${endpoint.logLabel}`);
+    try {
+      return { json: JSON.parse(result.stdout) as T, result };
+    } catch {
+      throw new Error("provider response was not JSON");
+    }
+  }
+
   async getJson<T = unknown>(
     endpoint: TrustedProviderEndpoint,
     options: ShellProbeRunOptions = {},
   ): Promise<T> {
-    const result = await this.curl(endpoint, options);
-    assertExitZero(result, `curl ${endpoint.logLabel}`);
-    try {
-      return JSON.parse(result.stdout) as T;
-    } catch {
-      throw new Error("provider response was not JSON");
-    }
+    const response = await this.requestJson<T>(endpoint, options);
+    return response.json;
   }
 }
