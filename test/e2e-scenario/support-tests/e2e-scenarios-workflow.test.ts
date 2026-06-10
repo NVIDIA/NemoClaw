@@ -181,6 +181,7 @@ jobs:
           "onboard-negative-paths-vitest checkout step must set persist-credentials=false",
           "onboard-negative-paths-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
           "onboard-negative-paths-vitest setup-node action must be pinned to a full commit SHA",
+          "onboard-negative-paths-vitest job missing step: Build CLI",
           "onboard-negative-paths-vitest step 'Run onboard negative-paths live test' env must not include NVIDIA_API_KEY",
           "step 'Run onboard negative-paths live test' run script must not interpolate dispatch inputs directly",
           "step 'Run onboard negative-paths live test' run script must include test/e2e-scenario/live/onboard-negative-paths.test.ts",
