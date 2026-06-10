@@ -578,12 +578,12 @@
       "legacyScript": "test/e2e/test-openclaw-tui-chat-correlation.sh",
       "domain": "support-diagnostics",
       "ownerIssue": "#4347",
-      "status": "not-migrated",
+      "status": "bridge-probe",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
+      "notes": "Migration in progress: free-standing live test at test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts; bash wrapper retained until soak (#5049 partial-migration pattern)."
     },
     {
       "legacyScript": "test/e2e/test-openshell-gateway-upgrade.sh",
