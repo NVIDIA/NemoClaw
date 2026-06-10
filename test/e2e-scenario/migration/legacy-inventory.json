@@ -611,12 +611,12 @@
       "legacyScript": "test/e2e/test-openshell-version-pin.sh",
       "domain": "sandbox-lifecycle",
       "ownerIssue": "#4355",
-      "status": "not-migrated",
-      "targetVitestScenarios": [],
+      "status": "bridge-probe",
+      "targetVitestScenarios": ["test/install-openshell-version-check.test.ts"],
       "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
+      "notes": "In flight: e2e-migrate/test-openshell-version-pin. Migration target is installer-integration Vitest (not e2e-scenario/live/) — see PR body for architectural rationale."
     },
     {
       "legacyScript": "test/e2e/test-overlayfs-autofix.sh",
