@@ -8,8 +8,7 @@ import type {
   SandboxMessagingInputReference,
 } from "../../manifest";
 
-const CREDENTIAL_PLACEHOLDER_PATTERN =
-  /\{\{\s*credential\.([A-Za-z0-9_-]+)\.placeholder\s*\}\}/g;
+const CREDENTIAL_PLACEHOLDER_PATTERN = /\{\{\s*credential\.([A-Za-z0-9_-]+)\.placeholder\s*\}\}/g;
 const EXACT_TEMPLATE_PATTERN = /^\{\{\s*([^}]+?)\s*\}\}$/;
 const TEMPLATE_REFERENCE_PATTERN = /\{\{\s*([^}]+?)\s*\}\}/g;
 
@@ -87,7 +86,9 @@ export function resolveRenderTemplatesInValue(
     if (sourceEntries.length === 0) return value;
     const entries = sourceEntries
       .map(([key, entry]) => [key, resolveRenderTemplatesInValue(entry, context)] as const)
-      .filter((entry): entry is readonly [string, MessagingSerializableValue] => entry[1] !== undefined);
+      .filter(
+        (entry): entry is readonly [string, MessagingSerializableValue] => entry[1] !== undefined,
+      );
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
   }
   return value;
@@ -115,17 +116,13 @@ export function isTruthyRenderTemplate(
   return true;
 }
 
-export function collectTemplateReferencesInValue(
-  value: MessagingSerializableValue,
-): string[] {
+export function collectTemplateReferencesInValue(value: MessagingSerializableValue): string[] {
   if (typeof value === "string") return collectTemplateReferencesInString(value);
   if (Array.isArray(value)) {
     return unique(value.flatMap((entry) => collectTemplateReferencesInValue(entry)));
   }
   if (value && typeof value === "object") {
-    return unique(
-      Object.values(value).flatMap((entry) => collectTemplateReferencesInValue(entry)),
-    );
+    return unique(Object.values(value).flatMap((entry) => collectTemplateReferencesInValue(entry)));
   }
   return [];
 }
@@ -179,7 +176,9 @@ function collectTemplateReferencesInString(value: MessagingTemplateString): stri
   return unique(
     [...value.matchAll(TEMPLATE_REFERENCE_PATTERN)]
       .map((match) => match[1]?.trim())
-      .filter((reference): reference is string => typeof reference === "string" && reference.length > 0),
+      .filter(
+        (reference): reference is string => typeof reference === "string" && reference.length > 0,
+      ),
   );
 }
 

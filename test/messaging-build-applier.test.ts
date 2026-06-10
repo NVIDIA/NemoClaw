@@ -74,12 +74,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
   it("pins selected external messaging plugins to OPENCLAW_VERSION", () => {
     const payload = parseDryRun({
       OPENCLAW_VERSION: "2026.5.22",
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([
-        "telegram",
-        "discord",
-        "slack",
-        "whatsapp",
-      ]),
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram", "discord", "slack", "whatsapp"]),
     });
 
     expect(payload.installSpecs).toEqual([
@@ -155,7 +150,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       fakeOpenclaw,
       [
         "#!/bin/sh",
-        "printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" \"$4\" \"${TELEGRAM_BOT_TOKEN:-}\" \"${DISCORD_BOT_TOKEN:-}\" \"${SLACK_BOT_TOKEN:-}\" >> \"$OPENCLAW_TRACE\"",
+        'printf \'%s|%s|%s|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" "${TELEGRAM_BOT_TOKEN:-}" "${DISCORD_BOT_TOKEN:-}" "${SLACK_BOT_TOKEN:-}" >> "$OPENCLAW_TRACE"',
         "exit 0",
         "",
       ].join("\n"),

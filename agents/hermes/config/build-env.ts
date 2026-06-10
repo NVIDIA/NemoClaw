@@ -7,6 +7,7 @@ export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
   providerKey: string;
+  upstreamProvider: string;
   inferenceApi: string;
   managedToolGateways: {
     brokerEnabled: boolean;
@@ -22,14 +23,11 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     model,
     baseUrl,
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
+    upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
-      presets: readBase64Json<string[]>(
-        env,
-        "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64",
-        "W10=",
-      ),
+      presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
   };
 }

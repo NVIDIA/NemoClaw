@@ -6,12 +6,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const HELPER = path.join(
-  import.meta.dirname,
-  "e2e",
-  "lib",
-  "openclaw-agent-json.py",
-);
+const HELPER = path.join(import.meta.dirname, "e2e", "lib", "openclaw-agent-json.py");
 
 function runHelper(input: string) {
   return spawnSync("python3", [HELPER], {
@@ -56,11 +51,13 @@ describe("openclaw-agent-json.py", () => {
   });
 
   it("extracts payload text from later JSON envelopes in a stream", () => {
-    const result = runHelper([
-      JSON.stringify({ payloads: [] }),
-      "progress line",
-      JSON.stringify({ payloads: [{ text: "42" }] }),
-    ].join("\n"));
+    const result = runHelper(
+      [
+        JSON.stringify({ payloads: [] }),
+        "progress line",
+        JSON.stringify({ payloads: [{ text: "42" }] }),
+      ].join("\n"),
+    );
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("42\n");
   });

@@ -36,7 +36,9 @@ export function getStoredMessagingChannelConfig(
   return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
 }
 
-export function persistMessagingChannelConfigToSession(config: MessagingChannelConfig | null): void {
+export function persistMessagingChannelConfigToSession(
+  config: MessagingChannelConfig | null,
+): void {
   onboardSession.updateSession((current: Session) => {
     current.messagingChannelConfig = config;
     return current;

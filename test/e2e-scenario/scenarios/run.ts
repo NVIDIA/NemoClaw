@@ -6,16 +6,16 @@ import { fileURLToPath } from "node:url";
 
 import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
 import { ScenarioRunner } from "./orchestrators/runner.ts";
-import { listScenarios } from "./registry.ts";
+import { listScenarios, requireScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
-import type { ScenarioDefinition } from "./types.ts";
+import { type LiveScenarioSupport, liveScenarioSupport } from "./runtime-support.ts";
+import type { PhaseResult, ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
-  planOnly: boolean;
-  dryRun: boolean;
-  validateOnly: boolean;
   emitMatrix: boolean;
+  emitLiveMatrix: boolean;
+  planOnly: boolean;
   scenarios: string[];
 }
 
@@ -33,13 +33,23 @@ export interface ScenarioMatrixEntry {
   suites: string[];
 }
 
+export interface LiveScenarioMatrixEntry extends ScenarioMatrixEntry {
+  install: string;
+  runtime: string;
+  onboarding: string;
+  expectedStateId: string;
+  requiredSecrets: string[];
+  supported: boolean;
+  supportReasons: string[];
+  pendingRuntimeSuites: string[];
+}
+
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     list: false,
-    planOnly: false,
-    dryRun: false,
-    validateOnly: false,
     emitMatrix: false,
+    emitLiveMatrix: false,
+    planOnly: false,
     scenarios: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -52,16 +62,12 @@ function parseArgs(argv: string[]): Args {
       args.emitMatrix = true;
       continue;
     }
+    if (arg === "--emit-live-matrix") {
+      args.emitLiveMatrix = true;
+      continue;
+    }
     if (arg === "--plan-only") {
       args.planOnly = true;
-      continue;
-    }
-    if (arg === "--dry-run") {
-      args.dryRun = true;
-      continue;
-    }
-    if (arg === "--validate-only") {
-      args.validateOnly = true;
       continue;
     }
     if (arg === "--scenarios") {
@@ -69,7 +75,10 @@ function parseArgs(argv: string[]): Args {
       if (!value) {
         throw new Error("--scenarios requires a comma-separated value");
       }
-      args.scenarios = value.split(",").map((id) => id.trim()).filter(Boolean);
+      args.scenarios = value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
       i += 1;
       continue;
     }
@@ -118,11 +127,50 @@ export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
   });
 }
 
+function liveMatrixEntry(
+  scenario: ScenarioDefinition,
+  support: LiveScenarioSupport,
+): LiveScenarioMatrixEntry {
+  const { runner } = resolveRunnerForScenario(scenario);
+  return {
+    id: scenario.id,
+    runner,
+    label: buildLabel(scenario),
+    platform: scenario.environment?.platform ?? "unknown",
+    install: scenario.environment?.install ?? "unknown",
+    runtime: scenario.environment?.runtime ?? "unknown",
+    onboarding: scenario.environment?.onboarding ?? "unknown",
+    expectedStateId: scenario.expectedStateId ?? "",
+    suites: scenario.suiteIds ?? [],
+    requiredSecrets: scenario.requiredSecrets ?? [],
+    supported: support.supported,
+    supportReasons: support.reasons,
+    pendingRuntimeSuites: support.pendingRuntimeSuites,
+  };
+}
+
+export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
+  const scenarioSupport = (ids.length > 0 ? requireScenarios(ids) : listScenarios()).map(
+    (scenario) => ({
+      scenario,
+      support: liveScenarioSupport(scenario),
+    }),
+  );
+  const liveEntries =
+    ids.length > 0 ? scenarioSupport : scenarioSupport.filter(({ support }) => support.supported);
+  return liveEntries.map(({ scenario, support }) => liveMatrixEntry(scenario, support));
+}
+
 function emitMatrix() {
   // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
   //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
   // without needing heredoc multi-line output handling.
+  // Consumed by the dynamic matrix workflow (PR #4359).
   process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
+}
+
+function emitLiveMatrix(ids: string[]) {
+  process.stdout.write(`${JSON.stringify(buildLiveScenarioMatrix(ids))}\n`);
 }
 
 async function main() {
@@ -135,17 +183,19 @@ async function main() {
     emitMatrix();
     return;
   }
-
-  const modeCount = [args.planOnly, args.dryRun, args.validateOnly].filter(Boolean).length;
-  if (modeCount !== 1) {
-    throw new Error("Use exactly one of --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
+  if (args.emitLiveMatrix) {
+    emitLiveMatrix(args.scenarios);
+    return;
   }
+
   if (args.scenarios.length === 0) {
     throw new Error("scenario execution requires --scenarios <id[,id...]>");
   }
 
   if (process.env.E2E_SUITE_FILTER) {
-    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
+    throw new Error(
+      "E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.",
+    );
   }
 
   const plans = compileRunPlans(args.scenarios);
@@ -153,12 +203,89 @@ async function main() {
   writePlanArtifacts(plans, contextDir);
   console.log(renderPlanText(plans));
 
-  if (args.dryRun) {
-    const runner = new ScenarioRunner();
-    for (const plan of plans) {
-      await runner.run({ contextDir, dryRun: true }, plan);
+  if (args.planOnly) {
+    // Local debug only. Workflows must not pass --plan-only.
+    return;
+  }
+
+  const runner = new ScenarioRunner();
+  const allResults: PhaseResult[] = [];
+  let anyFailed = false;
+  for (const plan of plans) {
+    const results = await runner.run({ contextDir }, plan);
+    allResults.push(...results);
+    if (planFailed(plan, results)) {
+      anyFailed = true;
     }
   }
+
+  // Surface a compact run summary so phase results don't have to be opened
+  // to see what passed.
+  console.log("");
+  console.log("Phase results:");
+  for (const result of allResults) {
+    const counts = result.assertions.reduce(
+      (acc, assertion) => {
+        acc[assertion.status] = (acc[assertion.status] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+    const detail = Object.entries(counts)
+      .map(([status, count]) => `${status}=${count}`)
+      .join(" ");
+    console.log(`  ${result.phase}: ${result.status} (${detail || "no steps"})`);
+  }
+
+  if (anyFailed) {
+    process.exitCode = 1;
+  }
+}
+
+// A scenario fails iff:
+//   positive (no expectedFailure): any phase result failed.
+//   negative (expectedFailure declared): the synthetic
+//     negative-contract phase did not match, OR state-validation
+//     did not prove the declared forbidden side effects stayed absent.
+//
+// The matcher decides exit code for negatives so that a scenario
+// that failed for the right reason in the right phase is no longer
+// reported as red just because setup did not complete. Forbidden
+// side effects stay visible through the typed state-validation probes.
+function forbiddenSideEffectProbeId(sideEffect: string): string {
+  if (sideEffect === "gateway-started") {
+    return "state-validation.gateway-absent";
+  }
+  if (sideEffect === "sandbox-created") {
+    return "state-validation.sandbox-absent";
+  }
+  return `state-validation.${sideEffect}`;
+}
+
+export function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
+  if (!plan.expectedFailure) {
+    return results.some((result) => result.status === "failed");
+  }
+  const contractPhase = results.find((result) => result.phase === "negative-contract");
+  if (!contractPhase || contractPhase.status !== "passed") {
+    return true;
+  }
+  const requiredSideEffectProbes = (plan.expectedFailure.forbiddenSideEffects ?? []).map(
+    forbiddenSideEffectProbeId,
+  );
+  if (requiredSideEffectProbes.length === 0) {
+    return false;
+  }
+  const stateValidation = results.find((result) => result.phase === "state-validation");
+  if (!stateValidation || stateValidation.status !== "passed") {
+    return true;
+  }
+  const passedActionIds = new Set(
+    stateValidation.actions
+      .filter((action) => action.status === "passed")
+      .map((action) => action.id),
+  );
+  return requiredSideEffectProbes.some((id) => !passedActionIds.has(id));
 }
 
 // Only execute when invoked directly as a script. Importing this module from

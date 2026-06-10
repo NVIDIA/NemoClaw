@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 
-type RebuildSandbox = typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox =
+  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
 
@@ -115,22 +116,61 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
-  it("recovers the named gateway and retries the liveness query before deciding running state", async () => {
+  it("recovers the named gateway and retries the liveness query before entering stale recovery", async () => {
     detectPreflightIssueSpy.mockReturnValue(null);
-    captureOpenshellSpy
-      .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
-      .mockReturnValueOnce({ status: 0, output: "beta Ready" });
+    // First `sandbox list` fails (gateway down) and triggers recovery; the retry
+    // shows only 'beta', so 'alpha' is absent. Before treating that as stale,
+    // rebuild reconciles against the NAMED gateway, which reports a healthy
+    // nemoclaw (status Connected + gateway info), confirming the sandbox is
+    // genuinely gone (#4497).
+    let listCalls = 0;
+    captureOpenshellSpy.mockImplementation((args: string[]) => {
+      if (args[0] === "sandbox" && args[1] === "list") {
+        listCalls += 1;
+        return listCalls === 1
+          ? { status: 1, output: "client error (Connect): Connection refused" }
+          : { status: 0, output: "beta Ready" };
+      }
+      if (args[0] === "status") {
+        return {
+          status: 0,
+          output: "Server Status\n\n  Gateway: nemoclaw\n  Status: Connected\n",
+        };
+      }
+      if (args[0] === "gateway" && args[1] === "info") {
+        return { status: 0, output: "Gateway Info\n\nGateway: nemoclaw\n" };
+      }
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return { status: 1, output: "Error:   × Not Found: sandbox not found" };
+      }
+      return { status: 0, output: "" };
+    });
+
+    // The reconcile confirms the stale state, so rather than dead-ending at
+    // "Cannot back up state", rebuild skips backup and recreates from the
+    // preserved registry metadata. Stub the destructive steps + recreate handoff
+    // so the path stays hermetic, and assert the recreate failure surfaces the
+    // stale-recovery message instead of "not running".
+    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
+    const destroy = requireDist("../../../../dist/lib/actions/sandbox/destroy.js");
+    const onboardMod = requireDist("../../../../dist/lib/onboard.js");
+    spies.push(
+      vi
+        .spyOn(openshellRuntime, "runOpenshell")
+        .mockReturnValue({ status: 0, output: "" } as never),
+      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
+      vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
+    );
 
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
-      "Sandbox 'alpha' is not running.",
+      /stale-sandbox recovery/,
     );
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
       recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
     });
-    expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
-    expect(captureOpenshellSpy).toHaveBeenNthCalledWith(1, ["sandbox", "list"]);
-    expect(captureOpenshellSpy).toHaveBeenNthCalledWith(2, ["sandbox", "list"]);
+    // The liveness query ran twice (initial failure + post-recovery retry).
+    expect(listCalls).toBe(2);
   });
 
   it("does not recover generic sandbox list failures", async () => {

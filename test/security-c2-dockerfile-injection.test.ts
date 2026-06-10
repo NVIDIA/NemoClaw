@@ -28,18 +28,12 @@ function runNode(src: string, env: Record<string, string | undefined> = {}) {
 
 // Simulate what Docker ARG substitution produces (the VULNERABLE pattern)
 function vulnerableSource(chatUiUrlValue: string): string {
-  return (
-    `const chatUiUrl = '${chatUiUrlValue}'; ` +
-    "console.log(JSON.stringify(chatUiUrl))"
-  );
+  return `const chatUiUrl = '${chatUiUrlValue}'; ` + "console.log(JSON.stringify(chatUiUrl))";
 }
 
 // Simulate the FIXED pattern (env var, no source interpolation)
 function fixedSource(): string {
-  return (
-    "const chatUiUrl = process.env.CHAT_UI_URL; " +
-    "console.log(JSON.stringify(chatUiUrl))"
-  );
+  return "const chatUiUrl = process.env.CHAT_UI_URL; " + "console.log(JSON.stringify(chatUiUrl))";
 }
 
 // ═══════════════════════════════════════════════════════════════════

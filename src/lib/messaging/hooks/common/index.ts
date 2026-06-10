@@ -3,17 +3,9 @@
 
 import { getCredential, prompt, saveCredential } from "../../../credentials/store";
 import type { MessagingHookRegistration } from "../types";
-import {
-  type ConfigPromptHookOptions,
-  createConfigPromptHookRegistration,
-} from "./config-prompt";
-import {
-  createStaticOutputsHookRegistration,
-} from "./static-outputs";
-import {
-  createTokenPasteHookRegistration,
-  type TokenPasteHookOptions,
-} from "./token-paste";
+import { type ConfigPromptHookOptions, createConfigPromptHookRegistration } from "./config-prompt";
+import { createStaticOutputsHookRegistration } from "./static-outputs";
+import { createTokenPasteHookRegistration, type TokenPasteHookOptions } from "./token-paste";
 
 export interface CommonHookOptions extends TokenPasteHookOptions {
   readonly tokenPaste?: TokenPasteHookOptions;

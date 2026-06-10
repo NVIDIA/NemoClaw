@@ -88,14 +88,22 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # Ensure sandbox user can read blueprint files copied as root
 RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
-# Copy startup script
+# Copy startup script and the secret-boundary validator. The validator is the
+# single source of truth shared between start.sh (cold start) and the host-side
+# gateway recovery script (src/lib/agent/runtime.ts) so `sandbox recover` enforces
+# the same boundary as the initial entrypoint.
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
 ARG NEMOCLAW_PROVIDER_KEY=custom
+# User-selected upstream provider name (nvidia-prod, hermes-provider, ...).
+# Distinct from NEMOCLAW_PROVIDER_KEY, which carries the managed route key
+# ("inference" for proxied providers) needed at routing/runtime.
+ARG NEMOCLAW_UPSTREAM_PROVIDER=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 # CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
@@ -111,6 +119,7 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     CHAT_UI_URL=${CHAT_UI_URL} \

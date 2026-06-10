@@ -13,10 +13,7 @@ import {
 } from "../state/onboard-session";
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
-import {
-  repairResumeMachineSnapshot,
-  resumeMachineState,
-} from "./resume-machine-repair";
+import { repairResumeMachineSnapshot, resumeMachineState } from "./resume-machine-repair";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
 /**
@@ -187,34 +184,105 @@ describe("resume machine repair", () => {
     });
   });
 
+  it("repairs a complete snapshot reopened by rebuild from the last completed step", () => {
+    const session = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: "gateway",
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 9,
+      },
+    });
+    session.steps.preflight.status = "complete";
+    session.steps.gateway.status = "complete";
+
+    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+
+    expect(session.machine).toEqual({
+      version: MACHINE_SNAPSHOT_VERSION,
+      state: "provider_selection",
+      stateEnteredAt: "2026-06-01T00:01:00.000Z",
+      revision: 10,
+    });
+  });
+
+  it("leaves a non-resumable complete snapshot untouched", () => {
+    const session = createSession({
+      lastCompletedStep: "policies",
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    session.resumable = false;
+    session.status = "complete";
+
+    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+
+    expect(session.machine).toEqual({
+      version: MACHINE_SNAPSHOT_VERSION,
+      state: "complete",
+      stateEnteredAt: "2026-06-01T00:00:00.000Z",
+      revision: 5,
+    });
+  });
+
   it.each([
     ["preflight", "preflight", null],
     ["gateway", "gateway", "preflight"],
     ["inference", "inference", "provider_selection"],
-  ] as const)(
-    "lets record-only resume complete from failed %s",
-    async (_name, failedStep, completedStep) => {
-      const session = createFailedSession((current) => {
-        current.failure = {
-          step: failedStep,
-          message: `${failedStep} failed`,
-          recordedAt: "2026-06-01T00:00:00.000Z",
-        };
-        current.lastStepStarted = failedStep;
-        current.steps[failedStep].status = "failed";
-        if (completedStep) {
-          current.lastCompletedStep = completedStep;
-          current.steps[completedStep].status = "complete";
-        }
-      });
+  ] as const)("lets record-only resume complete from failed %s", async (_name, failedStep, completedStep) => {
+    const session = createFailedSession((current) => {
+      current.failure = {
+        step: failedStep,
+        message: `${failedStep} failed`,
+        recordedAt: "2026-06-01T00:00:00.000Z",
+      };
+      current.lastStepStarted = failedStep;
+      current.steps[failedStep].status = "failed";
+      if (completedStep) {
+        current.lastCompletedStep = completedStep;
+        current.steps[completedStep].status = "complete";
+      }
+    });
 
-      const completed = await runRecordOnlyResumeSequence(session);
+    const completed = await runRecordOnlyResumeSequence(session);
 
-      expect(completed).toMatchObject({
-        status: "complete",
-        failure: null,
-        machine: { state: "complete" },
-      });
-    },
-  );
+    expect(completed).toMatchObject({
+      status: "complete",
+      failure: null,
+      machine: { state: "complete" },
+    });
+  });
+
+  it.each([
+    "gateway",
+    "policies",
+  ] as const)("lets record-only resume complete from a reopened complete snapshot after %s", async (completedStep) => {
+    const session = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: completedStep,
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 7,
+      },
+    });
+    session.steps[completedStep].status = "complete";
+
+    const completed = await runRecordOnlyResumeSequence(session);
+
+    expect(completed).toMatchObject({
+      status: "complete",
+      failure: null,
+      machine: { state: "complete" },
+    });
+  });
 });

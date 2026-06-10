@@ -83,3 +83,10 @@ jobs:
       scenarios: ${{ matrix.id }}
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  ubuntu-rebuild-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenarios: ubuntu-rebuild-openclaw
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}

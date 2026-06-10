@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,10 +34,11 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+  recoverDockerDriverSandbox,
+  type DockerDriverRecoveryResult,
+} from "../../onboard/docker-driver-sandbox-recovery";
 
 export type SandboxGatewayState = {
   state: string;
@@ -47,6 +47,20 @@ export type SandboxGatewayState = {
   recoveredGateway?: boolean;
   recoveryVia?: string | null;
   gatewayRecoveryFailed?: boolean;
+  /**
+   * True when active Docker-driver sandbox recovery (#4423 part 2)
+   * restarted the labeled sandbox container before the lookup
+   * returned `present`. Callers can surface this in user-facing
+   * output to explain why a previously-NotFound sandbox is now
+   * Ready.
+   */
+  recoveredSandbox?: boolean;
+  /**
+   * Stable identifier for which Docker-driver recovery branch fired,
+   * mirroring `DockerDriverRecoveryVia`. `null` when no Docker-side
+   * recovery was attempted or required.
+   */
+  recoverySandboxVia?: string | null;
 };
 
 type SandboxGatewayStateLookup = (
@@ -61,10 +75,7 @@ function formatGatewaySchemaMismatchOutput(
   return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
 }
 
-export function mergeLivePolicyIntoSandboxOutput(
-  output: string,
-  livePolicyOutput: string,
-): string {
+export function mergeLivePolicyIntoSandboxOutput(output: string, livePolicyOutput: string): string {
   const rawLines = String(output).split("\n");
   const cleanLines = stripAnsi(String(output)).split("\n");
   const policyLineIdx = cleanLines.findIndex((line: string) => line.trim() === "Policy:");
@@ -232,7 +243,10 @@ export function reconcileMissingAgainstNamedGateway(
     if (retry.state === "missing") {
       const after = getNamedGatewayLifecycleState();
       if (after.state === "healthy_named") {
-        return retry;
+        // Even with the right gateway selected, the sandbox is
+        // still missing. Try Docker-side recovery before declaring
+        // the sandbox truly absent.
+        return tryRecoverDockerDriverSandbox(sandboxName, retry);
       }
     }
     return {
@@ -247,7 +261,46 @@ export function reconcileMissingAgainstNamedGateway(
   if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
     return { state: "gateway_unreachable_after_restart", output: lifecycle.status };
   }
+  if (lifecycle.state === "healthy_named") {
+    // The gateway is healthy and we already see `missing`. This is
+    // the precise post-reboot precondition described in #4423: the
+    // gateway came back fresh (per #4580's user-systemd unit) with
+    // no sandbox memory, but Docker may still have the labeled
+    // container. Attempt active Docker-side recovery before falling
+    // through to non-destructive guidance.
+    return tryRecoverDockerDriverSandbox(sandboxName, missingLookup);
+  }
   return missingLookup;
+}
+
+/**
+ * Attempt Docker-driver sandbox recovery (#4423) and re-query the
+ * OpenShell gateway. Returns the new lookup with `recoveredSandbox`
+ * flags set when recovery succeeded; otherwise returns the original
+ * `missing` lookup unchanged so the caller's existing non-destructive
+ * guidance fires.
+ */
+function tryRecoverDockerDriverSandbox(
+  sandboxName: string,
+  missingLookup: SandboxGatewayState,
+): SandboxGatewayState {
+  let recovery: DockerDriverRecoveryResult;
+  try {
+    recovery = recoverDockerDriverSandbox(sandboxName);
+  } catch {
+    return missingLookup;
+  }
+  if (!recovery.recovered) {
+    return missingLookup;
+  }
+  // Recovery succeeded against Docker; re-query OpenShell so the
+  // returned state reflects what the gateway sees post-restart.
+  const retried = getSandboxGatewayState(sandboxName);
+  return {
+    ...retried,
+    recoveredSandbox: true,
+    recoverySandboxVia: recovery.via,
+  };
 }
 
 /**
@@ -259,6 +312,10 @@ export function printWrongGatewayActiveGuidance(
   sandboxName: string,
   activeGateway: string | null | undefined,
   writer: (message: string) => void = console.error,
+  // The command to re-run after switching gateways. Defaults to `connect`;
+  // callers in a different recovery flow (e.g. `rebuild`) pass their own so the
+  // guidance points back to the workflow the user actually invoked.
+  retryCommand = "connect",
 ): void {
   const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
   writer(
@@ -266,7 +323,7 @@ export function printWrongGatewayActiveGuidance(
   );
   writer("  Switch gateways and retry:");
   writer("      openshell gateway select nemoclaw");
-  writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
+  writer(`  Then re-run: ${CLI_NAME} ${sandboxName} ${retryCommand}`);
 }
 
 /** Print troubleshooting hints based on gateway lifecycle state in the output. */

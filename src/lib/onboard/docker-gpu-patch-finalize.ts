@@ -79,11 +79,7 @@ export function rollbackToBackupContainer(
   };
   deps.dockerStop(refs.newContainerId, containerOpts);
   deps.dockerRm(refs.newContainerId, containerOpts);
-  const restored = deps.dockerRename(
-    refs.backupContainerName,
-    refs.originalName,
-    containerOpts,
-  );
+  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
   if (!isZeroStatus(restored)) return false;
   const started = deps.dockerStart(refs.originalName, containerOpts);
   return isZeroStatus(started);
@@ -118,10 +114,7 @@ export function finalizeDockerGpuPatchBackup(
     // even if `docker rm` cannot delete it (e.g. concurrent admin action,
     // daemon timeout). Reflect the actual rm status in the outcome so
     // diagnostics can flag a leaked backup container.
-    const rmResult = resolved.dockerRm(
-      options.result.backupContainerName,
-      containerOpts,
-    );
+    const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
     return { backupRemoved: isZeroStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(

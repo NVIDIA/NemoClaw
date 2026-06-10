@@ -89,9 +89,7 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
-  );
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
     for (const [key, value] of Object.entries(values)) {
       if (value === undefined) {
@@ -124,10 +122,7 @@ describe("MessagingWorkflowPlanner", () => {
 
     expect(plan.workflow).toBe("onboard");
     expect(plan.disabledChannels).toEqual([]);
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "wechat",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "wechat"]);
     expect(plan.channels).toEqual([
       expect.objectContaining({
         channelId: "telegram",
@@ -354,9 +349,7 @@ describe("MessagingWorkflowPlanner", () => {
       "telegram",
       "slack",
     ]);
-    expect(
-      plan.credentialBindings.some((binding) => binding.channelId === "telegram"),
-    ).toBe(true);
+    expect(plan.credentialBindings.some((binding) => binding.channelId === "telegram")).toBe(true);
   });
 
   it("records re-enabled channels for start-channel plans", async () => {
@@ -519,10 +512,7 @@ describe("MessagingWorkflowPlanner", () => {
     });
 
     expect(plan.workflow).toBe("add-channel");
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "slack",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "slack"]);
     expect(plan.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
       active: true,
       configured: true,
@@ -624,12 +614,12 @@ describe("MessagingWorkflowPlanner", () => {
     expect(removed?.workflow).toBe("remove-channel");
     expect(removed?.channels.map((channel) => channel.channelId)).toEqual(["slack"]);
     expect(removed?.disabledChannels).toEqual([]);
-    expect(
-      removed?.credentialBindings.some((binding) => binding.channelId === "telegram"),
-    ).toBe(false);
-    expect(
-      removed?.networkPolicy.entries.some((entry) => entry.channelId === "telegram"),
-    ).toBe(false);
+    expect(removed?.credentialBindings.some((binding) => binding.channelId === "telegram")).toBe(
+      false,
+    );
+    expect(removed?.networkPolicy.entries.some((entry) => entry.channelId === "telegram")).toBe(
+      false,
+    );
     expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
   });
 
@@ -677,10 +667,12 @@ describe("MessagingWorkflowPlanner", () => {
         ).toMatchObject({
           value: "1",
         });
-        expect(rebuilt?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
-          active: true,
-          disabled: false,
-        });
+        expect(rebuilt?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject(
+          {
+            active: true,
+            disabled: false,
+          },
+        );
       },
     );
   });
@@ -692,9 +684,6 @@ describe("MessagingWorkflowPlanner", () => {
       sandboxEntry: {
         name: "demo",
         messagingChannels: ["telegram"],
-        providerCredentialHashes: {
-          TELEGRAM_BOT_TOKEN: "sha256:test",
-        },
       },
     });
 

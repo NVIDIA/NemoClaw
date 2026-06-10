@@ -162,9 +162,7 @@ describe("getDebugCompletionMessages", () => {
 describe("isDmesgPermissionDeniedOutput", () => {
   it("recognizes restricted dmesg stderr", () => {
     expect(
-      isDmesgPermissionDeniedOutput(
-        "dmesg: read kernel buffer failed: Operation not permitted",
-      ),
+      isDmesgPermissionDeniedOutput("dmesg: read kernel buffer failed: Operation not permitted"),
     ).toBe(true);
   });
 

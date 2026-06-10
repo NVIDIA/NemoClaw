@@ -29,7 +29,10 @@ describe("runNpmLinkOrShim", () => {
     const { homeDir, repoDir } = setupRepo();
     const run = failingNpm();
 
-    const result = runNpmLinkOrShim({ env: { HOME: homeDir, NEMOCLAW_INSTALLING: "1" }, repoRoot: repoDir }, { run });
+    const result = runNpmLinkOrShim(
+      { env: { HOME: homeDir, NEMOCLAW_INSTALLING: "1" }, repoRoot: repoDir },
+      { run },
+    );
 
     expect(result.status).toBe(0);
     expect(run).not.toHaveBeenCalled();
@@ -83,7 +86,9 @@ describe("runNpmLinkOrShim", () => {
       {
         commandPath: () => process.execPath,
         logError: (message) => errors.push(message),
-        run: failingNpm(`npm failed in ${repoDir} under ${homeDir}\nNVIDIA_API_KEY=${token}\nAuthorization: Bearer ${token}\n`),
+        run: failingNpm(
+          `npm failed in ${repoDir} under ${homeDir}\nNVIDIA_API_KEY=${token}\nAuthorization: Bearer ${token}\n`,
+        ),
       },
     );
 
@@ -108,7 +113,11 @@ describe("runNpmLinkOrShim", () => {
 
     const result = runNpmLinkOrShim(
       { env: { HOME: homeDir }, repoRoot: repoDir },
-      { commandPath: () => process.execPath, logError: (message) => errors.push(message), run: failingNpm() },
+      {
+        commandPath: () => process.execPath,
+        logError: (message) => errors.push(message),
+        run: failingNpm(),
+      },
     );
 
     expect(result.status).toBe(1);
@@ -142,7 +151,11 @@ describe("runNpmLinkOrShim", () => {
 
     const result = runNpmLinkOrShim(
       { env: { HOME: homeDir }, repoRoot: repoDir },
-      { commandPath: () => process.execPath, logError: (message) => errors.push(message), run: failingNpm() },
+      {
+        commandPath: () => process.execPath,
+        logError: (message) => errors.push(message),
+        run: failingNpm(),
+      },
     );
 
     expect(result.status).toBe(1);

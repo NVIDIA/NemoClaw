@@ -113,9 +113,7 @@ describe("built-in channel manifests", () => {
   it("registers the phase-1 built-in manifests without consuming them in workflows", () => {
     const registry = createBuiltInChannelManifestRegistry();
 
-    expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(
-      knownChannelNames(),
-    );
+    expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(knownChannelNames());
     expect(registry.list().map((manifest) => manifest.id)).toEqual(knownChannelNames());
     expect(registry.listAvailable({ agent: "openclaw" }).map((manifest) => manifest.id)).toEqual([
       "telegram",
@@ -277,9 +275,9 @@ describe("built-in channel manifests", () => {
         placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
       },
     ]);
-    expect(renderJson(discordManifest)).toContain("\"path\":\"discord\"");
-    expect(renderJson(discordManifest)).toContain("\"require_mention\"");
-    expect(renderJson(discordManifest)).toContain("\"path\":\"platforms.discord\"");
+    expect(renderJson(discordManifest)).toContain('"path":"discord"');
+    expect(renderJson(discordManifest)).toContain('"require_mention"');
+    expect(renderJson(discordManifest)).toContain('"path":"platforms.discord"');
     expectEnvRenderLines(discordManifest, "discord-hermes-env", [
       "DISCORD_BOT_TOKEN={{credential.discordBotToken.placeholder}}",
       "NEMOCLAW_DISCORD_GUILD_IDS={{discord.guildIds.csv}}",

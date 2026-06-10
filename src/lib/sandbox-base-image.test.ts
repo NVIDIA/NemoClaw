@@ -46,10 +46,14 @@ function buildGitEnv(): NodeJS.ProcessEnv {
 const gitEnv = buildGitEnv();
 
 function git(root: string, args: string[]) {
-  const result = spawnSync("git", ["-c", `core.hooksPath=${emptyGitHooksDir}`, "-C", root, ...args], {
-    encoding: "utf-8",
-    env: gitEnv,
-  });
+  const result = spawnSync(
+    "git",
+    ["-c", `core.hooksPath=${emptyGitHooksDir}`, "-C", root, ...args],
+    {
+      encoding: "utf-8",
+      env: gitEnv,
+    },
+  );
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed:\n${result.stderr}\n${result.stdout}`);
   }
@@ -160,7 +164,8 @@ describe("sandbox base image helpers", () => {
   it("surfaces stdout-only build diagnostics — BuildKit can land errors there (Codex review on #3584)", () => {
     const output = formatBuildFailureDiagnostics({
       stderr: "",
-      stdout: "ERROR: failed to solve: process \"/bin/sh -c apt-get install\" did not complete successfully",
+      stdout:
+        'ERROR: failed to solve: process "/bin/sh -c apt-get install" did not complete successfully',
     });
     expect(output).toContain("ERROR: failed to solve");
   });

@@ -230,7 +230,9 @@ describe("handleGatewayState", () => {
   it("refuses to destroy an unknown container state when HTTP is also unavailable", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn((_gatewayName: string): GatewayContainerState => "unknown"),
+      verifyGatewayContainerRunning: vi.fn(
+        (_gatewayName: string): GatewayContainerState => "unknown",
+      ),
       waitForGatewayHttpReady: vi.fn(async () => false),
     });
 
@@ -261,7 +263,10 @@ describe("handleGatewayState", () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
       waitForGatewayHttpReady: vi.fn(async () => true),
-      getGatewayClusterImageDrift: vi.fn(() => ({ currentVersion: "0.0.38", expectedVersion: "0.0.39" })),
+      getGatewayClusterImageDrift: vi.fn(() => ({
+        currentVersion: "0.0.38",
+        expectedVersion: "0.0.39",
+      })),
       destroyGatewayForReuse: vi.fn(() => "missing" as GatewayReuseState),
     });
 
@@ -318,9 +323,7 @@ describe("handleGatewayState", () => {
   it("does not retire a foreign-active Docker-driver gateway (concurrent instances)", async () => {
     const { deps, calls } = createDeps({
       isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
-      reconcileGatewayGpuReuseForGpuIntent: vi.fn(
-        () => "foreign-active" as GatewayReuseState,
-      ),
+      reconcileGatewayGpuReuseForGpuIntent: vi.fn(() => "foreign-active" as GatewayReuseState),
     });
 
     const result = await handleGatewayState(baseOptions(deps, "foreign-active"));

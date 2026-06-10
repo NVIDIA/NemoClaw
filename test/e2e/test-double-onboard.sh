@@ -780,38 +780,95 @@ else
   fail "connect removed '$SANDBOX_A' from the registry (must be preserved, #4497)"
 fi
 
-# The preserved entry must still be locatable by the recovery command the
-# status hint recommends: rebuild must get past the dispatcher and into its
-# own flow rather than failing with "does not exist".
+# #4497 (reopened) acceptance gate — the EXACT reporter workflow:
+#   status recommends `rebuild --yes` → connect preserves the registry →
+#   `rebuild --yes` must actually RECOVER the sandbox, not dead-end.
+#
+# The first fix (PR #4647) only stopped connect from deleting the entry; rebuild
+# still aborted at its backup step with "Cannot back up state" whenever the live
+# sandbox was absent — precisely this stale state. A probe that only checks for
+# "does not exist" would pass against that bug, so this drives the full recovery
+# rebuild and asserts it (a) never prints the dead-end errors, (b) reports the
+# stale state and skips the impossible backup, and (c) recreates a live sandbox.
+#
+# The recreate runs `onboard --resume` in-process, so it needs the same provider
+# env the original onboard used. Allow a full phase timeout for the rebuild.
 REBUILD_LOG="$(mktemp)"
 rebuild_exit=0
-run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
-  env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
+run_with_timeout "$PHASE_TIMEOUT" \
+  env \
+  COMPATIBLE_API_KEY=dummy \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=custom \
+  "NEMOCLAW_ENDPOINT_URL=${FAKE_BASE_URL}" \
+  NEMOCLAW_MODEL=test-model \
+  "NEMOCLAW_SANDBOX_NAME=${SANDBOX_A}" \
+  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_DASHBOARD_PORT= \
+  CHAT_UI_URL= \
+  "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
 rebuild_output="$(cat "$REBUILD_LOG")"
 rm -f "$REBUILD_LOG"
 
-# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass: a
-# killed process produces output without "does not exist", so guard the exit
-# code before the content assertion.
+# A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass.
 if [ "$rebuild_exit" -eq 124 ]; then
-  fail "rebuild probe timed out after ${RECOVERY_PROBE_TIMEOUT_SECONDS}s (possible prompt regression, #4497)"
+  dump_diagnostics "stale rebuild recovery (#4497)"
+  fail "rebuild recovery timed out after ${PHASE_TIMEOUT}s (#4497)"
+fi
+
+# (a) The pre-fix dead-ends must never appear.
+if grep -q "Cannot back up state" <<<"$rebuild_output"; then
+  fail "rebuild dead-ended at 'Cannot back up state' on a stale sandbox (#4497)"
 elif grep -q "does not exist" <<<"$rebuild_output"; then
   fail "rebuild could not locate the preserved sandbox '$SANDBOX_A' (#4497)"
 else
-  pass "rebuild located the preserved sandbox '$SANDBOX_A' (#4497)"
+  pass "rebuild did not dead-end on the stale sandbox (#4497)"
 fi
 
-# #4497: the explicit `destroy` command is the intended way to purge a stale
-# entry now that routine status/connect no longer delete it. Purge it here,
-# while the gateway is still healthy, so the preserved entry does not leak into
-# Phase 7 cleanup (which runs against a stopped gateway and cannot remove it).
+# (b) It must recognize the stale state and skip the impossible backup.
+if grep -q "absent from the live OpenShell gateway" <<<"$rebuild_output" \
+  && grep -q "No live workspace state to back up" <<<"$rebuild_output"; then
+  pass "rebuild reported the stale state and skipped backup (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery markers (#4497)"
+  fail "rebuild did not report the stale-recovery path (#4497)"
+fi
+if grep -q "Creating new sandbox with current image" <<<"$rebuild_output"; then
+  pass "rebuild proceeded to recreate from preserved metadata (#4497)"
+else
+  fail "rebuild did not proceed to recreate the sandbox (#4497)"
+fi
+
+# (c) The recovery must succeed end-to-end: a live sandbox is back and the
+# registry entry survived the whole workflow.
+if [ "$rebuild_exit" -eq 0 ]; then
+  pass "rebuild recovery exited 0 (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery exit=$rebuild_exit (#4497)"
+  fail "rebuild recovery exited $rebuild_exit (expected 0, #4497)"
+fi
+if openshell sandbox get "$SANDBOX_A" >/dev/null 2>&1; then
+  pass "OpenShell reports '$SANDBOX_A' live again after recovery rebuild (#4497)"
+else
+  dump_diagnostics "stale rebuild recovery liveness (#4497)"
+  fail "'$SANDBOX_A' is still absent from OpenShell after recovery rebuild (#4497)"
+fi
+if registry_has "$SANDBOX_A"; then
+  pass "Registry still contains '$SANDBOX_A' after recovery rebuild (#4497)"
+else
+  fail "Recovery rebuild lost the '$SANDBOX_A' registry entry (#4497)"
+fi
+
+# Teardown the now-live sandbox while the gateway is healthy so it does not leak
+# into Phase 7 cleanup (which runs against a stopped gateway).
 run_with_timeout "$RECOVERY_PROBE_TIMEOUT_SECONDS" \
   env NEMOCLAW_NON_INTERACTIVE=1 "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" destroy --yes 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_A" 2>/dev/null || true
 if registry_has "$SANDBOX_A"; then
-  fail "destroy did not purge the stale '$SANDBOX_A' registry entry (#4497)"
+  fail "destroy did not purge the recovered '$SANDBOX_A' registry entry (#4497)"
 else
-  pass "destroy purged the stale '$SANDBOX_A' registry entry (#4497)"
+  pass "destroy purged the recovered '$SANDBOX_A' registry entry (#4497)"
 fi
 
 # ══════════════════════════════════════════════════════════════════

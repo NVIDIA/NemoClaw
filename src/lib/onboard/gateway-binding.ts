@@ -71,7 +71,11 @@ export function resolveGatewayCompatContainerName(port: number): string {
 export interface GatewayNameBoundClassifiers {
   hasStaleGateway(gwInfoOutput?: string): boolean;
   isSelectedGateway(statusOutput?: string): boolean;
-  isGatewayHealthy(statusOutput?: string, gwInfoOutput?: string, activeGatewayInfoOutput?: string): boolean;
+  isGatewayHealthy(
+    statusOutput?: string,
+    gwInfoOutput?: string,
+    activeGatewayInfoOutput?: string,
+  ): boolean;
   getGatewayReuseState(
     statusOutput?: string,
     gwInfoOutput?: string,

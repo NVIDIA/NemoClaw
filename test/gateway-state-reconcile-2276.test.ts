@@ -30,7 +30,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, it } from "vitest";
 import { testTimeout } from "./helpers/timeouts";
 
 const TIMEOUT_MS = testTimeout(20_000);
@@ -294,514 +294,513 @@ afterEach(() => {
 
 // ─── Scenario 1 ─── connect is now non-destructive (#4497) ─────────────────
 describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound truly gone", () => {
-  it(
-    "preserves the registry entry and session, points at rebuild/destroy, and exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 0 },
-        selectFlipsActive: false,
-      });
+  it("preserves the registry entry and session, points at rebuild/destroy, and exits 1", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 0 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
-      // #4497: no routine command may delete the state `rebuild` needs.
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-      assert.match(r.stderr, /registered locally, but is not present/);
-      assert.match(r.stderr, /preserved/);
-      assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} rebuild --yes`));
-      assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} destroy`));
-    },
-  );
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}\n${r.stderr}`);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
+    // #4497: no routine command may delete the state `rebuild` needs.
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+    assert.match(r.stderr, /registered locally, but is not present/);
+    assert.match(r.stderr, /preserved/);
+    assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} rebuild --yes`));
+    assert.match(r.stderr, new RegExp(`${SANDBOX_NAME} destroy`));
+  });
 });
 
 // ─── Scenario 2 ─── passive `status` must preserve registry state ─────────
 describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound truly gone", () => {
-  it(
-    "reports the missing live sandbox without removing local registry state",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 0 },
-        selectFlipsActive: false,
-      });
+  it("reports the missing live sandbox without removing local registry state", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 0 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("status");
+    const r = runCli("status");
 
-      assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
-      assert.match(r.stdout, /registered locally, but is not present/);
-      assert.match(r.stdout, /No local registry entry was removed/);
-      assert.doesNotMatch(r.stdout, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
+    assert.match(r.stdout, /registered locally, but is not present/);
+    assert.match(r.stdout, /No local registry entry was removed/);
+    assert.doesNotMatch(r.stdout, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 3 ─── self-heal via gateway select succeeds ──────────────────
 describe("Scenario 3: status — select succeeds, sandbox reappears, registry intact", () => {
-  it(
-    "attempts `gateway select nemoclaw`, re-queries, proceeds; registry preserved",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        // 1st sandbox get: NotFound (gw drifted); 2nd: Ready after select.
-        sandboxGet: [
-          { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
-          { output: SANDBOX_GET_READY, exit: 0 },
-        ],
-        // 1st status call: openshell active. 2nd: nemoclaw active.
-        status: [
-          { output: STATUS_CONNECTED_OPENSHELL, exit: 0 },
-          { output: STATUS_CONNECTED_NEMOCLAW, exit: 0 },
-        ],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 0 },
-        selectFlipsActive: true,
-      });
+  it("attempts `gateway select nemoclaw`, re-queries, proceeds; registry preserved", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      // 1st sandbox get: NotFound (gw drifted); 2nd: Ready after select.
+      sandboxGet: [
+        { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
+        { output: SANDBOX_GET_READY, exit: 0 },
+      ],
+      // 1st status call: openshell active. 2nd: nemoclaw active.
+      status: [
+        { output: STATUS_CONNECTED_OPENSHELL, exit: 0 },
+        { output: STATUS_CONNECTED_NEMOCLAW, exit: 0 },
+      ],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 0 },
+      selectFlipsActive: true,
+    });
 
-      const r = runCli("status");
+    const r = runCli("status");
 
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `expected registry preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
-      // gateway select nemoclaw should have been invoked.
-      assert.ok(r.selectCalls >= 1, `expected ≥1 gateway select calls, got ${r.selectCalls}`);
-    },
-  );
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `expected registry preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
+    // gateway select nemoclaw should have been invoked.
+    assert.ok(r.selectCalls >= 1, `expected ≥1 gateway select calls, got ${r.selectCalls}`);
+  });
 });
 
 // ─── Scenario 4 ─── select fails → wrong_gateway_active, registry intact ───
 describe("Scenario 4: connect — select fails, sandbox still NotFound", () => {
-  it(
-    "surfaces wrong_gateway_active guidance, preserves registry, exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [
-          { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
-          { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
-        ],
-        // All status probes show 'openshell' active (select "failed" to switch)
-        status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "Error: failed to select", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("surfaces wrong_gateway_active guidance, preserves registry, exits 1", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [
+        { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
+        { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
+      ],
+      // All status probes show 'openshell' active (select "failed" to switch)
+      status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "Error: failed to select", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "session sandboxName must be preserved");
-      // User-facing guidance.
-      assert.match(r.stderr, /NOT been removed/);
-      assert.match(r.stderr, /openshell gateway select nemoclaw/);
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME, "session sandboxName must be preserved");
+    // User-facing guidance.
+    assert.match(r.stderr, /NOT been removed/);
+    assert.match(r.stderr, /openshell gateway select nemoclaw/);
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 5 ─── exact #2276 repro: registry entry still present ────────
 describe("Scenario 5: #2276 repro — failed connect must leave registry entry intact", () => {
-  it(
-    "after a failed connect triggered by drifted gateway, entry is still present",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_OTHER, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("after a failed connect triggered by drifted gateway, entry is still present", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_OTHER, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must still contain '${SANDBOX_NAME}', got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      assert.match(r.stderr, /NOT been removed/);
-      assert.match(r.stderr, /openshell gateway select nemoclaw/);
-    },
-  );
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must still contain '${SANDBOX_NAME}', got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    assert.match(r.stderr, /NOT been removed/);
+    assert.match(r.stderr, /openshell gateway select nemoclaw/);
+  });
 });
 
 // ─── Scenario 6 ─── nemoclaw gateway missing + NotFound ────────────────────
 describe("Scenario 6: connect — nemoclaw gateway missing after restart", () => {
-  it(
-    "returns gateway_missing_after_restart, preserves registry, exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_NO_GATEWAY, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_MISSING, exit: 1 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("returns gateway_missing_after_restart, preserves registry, exits 1", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_NO_GATEWAY, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_MISSING, exit: 1 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-      assert.match(
-        r.stderr,
-        /(no longer configured|Start the gateway again|openshell gateway start)/i,
-      );
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+    assert.match(
+      r.stderr,
+      /(no longer configured|Start the gateway again|openshell gateway start)/i,
+    );
+  });
 });
 
 // ─── Scenario 7 ─── nemoclaw gateway unreachable + NotFound ────────────────
 describe("Scenario 7: connect — nemoclaw gateway unreachable after restart", () => {
-  it(
-    "returns gateway_unreachable_after_restart, preserves registry, exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_REFUSED_NEMOCLAW, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("returns gateway_unreachable_after_restart, preserves registry, exits 1", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_REFUSED_NEMOCLAW, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-      assert.match(
-        r.stderr,
-        /(still refusing connections|openshell gateway start|verify `openshell status`)/i,
-      );
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+    assert.match(
+      r.stderr,
+      /(still refusing connections|openshell gateway start|verify `openshell status`)/i,
+    );
+  });
 });
 
 // ─── Scenario 8 ─── gateway info fails / unparseable ───────────────────────
 describe("Scenario 8: gateway info fails — safe default, registry preserved", () => {
-  it(
-    "non-zero exit on `openshell gateway info -g nemoclaw` still preserves registry",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        // connected to "openshell", not nemoclaw — but gateway info fails.
-        status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_MISSING, exit: 1 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("non-zero exit on `openshell gateway info -g nemoclaw` still preserves registry", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      // connected to "openshell", not nemoclaw — but gateway info fails.
+      status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_MISSING, exit: 1 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved when gateway info fails, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved when gateway info fails, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 9 ─── openshell status empty / malformed ─────────────────────
 describe("Scenario 9: empty or malformed status — registry untouched", () => {
-  it(
-    "empty status + gateway info missing → registry preserved, no removal",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_EMPTY, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_EMPTY, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("empty status + gateway info missing → registry preserved, no removal", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_EMPTY, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_EMPTY, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved on empty status, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved on empty status, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+  });
 
-  it(
-    "malformed status + malformed gateway info → registry preserved",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_MALFORMED, exit: 0 }],
-        gatewayInfo: [{ output: "garbage gateway info", exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("malformed status + malformed gateway info → registry preserved", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_MALFORMED, exit: 0 }],
+      gatewayInfo: [{ output: "garbage gateway info", exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect");
+    const r = runCli("connect");
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved on malformed status, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved on malformed status, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 10 ─── non-interactive mode: no prompts ──────────────────────
 describe("Scenario 10: non-interactive mode — deterministic exit, no prompts", () => {
-  it(
-    "NEMOCLAW_NON_INTERACTIVE=1 does not block on user input and exits 1",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("NEMOCLAW_NON_INTERACTIVE=1 does not block on user input and exits 1", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("connect", { NEMOCLAW_NON_INTERACTIVE: "1" });
+    const r = runCli("connect", { NEMOCLAW_NON_INTERACTIVE: "1" });
 
-      assert.equal(r.status, 1);
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        "registry must remain intact in non-interactive mode",
-      );
-      assert.match(r.stderr, /NOT been removed/);
-      // No prompt-style "Press enter" / "? " should appear.
-      assert.doesNotMatch(r.stderr, /Press (enter|any key)|\?\s+\[/i);
-      assert.doesNotMatch(r.stdout, /Press (enter|any key)|\?\s+\[/i);
-    },
-  );
+    assert.equal(r.status, 1);
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      "registry must remain intact in non-interactive mode",
+    );
+    assert.match(r.stderr, /NOT been removed/);
+    // No prompt-style "Press enter" / "? " should appear.
+    assert.doesNotMatch(r.stderr, /Press (enter|any key)|\?\s+\[/i);
+    assert.doesNotMatch(r.stdout, /Press (enter|any key)|\?\s+\[/i);
+  });
 });
 
 // ─── Scenario 11 ─── cross-command parity: status drifts same way ──────────
 describe("Scenario 11: status — wrong gateway active yields guidance, not removal", () => {
-  it(
-    "drift case under `status` preserves registry and prints guidance",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [
-          { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
-          { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
-        ],
-        status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+  it("drift case under `status` preserves registry and prints guidance", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [
+        { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
+        { output: SANDBOX_GET_NOT_FOUND, exit: 1 },
+      ],
+      status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const r = runCli("status");
+    const r = runCli("status");
 
-      assert.equal(
-        registrySandboxPresent(r),
-        true,
-        `registry must be preserved on status drift, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(r.sessionSandboxName, SANDBOX_NAME);
-      // status writes to stdout (console.log), not stderr.
-      const combined = `${r.stdout}\n${r.stderr}`;
-      assert.match(combined, /NOT been removed/);
-      assert.match(combined, /openshell gateway select nemoclaw/);
-      assert.doesNotMatch(combined, /Removed stale local registry entry/);
-    },
-  );
+    assert.equal(
+      registrySandboxPresent(r),
+      true,
+      `registry must be preserved on status drift, got: ${JSON.stringify(r.registry)}`,
+    );
+    assert.equal(r.sessionSandboxName, SANDBOX_NAME);
+    // status writes to stdout (console.log), not stderr.
+    const combined = `${r.stdout}\n${r.stderr}`;
+    assert.match(combined, /NOT been removed/);
+    assert.match(combined, /openshell gateway select nemoclaw/);
+    assert.doesNotMatch(combined, /Removed stale local registry entry/);
+  });
 });
 
 // ─── Scenario 12 ─── cross-command parity: skill install drifts same way ───
 describe("Scenario 12: skill install — wrong gateway active yields guidance, not removal", () => {
-  it(
-    "skill install under drift preserves registry, exits 1 with guidance",
-    { timeout: TIMEOUT_MS },
-    () => {
-      // Minimal valid skill directory.
-      const skillDir = path.join(tmpDir, "my-skill");
-      fs.mkdirSync(skillDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(skillDir, "SKILL.md"),
-        "---\nname: my-skill\ndescription: test\n---\nHello\n",
-      );
+  it("skill install under drift preserves registry, exits 1 with guidance", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    // Minimal valid skill directory.
+    const skillDir = path.join(tmpDir, "my-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: my-skill\ndescription: test\n---\nHello\n",
+    );
 
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 1 },
-        selectFlipsActive: false,
-      });
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_OPENSHELL, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 1 },
+      selectFlipsActive: false,
+    });
 
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const result = spawnSync(
-        process.execPath,
-        [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "skill", "install", skillDir],
-        {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          timeout: TIMEOUT_MS,
-          env: {
-            ...process.env,
-            HOME: tmpDir,
-            PATH: `${homeLocalBin}:/usr/bin:/bin`,
-            NO_COLOR: "1",
-          },
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const result = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "skill", "install", skillDir],
+      {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        timeout: TIMEOUT_MS,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${homeLocalBin}:/usr/bin:/bin`,
+          NO_COLOR: "1",
         },
-      );
+      },
+    );
 
-      const registryPath = path.join(registryDir, "sandboxes.json");
-      const reg = fs.existsSync(registryPath)
-        ? JSON.parse(fs.readFileSync(registryPath, "utf-8"))
-        : null;
-      const sessionPath = path.join(registryDir, "onboard-session.json");
-      const session = fs.existsSync(sessionPath)
-        ? JSON.parse(fs.readFileSync(sessionPath, "utf-8"))
-        : {};
+    const registryPath = path.join(registryDir, "sandboxes.json");
+    const reg = fs.existsSync(registryPath)
+      ? JSON.parse(fs.readFileSync(registryPath, "utf-8"))
+      : null;
+    const sessionPath = path.join(registryDir, "onboard-session.json");
+    const session = fs.existsSync(sessionPath)
+      ? JSON.parse(fs.readFileSync(sessionPath, "utf-8"))
+      : {};
 
-      assert.equal(result.status, 1, `expected exit 1, got ${result.status}\n${result.stderr}`);
-      assert.ok(
-        reg && reg.sandboxes && reg.sandboxes[SANDBOX_NAME],
-        `registry must be preserved on skill install drift, got: ${JSON.stringify(reg)}`,
-      );
-      assert.equal(session.sandboxName, SANDBOX_NAME);
-      assert.match(result.stderr, /NOT been removed/);
-      assert.match(result.stderr, /openshell gateway select nemoclaw/);
-    },
-  );
+    assert.equal(result.status, 1, `expected exit 1, got ${result.status}\n${result.stderr}`);
+    assert.ok(
+      reg && reg.sandboxes && reg.sandboxes[SANDBOX_NAME],
+      `registry must be preserved on skill install drift, got: ${JSON.stringify(reg)}`,
+    );
+    assert.equal(session.sandboxName, SANDBOX_NAME);
+    assert.match(result.stderr, /NOT been removed/);
+    assert.match(result.stderr, /openshell gateway select nemoclaw/);
+  });
 });
 
 // ─── Scenario 14 (#4497) ─── connect preserves enough state for rebuild ─────
-// End-to-end recovery contract: a healthy gateway reports the sandbox as gone,
-// `connect` must NOT delete the registry entry, and a follow-up
-// `rebuild --yes` must still be able to LOCATE the sandbox (it now gets past
-// the dispatcher's "does not exist" guard and into the rebuild flow, where it
-// stops at the credential preflight with the sandbox untouched). Before the
-// fix, `connect` removed the entry and `rebuild` failed with "does not exist".
+// End-to-end recovery contract for the REOPENED issue: a healthy gateway
+// reports the sandbox as gone, `connect` must NOT delete the registry entry,
+// and the follow-up `rebuild --yes` must actually RECOVER it.
+//
+// The first fix (PR #4647) only stopped `connect` from deleting the entry. But
+// `rebuild` then still dead-ended at its backup step with "Cannot back up
+// state" because the live sandbox was absent — exactly this stale state. So the
+// recommended recovery path was still broken. This scenario now asserts rebuild
+// (a) locates the preserved entry (no "does not exist"), (b) does NOT dead-end
+// at "Cannot back up state", and (c) reports the stale state and proceeds to
+// recreate from the preserved registry metadata instead of aborting.
 describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover", () => {
-  it(
-    "after a non-destructive connect, `rebuild --yes` still finds the sandbox",
-    { timeout: TIMEOUT_MS },
-    () => {
-      writeStubOpenshell({
-        sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
-        status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
-        gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
-        gatewaySelect: { output: "", exit: 0 },
-        selectFlipsActive: false,
-      });
+  it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
+    timeout: TIMEOUT_MS,
+  }, () => {
+    writeStubOpenshell({
+      sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
+      status: [{ output: STATUS_CONNECTED_NEMOCLAW, exit: 0 }],
+      gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
+      gatewaySelect: { output: "", exit: 0 },
+      selectFlipsActive: false,
+    });
 
-      // Step 3: routine connect must preserve the registry entry.
-      const connect = runCli("connect");
-      assert.equal(connect.status, 1, `connect expected exit 1, got ${connect.status}`);
-      assert.equal(
-        registrySandboxPresent(connect),
-        true,
-        `connect must preserve the registry entry, got: ${JSON.stringify(connect.registry)}`,
-      );
-      assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
-      assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
+    // Step 3: routine connect must preserve the registry entry.
+    const connect = runCli("connect");
+    assert.equal(connect.status, 1, `connect expected exit 1, got ${connect.status}`);
+    assert.equal(
+      registrySandboxPresent(connect),
+      true,
+      `connect must preserve the registry entry, got: ${JSON.stringify(connect.registry)}`,
+    );
+    assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
+    assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
 
-      // Step 4: the previously-suggested rebuild can still locate the sandbox.
-      // The registry provider is `nvidia-prod`; with NVIDIA_API_KEY unset the
-      // rebuild stops at the credential preflight (before any destructive
-      // backup/delete) — proving it located the entry rather than tripping the
-      // dispatcher's "does not exist" guard.
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const rebuild = spawnSync(
-        process.execPath,
-        [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
-        {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          timeout: TIMEOUT_MS,
-          env: {
-            ...process.env,
-            HOME: tmpDir,
-            PATH: `${homeLocalBin}:/usr/bin:/bin`,
-            NO_COLOR: "1",
-            NEMOCLAW_NON_INTERACTIVE: "1",
-            // Force the credential preflight to fail deterministically so the
-            // rebuild halts the moment after it locates the sandbox.
-            NVIDIA_API_KEY: "",
-            NEMOCLAW_PROVIDER_KEY: "",
-          },
+    // Step 4: the previously-suggested rebuild must RECOVER the stale sandbox.
+    // The live `sandbox list` does not report it, so rebuild enters its
+    // stale-recovery path: it locates the preserved registry entry, skips the
+    // impossible backup (instead of dead-ending at "Cannot back up state"),
+    // and proceeds to recreate from the preserved metadata.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const rebuild = spawnSync(
+      process.execPath,
+      [path.join(repoRoot, "bin", "nemoclaw.js"), SANDBOX_NAME, "rebuild", "--yes"],
+      {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        timeout: TIMEOUT_MS,
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${homeLocalBin}:/usr/bin:/bin`,
+          NO_COLOR: "1",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          // The recreate handoff (onboard --resume) fails fast in this stubbed
+          // HOME — fine: the assertions below target the recovery markers that
+          // are emitted BEFORE the recreate, proving rebuild crossed the
+          // backup gate that previously blocked it.
+          NVIDIA_API_KEY: "",
+          NEMOCLAW_PROVIDER_KEY: "",
         },
-      );
-      const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
+      },
+    );
+    const rebuildOut = `${rebuild.stdout || ""}\n${rebuild.stderr || ""}`;
 
-      assert.doesNotMatch(
-        rebuildOut,
-        /does not exist/,
-        `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
-      );
-      assert.match(
-        rebuildOut,
-        new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
-        `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
-      );
-      // Registry entry still intact after the located-but-halted rebuild.
-      const registryPath = path.join(registryDir, "sandboxes.json");
-      const reg = fs.existsSync(registryPath)
-        ? JSON.parse(fs.readFileSync(registryPath, "utf-8"))
-        : null;
-      assert.ok(
-        reg?.sandboxes?.[SANDBOX_NAME],
-        `registry entry must remain after rebuild preflight, got: ${JSON.stringify(reg)}`,
-      );
-    },
-  );
+    assert.doesNotMatch(
+      rebuildOut,
+      /does not exist/,
+      `rebuild must locate the preserved sandbox, got:\n${rebuildOut}`,
+    );
+    // The reopened-issue dead-end must be gone.
+    assert.doesNotMatch(
+      rebuildOut,
+      /Cannot back up state/,
+      `rebuild must not dead-end on the stale sandbox (#4497), got:\n${rebuildOut}`,
+    );
+    assert.match(
+      rebuildOut,
+      new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
+      `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
+    );
+    // It must recognize the stale state and skip the impossible backup.
+    assert.match(
+      rebuildOut,
+      /absent from the live OpenShell gateway/,
+      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}`,
+    );
+    assert.match(
+      rebuildOut,
+      /No live workspace state to back up/,
+      `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
+    );
+    assert.doesNotMatch(
+      rebuildOut,
+      /Backing up sandbox state/,
+      `rebuild must not attempt backup on a stale sandbox (#4497), got:\n${rebuildOut}`,
+    );
+    // And it must proceed to recreate from the preserved metadata — this line
+    // is printed right before the onboard --resume handoff.
+    assert.match(
+      rebuildOut,
+      /Creating new sandbox with current image/,
+      `rebuild must proceed to recreate the sandbox (#4497), got:\n${rebuildOut}`,
+    );
+  });
 });

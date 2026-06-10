@@ -24,10 +24,10 @@ export function verifyGatewayContainerRunning(
     deps.dockerInspect ??
     (require("../adapters/docker") as { dockerInspect: DockerInspect }).dockerInspect;
   const containerName = `openshell-cluster-${gatewayName}`;
-  const result = inspect(
-    ["--type", "container", "--format", "{{.State.Running}}", containerName],
-    { ignoreError: true, suppressOutput: true },
-  );
+  const result = inspect(["--type", "container", "--format", "{{.State.Running}}", containerName], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
 
   if (result.status === 0 && String(result.stdout || "").trim() === "true") {
     return "running";

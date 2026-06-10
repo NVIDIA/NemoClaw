@@ -32,7 +32,8 @@ export const slackManifest = {
       required: true,
       envKey: "SLACK_APP_TOKEN",
       formatPattern: "^xapp-[A-Za-z0-9_-]+$",
-      formatHint: "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
+      formatHint:
+        "Slack app tokens start with 'xapp-' (e.g. xapp-<version>-<app-id>-<team-id>-<redacted>).",
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",

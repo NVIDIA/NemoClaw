@@ -81,10 +81,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     expect(waitForSupervisor).toHaveBeenCalledTimes(1);
     expect(finalizeBackup).toHaveBeenCalledTimes(1);
-    expect(finalizeBackup).toHaveBeenCalledWith(
-      { result, supervisorReady: true },
-      deps,
-    );
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
@@ -114,10 +111,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     patch.waitForSupervisorReconnectIfNeeded();
 
-    expect(finalizeBackup).toHaveBeenCalledWith(
-      { result, supervisorReady: false },
-      deps,
-    );
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
     expect(onPatchFailureExit).toHaveBeenCalledTimes(1);
     const [sandboxName, error, exitDeps] = onPatchFailureExit.mock.calls[0];
     expect(sandboxName).toBe("alpha");

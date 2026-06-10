@@ -19,10 +19,7 @@ function notFound(): RunResult {
 
 const PROXY_CMDLINE = "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.js\n";
 
-function psStub(
-  pidStr: string,
-  opts: { exited: Set<number>; cmdline?: string; owner?: string },
-) {
+function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; owner?: string }) {
   return (args: readonly string[]): RunResult | null => {
     if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
     const pid = Number(pidStr);
@@ -78,7 +75,10 @@ describe("uninstall run plan", () => {
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
         commandExists: () => true,
-        env: { HOME: "/tmp/nemoclaw-uninstall-test", TMPDIR: "/tmp/nemoclaw-uninstall-test" } as NodeJS.ProcessEnv,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test",
+          TMPDIR: "/tmp/nemoclaw-uninstall-test",
+        } as NodeJS.ProcessEnv,
         existsSync: () => false,
         isTty: false,
         kill: () => true,
@@ -95,8 +95,15 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("[3/6] NemoClaw CLI");
     expect(logs).toContain("Removed global NemoClaw CLI package");
     expect(logs).toContain("Claws retracted. Until next time.");
-    expect(dockerCalls).toEqual(expect.arrayContaining([["rm", "-f", "abc"], ["rmi", "-f", "img1"]]));
-    expect(dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw")).toBe(true);
+    expect(dockerCalls).toEqual(
+      expect.arrayContaining([
+        ["rm", "-f", "abc"],
+        ["rmi", "-f", "img1"],
+      ]),
+    );
+    expect(
+      dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw"),
+    ).toBe(true);
   });
 
   it("removes all managed OpenShell helper binaries from the writable user bin", () => {
@@ -117,7 +124,11 @@ describe("uninstall run plan", () => {
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: false },
         {
-          commandExists: (command) => command !== "docker" && command !== "lsof" && command !== "openshell" && command !== "pgrep",
+          commandExists: (command) =>
+            command !== "docker" &&
+            command !== "lsof" &&
+            command !== "openshell" &&
+            command !== "pgrep",
           env: { HOME: tmpHome } as NodeJS.ProcessEnv,
           existsSync: (target) => existing.has(target),
           isTty: false,
@@ -235,9 +246,9 @@ describe("uninstall run plan", () => {
     const killed: number[] = [];
     const exited = new Set<number>();
     // Simulate the persisted PID file under ~/.nemoclaw/.
-    const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-pidfile";
-    const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
-    fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-test-2759-pidfile-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "ollama-auth-proxy.pid");
+    fs.mkdirSync(path.join(tmpHome, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(pidFile, "44321\n");
 
     try {
@@ -462,9 +473,9 @@ describe("uninstall run plan", () => {
     const logs: string[] = [];
     const warnings: string[] = [];
     const signals: NodeJS.Signals[] = [];
-    const tmpHome = "/tmp/nemoclaw-uninstall-test-2759-stuck";
-    const pidFile = `${tmpHome}/.nemoclaw/ollama-auth-proxy.pid`;
-    fs.mkdirSync(`${tmpHome}/.nemoclaw`, { recursive: true });
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-test-2759-stuck-"));
+    const pidFile = path.join(tmpHome, ".nemoclaw", "ollama-auth-proxy.pid");
+    fs.mkdirSync(path.join(tmpHome, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(pidFile, "44322\n");
 
     try {
@@ -571,7 +582,8 @@ describe("uninstall run plan", () => {
         commandExists: (command) => command !== "docker" && command !== "pgrep",
         env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
         error: (line) => warnings.push(line),
-        existsSync: (target) => target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
+        existsSync: (target) =>
+          target === "/swapfile" || target === "/home/test/.nemoclaw/managed_swap",
         isTty: true,
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
@@ -628,7 +640,10 @@ describe("uninstall run plan", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101"), { recursive: true });
-      fs.writeFileSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"), "{}");
+      fs.writeFileSync(
+        path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"),
+        "{}",
+      );
       fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
       fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
       fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
@@ -659,13 +674,21 @@ describe("uninstall run plan", () => {
         );
 
         expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
-        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(
+          true,
+        );
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(fs.existsSync(path.join(stateDir, "ollama-auth-proxy.pid"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "source"))).toBe(false);
-        expect(logs).toContain(`Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`);
-        expect(logs.some((line) => line.includes("preserved: rebuild-backups, backups, sandboxes.json"))).toBe(true);
+        expect(logs).toContain(
+          `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,
+        );
+        expect(
+          logs.some((line) => line.includes("preserved: rebuild-backups, backups, sandboxes.json")),
+        ).toBe(true);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -694,7 +717,9 @@ describe("uninstall run plan", () => {
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(stateDir)).toBe(false);
         expect(logs).toContain(`Removed ${stateDir}`);
-        expect(logs).toContain("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.");
+        expect(logs).toContain(
+          "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
+        );
         expect(logs.every((line) => !line.includes("preserved:"))).toBe(true);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -749,8 +774,12 @@ describe("uninstall run plan", () => {
         );
 
         expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
-        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(
+          true,
+        );
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(logs).toContain("Keeping user data.");
       } finally {
@@ -783,10 +812,16 @@ describe("uninstall run plan", () => {
         );
 
         expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
-        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
+        ).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(
+          true,
+        );
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
-        expect(logs).toContain(`Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`);
+        expect(logs).toContain(
+          `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,
+        );
         // Interactive y/N prompt must not fire when NEMOCLAW_NON_INTERACTIVE is set.
         expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
         // The earlier generic confirm() prompt still consumes one readLine for "Proceed? [y/N]";
@@ -826,12 +861,16 @@ describe("uninstall run plan", () => {
         );
 
         expect(result.exitCode).toBe(1);
-        expect(warnings.some((line) => line.startsWith(`Failed to inspect ${stateDir}: `))).toBe(true);
+        expect(warnings.some((line) => line.startsWith(`Failed to inspect ${stateDir}: `))).toBe(
+          true,
+        );
         expect(warnings).toContain(
           "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
         );
         expect(logs).not.toContain("Claws retracted. Until next time.");
-        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
+        expect(
+          fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
+        ).toBe(true);
       } finally {
         lstatSpy.mockRestore();
         fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -840,7 +879,9 @@ describe("uninstall run plan", () => {
 
     it("removes ~/.nemoclaw wholesale when it is a symlink rather than a real directory", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
-      const realTarget = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"));
+      const realTarget = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"),
+      );
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.symlinkSync(realTarget, stateDir);
       // Symlink target intentionally non-empty so that following it would
@@ -853,8 +894,7 @@ describe("uninstall run plan", () => {
           {
             commandExists: () => false,
             env: { HOME: tmpHome } as NodeJS.ProcessEnv,
-            existsSync: (target: string) =>
-              target.startsWith(tmpHome) && fs.existsSync(target),
+            existsSync: (target: string) => target.startsWith(tmpHome) && fs.existsSync(target),
             isTty: false,
             log: (line) => logs.push(line),
             run: vi.fn(() => ok()),
@@ -926,7 +966,11 @@ describe("uninstall run plan", () => {
             exited,
           })(args);
           if (psResult) return psResult;
-          if (command === "pgrep" && args[0] === "-f" && String(args[1]).includes("openshell-gateway")) {
+          if (
+            command === "pgrep" &&
+            args[0] === "-f" &&
+            String(args[1]).includes("openshell-gateway")
+          ) {
             return { status: 0, stdout: "9999887\n", stderr: "" };
           }
           if (command === "lsof") return ok("");
@@ -941,6 +985,5 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(killed).toContain(9999887);
     expect(logs).toContain("Stopped host openshell-gateway process 9999887");
-
   });
 });

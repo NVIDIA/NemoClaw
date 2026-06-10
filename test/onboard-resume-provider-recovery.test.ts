@@ -50,10 +50,7 @@ const onboardSession: typeof import("../dist/lib/state/onboard-session") = requi
 function stubLiveGatewayUntrusted(): void {
   registry.listSandboxes = () =>
     ({
-      sandboxes: [
-        { name: "other-default" },
-        { name: "another" },
-      ],
+      sandboxes: [{ name: "other-default" }, { name: "another" }],
       defaultSandbox: "other-default",
     }) as ReturnType<typeof registry.listSandboxes>;
 }
@@ -165,7 +162,9 @@ describe("readRecordedProvider", () => {
       throw new Error("registry unreadable");
     };
     onboardSession.loadSession = () =>
-      ({ sandboxName: "spark-1", provider: "ollama-local" }) as ReturnType<typeof onboardSession.loadSession>;
+      ({ sandboxName: "spark-1", provider: "ollama-local" }) as ReturnType<
+        typeof onboardSession.loadSession
+      >;
     stubLiveGatewayUntrusted();
     expect(readRecordedProvider("spark-1")).toBe("ollama-local");
   });
@@ -272,9 +271,12 @@ describe("readRecordedNimContainer", () => {
   });
 
   it("returns null when neither registry nor session has a nimContainer", () => {
-    registry.getSandbox = () => ({ name: "spark-1", nimContainer: null }) as ReturnType<typeof registry.getSandbox>;
+    registry.getSandbox = () =>
+      ({ name: "spark-1", nimContainer: null }) as ReturnType<typeof registry.getSandbox>;
     onboardSession.loadSession = () =>
-      ({ sandboxName: "spark-1", nimContainer: null }) as ReturnType<typeof onboardSession.loadSession>;
+      ({ sandboxName: "spark-1", nimContainer: null }) as ReturnType<
+        typeof onboardSession.loadSession
+      >;
     expect(readRecordedNimContainer("spark-1")).toBeNull();
   });
 

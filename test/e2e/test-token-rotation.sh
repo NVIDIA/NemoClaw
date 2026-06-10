@@ -163,6 +163,22 @@ is_fake_slack_token() {
   esac
 }
 
+registry_has_messaging_credential_hash() {
+  local env_key="$1"
+  [ -f "$REGISTRY" ] && node -e "
+const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+const sandbox = (r.sandboxes || {})[process.argv[2]];
+const bindings = sandbox?.messaging?.plan?.credentialBindings;
+if (!Array.isArray(bindings)) process.exit(1);
+const found = bindings.some((entry) =>
+  entry?.providerEnvKey === process.argv[3] &&
+  typeof entry.credentialHash === 'string' &&
+  entry.credentialHash.length > 0,
+);
+process.exit(found ? 0 : 1);
+" "$REGISTRY" "$SANDBOX_NAME" "$env_key" 2>/dev/null
+}
+
 # ── Phase 0: Install NemoClaw with token A ────────────────────────
 
 section "Phase 0: Install NemoClaw and first onboard with token A"
@@ -293,45 +309,29 @@ else
     fail "Provider ${SANDBOX_NAME}-slack-app not found"
   fi
 
-  # Verify credential hashes are stored for this sandbox in the registry
-  if [ -f "$REGISTRY" ] && node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const h = (r.sandboxes || {})[process.argv[2]]?.providerCredentialHashes || {};
-process.exit('TELEGRAM_BOT_TOKEN' in h ? 0 : 1);
-" "$REGISTRY" "$SANDBOX_NAME" 2>/dev/null; then
-    pass "Telegram credential hash stored for $SANDBOX_NAME"
+  # Verify credential hashes are stored in the persisted messaging plan.
+  if registry_has_messaging_credential_hash "TELEGRAM_BOT_TOKEN"; then
+    pass "Telegram credential hash stored in messaging plan for $SANDBOX_NAME"
   else
-    fail "Telegram credential hash not found for $SANDBOX_NAME in registry"
+    fail "Telegram credential hash not found in messaging plan for $SANDBOX_NAME"
   fi
 
-  if [ -f "$REGISTRY" ] && node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const h = (r.sandboxes || {})[process.argv[2]]?.providerCredentialHashes || {};
-process.exit('DISCORD_BOT_TOKEN' in h ? 0 : 1);
-" "$REGISTRY" "$SANDBOX_NAME" 2>/dev/null; then
-    pass "Discord credential hash stored for $SANDBOX_NAME"
+  if registry_has_messaging_credential_hash "DISCORD_BOT_TOKEN"; then
+    pass "Discord credential hash stored in messaging plan for $SANDBOX_NAME"
   else
-    fail "Discord credential hash not found for $SANDBOX_NAME in registry"
+    fail "Discord credential hash not found in messaging plan for $SANDBOX_NAME"
   fi
 
-  if [ -f "$REGISTRY" ] && node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const h = (r.sandboxes || {})[process.argv[2]]?.providerCredentialHashes || {};
-process.exit('SLACK_BOT_TOKEN' in h ? 0 : 1);
-" "$REGISTRY" "$SANDBOX_NAME" 2>/dev/null; then
-    pass "Slack bot credential hash stored for $SANDBOX_NAME"
+  if registry_has_messaging_credential_hash "SLACK_BOT_TOKEN"; then
+    pass "Slack bot credential hash stored in messaging plan for $SANDBOX_NAME"
   else
-    fail "Slack bot credential hash not found for $SANDBOX_NAME in registry"
+    fail "Slack bot credential hash not found in messaging plan for $SANDBOX_NAME"
   fi
 
-  if [ -f "$REGISTRY" ] && node -e "
-const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
-const h = (r.sandboxes || {})[process.argv[2]]?.providerCredentialHashes || {};
-process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
-" "$REGISTRY" "$SANDBOX_NAME" 2>/dev/null; then
-    pass "Slack app credential hash stored for $SANDBOX_NAME"
+  if registry_has_messaging_credential_hash "SLACK_APP_TOKEN"; then
+    pass "Slack app credential hash stored in messaging plan for $SANDBOX_NAME"
   else
-    fail "Slack app credential hash not found for $SANDBOX_NAME in registry"
+    fail "Slack app credential hash not found in messaging plan for $SANDBOX_NAME"
   fi
 
   # ── Phase 2: Rotate Telegram token only (re-onboard with token B) ─

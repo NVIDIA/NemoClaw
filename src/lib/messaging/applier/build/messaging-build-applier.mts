@@ -688,7 +688,8 @@ function parseGeneratedYamlObject(existing: string | undefined, target: string):
   const lines = existing
     .split(/\r?\n/)
     .map((line, index): GeneratedYamlLine | null => {
-      if (line.trim().length === 0) return null;
+      const trimmed = line.trim();
+      if (trimmed.length === 0 || trimmed.startsWith("#")) return null;
       const indent = line.match(/^ */)?.[0].length ?? 0;
       return { indent, text: line.slice(indent), lineNumber: index + 1 };
     })

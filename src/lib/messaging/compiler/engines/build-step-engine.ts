@@ -30,10 +30,7 @@ export async function planBuildSteps(
     if (channel?.active) {
       const result = await runMessagingHook(hook, hooks, {
         channelId: manifest.id,
-        inputs: selectHookInputs(
-          buildHookInputMap(channel, credentialBindings),
-          hook.inputs,
-        ),
+        inputs: selectHookInputs(buildHookInputMap(channel, credentialBindings), hook.inputs),
       });
       hookOutputs = result.outputs;
     }
@@ -54,15 +51,11 @@ export async function planBuildSteps(
   return steps;
 }
 
-function isBuildStepOutput(
-  output: ChannelHookOutputSpec,
-): output is ChannelHookOutputSpec & {
+function isBuildStepOutput(output: ChannelHookOutputSpec): output is ChannelHookOutputSpec & {
   readonly kind: "build-arg" | "build-file" | "package-install";
 } {
   return (
-    output.kind === "build-arg" ||
-    output.kind === "build-file" ||
-    output.kind === "package-install"
+    output.kind === "build-arg" || output.kind === "build-file" || output.kind === "package-install"
   );
 }
 

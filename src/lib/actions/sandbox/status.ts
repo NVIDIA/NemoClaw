@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { printOpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import * as agentRuntime from "../../agent/runtime";
@@ -19,15 +18,9 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { getSandboxDockerRuntime } from "./docker-health";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
-import {
-  printGatewayLifecycleHint,
-  printWrongGatewayActiveGuidance,
-} from "./gateway-state";
+import { printGatewayLifecycleHint, printWrongGatewayActiveGuidance } from "./gateway-state";
 import { isSandboxGatewayRunningForStatus } from "./process-recovery";
 import {
   getSandboxStatusPreflight,
@@ -112,9 +105,7 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   // the auth proxy in `inference/local.ts:probeOllamaAuthProxyHealth`); the
   // `|| "unreachable"` fallback only applies when an upstream forgot to set
   // one. Don't infer the failure mode here — preserve what the probe said. (#3265)
-  console.log(
-    `    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`,
-  );
+  console.log(`    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`);
   console.log(`      ${probe.detail}`);
 }
 
@@ -172,8 +163,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
   printSandboxStatusPreflightHeader(effectivePreflight);
@@ -203,7 +193,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       console.log("    Inference: not verified (gateway/sandbox state not verified)");
     }
     const hostGpu = sb.hostGpuDetected ? "yes" : "no";
-    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true);
+    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? sb.gpuEnabled === true;
     const sandboxGpu = sandboxGpuEnabled ? "enabled" : "disabled";
     const sandboxGpuMode = sb.sandboxGpuMode ? ` (${sb.sandboxGpuMode})` : "";
     const sandboxGpuDevice = sb.sandboxGpuDevice ? ` device=${sb.sandboxGpuDevice}` : "";
@@ -283,7 +273,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         versionCheck.expectedVersion
       ) {
         console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
-        console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`);
+        console.log(
+          `              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`,
+        );
       }
     } catch {
       /* non-fatal */
@@ -295,6 +287,16 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
       console.log(
         `  Recovered ${CLI_DISPLAY_NAME} gateway runtime via ${("recoveryVia" in lookup ? lookup.recoveryVia : null) || "gateway reattach"}.`,
+      );
+      console.log("");
+    }
+    if ("recoveredSandbox" in lookup && lookup.recoveredSandbox) {
+      const via =
+        "recoverySandboxVia" in lookup && lookup.recoverySandboxVia
+          ? ` via ${lookup.recoverySandboxVia}`
+          : "";
+      console.log(
+        `  Recovered sandbox '${sandboxName}' from Docker${via}; OpenShell now sees it as live.`,
       );
       console.log("");
     }

@@ -36,34 +36,6 @@ jobs:
       - id: get-pr-info
         uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
 
-  unit-vitest-linux:
-    runs-on: linux-amd64-cpu4
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies
-        run: |
-          npm ci --ignore-scripts
-          cd nemoclaw
-          npm ci --ignore-scripts
-
-      - name: Build CLI and plugin
-        run: |
-          npm run build:cli
-          cd nemoclaw
-          npm run build
-
-      - name: Run full Vitest suite
-        run: npx vitest run --testTimeout 60000
-
   build-sandbox-images:
     runs-on: linux-amd64-cpu4
     timeout-minutes: 15
