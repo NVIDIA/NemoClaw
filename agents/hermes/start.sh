@@ -676,7 +676,7 @@ start_hermes_dashboard_sandbox_user() {
 wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local attempts=0
-  while [ "$attempts" -lt 45 ]; do
+  while [ "$attempts" -lt 60 ]; do
     if curl -sf --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1; then
       return 0
     fi
@@ -952,6 +952,59 @@ migrate_legacy_layout() {
   echo "[migration] Completed ${label} layout migration (${data_dir} removed)" >&2
 }
 
+# Hermes v0.16.0+ requires API_SERVER_KEY in the environment even for
+# loopback-only api_server binds. Sandboxes built before this requirement
+# have a .env without the key; generate and persist one now so existing
+# sandboxes don't fail on first startup after a Hermes version upgrade.
+ensure_hermes_api_server_key() {
+  local env_file="${HERMES_DIR}/.env"
+  local hash_file="${HERMES_HASH_FILE}"
+  local compat_hash="${HERMES_DIR}/.config-hash"
+  [ -f "$env_file" ] || return 0
+
+  grep -q "^API_SERVER_KEY=" "$env_file" 2>/dev/null && return 0
+
+  if [ -L "$env_file" ] || [ -L "$hash_file" ] || { [ -e "$compat_hash" ] && [ -L "$compat_hash" ]; }; then
+    echo "[SECURITY] Refusing API_SERVER_KEY injection — config or hash path is a symlink" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown root:sandbox "$env_file" || return 1
+    chmod 640 "$env_file" || return 1
+    chmod u+w "$hash_file" || return 1
+    [ ! -f "$compat_hash" ] || chmod u+w "$compat_hash" 2>/dev/null || true
+  elif [ ! -w "$env_file" ]; then
+    echo "[config] Cannot inject API_SERVER_KEY — .env not writable (non-root mode); Hermes api_server will fail" >&2
+    return 0
+  fi
+
+  local new_key
+  new_key=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  printf 'API_SERVER_KEY=%s\n' "$new_key" >>"$env_file"
+  echo "[config] Generated missing API_SERVER_KEY for Hermes API server (Hermes v0.16.0+ requirement)" >&2
+
+  local _write_rc=0
+  if sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$hash_file"; then
+    chown root:root "$hash_file" 2>/dev/null || true
+    chmod 444 "$hash_file" 2>/dev/null || true
+    if [ -f "$compat_hash" ]; then
+      sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$compat_hash" || _write_rc=$?
+      chown sandbox:sandbox "$compat_hash" 2>/dev/null || true
+      chmod 600 "$compat_hash" 2>/dev/null || true
+    fi
+  else
+    _write_rc=$?
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$env_file" 2>/dev/null || true
+    chmod 640 "$env_file" 2>/dev/null || true
+  fi
+
+  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+}
+
 refresh_hermes_provider_placeholders() {
   local env_file="${HERMES_DIR}/.env"
   local hash_file="${HERMES_HASH_FILE}"
@@ -1092,6 +1145,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_shields_up_runtime_env
   validate_hermes_env_secret_boundary
   validate_hermes_runtime_env_secret_boundary
+  ensure_hermes_api_server_key
   refresh_hermes_provider_placeholders
   configure_messaging_channels
   retry_tirith_marker_if_needed
@@ -1142,6 +1196,7 @@ verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 apply_shields_up_runtime_env
 validate_hermes_env_secret_boundary
 validate_hermes_runtime_env_secret_boundary
+ensure_hermes_api_server_key
 refresh_hermes_provider_placeholders
 configure_messaging_channels
 retry_tirith_marker_if_needed

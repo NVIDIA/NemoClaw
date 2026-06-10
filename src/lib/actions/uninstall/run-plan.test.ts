@@ -986,4 +986,195 @@ describe("uninstall run plan", () => {
     expect(killed).toContain(9999887);
     expect(logs).toContain("Stopped host openshell-gateway process 9999887");
   });
+
+  const ROUTER_CMDLINE = "/home/test/.nemoclaw/model-router-venv/bin/model-router proxy --port 4000\n";
+
+  function routerPsStub(
+    pidStr: string,
+    opts: { exited: Set<number>; cmdline?: string; owner?: string },
+  ) {
+    return (args: readonly string[]): RunResult | null => {
+      if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
+      const pid = Number(pidStr);
+      if (args[3] === "pid=") return opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`);
+      if (args[3] === "user=") return ok(`${opts.owner ?? "testuser"}\n`);
+      if (args[3] === "args=") return ok(opts.cmdline ?? ROUTER_CMDLINE);
+      return null;
+    };
+  }
+
+  it("kills the model router via the onboard-session.json routerPid (#5169)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-test-5169-pid-"));
+    const stateDir = path.join(tmpHome, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, "onboard-session.json"), JSON.stringify({ routerPid: 54321 }));
+
+    try {
+      const stub = routerPsStub("54321", { exited });
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: tmpHome, LOGNAME: "testuser" } as NodeJS.ProcessEnv,
+          existsSync: (target) => fs.existsSync(target),
+          isTty: false,
+          kill: (pid, _signal) => {
+            killed.push(pid);
+            exited.add(pid);
+            return true;
+          },
+          log: (line) => logs.push(line),
+          rmSync: vi.fn(),
+          run: (command, args) => {
+            if (command === "ps") {
+              const result = stub(args);
+              if (result) return result;
+            }
+            if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") return ok("");
+            if (args[0] === "-c") return ok("/fake/bin/tool\n");
+            if (args[0] === "-f") return ok("");
+            return ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(killed).toContain(54321);
+      expect(logs).toContain("Stopped model router 54321");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("kills an orphan model router via lsof :4000 when the session file is gone (#5169)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const exited = new Set<number>();
+    const stub = routerPsStub("65432", { exited });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-lsof",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid, _signal) => {
+          killed.push(pid);
+          exited.add(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("65432\n");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).toContain(65432);
+    expect(logs).toContain("Stopped model router 65432");
+  });
+
+  it("never stops a model router process owned by a different user (#5169)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const stub = routerPsStub("77788", { exited: new Set(), owner: "someone-else" });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("77788\n");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).not.toContain(77788);
+    expect(logs).toContain("No model router processes found");
+  });
+
+  it("never kills a process on :4000 whose cmdline is not model-router proxy (#5169)", () => {
+    const logs: string[] = [];
+    const killed: number[] = [];
+    const stub = routerPsStub("99988", {
+      exited: new Set(),
+      cmdline: "/usr/bin/python3 -m http.server 4000\n",
+    });
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: () => true,
+        env: {
+          HOME: "/tmp/nemoclaw-uninstall-test-5169-foreign-cmdline",
+          LOGNAME: "testuser",
+        } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        kill: (pid) => {
+          killed.push(pid);
+          return true;
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "lsof" && args[0] === "-ti" && args[1] === ":4000") {
+            return ok("99988\n");
+          }
+          if (command === "ps") {
+            const result = stub(args);
+            if (result) return result;
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          if (args[0] === "-f") return ok("");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(killed).not.toContain(99988);
+    expect(logs).toContain("No model router processes found");
+  });
 });
