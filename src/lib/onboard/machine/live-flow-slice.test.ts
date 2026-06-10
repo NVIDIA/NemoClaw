@@ -4,7 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
-import { EmptyLiveOnboardFlowSliceResultError, runLiveOnboardFlowSlice } from "./live-flow-slice";
+import {
+  EmptyLiveOnboardFlowSliceResultError,
+  runLiveOnboardFlowSlice,
+  UnexpectedLiveOnboardFlowSliceStateError,
+} from "./live-flow-slice";
 import { advanceTo, type OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime } from "./runner";
 import { DuplicateOnboardSequencePhaseError, type OnboardSequencePhase } from "./sequence-runner";
@@ -78,6 +82,7 @@ describe("runLiveOnboardFlowSlice", () => {
       phases: [phase("preflight", 2)],
       resume: false,
       runWhenState: ["preflight"],
+      compatibilityWhenState: ["provider_selection"],
       runSlice,
       applyCompatibleResult,
     });
@@ -158,12 +163,37 @@ describe("runLiveOnboardFlowSlice", () => {
       phases: [phase("preflight", 2)],
       resume: false,
       runWhenState: ["preflight"],
+      compatibilityWhenState: ["provider_selection"],
       runSlice,
       applyCompatibleResult,
     });
 
     expect(runSlice).not.toHaveBeenCalled();
     expect(applyCompatibleResult).toHaveBeenCalledOnce();
+  });
+
+  it("rejects non-resume states before the slice entry before running side effects", async () => {
+    const liveRuntime = runtime("init");
+    const blocked = phase("provider_selection", 2);
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const applyCompatibleResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [blocked],
+        resume: false,
+        runWhenState: ["provider_selection"],
+        compatibilityWhenState: ["inference", "sandbox"],
+        runSlice,
+        applyCompatibleResult,
+      }),
+    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(blocked.run).not.toHaveBeenCalled();
+    expect(applyCompatibleResult).not.toHaveBeenCalled();
   });
 
   it("rejects duplicate compatibility phases before running side effects", async () => {
