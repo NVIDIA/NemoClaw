@@ -14,10 +14,7 @@ import {
   assertHostDnsHealthy,
   printHostDnsRemediation,
 } from "../../../dist/lib/onboard/bridge-dns-preflight";
-import {
-  isFatalHostDnsProbeFailure,
-  probeHostDns,
-} from "../../../dist/lib/onboard/preflight";
+import { isFatalHostDnsProbeFailure, probeHostDns } from "../../../dist/lib/onboard/preflight";
 
 describe("probeHostDns (#4784)", () => {
   // The probe runs `node -e <resolver-script> <hostname>`. Inject a
@@ -198,7 +195,9 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("aborts (exit 1) with remediation when host DNS is blocked but container DNS would pass (#4784)", () => {
     const errors: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((arg?: unknown) => errors.push(String(arg ?? "")));
+    vi.spyOn(console, "error").mockImplementation((arg?: unknown) =>
+      errors.push(String(arg ?? "")),
+    );
     const exit = vi.fn();
     assertHostDnsHealthy(host, {
       env: {},
@@ -220,7 +219,9 @@ describe("assertHostDnsHealthy (#4784)", () => {
 
   it("aborts on resolution_failed with the resolver-answered wording", () => {
     const errors: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((arg?: unknown) => errors.push(String(arg ?? "")));
+    vi.spyOn(console, "error").mockImplementation((arg?: unknown) =>
+      errors.push(String(arg ?? "")),
+    );
     const exit = vi.fn();
     assertHostDnsHealthy(host, {
       env: {},
@@ -356,7 +357,10 @@ describe("assertHostDnsHealthy (#4784)", () => {
     // Recorded NVIDIA session/registry providers → run (even interactive/unset env).
     // `nvidia-nim` is the legacy NVIDIA Endpoints alias and still needs the host.
     for (const provider of ["nvidia-prod", "nvidia-nim", "nvidia-router"]) {
-      const nvidiaProbe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
+      const nvidiaProbe = vi.fn(() => ({
+        ok: true as const,
+        hostname: "integrate.api.nvidia.com",
+      }));
       assertHostDnsHealthy(host, {
         env: {},
         nonInteractive: false,

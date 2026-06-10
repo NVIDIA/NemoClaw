@@ -1857,7 +1857,8 @@ type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
 > & {
-  optedOutGpuPassthrough?: boolean; recordedProviderForHostDns?: string | null;
+  optedOutGpuPassthrough?: boolean;
+  recordedProviderForHostDns?: string | null;
 };
 
 // Reject unsupported container runtimes (currently only Podman with the
@@ -1905,7 +1906,11 @@ async function preflight(
     !sandboxGpuConfig.sandboxGpuEnabled;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
 
-  assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive(), preflightOpts.recordedProviderForHostDns ?? null);
+  assertDockerBridgeAndContainerDnsHealthy(
+    host,
+    isNonInteractive(),
+    preflightOpts.recordedProviderForHostDns ?? null,
+  );
 
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
@@ -6459,11 +6464,25 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getSandbox: registry.getSandbox.bind(registry),
         getResumeSandboxGpuOverrides,
         detectGpu: nim.detectGpu,
-        runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions, recordedProviderForHostDns: session?.provider ?? readRecordedProvider(recordedSandboxName || requestedSandboxName) }),
+        runPreflight: (preflightOptions) =>
+          preflight({
+            ...opts,
+            ...preflightOptions,
+            recordedProviderForHostDns:
+              session?.provider ??
+              readRecordedProvider(recordedSandboxName || requestedSandboxName),
+          }),
         assessHost,
         assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
-        assertDockerBridgeAndContainerDnsHealthy: (h: Parameters<typeof assertDockerBridgeAndContainerDnsHealthy>[0]) => assertDockerBridgeAndContainerDnsHealthy(h, isNonInteractive(), session?.provider ?? readRecordedProvider(recordedSandboxName || requestedSandboxName)),
+        assertDockerBridgeAndContainerDnsHealthy: (
+          h: Parameters<typeof assertDockerBridgeAndContainerDnsHealthy>[0],
+        ) =>
+          assertDockerBridgeAndContainerDnsHealthy(
+            h,
+            isNonInteractive(),
+            session?.provider ?? readRecordedProvider(recordedSandboxName || requestedSandboxName),
+          ),
         resolveSandboxGpuConfig,
         validateSandboxGpuPreflight,
         skippedStepMessage,

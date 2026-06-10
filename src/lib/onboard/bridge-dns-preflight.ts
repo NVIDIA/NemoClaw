@@ -385,9 +385,7 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
   const probe = opts.probeHostDnsImpl ?? probeHostDns;
 
   if (hostDnsPreflightSkipped(env)) {
-    console.log(
-      `  ⓘ Host DNS resolution check skipped (${SKIP_HOST_DNS_PREFLIGHT_ENV} is set)`,
-    );
+    console.log(`  ⓘ Host DNS resolution check skipped (${SKIP_HOST_DNS_PREFLIGHT_ENV} is set)`);
     return;
   }
 
@@ -415,13 +413,13 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
     return;
   }
   if (!isFatalHostDnsProbeFailure(result)) {
-    console.warn(
-      `  ⚠ Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`,
-    );
+    console.warn(`  ⚠ Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`);
     if (result.details) {
       console.warn(`    ${String(result.details).trim()}`);
     }
-    console.warn("    Proceeding; provider validation will surface a clearer error if DNS is broken.");
+    console.warn(
+      "    Proceeding; provider validation will surface a clearer error if DNS is broken.",
+    );
     return;
   }
 
@@ -467,7 +465,9 @@ export function printHostDnsRemediation(
   console.error(`  ${SKIP_HOST_DNS_PREFLIGHT_ENV}=1 to skip this check.`);
   console.error("");
   console.error("  Verify the fix worked:");
-  console.error(`    node -e "require('node:dns').resolve('${hostname}', (e,a)=>{if(e)throw e;console.log(a)})"`);
+  console.error(
+    `    node -e "require('node:dns').resolve('${hostname}', (e,a)=>{if(e)throw e;console.log(a)})"`,
+  );
   console.error(`    curl -sS https://${hostname}/v1/models -o /dev/null && echo reachable`);
 }
 
