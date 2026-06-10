@@ -76,7 +76,6 @@ const LEGACY_E2E_SHELL_ALLOWLIST = [
   "test/e2e/test-snapshot-commands.sh",
   "test/e2e/test-spark-install.sh",
   "test/e2e/test-state-backup-restore.sh",
-  "test/e2e/test-strict-tool-call-probe.sh",
   "test/e2e/test-telegram-injection.sh",
   "test/e2e/test-token-rotation.sh",
   "test/e2e/test-tunnel-lifecycle.sh",
