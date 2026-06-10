@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-
-import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
-import type { ShellProbeResult } from "../shell-probe.ts";
 import { redactString } from "../redaction.ts";
+import type { ShellProbeResult } from "../shell-probe.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -32,6 +32,9 @@ const DOCKER_MISSING_PATTERNS = [
   /Docker is not reachable/i,
   /could not talk to the Docker daemon/i,
 ];
+const INVALID_NVIDIA_KEY_PATTERNS = [/Invalid NVIDIA API key/i, /Must start with nvapi-/i];
+const GATEWAY_PORT_CONFLICT_PATTERNS = [/Port \d+ is not available/i];
+const STACK_TRACE_PATTERNS = [/(^|\s)(TypeError|ReferenceError|SyntaxError):/m, /^\s+at /m];
 const MISSING_SANDBOX_DELETE_PATTERNS = [
   /\bNotFound\b/i,
   /\bNot Found\b/i,
@@ -57,8 +60,8 @@ export interface OnboardingOptions {
 }
 
 export interface OnboardingExpectedFailure {
-  phase: "preflight";
-  errorClass: "docker-missing";
+  phase: "preflight" | "onboarding";
+  errorClass: "docker-missing" | "invalid-nvidia-api-key" | "gateway-port-conflict";
 }
 
 export interface NemoClawInstance {
@@ -135,6 +138,58 @@ function hasMissingSandboxDeleteSignature(result: ShellProbeResult): boolean {
   return MISSING_SANDBOX_DELETE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function hasInvalidNvidiaKeySignature(result: ShellProbeResult): boolean {
+  const text = resultText(result);
+  return INVALID_NVIDIA_KEY_PATTERNS.every((pattern) => pattern.test(text));
+}
+
+function hasGatewayPortConflictSignature(result: ShellProbeResult): boolean {
+  const text = resultText(result);
+  return GATEWAY_PORT_CONFLICT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function listenOnLoopback(port: number): Promise<http.Server> {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(204);
+    response.end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, "127.0.0.1");
+  });
+  return server;
+}
+
+function isAddressInUse(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "EADDRINUSE"
+  );
+}
+
+async function closeServer(server: http.Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export class OnboardingPhaseFixture {
   constructor(
     private readonly host: HostCliClient,
@@ -152,6 +207,15 @@ export class OnboardingPhaseFixture {
       switch (environment.onboarding) {
         case "cloud-openclaw":
           result = await this.cloudOpenClaw(environment, options);
+          break;
+        case "cloud-openclaw-custom-policies":
+          result = await this.cloudOpenClawCustomPolicies(environment, options);
+          break;
+        case "cloud-openclaw-invalid-nvidia-key":
+          result = await this.cloudOpenClawInvalidNvidiaKey(environment, options);
+          break;
+        case "cloud-openclaw-gateway-port-conflict":
+          result = await this.cloudOpenClawGatewayPortConflict(environment, options);
           break;
         case "cloud-openclaw-no-docker":
           result = await this.cloudOpenClawNoDocker(environment, options);
@@ -193,6 +257,146 @@ export class OnboardingPhaseFixture {
       gatewayUrl: OPENCLAW_GATEWAY_URL,
       result,
     };
+  }
+
+  async cloudOpenClawCustomPolicies(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "cloud-openclaw-custom-policies onboarding requires an available Docker runtime.",
+      );
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
+    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+      artifactName: "onboard-cloud-openclaw-custom-policies",
+      env: commandEnv(sandboxName, {
+        NVIDIA_API_KEY: apiKey,
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+        NEMOCLAW_POLICY_MODE: "custom",
+        NEMOCLAW_POLICY_PRESETS: "npm,pypi",
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    assertExitZero(result, "cloud-openclaw-custom-policies onboarding");
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "openclaw",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      result,
+    };
+  }
+
+  async cloudOpenClawInvalidNvidiaKey(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "cloud-openclaw-invalid-nvidia-key onboarding requires an available Docker runtime.",
+      );
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    this.registerSandboxCleanup(sandboxName);
+    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+      artifactName: "onboard-cloud-openclaw-invalid-nvidia-key",
+      env: commandEnv(sandboxName, {
+        NVIDIA_API_KEY: "not-a-nvidia-key",
+        NEMOCLAW_POLICY_MODE: "skip",
+      }),
+      redactionValues: ["not-a-nvidia-key"],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    if (result.exitCode === 0) {
+      throw new Error("cloud-openclaw-invalid-nvidia-key onboarding unexpectedly succeeded.");
+    }
+    this.assertNoStackTrace(result, "cloud-openclaw-invalid-nvidia-key");
+    if (!hasInvalidNvidiaKeySignature(result)) {
+      throw new Error(
+        `cloud-openclaw-invalid-nvidia-key onboarding failed without invalid-nvidia-api-key signature: ${resultText(result)}`,
+      );
+    }
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "openclaw",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      result,
+      expectedFailure: {
+        phase: "onboarding",
+        errorClass: "invalid-nvidia-api-key",
+      },
+    };
+  }
+
+  async cloudOpenClawGatewayPortConflict(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "cloud-openclaw-gateway-port-conflict onboarding requires an available Docker runtime.",
+      );
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const apiKey = this.secrets.required("NVIDIA_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
+    const port = 18080;
+    let server: http.Server | undefined;
+    try {
+      server = await listenOnLoopback(port);
+    } catch (error) {
+      if (!isAddressInUse(error)) {
+        throw error;
+      }
+    }
+    try {
+      const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+        artifactName: "onboard-cloud-openclaw-gateway-port-conflict",
+        env: commandEnv(sandboxName, {
+          NVIDIA_API_KEY: apiKey,
+          NEMOCLAW_GATEWAY_PORT: String(port),
+          NEMOCLAW_POLICY_MODE: "skip",
+        }),
+        redactionValues: [apiKey],
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      });
+      if (result.exitCode === 0) {
+        throw new Error("cloud-openclaw-gateway-port-conflict onboarding unexpectedly succeeded.");
+      }
+      this.assertNoStackTrace(result, "cloud-openclaw-gateway-port-conflict");
+      if (!hasGatewayPortConflictSignature(result)) {
+        throw new Error(
+          `cloud-openclaw-gateway-port-conflict onboarding failed without gateway-port-conflict signature: ${resultText(result)}`,
+        );
+      }
+      return {
+        onboarding: environment.onboarding,
+        sandboxName,
+        agent: "openclaw",
+        provider: "nvidia",
+        providerEnv: "cloud",
+        gatewayUrl: OPENCLAW_GATEWAY_URL,
+        result,
+        expectedFailure: {
+          phase: "onboarding",
+          errorClass: "gateway-port-conflict",
+        },
+      };
+    } finally {
+      if (server) {
+        await closeServer(server);
+      }
+    }
   }
 
   async cloudOpenClawNoDocker(
@@ -244,6 +448,14 @@ export class OnboardingPhaseFixture {
       };
     } finally {
       await rm(shimDir, { force: true, recursive: true });
+    }
+  }
+
+  private assertNoStackTrace(result: ShellProbeResult, label: string): void {
+    const text = resultText(result);
+    const pattern = STACK_TRACE_PATTERNS.find((candidate) => candidate.test(text));
+    if (pattern) {
+      throw new Error(`${label} onboarding printed a stack trace matching ${pattern}: ${text}`);
     }
   }
 

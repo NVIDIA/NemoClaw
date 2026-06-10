@@ -501,12 +501,12 @@
       "legacyScript": "test/e2e/test-onboard-negative-paths.sh",
       "domain": "smoke-onboarding",
       "ownerIssue": "#4348",
-      "status": "not-migrated",
+      "status": "bridge-probe",
       "targetVitestScenarios": [],
-      "bridgeProbes": [],
+      "bridgeProbes": ["test/e2e-scenario/live/registry-scenarios.test.ts"],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
+      "notes": "Bridge-probe migration for issue #2573 negative/edge onboarding paths: policy-mode fallback remains covered by focused unit tests; live Vitest registry scenarios now exercise invalid NVIDIA key, gateway port conflict, and custom policy/model onboarding paths."
     },
     {
       "legacyScript": "test/e2e/test-onboard-repair.sh",

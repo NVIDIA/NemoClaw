@@ -9,13 +9,13 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../framework/artifacts.ts";
 import {
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   SandboxClient,
-  type CommandRunner,
 } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
-import { StateValidationPhaseFixture, type NemoClawInstance } from "../framework/phases/index.ts";
+import { type NemoClawInstance, StateValidationPhaseFixture } from "../framework/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -460,6 +460,53 @@ describe("state-validation phase fixture", () => {
 
     expect(result.probes.map((probe) => probe.id)).toEqual(["cli-installed"]);
     expect(runner.calls.map((call) => call.args)).toEqual([["--version"]]);
+  });
+
+  it("validates requested custom policy registry fields", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    runner.enqueue(shellResult(0, "200"));
+    runner.enqueue(shellResult(0, "NAME\ne2e-ubuntu-repo-cloud-openclaw\n"));
+    const fx = fixture(runner, {
+      readRegistry: () => ({
+        entries: {
+          "e2e-ubuntu-repo-cloud-openclaw": {
+            provider: "nvidia-prod",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            policies: ["npm", "pypi"],
+          },
+        },
+      }),
+    });
+
+    const result = await fx.from("cloud-openclaw-custom-policies-ready", instance());
+
+    expect(result.probes.map((probe) => probe.id)).toEqual([
+      "cli-installed",
+      "local-registry-fields-match",
+      "gateway-healthy",
+      "sandbox-running",
+    ]);
+  });
+
+  it("fails custom policy registry validation when a preset is missing", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+    const fx = fixture(runner, {
+      readRegistry: () => ({
+        entries: {
+          "e2e-ubuntu-repo-cloud-openclaw": {
+            provider: "nvidia-prod",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            policies: ["npm"],
+          },
+        },
+      }),
+    });
+
+    await expect(fx.from("cloud-openclaw-custom-policies-ready", instance())).rejects.toThrow(
+      /expected registry policy preset pypi/,
+    );
   });
 
   it("rejects unknown expected-state IDs", async () => {

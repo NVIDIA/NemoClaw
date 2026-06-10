@@ -20,6 +20,11 @@ const cloudOpenclawReady: ExpectedState = {
 const cloudOpenclawCustomPoliciesReady: ExpectedState = {
   ...cloudOpenclawReady,
   id: "cloud-openclaw-custom-policies-ready",
+  registry: {
+    provider: "nvidia-prod",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    policyPresets: ["npm", "pypi"],
+  },
 };
 
 const cloudHermesReady: ExpectedState = {
@@ -155,6 +160,9 @@ export function probesForState(state: ExpectedState): readonly StateProbeId[] {
   // scenario in flight. Add when a negative scenario needs it.
   if (state.localRegistry?.expected === "present") {
     probes.push("local-registry-entry-present");
+  }
+  if (state.registry) {
+    probes.push("local-registry-fields-match");
   }
   if (state.dockerSandboxContainer?.expected === "present") {
     probes.push("docker-sandbox-container-present");

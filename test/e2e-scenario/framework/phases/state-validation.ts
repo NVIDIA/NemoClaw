@@ -4,18 +4,17 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
-import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import { probesForState, requireExpectedState } from "../../scenarios/expected-states.ts";
+import type { ExpectedState, StateProbeId } from "../../scenarios/types.ts";
 import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import {
-  trustedProviderEndpoint,
   type GatewayClient,
   type HostCliClient,
   type SandboxClient,
+  trustedProviderEndpoint,
 } from "../clients/index.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
-import { probesForState, requireExpectedState } from "../../scenarios/expected-states.ts";
-import type { ExpectedState, StateProbeId } from "../../scenarios/types.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
 
 // Mirror of `src/lib/state/registry.ts::REGISTRY_FILE`. The fixture
@@ -130,7 +129,7 @@ export class StateValidationPhaseFixture {
         typeof expectedState === "string" ? requireExpectedState(expectedState) : expectedState;
       const probes: StateValidationProbeResult[] = [];
       for (const probe of probesForState(state)) {
-        probes.push(await this.runProbe(probe, instance));
+        probes.push(await this.runProbe(probe, state, instance));
       }
       const result = { state, probes };
       await this.writeResult("passed", state, result);
@@ -159,6 +158,7 @@ export class StateValidationPhaseFixture {
 
   private async runProbe(
     probe: StateProbeId,
+    state: ExpectedState,
     instance: NemoClawInstance | undefined,
   ): Promise<StateValidationProbeResult> {
     switch (probe) {
@@ -174,6 +174,8 @@ export class StateValidationPhaseFixture {
         return await this.expectSandboxAbsent(requireInstance(probe, instance));
       case "local-registry-entry-present":
         return this.expectLocalRegistryEntryPresent(requireInstance(probe, instance));
+      case "local-registry-fields-match":
+        return this.expectRegistryFieldsMatch(state, requireInstance(probe, instance));
       case "docker-sandbox-container-present":
         return await this.expectDockerSandboxContainerPresent(requireInstance(probe, instance));
       default: {
@@ -320,6 +322,47 @@ export class StateValidationPhaseFixture {
       );
     }
     return { id: "local-registry-entry-present", status: "passed", results: [] };
+  }
+
+  private expectRegistryFieldsMatch(
+    state: ExpectedState,
+    instance: NemoClawInstance,
+  ): StateValidationProbeResult {
+    if (!state.registry) {
+      throw new Error(
+        "state-validation local-registry-fields-match probe requires registry expectations.",
+      );
+    }
+    const reader = this.io.readRegistry ?? defaultReadRegistry;
+    const registry = reader();
+    const entry = registry?.entries[instance.sandboxName];
+    if (!entry || typeof entry !== "object") {
+      throw new Error(
+        `state-validation expected registry fields for '${instance.sandboxName}', but no registry entry was found.`,
+      );
+    }
+    const record = entry as Record<string, unknown>;
+    if (state.registry.provider !== undefined && record.provider !== state.registry.provider) {
+      throw new Error(
+        `state-validation expected registry provider ${state.registry.provider}, got ${String(record.provider)}.`,
+      );
+    }
+    if (state.registry.model !== undefined && record.model !== state.registry.model) {
+      throw new Error(
+        `state-validation expected registry model ${state.registry.model}, got ${String(record.model)}.`,
+      );
+    }
+    if (state.registry.policyPresets) {
+      const actual = Array.isArray(record.policies) ? record.policies : [];
+      for (const preset of state.registry.policyPresets) {
+        if (!actual.includes(preset)) {
+          throw new Error(
+            `state-validation expected registry policy preset ${preset}; policies=${JSON.stringify(actual)}.`,
+          );
+        }
+      }
+    }
+    return { id: "local-registry-fields-match", status: "passed", results: [] };
   }
 
   private async expectDockerSandboxContainerPresent(

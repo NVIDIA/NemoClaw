@@ -96,6 +96,22 @@ describe("probesForState maps typed expected-state into probe ids", () => {
     expect(probesForState(state)).toEqual([]);
   });
 
+  it("custom-policy state records requested registry invariants without extra probes", () => {
+    const state = requireExpectedState("cloud-openclaw-custom-policies-ready");
+
+    expect(state.registry).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: ["npm", "pypi"],
+    });
+    expect(probesForState(state)).toEqual([
+      "cli-installed",
+      "local-registry-fields-match",
+      "gateway-healthy",
+      "sandbox-running",
+    ]);
+  });
+
   it("post-reboot-recovery-ready locks down host-side invariants only", () => {
     // The post-reboot scenario locks the user-visible regression
     // surface: registry preservation and Docker container

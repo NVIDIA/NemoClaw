@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, expectTypeOf, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../framework/artifacts.ts";
-import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
+import { type CommandRunner, HostCliClient } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
-import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
 import type { EnvironmentReady } from "../framework/phases/index.ts";
+import { OnboardingPhaseFixture, type OnboardingSecrets } from "../framework/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -366,6 +366,135 @@ describe("onboarding phase fixture", () => {
     });
   });
 
+  it("runs custom policy onboarding with requested model and presets", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(
+      shellResult(0, "Using NVIDIA Endpoints with model: nvidia/nemotron-3-super-120b-a12b\n"),
+    );
+    const secrets = new FakeSecrets({ NVIDIA_API_KEY: "secret-token" });
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), secrets);
+
+    const instance = await onboard.from(ready({ onboarding: "cloud-openclaw-custom-policies" }), {
+      sandboxName: "e2e-custom-policies",
+    });
+
+    expect(instance).toMatchObject({
+      onboarding: "cloud-openclaw-custom-policies",
+      sandboxName: "e2e-custom-policies",
+    });
+    expect(runner.calls[0]).toMatchObject({
+      command: "nemoclaw",
+      args: ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+      options: {
+        artifactName: "onboard-cloud-openclaw-custom-policies",
+        timeoutMs: 900_000,
+      },
+    });
+    expect(runner.calls[0]?.options?.env).toMatchObject({
+      NVIDIA_API_KEY: "secret-token",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_POLICY_MODE: "custom",
+      NEMOCLAW_POLICY_PRESETS: "npm,pypi",
+    });
+  });
+
+  it("accepts the invalid NVIDIA key negative path without stack traces", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "Invalid NVIDIA API key. Must start with nvapi-"));
+    const cleanup = new FakeCleanup();
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets(),
+      cleanup,
+    );
+
+    const instance = await onboard.from(
+      ready({ onboarding: "cloud-openclaw-invalid-nvidia-key" }),
+      { sandboxName: "e2e-invalid-key" },
+    );
+
+    expect(instance.expectedFailure).toEqual({
+      phase: "onboarding",
+      errorClass: "invalid-nvidia-api-key",
+    });
+    expect(runner.calls[0]).toMatchObject({
+      options: {
+        artifactName: "onboard-cloud-openclaw-invalid-nvidia-key",
+        redactionValues: ["not-a-nvidia-key"],
+      },
+    });
+    expect(runner.calls[0]?.options?.env).toMatchObject({
+      NVIDIA_API_KEY: "not-a-nvidia-key",
+      NEMOCLAW_POLICY_MODE: "skip",
+    });
+    expect(cleanup.calls[0]?.name).toBe("destroy NemoClaw sandbox e2e-invalid-key");
+  });
+
+  it("rejects invalid NVIDIA key output that contains a stack trace", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(
+      shellResult(1, "Invalid NVIDIA API key. Must start with nvapi-\n    at fail (/tmp/x.js:1:1)"),
+    );
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
+
+    await expect(
+      onboard.from(ready({ onboarding: "cloud-openclaw-invalid-nvidia-key" })),
+    ).rejects.toThrow(/printed a stack trace/);
+  });
+
+  it("rejects invalid NVIDIA key output without the expected user-facing signature", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "provider rejected credential"));
+    const onboard = new OnboardingPhaseFixture(new HostCliClient(runner), new FakeSecrets());
+
+    await expect(
+      onboard.from(ready({ onboarding: "cloud-openclaw-invalid-nvidia-key" })),
+    ).rejects.toThrow(/without invalid-nvidia-api-key signature/);
+  });
+
+  it("accepts the gateway port conflict negative path without stack traces", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "!! Port 18080 is not available."));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+    );
+
+    const instance = await onboard.from(
+      ready({ onboarding: "cloud-openclaw-gateway-port-conflict" }),
+      { sandboxName: "e2e-port-conflict" },
+    );
+
+    expect(instance.expectedFailure).toEqual({
+      phase: "onboarding",
+      errorClass: "gateway-port-conflict",
+    });
+    expect(runner.calls[0]).toMatchObject({
+      options: {
+        artifactName: "onboard-cloud-openclaw-gateway-port-conflict",
+        redactionValues: ["secret-token"],
+      },
+    });
+    expect(runner.calls[0]?.options?.env).toMatchObject({
+      NVIDIA_API_KEY: "secret-token",
+      NEMOCLAW_GATEWAY_PORT: "18080",
+      NEMOCLAW_POLICY_MODE: "skip",
+    });
+  });
+
+  it("rejects gateway port conflict output without the expected user-facing signature", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(1, "gateway failed"));
+    const onboard = new OnboardingPhaseFixture(
+      new HostCliClient(runner),
+      new FakeSecrets({ NVIDIA_API_KEY: "secret-token" }),
+    );
+
+    await expect(
+      onboard.from(ready({ onboarding: "cloud-openclaw-gateway-port-conflict" })),
+    ).rejects.toThrow(/without gateway-port-conflict signature/);
+  });
+
   it("requires the docker-missing runtime expectation for the no-Docker negative path", async () => {
     const runner = new FakeRunner();
     const onboard = new OnboardingPhaseFixture(
@@ -477,9 +606,9 @@ describe("onboarding phase fixture", () => {
       new FakeSecrets(),
     );
 
-    await expect(onboard.from(ready({ onboarding: "cloud-hermes" }))).rejects.toThrow(
-      /Unsupported onboarding profile 'cloud-hermes'/,
-    );
+    await expect(
+      onboard.from(ready({ onboarding: "cloud-nvidia-openclaw-brave" })),
+    ).rejects.toThrow(/Unsupported onboarding profile 'cloud-nvidia-openclaw-brave'/);
   });
 
   it("writes an onboarding phase result artifact on success", async () => {

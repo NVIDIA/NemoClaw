@@ -30,6 +30,7 @@ export type StateProbeId =
   | "sandbox-running"
   | "sandbox-absent"
   | "local-registry-entry-present"
+  | "local-registry-fields-match"
   | "docker-sandbox-container-present";
 
 // User-facing phase the negative-scenario contract advertises. Wider
@@ -85,6 +86,15 @@ export interface ExpectedState {
   // Used to assert that recovery information remains available even
   // when the live OpenShell gateway returns NotFound.
   dockerSandboxContainer?: { expected: ExpectedPresence };
+  // Local NemoClaw registry fields the onboard flow records for the
+  // scenario sandbox. These are host-side, deterministic invariants
+  // for non-interactive onboard configuration: provider/model plus
+  // any custom policy presets selected from env.
+  registry?: {
+    provider?: string;
+    model?: string;
+    policyPresets?: readonly string[];
+  };
 }
 
 export type TransientClassifier =
