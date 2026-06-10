@@ -353,6 +353,46 @@ describe("MessagingSetupApplier", () => {
     expect(result.unresolvedTemplateRefs).toEqual([]);
   });
 
+  it("preserves runtime-scoped credential placeholders when reapplying render plans", async () => {
+    const plan = await buildOnboardPlan({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
+      "telegram",
+    ]);
+    const scoped = "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN";
+    const files: Record<string, string> = {
+      "/sandbox/.openclaw/openclaw.json": JSON.stringify({
+        channels: {
+          telegram: {
+            accounts: {
+              default: {
+                botToken: scoped,
+              },
+            },
+          },
+        },
+      }),
+    };
+    const runOpenshell: MessagingOpenShellRunner = (args, options) => {
+      const target = String(args.at(-1));
+      if (args.includes("cat") && !options?.input) {
+        return { status: files[target] === undefined ? 1 : 0, stdout: files[target] ?? "" };
+      }
+      if (options?.input !== undefined) {
+        files[target] = options.input;
+        return { status: 0 };
+      }
+      return { status: 1 };
+    };
+
+    await MessagingSetupApplier.applyAgentConfigAtOpenShell(plan, { runOpenshell });
+
+    const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");
+    expect(openclawConfig.channels.telegram.accounts.default).toMatchObject({
+      botToken: scoped,
+      enabled: true,
+      groupPolicy: "open",
+    });
+  });
+
   it("excludes disabled channels at the applier boundary", async () => {
     const plan = await withEnv(
       {

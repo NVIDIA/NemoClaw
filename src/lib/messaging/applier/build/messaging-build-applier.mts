@@ -144,6 +144,7 @@ export function applyMessagingAgentRenderToObject(
   target: string,
 ): void {
   if (!plan) return;
+  const rules = credentialPlaceholderRules(plan);
   for (const render of enabledAgentRender(plan)) {
     if (
       render.kind !== "json-fragment" ||
@@ -152,7 +153,12 @@ export function applyMessagingAgentRenderToObject(
     ) {
       continue;
     }
-    setJsonPath(config, render.path, requiredSerializableValue(render.value, "render value"));
+    const value = preserveCredentialPlaceholders(
+      requiredSerializableValue(render.value, "render value"),
+      getJsonPath(config, render.path),
+      rules,
+    );
+    setJsonPath(config, render.path, value);
   }
 }
 
@@ -194,7 +200,7 @@ export function applyMessagingAgentRenderToLocalFiles(
       throw new MessagingBuildApplierError(`Cannot apply mixed messaging render kinds to ${target}.`);
     }
     if (kinds[0] === "json-fragment") {
-      appliedTargets.push(applyJsonRenderEntriesToLocalFile(plan.agent, target, renderEntries, options));
+      appliedTargets.push(applyJsonRenderEntriesToLocalFile(plan, target, renderEntries, options));
     } else {
       appliedTargets.push(applyEnvRenderEntriesToLocalFile(plan.agent, target, renderEntries, options));
     }
@@ -300,17 +306,17 @@ export function applyPostAgentInstallBuildFilesToLocalFiles(
 }
 
 function applyJsonRenderEntriesToLocalFile(
-  agent: MessagingAgentId,
+  plan: MessagingBuildPlan,
   target: string,
   renderEntries: readonly MessagingRenderEntry[],
   options: { readonly homeDir?: string },
 ): string {
-  const targetPath = resolveAgentRenderTarget(agent, target, options);
+  const targetPath = resolveAgentRenderTarget(plan.agent, target, options);
   const config = targetPath.endsWith(".yaml")
     ? parseGeneratedYamlObject(readTextIfExists(targetPath), targetPath)
     : parseJsonObject(readTextIfExists(targetPath), targetPath);
-  applyMessagingRenderEntriesToObject(config, renderEntries, target);
-  if (agent === "hermes" && target === "~/.hermes/config.yaml") {
+  applyMessagingRenderEntriesToObject(config, renderEntries, target, plan);
+  if (plan.agent === "hermes" && target === "~/.hermes/config.yaml") {
     finalizeHermesRenderedPlatformToolsets(config);
   }
   mkdirSync(dirname(targetPath), { recursive: true });
@@ -348,12 +354,19 @@ function applyMessagingRenderEntriesToObject(
   config: JsonObject,
   renderEntries: readonly MessagingRenderEntry[],
   target: string,
+  plan: MessagingBuildPlan,
 ): void {
+  const rules = credentialPlaceholderRules(plan);
   for (const render of renderEntries) {
     if (render.kind !== "json-fragment" || typeof render.path !== "string") {
       throw new MessagingBuildApplierError(`Messaging render for ${target} must be a JSON fragment with a path.`);
     }
-    setJsonPath(config, render.path, requiredSerializableValue(render.value, "render value"));
+    const value = preserveCredentialPlaceholders(
+      requiredSerializableValue(render.value, "render value"),
+      getJsonPath(config, render.path),
+      rules,
+    );
+    setJsonPath(config, render.path, value);
   }
 }
 
@@ -616,6 +629,86 @@ function runCommand(args: readonly string[], env: Env): void {
       `${args[0]} exited with status ${String(result.status ?? "unknown")}`,
     );
   }
+}
+
+type CredentialPlaceholderRule = {
+  readonly envKey: string;
+  readonly placeholder: string;
+};
+
+function credentialPlaceholderRules(
+  plan: MessagingBuildPlan | null | undefined,
+): CredentialPlaceholderRule[] {
+  if (!plan) return [];
+  const active = new Set(activeChannels(plan));
+  return plan.credentialBindings.flatMap((binding) => {
+    if (!active.has(binding.channelId)) return [];
+    if (typeof binding.providerEnvKey !== "string" || typeof binding.placeholder !== "string") {
+      return [];
+    }
+    return [{ envKey: binding.providerEnvKey, placeholder: binding.placeholder }];
+  });
+}
+
+function preserveCredentialPlaceholders(
+  desired: MessagingSerializableValue,
+  existing: unknown,
+  rules: readonly CredentialPlaceholderRule[],
+): MessagingSerializableValue {
+  if (typeof desired === "string") {
+    const rule = rules.find((candidate) => candidate.placeholder === desired);
+    if (
+      rule &&
+      typeof existing === "string" &&
+      isProviderPlaceholderForEnvKey(existing, rule.envKey)
+    ) {
+      return existing;
+    }
+    return desired;
+  }
+  if (Array.isArray(desired)) {
+    return desired.map((entry, index) =>
+      preserveCredentialPlaceholders(
+        entry,
+        Array.isArray(existing) ? existing[index] : undefined,
+        rules,
+      ),
+    );
+  }
+  if (isObject(desired)) {
+    const existingObject = isObject(existing) ? existing : {};
+    return Object.fromEntries(
+      Object.entries(desired).map(([key, value]) => [
+        key,
+        preserveCredentialPlaceholders(value, existingObject[key], rules),
+      ]),
+    );
+  }
+  return desired;
+}
+
+function getJsonPath(root: JsonObject, pathValue: string): unknown {
+  let cursor: unknown = root;
+  for (const segment of pathValue.split(".").filter(Boolean)) {
+    if (!isObject(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {
+  const openShellPrefix = "openshell:resolve:env:";
+  if (value.startsWith(openShellPrefix)) {
+    return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
+  }
+  const aliasMatch = value.match(/^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/);
+  return aliasMatch ? placeholderSuffixMatchesEnvKey(aliasMatch[1] as string, envKey) : false;
+}
+
+function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
+  if (suffix === envKey) return true;
+  const revisionMatch = suffix.match(/^v[0-9]+_(.+)$/);
+  return revisionMatch?.[1] === envKey;
 }
 
 function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerializableValue): void {

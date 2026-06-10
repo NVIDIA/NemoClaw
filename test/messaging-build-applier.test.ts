@@ -4,11 +4,11 @@
 //
 // Functional tests for src/lib/messaging/applier/build/messaging-build-applier.mts.
 
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(
@@ -321,7 +321,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-doctor-rewrite-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
-    const channels = channelsB64(["discord", "slack", "wechat"]);
+    const channels = channelsB64(["telegram", "discord", "slack", "wechat"]);
     const wechatConfig = Buffer.from(
       JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
     ).toString("base64");
@@ -337,11 +337,12 @@ describe("messaging-build-applier.mts: agent-install", () => {
         'if (args[0] !== "doctor" || args[1] !== "--fix" || args[2] !== "--non-interactive") process.exit(46);',
         'const configPath = path.join(process.env.HOME, ".openclaw", "openclaw.json");',
         'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
-        "if (config.channels?.discord?.enabled !== true) process.exit(40);",
-        "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(41);",
-        "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(42);",
-        'if (config.channels?.["openclaw-weixin"]?.accounts?.primary?.enabled !== true) process.exit(43);',
-        "fs.writeFileSync(configPath, JSON.stringify({ channels: { defaults: {} }, plugins: { entries: {} } }, null, 2) + String.fromCharCode(10));",
+        'if (config.channels?.telegram?.accounts?.default?.botToken !== "openshell:resolve:env:TELEGRAM_BOT_TOKEN") process.exit(40);',
+        "if (config.channels?.discord?.enabled !== true) process.exit(41);",
+        "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(42);",
+        "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(43);",
+        'if (config.channels?.["openclaw-weixin"]?.accounts?.primary?.enabled !== true) process.exit(44);',
+        'fs.writeFileSync(configPath, JSON.stringify({ channels: { telegram: { accounts: { default: { botToken: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN" } } } }, plugins: { entries: {} } }, null, 2) + String.fromCharCode(10));',
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -396,6 +397,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const config = JSON.parse(
         fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
       );
+      expect(config.channels?.telegram?.accounts?.default).toMatchObject({
+        botToken: "openshell:resolve:env:v42_TELEGRAM_BOT_TOKEN",
+        enabled: true,
+      });
       expect(config.channels?.discord?.enabled).toBe(true);
       expect(config.plugins?.entries?.discord).toEqual({ enabled: true });
       expect(config.channels?.slack?.enabled).toBe(true);
