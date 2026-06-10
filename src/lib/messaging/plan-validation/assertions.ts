@@ -26,7 +26,7 @@ export function isWorkflow(value: unknown): value is MessagingCompilerWorkflow {
 }
 
 export function assertRecord(value: unknown, path: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail(path, "expected object");
   }
   return value as Record<string, unknown>;
@@ -106,7 +106,7 @@ export function fail(path: string, reason: string): never {
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null) return false;
+  if (value === null || typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
