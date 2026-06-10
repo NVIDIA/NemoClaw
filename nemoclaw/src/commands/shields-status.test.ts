@@ -176,4 +176,27 @@ describe("commands/shields-status", () => {
     expect(result.text).toContain("Shields down");
     expect(result.text).toContain("host-only");
   });
+
+  it("strips backticks from the echoed unknown argument so inline-code formatting cannot be broken", () => {
+    const result = slashShieldsStatus("`evil`");
+    expect(result.text).toContain("Unknown argument");
+    expect(result.text).not.toContain("`evil`");
+    expect(result.text).toContain("?evil?");
+  });
+
+  it("strips ASCII control characters from the echoed unknown argument", () => {
+    const result = slashShieldsStatus("ab\x01cd\x1Fef");
+    expect(result.text).toContain("Unknown argument");
+    expect(result.text).toContain("ab?cd?ef");
+    expect(result.text).not.toContain("\x01");
+    expect(result.text).not.toContain("\x1F");
+  });
+
+  it("truncates an overly long unknown argument with an ellipsis", () => {
+    const long = "a".repeat(64);
+    const result = slashShieldsStatus(long);
+    expect(result.text).toContain("Unknown argument");
+    expect(result.text).toContain(`${"a".repeat(32)}…`);
+    expect(result.text).not.toContain("a".repeat(33));
+  });
 });
