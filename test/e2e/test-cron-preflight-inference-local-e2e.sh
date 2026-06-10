@@ -5,10 +5,17 @@
 # Cron preflight inference.local E2E.
 #
 # Onboards a fresh sandbox against the managed cloud provider (whose base URL
-# resolves through `inference.local`), schedules an isolated agentTurn cron
-# job, force-triggers it via `openclaw cron run --wait`, and asserts the
-# provider preflight does not skip the run with `EAI_AGAIN` or the
+# resolves through `inference.local`), then loads OpenClaw's cron isolated-agent
+# preflight runtime directly from the in-sandbox dist and invokes
+# `preflightCronModelProvider` against the onboarded provider/model. Asserts
+# the call returns `status: "available"` and never reports `EAI_AGAIN` or the
 # "local provider endpoint is not reachable" message.
+#
+# This probes the exact runtime path Patch 6 modifies — the cron CLI surfaces
+# (`openclaw cron add` / `openclaw cron run`) need `operator.admin` scope, which
+# the in-sandbox auto-pair approval sweep deliberately omits from its allowlist,
+# so the scheduler boundary is intentionally bypassed in favour of a direct
+# runtime probe.
 #
 # Prerequisites:
 #   - Docker running
@@ -149,6 +156,10 @@ command -v nemoclaw >/dev/null 2>&1 || {
   exit 1
 }
 
+# Wire the documented `NEMOCLAW_CRON_PREFLIGHT_KEEP` flag through to the shared
+# teardown helper (which honours only `NEMOCLAW_E2E_KEEP_SANDBOX`) so the
+# documented escape hatch actually preserves the sandbox for inspection.
+export NEMOCLAW_E2E_KEEP_SANDBOX="${NEMOCLAW_E2E_KEEP_SANDBOX:-${NEMOCLAW_CRON_PREFLIGHT_KEEP:-}}"
 register_sandbox_for_teardown "$SANDBOX"
 
 # ── Probe the cron preflight directly ──
@@ -174,16 +185,16 @@ const url = require("node:url");
 
 const AUDIT_CONTEXT = "cron-model-provider-preflight";
 const EXPORT_NAME = "preflightCronModelProvider";
+const EXPECTED_HOSTNAME = "inference.local";
 const DIST_ROOTS = [
   "/usr/local/lib/node_modules/openclaw/dist",
   "/usr/lib/node_modules/openclaw/dist",
 ];
 
-function isManagedLocalProvider(provider) {
+function isExpectedManagedProvider(provider) {
   if (!provider || typeof provider.baseUrl !== "string") return false;
   try {
-    const host = new URL(provider.baseUrl).hostname.toLowerCase();
-    return host.endsWith(".local") || host === "localhost" || host === "127.0.0.1";
+    return new URL(provider.baseUrl).hostname.toLowerCase() === EXPECTED_HOSTNAME;
   } catch {
     return false;
   }
@@ -272,10 +283,19 @@ function findPreflightModule(root) {
   }
 
   const providers = (cfg.models && cfg.models.providers) || {};
-  const providerKey = Object.keys(providers).find((key) => isManagedLocalProvider(providers[key]));
+  const providerKey = Object.keys(providers).find((key) =>
+    isExpectedManagedProvider(providers[key]),
+  );
   if (!providerKey) {
     console.error(
-      JSON.stringify({ error: "no-managed-local-provider", providers: Object.keys(providers) }),
+      JSON.stringify({
+        error: "no-managed-inference-local-provider",
+        expectedHost: EXPECTED_HOSTNAME,
+        providers: Object.entries(providers).map(([key, value]) => ({
+          key,
+          baseUrl: value && typeof value.baseUrl === "string" ? value.baseUrl : null,
+        })),
+      }),
     );
     process.exit(3);
   }
