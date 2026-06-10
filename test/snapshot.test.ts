@@ -1454,18 +1454,37 @@ process.exit(0);
       expect(backedUp.mcpServers.github.env.NODE_ENV).toBe("production");
       expect(backedUp.gateway).toBeUndefined();
 
-      // Simulate a rebuild that recreates the sandbox with a settings-less
-      // config, then restore and confirm the reporter's settings survive.
       fs.writeFileSync(
         path.join(openclawDir, "openclaw.json"),
-        JSON.stringify({ models: { mode: "merge" } }, null, 2),
+        JSON.stringify(
+          {
+            models: {
+              mode: "merge",
+              providers: { nvidia: { apiKey: "unused", models: [{ id: "nvidia/nemotron" }] } },
+            },
+            channels: {
+              defaults: {},
+              discord: { accounts: { default: { token: "openshell:resolve:env:v222_TOKEN" } } },
+              whatsapp: { accounts: { default: { enabled: true } } },
+            },
+            gateway: { auth: { token: "fresh-runtime-token" } },
+          },
+          null,
+          2,
+        ),
       );
       const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredFiles).toEqual(["openclaw.json"]);
 
       const after = JSON.parse(fs.readFileSync(path.join(openclawDir, "openclaw.json"), "utf-8"));
-      expect(after.models.providers.nvidia.models[0].id).toBe("moonshotai/kimi-k2");
+      expect(after.gateway.auth.token).toBe("fresh-runtime-token");
+      expect(after.models.providers.nvidia.models[0].id).toBe("nvidia/nemotron");
+      expect(after.channels.discord.accounts.default.token).toBe(
+        "openshell:resolve:env:v222_TOKEN",
+      );
+      expect(after.channels.whatsapp.accounts.default.enabled).toBe(true);
+      expect(after.channels.slack).toBeUndefined();
       expect(after.mcpServers.filesystem.command).toBe("npx");
       expect(after.customAgents.researcher.prompt).toBe("be thorough");
     } finally {
