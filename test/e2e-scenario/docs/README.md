@@ -203,9 +203,12 @@ is tracked in #4941.
 The narrow repo-local exception is
 `test/e2e-scenario/migration/legacy-inventory.json`, a machine-readable deletion
 gate for direct legacy `test/e2e/test-*.sh` entrypoints and explicit bridge
-entrypoints. It should prevent accidental deletions, not become a parallel
-status table. Remove it after #4357 completes final legacy E2E reconciliation,
-or keep it only as an audit artifact if maintainers still need that record.
+entrypoints. It also tracks coarse internal legacy runner surfaces such as
+scenario shell workers, validation suites, shell-runner orchestrators, and
+runtime helper libraries so they cannot be removed without #4357 evidence. It
+should prevent accidental deletions, not become a parallel status table. Remove
+it after #4357 completes final legacy E2E reconciliation, or keep it only as an
+audit artifact if maintainers still need that record.
 
 The old workflow-level parity report has been removed. Use scenario framework
 tests, the coverage report, PR review, and the audit issues to decide what to

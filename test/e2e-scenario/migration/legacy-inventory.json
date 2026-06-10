@@ -816,5 +816,75 @@
       "deletionReady": false,
       "notes": "Already uses Vitest, but still dispatches legacy remote shell suites; keep as a bridge until remote execution uses shared fixtures."
     }
+  ],
+  "internalSurfaces": [
+    {
+      "id": "typed-shell-orchestrators",
+      "paths": ["test/e2e-scenario/scenarios/orchestrators"],
+      "domain": "scenario-runner",
+      "ownerIssue": "#4357",
+      "status": "not-migrated",
+      "replacementSurface": "test/e2e-scenario/framework/phases",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Retire after the registry-driven Vitest runner owns phase ordering, expected-failure matching, cleanup, redaction, and artifact evidence."
+    },
+    {
+      "id": "legacy-bash-scenario-workers",
+      "paths": ["test/e2e-scenario/nemoclaw_scenarios"],
+      "domain": "scenario-runner",
+      "ownerIssue": "#4357",
+      "status": "not-migrated",
+      "replacementSurface": "test/e2e-scenario/framework/phases",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Install, onboarding, lifecycle, probe, fixture, and context workers are bridge adapters until equivalent Vitest fixtures or CI setup actions own those phases."
+    },
+    {
+      "id": "legacy-onboarding-assertion-workers",
+      "paths": ["test/e2e-scenario/onboarding_assertions"],
+      "domain": "smoke-onboarding",
+      "ownerIssue": "#4348",
+      "status": "not-migrated",
+      "replacementSurface": "test/e2e-scenario/framework/phases/onboarding.ts",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Retire after onboarding phase fixtures emit equivalent pass/fail evidence for base install and preflight assertions."
+    },
+    {
+      "id": "legacy-validation-suites",
+      "paths": ["test/e2e-scenario/validation_suites"],
+      "domain": "runtime-suites",
+      "ownerIssue": "#4357",
+      "status": "not-migrated",
+      "replacementSurface": "test/e2e-scenario/framework/phases",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Runtime suite assertions migrate one family at a time into typed Vitest runtime helpers before this shell suite tree can be removed."
+    },
+    {
+      "id": "legacy-runtime-helper-libraries",
+      "paths": [
+        "test/e2e-scenario/runtime/lib",
+        "test/e2e-scenario/runtime/reports"
+      ],
+      "domain": "scenario-runner",
+      "ownerIssue": "#4357",
+      "status": "not-migrated",
+      "replacementSurface": "test/e2e-scenario/framework",
+      "targetVitestScenarios": [],
+      "bridgeProbes": [],
+      "retiredReason": "",
+      "deletionReady": false,
+      "notes": "Runtime helper libraries stay only while bridge shell workers need shared environment, logging, context, teardown, or report rendering behavior."
+    }
   ]
 }
