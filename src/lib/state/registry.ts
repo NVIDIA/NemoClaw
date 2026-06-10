@@ -407,6 +407,36 @@ export function removeSandbox(name: string): boolean {
   });
 }
 
+/**
+ * Restore a previously-removed sandbox entry verbatim under the registry lock,
+ * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
+ * fresh entry from known fields). Used to roll back a failed stale-sandbox
+ * rebuild recovery (#4497): the entry was removed before the recreate, and on
+ * failure it must come back intact. Operates on the CURRENT registry (it does
+ * not clobber other sandboxes' entries another command added during the rebuild
+ * window).
+ *
+ * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
+ * performed: when this sandbox was the default, `removeSandbox` reassigned
+ * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
+ * it back. This is best-effort "undo my operation" — a deliberate default change
+ * by a concurrent command during the rebuild window is an inherent race and may
+ * be overwritten.
+ */
+export function restoreSandboxEntry(
+  entry: SandboxEntry,
+  options: { reclaimDefault?: string | null } = {},
+): void {
+  withLock(() => {
+    const data = load();
+    data.sandboxes[entry.name] = entry;
+    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
+      data.defaultSandbox = options.reclaimDefault;
+    }
+    save(data);
+  });
+}
+
 export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: string | null } {
   const data = load();
   return {

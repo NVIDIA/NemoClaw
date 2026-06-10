@@ -9,13 +9,14 @@ import {
   createOpenclawSetupPhase,
   createPoliciesPhase,
 } from "./flow-phases/agent-policy-finalization";
-import { handleAgentSetupState, type AgentSetupStateOptions } from "./handlers/agent-setup";
-import { handleFinalizationState, type FinalizationStateOptions } from "./handlers/finalization";
-import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
-import type { OnboardStateResult } from "./result";
-import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
-import type { OnboardSequencePhase } from "./sequence-runner";
 import { runFinalOnboardFlowSequence } from "./flow-slices";
+import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
+import { type FinalizationStateOptions, handleFinalizationState } from "./handlers/finalization";
+import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
+import type { OnboardStateResult } from "./result";
+import type { OnboardMachineRunnerRuntime } from "./runner";
+import type { OnboardSequencePhase } from "./sequence-runner";
 
 export interface FinalOnboardFlowPhaseOptions<
   Context extends OnboardFlowContext,
@@ -25,7 +26,6 @@ export interface FinalOnboardFlowPhaseOptions<
   branchState: "agent_setup" | "openclaw";
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
-  afterPolicies?(): void;
   finalization: {
     stagedLegacyKeys: readonly string[];
     migratedLegacyKeys: ReadonlySet<string>;
@@ -91,9 +91,11 @@ export function createFinalOnboardFlowPhases<
       agent: context.agent,
       deps: options.policiesDeps,
     });
-    options.afterPolicies?.();
     return {
-      context: { session: policiesResult.session } as Partial<Context>,
+      context: {
+        session: policiesResult.session,
+        selectedMessagingChannels: policiesResult.selectedMessagingChannels,
+      } as Partial<Context>,
       result: policiesResult.stateResult,
     };
   });
@@ -119,9 +121,42 @@ export function createFinalOnboardFlowPhases<
   return [branchSetupPhase, policiesPhase, finalizationPhase];
 }
 
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
+function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
+  return (
+    result.type === "transition" &&
+    result.next === "finalizing" &&
+    result.metadata?.state === "policies"
+  );
+}
+
+function withAfterPoliciesResultApplied(
+  runtime: OnboardMachineRunnerRuntime,
+  afterPoliciesResultApplied: (() => void) | undefined,
+): OnboardMachineRunnerRuntime {
+  if (!afterPoliciesResultApplied) return runtime;
+  return {
+    session: runtime.session.bind(runtime),
+    async applyResult(result) {
+      const session = await runtime.applyResult(result);
+      if (isPoliciesAppliedResult(result)) afterPoliciesResultApplied();
+      return session;
+    },
+  };
+}
+
+function withContextObserver<Context extends OnboardFlowContext>(
+  phases: readonly OnboardSequencePhase<Context>[],
+  onContextUpdated: ((context: Context) => void) | undefined,
+): readonly OnboardSequencePhase<Context>[] {
+  if (!onContextUpdated) return phases;
+  return phases.map((phase) => ({
+    ...phase,
+    async run(context) {
+      const result = await phase.run(context);
+      onContextUpdated(result.context);
+      return result;
+    },
+  }));
 }
 
 export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
@@ -130,31 +165,32 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
+  afterPoliciesResultApplied?(): void;
+  onContextUpdated?(context: Context): void;
 }): Promise<void> {
-  const finalRuntimeSession = await options.runtime.session();
-  // Keep resume on the compatibility path for now: persisted sessions may
-  // still need to re-run agent setup, policy reconciliation, or final
-  // verification even when the saved machine state is ahead. Remove this
-  // fallback once those repair checks are first-class resumable FSM states.
-  if (
-    !options.resume &&
-    (finalRuntimeSession.machine.state === "openclaw" ||
-      finalRuntimeSession.machine.state === "agent_setup")
-  ) {
-    await runFinalOnboardFlowSequence({
-      context: options.context,
-      runtime: options.runtime,
-      phases: options.phases,
-    });
-    return;
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
+  // Keep resume and ahead-state sessions on the compatibility path for now.
+  // The persisted invalid states for this slice are "policies", "finalizing",
+  // and "post_verify": a previous run may have advanced `session.machine`
+  // there via legacy step helpers, but resume still needs to re-run branch
+  // setup/readiness, policy reconciliation, and final verification. Those
+  // legacy helpers remain a second machine snapshot writer in
+  // OnboardRuntimeBoundary/recordStateResultWithStepCompatibility, so this
+  // slice cannot make those persisted states impossible at the source without
+  // changing the broader step persistence contract. Remove this fallback once
+  // final-phase repair checks are first-class resumable FSM states, or once
+  // legacy step helpers no longer advance `session.machine` and handler FSM
+  // results are the sole transition source.
+  await runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
+    phases: withContextObserver(options.phases, options.onContextUpdated),
+    resume: options.resume,
+    runWhenState: ["openclaw", "agent_setup"],
+    compatibilityWhenState: ["policies", "finalizing", "post_verify"],
+    runSlice: runFinalOnboardFlowSequence,
+    applyCompatibleResult: async (stateResult) => {
       await options.recordStateResult(stateResult);
-    }
-    context = phaseResult.context;
-  }
+      if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
+    },
+  });
 }

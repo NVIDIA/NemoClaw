@@ -6514,9 +6514,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (!initialContext.sandboxGpuConfig) {
       throw new Error("Preflight did not produce a sandbox GPU configuration.");
     }
-    session = initialContext.session;
+    session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const { resumeHasResolvedGpuIntent, requestedGpuPassthrough, gpuPassthrough } = initialContext;
+    const { gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu ?? null;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
@@ -6676,7 +6676,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const hermesToolGateways = coreContext.hermesToolGateways;
     const nimContainer = coreContext.nimContainer;
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    selectedMessagingChannels = coreContext.selectedMessagingChannels;
     const webSearchSupported = coreContext.webSearchSupported;
 
     const finalFlowContext: CoreOnboardFlowContext = {
@@ -6691,9 +6690,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       hermesToolGateways,
       nimContainer,
       webSearchConfig,
-      selectedMessagingChannels,
+      selectedMessagingChannels: coreContext.selectedMessagingChannels,
       webSearchSupported,
     };
+    let liveFinalFlowContext = finalFlowContext;
 
     const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
       CoreOnboardFlowContext,
@@ -6748,9 +6748,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
-      afterPolicies: () => {
-        sandboxCancelRollback.disarm();
-      },
       finalization: {
         stagedLegacyKeys,
         migratedLegacyKeys,
@@ -6795,7 +6792,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             },
             captureForwardList: () =>
               runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
+            getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) =>
               providerExistsInGateway(providerName),
           });
@@ -6817,6 +6814,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
       recordStateResult,
+      afterPoliciesResultApplied: () => {
+        sandboxCancelRollback.disarm();
+      },
+      onContextUpdated: (context) => {
+        liveFinalFlowContext = context;
+      },
     });
     traceCompleted = true;
   } finally {

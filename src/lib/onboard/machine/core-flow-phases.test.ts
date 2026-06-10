@@ -4,14 +4,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import {
+  type CoreOnboardFlowPhaseOptions,
+  createCoreOnboardFlowPhases,
+  runCoreOnboardFlowSlice,
+} from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
-import { createCoreOnboardFlowPhases, runCoreOnboardFlowSlice } from "./core-flow-phases";
+import type { OnboardStateResult } from "./result";
 import { advanceTo } from "./result";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
 type Gpu = { platform: string };
 type SandboxGpuConfig = { mode: string };
+type CoreContext = OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>;
+type TestHost = { memoryGb: number };
+type CoreOptions = CoreOnboardFlowPhaseOptions<CoreContext, TestHost>;
 
 function context(
   patch: Partial<OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>> = {},
@@ -50,8 +58,22 @@ function sessionWithUpdates(updates: SessionUpdates = {}): Session {
   return session;
 }
 
-function createPhases() {
-  return createCoreOnboardFlowPhases<OnboardFlowContext<Agent, Gpu, SandboxGpuConfig>>({
+function completeStep(): Session["steps"][string] {
+  return {
+    status: "complete",
+    startedAt: "2026-06-09T00:00:00.000Z",
+    completedAt: "2026-06-09T00:01:00.000Z",
+    error: null,
+  };
+}
+
+function createPhases(
+  overrides: {
+    providerDeps?: Partial<CoreOptions["providerDeps"]>;
+    sandboxDeps?: Partial<CoreOptions["sandboxDeps"]>;
+  } = {},
+) {
+  return createCoreOnboardFlowPhases<CoreContext, TestHost>({
     forceProviderSelection: false,
     env: {},
     constants: {
@@ -106,6 +128,7 @@ function createPhases() {
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
       deleteEnv: vi.fn(),
+      ...overrides.providerDeps,
     },
     sandbox: {
       resumeAgentChanged: false,
@@ -160,6 +183,7 @@ function createPhases() {
       exitProcess: ((code: number) => {
         throw new Error(`exit ${code}`);
       }) as (code: number) => never,
+      ...overrides.sandboxDeps,
     },
   });
 }
@@ -181,6 +205,54 @@ describe("core onboard flow phases", () => {
       nimContainer: "nim-test",
     });
     expect(Array.isArray(result.result)).toBe(true);
+  });
+
+  it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
+    const setupInference = vi.fn(async () => ({ ok: true as const }));
+    const [providerPhase] = createPhases({
+      providerDeps: {
+        ensureResumeProviderReady: vi.fn(async () => ({
+          forceInferenceSetup: false,
+          credentialEnv: "HERMES_API_KEY",
+        })),
+        isInferenceRouteReady: () => true,
+        setupInference,
+      },
+    });
+    const session = createSession({
+      model: "nvidia/test",
+      provider: "hermes",
+      credentialEnv: "HERMES_API_KEY",
+      hermesAuthMethod: "api_key",
+      hermesToolGateways: ["unknown-preset"],
+      steps: {
+        provider_selection: completeStep(),
+      },
+    });
+
+    const result = await providerPhase.run(
+      context({
+        resume: true,
+        session,
+        model: "nvidia/test",
+        provider: "hermes",
+        credentialEnv: "HERMES_API_KEY",
+        hermesAuthMethod: "api_key",
+        hermesToolGateways: ["nous-web"],
+      }),
+    );
+
+    expect(setupInference).toHaveBeenCalledWith(
+      "my-sandbox",
+      "nvidia/test",
+      "hermes",
+      null,
+      "HERMES_API_KEY",
+      "api_key",
+      ["nous-web"],
+      { allowToolsIncompatible: false },
+    );
+    expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
   });
 
   it("runs sandbox setup only after provider state is complete", async () => {
@@ -236,5 +308,90 @@ describe("core onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it("keeps non-resume ahead-state sessions on the compatibility path", async () => {
+    const calls: string[] = [];
+    const skipped: string[] = [];
+    const applied: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "sandbox",
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
+    });
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: ctx,
+            result: [
+              advanceTo("inference", {
+                metadata: { state: "provider_selection", provider: "nim", model: "nvidia/test" },
+              }),
+              advanceTo("sandbox", {
+                metadata: { state: "inference", provider: "nim", model: "nvidia/test" },
+              }),
+            ],
+          };
+        },
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: { ...ctx, sandboxName: "created-sandbox" },
+            result: advanceTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
+      },
+    ];
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context(),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async () => {
+          throw new Error("ahead-state compatibility path should not use strict applyResult");
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async (stateResult: OnboardStateResult) => {
+        if (stateResult.type !== "transition") return runtimeSession;
+        const source =
+          stateResult.metadata && typeof stateResult.metadata.state === "string"
+            ? stateResult.metadata.state
+            : null;
+        if (
+          runtimeSession.machine.state === stateResult.next ||
+          source !== runtimeSession.machine.state
+        ) {
+          skipped.push(`${source ?? "unknown"}->${stateResult.next}`);
+          return runtimeSession;
+        }
+        applied.push(`${source}->${stateResult.next}`);
+        runtimeSession = createSession({
+          machine: {
+            version: 1,
+            state: stateResult.next,
+            stateEnteredAt: "2026-06-09T00:03:00.000Z",
+            revision: runtimeSession.machine.revision + 1,
+          },
+        });
+        return runtimeSession;
+      },
+    });
+
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(skipped).toEqual(["provider_selection->inference", "inference->sandbox"]);
+    expect(applied).toEqual(["sandbox->openclaw"]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("openclaw");
   });
 });

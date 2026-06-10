@@ -2,23 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-
 import type { GatewayReuseState } from "../../state/gateway";
+import { formatSandboxGpuPassthroughNote } from "../sandbox-gpu-notes";
 import type { OnboardFlowContext } from "./flow-context";
 import { runInitialOnboardFlowSequence } from "./flow-slices";
-import { handleGatewayState, type GatewayStateOptions } from "./handlers/gateway";
+import { type GatewayStateOptions, handleGatewayState } from "./handlers/gateway";
 import {
   handlePreflightState,
   type PreflightSandboxGpuConfig,
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
-import type {
-  OnboardMachineRunnerResult,
-  OnboardMachineRunnerRuntime,
-  OnboardStateHandlerResult,
-} from "./runner";
+import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 export type InitialOnboardFlowContext<
@@ -55,30 +52,6 @@ export interface InitialOnboardFlowPhaseOptions<
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
   note(message: string): void;
   spawnSync?: SpawnSync;
-}
-
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
-}
-
-function formatSandboxGpuPassthroughNote(options: {
-  hostGpuPlatform?: string | null;
-  resumeHasResolvedGpuIntent?: boolean;
-  recordedGpuPassthroughBeforePreflight?: boolean;
-  requestedGpuPassthrough?: boolean;
-  sandboxGpuMode?: string | null;
-}): string {
-  if (options.hostGpuPlatform === "jetson") {
-    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
-  }
-  if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
-    return "  [resume] Continuing GPU passthrough from the saved onboarding session.";
-  }
-  if (options.requestedGpuPassthrough || options.sandboxGpuMode === "1") {
-    return "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.";
-  }
-  return "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.";
 }
 
 function emitPreflightGpuNote<Gpu, Config extends PreflightSandboxGpuConfig>(options: {
@@ -217,28 +190,18 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  const initialRuntimeSession = await options.runtime.session();
   // Keep resume on the compatibility path for now: resume intentionally re-runs
   // preflight/gateway backstops even when the saved machine is already ahead.
-  if (
-    !options.resume &&
-    (initialRuntimeSession.machine.state === "init" ||
-      initialRuntimeSession.machine.state === "preflight")
-  ) {
-    return runInitialOnboardFlowSequence({
-      context: options.context,
-      runtime: options.runtime,
-      phases: options.phases,
-    });
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
-      await options.recordStateResult(stateResult);
-    }
-    context = phaseResult.context;
-  }
-  return { context, session: await options.runtime.session() };
+  // Remove this fallback only after resume repairs are modeled as strict FSM
+  // transitions that preserve these safety checks before later phases run.
+  return runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: options.runtime,
+    phases: options.phases,
+    resume: options.resume,
+    runWhenState: ["init", "preflight"],
+    compatibilityWhenState: ["gateway", "provider_selection"],
+    runSlice: runInitialOnboardFlowSequence,
+    applyCompatibleResult: options.recordStateResult,
+  });
 }
