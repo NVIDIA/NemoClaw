@@ -1,4 +1,4 @@
-<img width="1450" height="336" alt="Screenshot 2026-06-09 at 7 39 36 PM" src="https://github.com/user-attachments/assets/df1602fd-5f75-4be3-b0c3-fed6a304508b" />
+
 # NemoClaw Kubernetes deployment — GPU (HPA)
 
 **Main deployment path** for NemoClaw on Kubernetes: **GPU agent pods** with **Horizontal Pod Autoscaler (HPA)**. Each pod uses **one GPU** and runs **local Ollama inference** (same pattern as NemoClaw GPU onboard / E2E).
