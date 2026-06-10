@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 
 import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
 import { ScenarioRunner } from "./orchestrators/runner.ts";
-import { listScenarios } from "./registry.ts";
+import { listScenarios, requireScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
+import { type LiveScenarioSupport, liveScenarioSupport } from "./runtime-support.ts";
 import type { PhaseResult, ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
   emitMatrix: boolean;
+  emitLiveMatrix: boolean;
   planOnly: boolean;
   scenarios: string[];
 }
@@ -31,8 +33,25 @@ export interface ScenarioMatrixEntry {
   suites: string[];
 }
 
+export interface LiveScenarioMatrixEntry extends ScenarioMatrixEntry {
+  install: string;
+  runtime: string;
+  onboarding: string;
+  expectedStateId: string;
+  requiredSecrets: string[];
+  supported: boolean;
+  supportReasons: string[];
+  pendingRuntimeSuites: string[];
+}
+
 function parseArgs(argv: string[]): Args {
-  const args: Args = { list: false, emitMatrix: false, planOnly: false, scenarios: [] };
+  const args: Args = {
+    list: false,
+    emitMatrix: false,
+    emitLiveMatrix: false,
+    planOnly: false,
+    scenarios: [],
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
@@ -41,6 +60,10 @@ function parseArgs(argv: string[]): Args {
     }
     if (arg === "--emit-matrix") {
       args.emitMatrix = true;
+      continue;
+    }
+    if (arg === "--emit-live-matrix") {
+      args.emitLiveMatrix = true;
       continue;
     }
     if (arg === "--plan-only") {
@@ -52,7 +75,10 @@ function parseArgs(argv: string[]): Args {
       if (!value) {
         throw new Error("--scenarios requires a comma-separated value");
       }
-      args.scenarios = value.split(",").map((id) => id.trim()).filter(Boolean);
+      args.scenarios = value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
       i += 1;
       continue;
     }
@@ -101,12 +127,50 @@ export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
   });
 }
 
+function liveMatrixEntry(
+  scenario: ScenarioDefinition,
+  support: LiveScenarioSupport,
+): LiveScenarioMatrixEntry {
+  const { runner } = resolveRunnerForScenario(scenario);
+  return {
+    id: scenario.id,
+    runner,
+    label: buildLabel(scenario),
+    platform: scenario.environment?.platform ?? "unknown",
+    install: scenario.environment?.install ?? "unknown",
+    runtime: scenario.environment?.runtime ?? "unknown",
+    onboarding: scenario.environment?.onboarding ?? "unknown",
+    expectedStateId: scenario.expectedStateId ?? "",
+    suites: scenario.suiteIds ?? [],
+    requiredSecrets: scenario.requiredSecrets ?? [],
+    supported: support.supported,
+    supportReasons: support.reasons,
+    pendingRuntimeSuites: support.pendingRuntimeSuites,
+  };
+}
+
+export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
+  const scenarioSupport = (ids.length > 0 ? requireScenarios(ids) : listScenarios()).map(
+    (scenario) => ({
+      scenario,
+      support: liveScenarioSupport(scenario),
+    }),
+  );
+  const liveEntries =
+    ids.length > 0 ? scenarioSupport : scenarioSupport.filter(({ support }) => support.supported);
+  return liveEntries.map(({ scenario, support }) => liveMatrixEntry(scenario, support));
+}
+
 function emitMatrix() {
   // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
   //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
   // without needing heredoc multi-line output handling.
   // Consumed by the dynamic matrix workflow (PR #4359).
   process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
+}
+
+function emitLiveMatrix(ids: string[]) {
+  process.stdout.write(`${JSON.stringify(buildLiveScenarioMatrix(ids))}\n`);
 }
 
 async function main() {
@@ -119,13 +183,19 @@ async function main() {
     emitMatrix();
     return;
   }
+  if (args.emitLiveMatrix) {
+    emitLiveMatrix(args.scenarios);
+    return;
+  }
 
   if (args.scenarios.length === 0) {
     throw new Error("scenario execution requires --scenarios <id[,id...]>");
   }
 
   if (process.env.E2E_SUITE_FILTER) {
-    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
+    throw new Error(
+      "E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.",
+    );
   }
 
   const plans = compileRunPlans(args.scenarios);
@@ -175,16 +245,24 @@ async function main() {
 // A scenario fails iff:
 //   positive (no expectedFailure): any phase result failed.
 //   negative (expectedFailure declared): the synthetic
-//     negative-contract phase did not match, OR the runtime
-//     control group's required side-effect step did not pass.
+//     negative-contract phase did not match, OR state-validation
+//     did not prove the declared forbidden side effects stayed absent.
 //
 // The matcher decides exit code for negatives so that a scenario
 // that failed for the right reason in the right phase is no longer
-// reported as red just because setup did not complete. Until the
-// forbidden-side-effect probe lands, the required pending step in
-// runtimeControlGroups keeps negatives visibly red on the side-effect
-// axis even when phase + errorClass match.
-function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
+// reported as red just because setup did not complete. Forbidden
+// side effects stay visible through the typed state-validation probes.
+function forbiddenSideEffectProbeId(sideEffect: string): string {
+  if (sideEffect === "gateway-started") {
+    return "state-validation.gateway-absent";
+  }
+  if (sideEffect === "sandbox-created") {
+    return "state-validation.sandbox-absent";
+  }
+  return `state-validation.${sideEffect}`;
+}
+
+export function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]): boolean {
   if (!plan.expectedFailure) {
     return results.some((result) => result.status === "failed");
   }
@@ -192,14 +270,22 @@ function planFailed(plan: import("./types.ts").RunPlan, results: PhaseResult[]):
   if (!contractPhase || contractPhase.status !== "passed") {
     return true;
   }
-  const runtime = results.find((result) => result.phase === "runtime");
-  const sideEffectStep = runtime?.assertions.find(
-    (assertion) => assertion.id === "runtime.expected-failure.no-side-effects",
+  const requiredSideEffectProbes = (plan.expectedFailure.forbiddenSideEffects ?? []).map(
+    forbiddenSideEffectProbeId,
   );
-  if (!sideEffectStep || sideEffectStep.status !== "passed") {
+  if (requiredSideEffectProbes.length === 0) {
+    return false;
+  }
+  const stateValidation = results.find((result) => result.phase === "state-validation");
+  if (!stateValidation || stateValidation.status !== "passed") {
     return true;
   }
-  return false;
+  const passedActionIds = new Set(
+    stateValidation.actions
+      .filter((action) => action.status === "passed")
+      .map((action) => action.id),
+  );
+  return requiredSideEffectProbes.some((id) => !passedActionIds.has(id));
 }
 
 // Only execute when invoked directly as a script. Importing this module from

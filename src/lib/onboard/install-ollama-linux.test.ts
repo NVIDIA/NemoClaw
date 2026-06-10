@@ -125,7 +125,6 @@ describe("decideInstallOllamaLinuxMode", () => {
     });
     expect(decideInstallOllamaLinuxMode(opts)).toBe("system");
   });
-
 });
 
 describe("installOllamaOnLinux (user-local)", () => {
@@ -142,7 +141,9 @@ describe("installOllamaOnLinux (user-local)", () => {
 
   it("downloads the arm64 tar.zst tarball into ~/.local without sudo when zstd is present", () => {
     const runCaptureImpl = vi.fn().mockReturnValue("/usr/bin/zstd");
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const runCaptureExImpl = vi.fn().mockReturnValue({ stdout: "", exitCode: 0, timedOut: false });
     const opts = makeOpts({
       modeOverride: "user-local",
@@ -152,14 +153,15 @@ describe("installOllamaOnLinux (user-local)", () => {
       runShellImpl,
     });
     const result = installOllamaOnLinux(opts);
-    expect(result).toEqual({ ok: true, mode: "user-local", binPath: "/home/test/.local/bin/ollama" });
+    expect(result).toEqual({
+      ok: true,
+      mode: "user-local",
+      binPath: "/home/test/.local/bin/ollama",
+    });
     const mkdirCall = findRunShellCall(runShellImpl, "mkdir -p");
     expect(mkdirCall).toContain("/home/test/.local/bin");
     expect(mkdirCall).toContain("/home/test/.local/lib/ollama");
-    const downloadCall = findRunShellCall(
-      runShellImpl,
-      "ollama-linux-arm64.tar.zst",
-    );
+    const downloadCall = findRunShellCall(runShellImpl, "ollama-linux-arm64.tar.zst");
     expect(downloadCall).toBeDefined();
     expect(downloadCall).toContain("zstd -d");
     expect(downloadCall).toContain("tar -xf - -C '/home/test/.local'");
@@ -171,7 +173,9 @@ describe("installOllamaOnLinux (user-local)", () => {
   });
 
   it("uses the amd64 tarball on x64 hosts", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const opts = makeOpts({
       modeOverride: "user-local",
       arch: () => "x64",
@@ -186,7 +190,9 @@ describe("installOllamaOnLinux (user-local)", () => {
   });
 
   it("shell-quotes user-local paths derived from HOME", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const opts = makeOpts({
       modeOverride: "user-local",
       homedir: () => "/tmp/name'with-quote",
@@ -204,7 +210,9 @@ describe("installOllamaOnLinux (user-local)", () => {
   });
 
   it("falls back to the .tgz tarball when the .tar.zst HEAD probe fails", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const runCaptureExImpl = vi.fn().mockReturnValue({
       stdout: "",
       exitCode: 22,
@@ -263,7 +271,9 @@ describe("installOllamaOnLinux (user-local)", () => {
   });
 
   it("pulls the matching JetPack add-on tarball when /etc/nv_tegra_release advertises R36", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const opts = makeOpts({
       modeOverride: "user-local",
       arch: () => "arm64",
@@ -324,7 +334,9 @@ describe("installOllamaOnLinux (system)", () => {
   }
 
   it("runs the official install.sh and applies the systemd loopback override", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const ensureOverride = vi.fn().mockReturnValue("ready");
     const opts = makeOpts({
       modeOverride: "system",
@@ -340,7 +352,6 @@ describe("installOllamaOnLinux (system)", () => {
     expect(ensureOverride).toHaveBeenCalled();
   });
 
-
   it("returns ok:false when the systemd override fails to recover", () => {
     const errorLog = vi.fn();
     const opts = makeOpts({
@@ -353,5 +364,4 @@ describe("installOllamaOnLinux (system)", () => {
     expect(result.ok).toBe(false);
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("systemd restart"));
   });
-
 });

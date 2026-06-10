@@ -27,14 +27,15 @@
  *
  * Tests:
  *   test/e2e-scenario/framework-tests/e2e-phase-orchestrators.test.ts
- *     - test_should_not_persist_secret_shaped_child_output_into_evidence
- *     - test_should_drop_non_allowlisted_parent_env_unless_declared_in_secretEnv
- *     - test_should_pass_declared_secretEnv_through_to_child
+ *     - child output redaction before evidence persistence
+ *     - parent env allowlist filtering unless declared in secretEnv
+ *     - declared secretEnv passthrough
  */
 
 import type { Readable, Writable } from "node:stream";
 
 const REDACTED = "<REDACTED>";
+const EXPLICIT_REDACTED = "[REDACTED]";
 
 // Framework-local mirror of src/lib/security/secret-patterns.ts. The
 // framework deliberately does not import from src/lib/security/ so it
@@ -77,13 +78,30 @@ export const CONTEXT_PATTERNS: RegExp[] = [
  * Replace every secret-shaped token in `text` with `<REDACTED>`. Uses
  * the canonical TOKEN_PREFIX_PATTERNS + CONTEXT_PATTERNS sets.
  *
+ * When `explicitValues` is supplied, each non-empty value is replaced
+ * verbatim with `[REDACTED]` before the regex passes run, so per-test
+ * secret literals (which may not match any canonical shape) are
+ * scrubbed at the same single entry point. The distinct sentinel keeps
+ * explicit-value hits visually separable from regex hits in artifacts.
+ * Values are applied longest first so a value that contains a shorter
+ * one cannot be exposed by ordering.
+ *
  * Best-effort against unknown token shapes. The actual defense is the
  * env allowlist (buildChildEnv); pattern redaction catches what slips
  * through (e.g. error messages that echo a secret value).
  */
-export function redactString(text: string): string {
+export function redactString(text: string, explicitValues?: Iterable<string>): string {
   if (!text) return text;
   let out = text;
+  if (explicitValues) {
+    const values = [
+      ...new Set(Array.from(explicitValues).filter((value) => value && value.length > 0)),
+    ];
+    values.sort((a, b) => b.length - a.length);
+    for (const value of values) {
+      out = out.split(value).join(EXPLICIT_REDACTED);
+    }
+  }
   for (const p of TOKEN_PREFIX_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
@@ -135,6 +153,8 @@ export function isValidSecretEnvKey(key: string): boolean {
 export interface BuildChildEnvOptions {
   /** Per-action / per-step declared secret-bearing env keys to pass through. */
   secretEnv?: readonly string[];
+  /** Additional non-secret env keys required by a framework-owned spawn helper. */
+  additionalAllowedEnv?: readonly string[];
   /** Framework-controlled overlay (E2E_CONTEXT_DIR, E2E_PHASE, E2E_*_ID). */
   frameworkOverlay: NodeJS.ProcessEnv;
 }
@@ -144,7 +164,8 @@ export interface BuildChildEnvOptions {
  * keeping only:
  *   1. keys in FRAMEWORK_ENV_ALLOWLIST
  *   2. keys starting with one of FRAMEWORK_ENV_PREFIXES
- *   3. keys explicitly declared in `opts.secretEnv` (validated shape)
+ *   3. non-secret keys explicitly declared in `opts.additionalAllowedEnv`
+ *   4. keys explicitly declared in `opts.secretEnv` (validated shape)
  * then layering `opts.frameworkOverlay` on top.
  *
  * Throws if a `secretEnv` entry doesn't match the secret-key shape;
@@ -165,6 +186,17 @@ export function buildChildEnv(
     if (FRAMEWORK_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) {
       out[key] = value;
       continue;
+    }
+  }
+  for (const key of opts.additionalAllowedEnv ?? []) {
+    if (isValidSecretEnvKey(key)) {
+      throw new Error(
+        `additionalAllowedEnv entry '${key}' looks secret-bearing; use secretEnv ` +
+          `so secret passthrough remains explicit.`,
+      );
+    }
+    if (base[key] !== undefined) {
+      out[key] = base[key];
     }
   }
   for (const key of opts.secretEnv ?? []) {

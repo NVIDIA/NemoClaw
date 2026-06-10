@@ -35,7 +35,7 @@ function fingerprint(patterns: readonly RegExp[]): string[] {
 }
 
 describe("framework redaction parity with product source-of-truth", () => {
-  it("framework TOKEN_PREFIX_PATTERNS matches product TOKEN_PREFIX_PATTERNS", () => {
+  it("framework token prefix patterns match product token prefix patterns", () => {
     const framework = fingerprint(FRAMEWORK_TOKEN_PREFIX_PATTERNS);
     const product = fingerprint(PRODUCT_TOKEN_PREFIX_PATTERNS);
     expect(framework.length).toBeGreaterThan(0);
@@ -43,7 +43,7 @@ describe("framework redaction parity with product source-of-truth", () => {
     expect(framework).toEqual(product);
   });
 
-  it("framework CONTEXT_PATTERNS matches product CONTEXT_PATTERNS", () => {
+  it("framework context patterns match product context patterns", () => {
     const framework = fingerprint(FRAMEWORK_CONTEXT_PATTERNS);
     const product = fingerprint(PRODUCT_CONTEXT_PATTERNS);
     expect(framework.length).toBeGreaterThan(0);

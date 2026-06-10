@@ -71,7 +71,10 @@ export interface VerifyDeploymentResult {
 
 export interface VerifyDeploymentDeps {
   /** Execute a command inside the sandbox via SSH. Returns null if sandbox unreachable. */
-  executeSandboxCommand: (name: string, script: string) => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxCommand: (
+    name: string,
+    script: string,
+  ) => { status: number; stdout: string; stderr: string } | null;
 
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
@@ -190,10 +193,7 @@ async function verifyGatewayInSandbox(
 /**
  * Retrieve the gateway version from inside the sandbox.
  */
-function fetchGatewayVersion(
-  sandboxName: string,
-  deps: VerifyDeploymentDeps,
-): string | null {
+function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): string | null {
   const script = `openclaw --version 2>/dev/null | awk '{print $2}' || echo ''`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result || !result.stdout.trim()) return null;
@@ -268,7 +268,8 @@ async function verifyDashboardFromHost(
  */
 function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
-  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost")) return "localhost";
+  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
+    return "localhost";
   return "ssh-tunnel";
 }
 

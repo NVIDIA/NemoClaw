@@ -27,7 +27,10 @@ describe("http-proxy-fix preload sync (#2109)", () => {
     const fixPath = path.join(tempDir, "http-proxy-fix.js");
     const block = startScript
       .slice(start, end)
-      .replace('_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"', `_PROXY_FIX_SCRIPT=${JSON.stringify(fixPath)}`)
+      .replace(
+        '_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"',
+        `_PROXY_FIX_SCRIPT=${JSON.stringify(fixPath)}`,
+      )
       .replace(
         '_PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"',
         `_PROXY_FIX_SOURCE=${JSON.stringify(CANONICAL_FIX)}`,
@@ -35,7 +38,7 @@ describe("http-proxy-fix preload sync (#2109)", () => {
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "emit_sandbox_sourced_file() { local target=\"$1\"; cat > \"$target\"; chmod 444 \"$target\"; }",
+      'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
       "NODE_USE_ENV_PROXY=1",
       "NODE_OPTIONS='--require /already-loaded.js'",
       block,

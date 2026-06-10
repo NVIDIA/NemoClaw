@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
-import {
-  applyManagedToolConfig,
-  loadManagedToolGatewayMatrix,
-} from "./managed-tool-gateway.ts";
+import { applyManagedToolConfig, loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
 const REMOTE_PLATFORM_TOOLSETS = [
@@ -63,8 +60,14 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
 
+  const upstream: Record<string, unknown> = {
+    provider: settings.upstreamProvider,
+    model: settings.model,
+  };
+
   const config: Record<string, unknown> = {
     _config_version: 12,
+    _nemoclaw_upstream: upstream,
     model: modelConfig,
     terminal: {
       backend: "local",

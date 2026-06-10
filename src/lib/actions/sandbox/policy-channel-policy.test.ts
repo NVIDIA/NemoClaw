@@ -126,9 +126,7 @@ describe("addSandboxPolicy", () => {
   it("prompts for confirmation before applying an interactively selected preset", async () => {
     await addSandboxPolicy("test-sandbox");
 
-    expect(promptMock).toHaveBeenCalledWith(
-      "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
-    );
+    expect(promptMock).toHaveBeenCalledWith("  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ");
     expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
   });
 
@@ -137,9 +135,7 @@ describe("addSandboxPolicy", () => {
 
     await addSandboxPolicy("test-sandbox");
 
-    expect(promptMock).toHaveBeenCalledWith(
-      "  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ",
-    );
+    expect(promptMock).toHaveBeenCalledWith("  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ");
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
@@ -182,7 +178,9 @@ describe("addSandboxPolicy", () => {
 
     await addSandboxPolicy("test-sandbox");
 
-    const pickerNames = selectFromListMock.mock.calls[0][0].map((preset: PresetInfo) => preset.name);
+    const pickerNames = selectFromListMock.mock.calls[0][0].map(
+      (preset: PresetInfo) => preset.name,
+    );
     expect(pickerNames).toEqual(
       expect.arrayContaining(["npm", "pypi", "discord", "openclaw-pricing"]),
     );
@@ -207,7 +205,9 @@ describe("addSandboxPolicy", () => {
 
     await addSandboxPolicy("test-sandbox");
 
-    const pickerNames = selectFromListMock.mock.calls[0][0].map((preset: PresetInfo) => preset.name);
+    const pickerNames = selectFromListMock.mock.calls[0][0].map(
+      (preset: PresetInfo) => preset.name,
+    );
     expect(pickerNames).toEqual(
       expect.arrayContaining(["npm", "pypi", "discord", "nous-web", "nous-code"]),
     );
@@ -244,7 +244,11 @@ describe("addSandboxPolicy", () => {
       expected: "curl is not in the preset binary allowlist, so curl probes can fail",
       detail: "https://discord.com/api/v10/gateway",
     },
-  ])("prints validation guidance when $preset is selected interactively", async ({ preset, expected, detail }) => {
+  ])("prints validation guidance when $preset is selected interactively", async ({
+    preset,
+    expected,
+    detail,
+  }) => {
     selectFromListMock.mockResolvedValue(preset);
 
     await addSandboxPolicy("test-sandbox");
@@ -280,9 +284,7 @@ describe("removeSandboxPolicy", () => {
   it("prompts for confirmation before removing an interactively selected preset", async () => {
     await removeSandboxPolicy("test-sandbox");
 
-    expect(promptMock).toHaveBeenCalledWith(
-      "  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ",
-    );
+    expect(promptMock).toHaveBeenCalledWith("  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ");
     expect(removePresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
   });
 
@@ -291,9 +293,7 @@ describe("removeSandboxPolicy", () => {
 
     await removeSandboxPolicy("test-sandbox");
 
-    expect(promptMock).toHaveBeenCalledWith(
-      "  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ",
-    );
+    expect(promptMock).toHaveBeenCalledWith("  Remove 'pypi' from sandbox 'test-sandbox'? [Y/n]: ");
     expect(removePresetMock).not.toHaveBeenCalled();
   });
 

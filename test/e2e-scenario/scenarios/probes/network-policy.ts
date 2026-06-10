@@ -57,7 +57,10 @@ function isBlockedHttpStatus(code: string): boolean {
 
 export const networkPolicyProbe: ProbeFn = async (ctx: ProbeContext): Promise<ProbeOutcome> => {
   if (!ctx.sandboxName) {
-    return { status: "failed", message: "networkPolicyProbe: E2E_SANDBOX_NAME missing in context.env" };
+    return {
+      status: "failed",
+      message: "networkPolicyProbe: E2E_SANDBOX_NAME missing in context.env",
+    };
   }
   const blockedUrl = ctx.contextEnv.E2E_NETWORK_POLICY_BLOCKED_URL || DEFAULT_BLOCKED_URL;
 
@@ -92,7 +95,7 @@ export const networkPolicyProbe: ProbeFn = async (ctx: ProbeContext): Promise<Pr
     stdoutTail: result.stdout,
     stderrTail: result.stderr,
   };
-  writeProbeEvidence(ctx.evidencePath, evidence);
+  writeProbeEvidence(ctx, evidence);
 
   if (result.signal === "SIGTERM") {
     return {

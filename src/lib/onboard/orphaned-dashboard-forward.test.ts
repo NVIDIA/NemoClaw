@@ -26,13 +26,17 @@ interface MakeDepsOverrides {
 
 function makeDeps(overrides: MakeDepsOverrides = {}) {
   const calls = {
-    captureProcessArgs: vi.fn((_pid: number) => overrides.cmdline ?? "ssh -L openshell-forward 18789:..."),
+    captureProcessArgs: vi.fn(
+      (_pid: number) => overrides.cmdline ?? "ssh -L openshell-forward 18789:...",
+    ),
     runCaptureOpenshell: vi.fn(
       overrides.listFn ?? (() => forwardListWith([])),
     ) as OrphanedDashboardForwardDeps["runCaptureOpenshell"],
     run: vi.fn() as unknown as OrphanedDashboardForwardDeps["run"],
     sleepSeconds: vi.fn() as OrphanedDashboardForwardDeps["sleepSeconds"],
-    checkPortAvailable: vi.fn(async () => overrides.portCheckResult ?? { ok: true }) as unknown as OrphanedDashboardForwardDeps["checkPortAvailable"],
+    checkPortAvailable: vi.fn(
+      async () => overrides.portCheckResult ?? { ok: true },
+    ) as unknown as OrphanedDashboardForwardDeps["checkPortAvailable"],
     log: vi.fn(),
   };
   const deps: OrphanedDashboardForwardDeps = {

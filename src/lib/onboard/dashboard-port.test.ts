@@ -111,7 +111,9 @@ describe("preflightDashboardPortRangeAvailability (#3953)", () => {
     }) as (code?: number) => never;
     const stderrChunks: string[] = [];
     const origError = console.error;
-    console.error = (msg: string) => { stderrChunks.push(msg); };
+    console.error = (msg: string) => {
+      stderrChunks.push(msg);
+    };
     try {
       assert.throws(() => preflightDashboardPortRangeAvailability(allBound, exitFn), /__exit_1__/);
     } finally {

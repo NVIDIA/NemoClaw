@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  MACHINE_SNAPSHOT_VERSION,
-  type Session,
-} from "../state/onboard-session";
+import { MACHINE_SNAPSHOT_VERSION, type Session } from "../state/onboard-session";
 import { nextMachineStateAfterCompletedStep } from "../state/onboard-step-state";
 import { machineStateFromOnboardSessionStep } from "./machine/events";
 import type { OnboardMachineState } from "./machine/types";
@@ -24,10 +21,7 @@ function activeStepMachineState(session: Session): OnboardMachineState | null {
   const startedStepName = session.lastStepStarted;
   const startedStep = startedStepName ? session.steps[startedStepName] : null;
   const startedState = machineStateFromOnboardSessionStep(startedStepName);
-  if (
-    startedState &&
-    (startedStep?.status === "failed" || startedStep?.status === "in_progress")
-  ) {
+  if (startedState && (startedStep?.status === "failed" || startedStep?.status === "in_progress")) {
     return startedState;
   }
 
@@ -38,10 +32,11 @@ function activeStepMachineState(session: Session): OnboardMachineState | null {
  * Computes the nonterminal state where a failed durable session should resume.
  */
 export function resumeMachineState(session: Session): OnboardMachineState {
-  return activeStepMachineState(session) ?? nextMachineStateAfterCompletedStep(
-    session.lastCompletedStep,
-    session,
-  ) ?? "init";
+  return (
+    activeStepMachineState(session) ??
+    nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) ??
+    "init"
+  );
 }
 
 function shouldRepairTerminalMachineSnapshot(session: Session): boolean {

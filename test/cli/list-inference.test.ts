@@ -258,5 +258,4 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Nonexistent flag: --bogus")).toBeTruthy();
     expect(r.out.includes("See more help with --help")).toBeTruthy();
   });
-
 });

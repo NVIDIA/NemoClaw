@@ -94,6 +94,16 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_PROVIDER_KEY=.*$/m,
     `ARG NEMOCLAW_PROVIDER_KEY=${sanitizeDockerArg(providerKey)}`,
   );
+  // Carry the user-selected upstream provider name separately from the
+  // managed route key, so Hermes' _nemoclaw_upstream annotation can record
+  // the upstream the user actually picked (nvidia-prod, hermes-provider,
+  // etc.) rather than the proxy-routing key. The replace is a silent no-op
+  // when the staged Dockerfile predates this ARG (e.g. OpenClaw).
+  const upstreamProvider = provider && provider.trim() ? provider : providerKey;
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
+    `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,
+  );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PRIMARY_MODEL_REF=.*$/m,
     `ARG NEMOCLAW_PRIMARY_MODEL_REF=${sanitizeDockerArg(primaryModelRef)}`,
@@ -275,9 +285,7 @@ export function patchStagedDockerfile(
   // the single source of truth for validation errors.
   const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
   if (extraAgentsRaw && extraAgentsRaw.trim()) {
-    const encoded = sanitizeDockerArg(
-      Buffer.from(extraAgentsRaw, "utf8").toString("base64"),
-    );
+    const encoded = sanitizeDockerArg(Buffer.from(extraAgentsRaw, "utf8").toString("base64"));
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=.*$/m,
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,

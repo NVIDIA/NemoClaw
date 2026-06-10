@@ -8,9 +8,14 @@ describe("buildChain", () => {
   it("returns default loopback chain with no arguments", () => {
     const c = buildChain();
     expect(c).toMatchObject({
-      accessUrl: "http://127.0.0.1:18789", forwardTarget: "18789",
-      healthEndpoint: "/health", port: 18789, bindAddress: "127.0.0.1",
-      dashboardHealthEndpoint: "/health", gatewayPort: 18789, gatewayHealthEndpoint: "/health",
+      accessUrl: "http://127.0.0.1:18789",
+      forwardTarget: "18789",
+      healthEndpoint: "/health",
+      port: 18789,
+      bindAddress: "127.0.0.1",
+      dashboardHealthEndpoint: "/health",
+      gatewayPort: 18789,
+      gatewayHealthEndpoint: "/health",
     });
     expect(c.corsOrigins).toEqual(["http://127.0.0.1:18789"]);
     expect(c.shouldDisableDeviceAuth).toBe(false);
@@ -58,8 +63,12 @@ describe("buildChain", () => {
   });
 
   it("normalizes URL-shaped health endpoints to their pathname", () => {
-    expect(buildChain({ dashboardHealthEndpoint: "http://127.0.0.1/" }).dashboardHealthEndpoint).toBe("/");
-    expect(buildChain({ gatewayHealthEndpoint: "http://127.0.0.1/health" }).gatewayHealthEndpoint).toBe("/health");
+    expect(
+      buildChain({ dashboardHealthEndpoint: "http://127.0.0.1/" }).dashboardHealthEndpoint,
+    ).toBe("/");
+    expect(
+      buildChain({ gatewayHealthEndpoint: "http://127.0.0.1/health" }).gatewayHealthEndpoint,
+    ).toBe("/health");
   });
 
   it("treats empty/invalid chatUiUrl as default without throwing", () => {

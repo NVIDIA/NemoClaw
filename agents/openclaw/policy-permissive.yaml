@@ -23,6 +23,10 @@ filesystem_policy:
   read_write:
     - /tmp
     - /dev/null
+    - /dev/pts                      # devpts PTY access for the tmux-session flow
+                                    # (#4513). Mirrors the baseline read_write so
+                                    # `shields down` does not remove a path
+                                    # (OpenShell rejects filesystem removals).
     - /sandbox/.openclaw
     - /sandbox/.nemoclaw
     - /home/linuxbrew

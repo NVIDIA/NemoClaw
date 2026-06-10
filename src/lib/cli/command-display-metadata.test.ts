@@ -9,7 +9,9 @@ import { COMMANDS, visibleCommands } from "./command-registry";
 describe("public command display metadata", () => {
   it("loads public display entries for root help and docs checks", () => {
     expect(COMMANDS.length).toBeGreaterThan(0);
-    expect(COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage }))).toEqual(
+    expect(
+      COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage })),
+    ).toEqual(
       expect.arrayContaining([
         { commandId: "onboard", usage: "nemoclaw onboard" },
         { commandId: "sandbox:status", usage: "nemoclaw <name> status" },

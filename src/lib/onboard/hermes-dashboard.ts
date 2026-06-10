@@ -11,6 +11,9 @@ import {
 } from "../hermes-dashboard";
 import type { SandboxEntry } from "../state/registry";
 
+/** Hermes OpenAI-compatible API port (manifest `forward_ports[1]` / start.sh `PUBLIC_PORT`); reserved — never a dashboard port. (#4984) */
+const HERMES_OPENAI_API_PORT = 8642;
+
 export interface HermesDashboardOnboardState {
   config: HermesDashboardConfig | null;
   enabled: boolean;
@@ -30,6 +33,22 @@ export function resolveHermesDashboardOnboardState({
   fail?: (message: string) => never;
 }): HermesDashboardOnboardState {
   if (agentName !== "hermes") return { config: null, enabled: false };
+
+  // #4984 — reject the reserved Hermes API port as the dashboard port, host-side,
+  // before any sandbox is built. Check both the resolved effectivePort (covers
+  // --control-ui-port / CHAT_UI_URL / persisted port) and the raw env override,
+  // which the host otherwise silently drops so effectivePort never shows it.
+  // Message mirrors agents/hermes/start.sh:164.
+  const rawDashboardPort = env.NEMOCLAW_DASHBOARD_PORT?.trim();
+  const requestedDashboardPort = rawDashboardPort ? Number(rawDashboardPort) : undefined;
+  if (
+    effectivePort === HERMES_OPENAI_API_PORT ||
+    requestedDashboardPort === HERMES_OPENAI_API_PORT
+  ) {
+    const message = `[SECURITY] Invalid Hermes dashboard port ${HERMES_OPENAI_API_PORT} - reserved for the Hermes OpenAI-compatible API`;
+    if (fail) return fail(message);
+    throw new Error(message);
+  }
 
   let config: HermesDashboardConfig;
   try {
@@ -133,9 +152,7 @@ export function ensureHermesDashboardForwardIfEnabled({
   return true;
 }
 
-export function formatHermesDashboardForwardFailure(
-  state: HermesDashboardOnboardState,
-): string {
+export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
   return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, or set ${HERMES_DASHBOARD_PORT_ENV} to another port.`;
 }

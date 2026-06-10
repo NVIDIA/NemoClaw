@@ -943,12 +943,13 @@ else
 fi
 
 # M-WA6b: WhatsApp compact-QR pairing wiring (NemoClaw#4522). The entrypoint
-# installs a NemoClaw-owned preload that forces qrcode-terminal into
+# installs a NemoClaw-owned preload that forces the `qrcode` package (which
+# OpenClaw's renderQrTerminal uses to render the pairing QR) into
 # `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
-# phone-camera frame, and the openclaw() guard injects it for the single
-# `channels login --channel whatsapp` invocation. Verify both the preload file
-# (root-owned/read-only in root mode; read-only in non-root mode) and the guard
-# wiring are present in the sandbox.
+# phone-camera frame. The preload is wired into the connect-session NODE_OPTIONS
+# and the openclaw() guard injects it for the `channels login --channel whatsapp`
+# invocation. Verify the preload file (root-owned/read-only in root mode;
+# read-only in non-root mode) and the guard wiring are present in the sandbox.
 whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
 entrypoint_start_log_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-start.log 2>/dev/null || echo missing")
 if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
@@ -976,6 +977,63 @@ if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
   pass "M-WA6c: openclaw() guard injects compact-QR preload via NODE_OPTIONS for WhatsApp login (#4522)"
 else
   fail "M-WA6c: openclaw() guard missing compact-QR preload --require injection for WhatsApp login (#4522)"
+fi
+
+# M-WA6d: Prove the rendered QR SIZE in the real sandbox, not just that the
+# preload file/wiring exist (NemoClaw#4522). Render a representative WhatsApp
+# pairing payload through the EXACT renderer the channel-login onQr callback
+# uses — `renderQrTerminal` from the baked OpenClaw's plugin-sdk/media-runtime —
+# once with the connect-session NODE_OPTIONS sourced (the preload active, as in
+# the reporter workflow) and once with NODE_OPTIONS cleared. Assert the sourced
+# render is compact and strictly smaller than the cleared baseline.
+#
+# The probe runs from the global node_modules parent so the bare
+# `openclaw/...` specifier resolves against the globally-installed CLI. If the
+# renderer cannot be resolved/executed at all (an infra/resolution issue, not a
+# size regression) the sub-check SKIPs rather than failing the suite — an actual
+# oversized render still yields a number above the ceiling and fails. The
+# hard-gated, version-pinned size proof lives in test-whatsapp-qr-compact-e2e.sh.
+WHATSAPP_QR_RENDER_PROBE=$(
+  cat <<'PROBE'
+import { renderQrTerminal } from "openclaw/plugin-sdk/media-runtime";
+const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const qr = "2@" + "ABcd12".repeat(8) + "," + "a8K3".repeat(11) + "=," +
+  "Xy90".repeat(11) + "=," + "Qr5T".repeat(9) + "=";
+const out = strip(await renderQrTerminal(qr));
+process.stdout.write(String(out.split("\n").length));
+PROBE
+)
+whatsapp_qr_render_b64=$(printf '%s' "$WHATSAPP_QR_RENDER_PROBE" | base64 | tr -d '\n')
+# Build a remote command that writes the probe to the global lib dir and runs
+# it twice (preload sourced vs NODE_OPTIONS cleared), printing both row counts.
+whatsapp_qr_render_remote=$(
+  cat <<REMOTE
+set -eu
+GLOBAL_NM="\$(npm root -g 2>/dev/null)" || GLOBAL_NM=""
+[ -n "\$GLOBAL_NM" ] || { echo "RENDER_PROBE_UNAVAILABLE: npm root -g empty"; exit 0; }
+LIBDIR="\$(dirname "\$GLOBAL_NM")"
+PROBE_FILE="\$LIBDIR/nemoclaw-wa-qr-render-probe.mjs"
+printf '%s' '${whatsapp_qr_render_b64}' | base64 -d > "\$PROBE_FILE" 2>/dev/null || { echo "RENDER_PROBE_UNAVAILABLE: write failed"; exit 0; }
+cd "\$LIBDIR" || { echo "RENDER_PROBE_UNAVAILABLE: cd failed"; exit 0; }
+# Compact render: source the connect-session env so the preload is on NODE_OPTIONS.
+COMPACT="\$( [ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh 2>/dev/null; node "\$PROBE_FILE" 2>/dev/null )" || COMPACT=""
+# Baseline render: explicitly clear NODE_OPTIONS so the preload is absent.
+BASELINE="\$( NODE_OPTIONS="" node "\$PROBE_FILE" 2>/dev/null )" || BASELINE=""
+rm -f "\$PROBE_FILE" 2>/dev/null || true
+echo "RENDER_COMPACT=\${COMPACT:-NA} RENDER_BASELINE=\${BASELINE:-NA}"
+REMOTE
+)
+whatsapp_qr_render_out=$(sandbox_exec "$whatsapp_qr_render_remote")
+whatsapp_qr_compact_rows=$(printf '%s' "$whatsapp_qr_render_out" | sed -n 's/.*RENDER_COMPACT=\([0-9]*\).*/\1/p')
+whatsapp_qr_baseline_rows=$(printf '%s' "$whatsapp_qr_render_out" | sed -n 's/.*RENDER_BASELINE=\([0-9]*\).*/\1/p')
+if [ -n "$whatsapp_qr_compact_rows" ] && [ -n "$whatsapp_qr_baseline_rows" ]; then
+  if [ "$whatsapp_qr_compact_rows" -le 40 ] && [ "$whatsapp_qr_compact_rows" -lt "$whatsapp_qr_baseline_rows" ]; then
+    pass "M-WA6d: in-sandbox pairing QR renders compact (${whatsapp_qr_compact_rows} rows, baseline ${whatsapp_qr_baseline_rows}) (#4522)"
+  else
+    fail "M-WA6d: in-sandbox pairing QR not compact (compact=${whatsapp_qr_compact_rows} rows, baseline=${whatsapp_qr_baseline_rows}) (#4522)"
+  fi
+else
+  skip "M-WA6d: in-sandbox QR render probe unavailable (${whatsapp_qr_render_out:0:160}) (#4522)"
 fi
 
 # M1: Verify Telegram provider exists in gateway

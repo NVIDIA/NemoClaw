@@ -930,6 +930,18 @@ nemohermes my-assistant skill remove my-skill
 Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
 
+### `nemohermes <name> agents list`
+
+List the OpenClaw agents configured in the sandbox.
+This is a thin pass-through to `openclaw agents list` via `openshell sandbox exec`; the OpenClaw CLI owns the gateway `agents.list` call, output formatting, and binding summaries.
+Flags accepted by the in-sandbox CLI (`--json`, `--bindings`) are forwarded verbatim.
+
+```bash
+nemohermes my-assistant agents list
+nemohermes my-assistant agents list --json
+nemohermes my-assistant agents list --bindings
+```
+
 ### `nemohermes <name> agents add`
 
 Run the OpenClaw interactive add wizard inside the sandbox.

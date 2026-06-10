@@ -229,9 +229,7 @@ describe("getLayerHeader", () => {
     );
     expect(getLayerHeader("container_exited")).toContain("container_exited");
     expect(getLayerHeader("gateway_unreachable")).toContain("gateway_unreachable");
-    expect(getLayerHeader("sandbox_container_stopped")).toContain(
-      "sandbox_container_stopped",
-    );
+    expect(getLayerHeader("sandbox_container_stopped")).toContain("sandbox_container_stopped");
     expect(getLayerHeader("sandbox_dashboard_port_conflict")).toContain(
       "sandbox_dashboard_port_conflict",
     );
@@ -256,8 +254,7 @@ describe("classifySandboxContainerFailure", () => {
       runners: makeSandboxRunners({
         listRunningContainerNames: () =>
           "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
-        listAllContainerNames: () =>
-          "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
       }),
     });
     expect(result).toBeNull();
@@ -275,8 +272,7 @@ describe("classifySandboxContainerFailure", () => {
   it("returns sandbox_container_stopped when the container exists but is not running and no port is recorded", async () => {
     const result = await classifySandboxContainerFailure("my-assistant", {
       runners: makeSandboxRunners({
-        listAllContainerNames: () =>
-          "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\nopenshell-cluster-nemoclaw",
       }),
     });
     expect(result?.layer).toBe("sandbox_container_stopped");
@@ -366,8 +362,7 @@ describe("classifySandboxContainerFailure", () => {
 
     const unrelated = await classifySandboxContainerFailure("my-assistant", {
       runners: makeSandboxRunners({
-        listAllContainerNames: () =>
-          "openshell-cluster-nemoclaw\nopenshell-my-assistantextra\n",
+        listAllContainerNames: () => "openshell-cluster-nemoclaw\nopenshell-my-assistantextra\n",
       }),
     });
     expect(unrelated).toBeNull();
@@ -391,8 +386,7 @@ describe("classifySandboxContainerFailure", () => {
   it("matches an `openshell-<name>` exact container even when a co-tenant `openshell-<name>-<id>` exists in the same listing", async () => {
     const result = await classifySandboxContainerFailure("my-assistant", {
       runners: makeSandboxRunners({
-        listAllContainerNames: () =>
-          "openshell-my-assistant-7616dcb1\nopenshell-my-assistant",
+        listAllContainerNames: () => "openshell-my-assistant-7616dcb1\nopenshell-my-assistant",
         listSandboxNames: () => ["my-assistant"],
       }),
     });

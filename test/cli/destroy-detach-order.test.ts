@@ -18,9 +18,7 @@ describe("CLI dispatch", () => {
     "detaches every per-sandbox provider before sandbox delete on destroy",
     testTimeoutOptions(30_000),
     () => {
-      const home = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-cli-destroy-detach-"),
-      );
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-detach-"));
       try {
         const localBin = path.join(home, "bin");
         const registryDir = path.join(home, ".nemoclaw");
@@ -57,11 +55,9 @@ describe("CLI dispatch", () => {
           ].join("\n"),
           { mode: 0o755 },
         );
-        fs.writeFileSync(
-          path.join(localBin, "docker"),
-          ["#!/bin/sh", "exit 0"].join("\n"),
-          { mode: 0o755 },
-        );
+        fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
+          mode: 0o755,
+        });
 
         const r = runWithEnv("alpha destroy -y", {
           HOME: home,
@@ -84,10 +80,7 @@ describe("CLI dispatch", () => {
         for (const line of expectedDetachLines) {
           const idx = indexOfArg(log, line);
           expect(idx, `${line} should appear in openshell log`).toBeGreaterThan(-1);
-          expect(
-            idx,
-            `${line} should precede 'sandbox delete alpha'`,
-          ).toBeLessThan(deleteIdx);
+          expect(idx, `${line} should precede 'sandbox delete alpha'`).toBeLessThan(deleteIdx);
         }
       } finally {
         fs.rmSync(home, { recursive: true, force: true });

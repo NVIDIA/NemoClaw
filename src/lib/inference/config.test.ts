@@ -273,16 +273,17 @@ describe("getSandboxInferenceConfig", () => {
   });
 
   it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
-    expect(getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"))
-      .toEqual({
-        providerKey: MANAGED_PROVIDER_ID,
-        primaryModelRef: `${MANAGED_PROVIDER_ID}/deepseek-ai/DeepSeek-V4-Flash`,
-        inferenceBaseUrl: INFERENCE_ROUTE_URL,
-        inferenceApi: "openai-completions",
-        inferenceCompat: {
-          supportsStore: false,
-        },
-      });
+    expect(
+      getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/deepseek-ai/DeepSeek-V4-Flash`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
   });
 
   it("maps Bedrock Runtime custom Anthropic endpoints through the managed OpenAI-compatible route", () => {
@@ -399,7 +400,10 @@ describe("planInferenceRouteReconcile", () => {
   });
 
   it("flags divergence when the gateway model differs (the #3726 case)", () => {
-    const live = { provider: "nvidia-prod", model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" };
+    const live = {
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    };
     expect(planInferenceRouteReconcile(live, recorded)).toEqual({
       kind: "diverged",
       live,
@@ -417,9 +421,11 @@ describe("planInferenceRouteReconcile", () => {
   });
 
   it("repairs a partial gateway route (provider only) instead of diverging", () => {
-    expect(planInferenceRouteReconcile({ provider: "nvidia-prod", model: null }, recorded)).toEqual({
-      kind: "repair",
-    });
+    expect(planInferenceRouteReconcile({ provider: "nvidia-prod", model: null }, recorded)).toEqual(
+      {
+        kind: "repair",
+      },
+    );
   });
 
   it("repairs a partial gateway route (model only) instead of diverging", () => {

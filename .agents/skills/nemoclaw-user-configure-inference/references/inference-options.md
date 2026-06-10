@@ -308,7 +308,7 @@ Managed vLLM uses these profiles:
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
-| DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
+| DGX Station | `Qwen/Qwen3.6-27B-FP8` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 **Note:**
@@ -345,10 +345,10 @@ Recognized slugs are:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | Default on the DGX Station profile |
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override |
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on the DGX Station profile |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | Default on the DGX Spark profile |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | Supported override |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
 
 The slug is case-insensitive; the full Hugging Face id is also accepted.

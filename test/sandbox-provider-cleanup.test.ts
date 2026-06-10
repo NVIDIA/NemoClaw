@@ -67,7 +67,10 @@ describe("detachSandboxProviders", () => {
     const responses = new Map<string, RunResult>([
       [
         "sandbox provider detach alpha alpha-telegram-bridge",
-        { status: 1, stderr: "Error: status: NotFound, provider 'alpha-telegram-bridge' not found" },
+        {
+          status: 1,
+          stderr: "Error: status: NotFound, provider 'alpha-telegram-bridge' not found",
+        },
       ],
       [
         "sandbox provider detach alpha alpha-brave-search",
@@ -137,9 +140,7 @@ describe("detachSandboxProviders", () => {
     // exposes those, this stays as a regression marker: when a real diagnostic of
     // this shape ships and shows up here, tighten the tolerance regex around the
     // canonical detach diagnostics rather than the word fragments.
-    expect(
-      result.failures.some((f) => f.name === "yankee-telegram-bridge"),
-    ).toBe(false);
+    expect(result.failures.some((f) => f.name === "yankee-telegram-bridge")).toBe(false);
   });
 
   it("tolerates sandbox-not-found when tolerateMissingSandbox is set (opportunistic call)", () => {
@@ -157,6 +158,28 @@ describe("detachSandboxProviders", () => {
     });
 
     expect(result.failures).toEqual([]);
+  });
+
+  it("suppresses output for tolerated missing-sandbox detach probes", () => {
+    const { runOpenshell } = buildRunOpenshell(new Map(), {
+      status: 1,
+      stderr: "Error: status: NotFound, sandbox 'phantom' not found",
+    });
+
+    const result = detachSandboxProviders("phantom", {
+      runOpenshell,
+      tolerateMissingSandbox: true,
+    });
+
+    expect(result.failures).toEqual([]);
+    expect(runOpenshell).toHaveBeenCalledTimes(SANDBOX_PROVIDER_SUFFIXES.length);
+    for (const [, opts] of runOpenshell.mock.calls) {
+      expect(opts).toMatchObject({
+        ignoreError: true,
+        suppressOutput: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
   });
 
   it("collects non-tolerated failures without aborting the loop", () => {
@@ -211,10 +234,7 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
     const tokenOutput =
       "Error: token AKIA0123456789ABCDEF failed: status Internal, gateway timeout";
     const responses = new Map<string, RunResult>([
-      [
-        "sandbox provider detach delta delta-telegram-bridge",
-        { status: 1, stderr: tokenOutput },
-      ],
+      ["sandbox provider detach delta delta-telegram-bridge", { status: 1, stderr: tokenOutput }],
     ]);
     const { runOpenshell } = buildRunOpenshell(responses);
     const warn = vi.fn();
@@ -258,9 +278,7 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
     const detachCount = calls.filter(
       (argv) => argv[0] === "sandbox" && argv[1] === "provider" && argv[2] === "detach",
     ).length;
-    const deleteIndex = calls.findIndex(
-      (argv) => argv[0] === "sandbox" && argv[1] === "delete",
-    );
+    const deleteIndex = calls.findIndex((argv) => argv[0] === "sandbox" && argv[1] === "delete");
     expect(detachCount).toBe(SANDBOX_PROVIDER_SUFFIXES.length);
     expect(deleteIndex).toBeGreaterThan(detachCount - 1);
   });
@@ -269,13 +287,12 @@ describe("runSandboxProviderPreDeleteCleanup", () => {
 describe("parseAttachedSandboxes", () => {
   it("parses a single sandbox name from a FailedPrecondition diagnostic", () => {
     const output =
-      'Error: × status: FailedPrecondition, message: "provider \'spark-nemo-telegram-bridge\' is attached to sandbox(es): spark-nemo"';
+      "Error: × status: FailedPrecondition, message: \"provider 'spark-nemo-telegram-bridge' is attached to sandbox(es): spark-nemo\"";
     expect(parseAttachedSandboxes(output)).toEqual(["spark-nemo"]);
   });
 
   it("parses multiple sandbox names from the same diagnostic", () => {
-    const output =
-      "provider 'x' is attached to sandbox(es): alpha, beta, gamma";
+    const output = "provider 'x' is attached to sandbox(es): alpha, beta, gamma";
     expect(parseAttachedSandboxes(output)).toEqual(["alpha", "beta", "gamma"]);
   });
 

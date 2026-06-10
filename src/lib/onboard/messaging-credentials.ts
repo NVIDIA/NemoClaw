@@ -35,7 +35,8 @@ export function getRecordedMessagingChannelsForResume({
     sessionMessagingChannels,
     sandboxName,
     channels,
-    (envKey: string) => Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
+    (envKey: string) =>
+      Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
     registry.getSandbox.bind(registry),
     registry.getDisabledChannels.bind(registry),
     providerExistsInGateway,

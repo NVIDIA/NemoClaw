@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  HERMES_PROVIDER_MODEL_OPTIONS,
-  NOUS_RECOMMENDED_MODELS_URL,
-} from "./config";
+import { HERMES_PROVIDER_MODEL_OPTIONS, NOUS_RECOMMENDED_MODELS_URL } from "./config";
 import { isSafeModelId } from "../validation";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 2500;
@@ -14,10 +11,7 @@ type FetchResponseLike = {
   json: () => Promise<unknown>;
 };
 
-type FetchLike = (
-  url: string,
-  init?: { signal?: AbortSignal },
-) => Promise<FetchResponseLike>;
+type FetchLike = (url: string, init?: { signal?: AbortSignal }) => Promise<FetchResponseLike>;
 
 type RecommendedModelEntry = {
   modelName?: unknown;
@@ -67,12 +61,12 @@ export function extractNousRecommendedModelOptions(
   fallbackModels: readonly string[] = HERMES_PROVIDER_MODEL_OPTIONS,
 ): string[] {
   const source = (payload || {}) as NousRecommendedModelsPayload;
-  const paidModels = sortByPortalPosition(
-    asRecommendedEntries(source.paidRecommendedModels),
-  ).map((entry) => String(entry.modelName || ""));
-  const freeModels = sortByPortalPosition(
-    asRecommendedEntries(source.freeRecommendedModels),
-  ).map((entry) => String(entry.modelName || ""));
+  const paidModels = sortByPortalPosition(asRecommendedEntries(source.paidRecommendedModels)).map(
+    (entry) => String(entry.modelName || ""),
+  );
+  const freeModels = sortByPortalPosition(asRecommendedEntries(source.freeRecommendedModels)).map(
+    (entry) => String(entry.modelName || ""),
+  );
   const recommended = mergeModelOptions(paidModels, freeModels);
 
   if (recommended.length === 0) {
@@ -84,9 +78,7 @@ export function extractNousRecommendedModelOptions(
 export async function getHermesProviderModelOptions(
   params: HermesProviderModelOptionsParams = {},
 ): Promise<string[]> {
-  const fallbackModels = mergeModelOptions(
-    params.fallbackModels ?? HERMES_PROVIDER_MODEL_OPTIONS,
-  );
+  const fallbackModels = mergeModelOptions(params.fallbackModels ?? HERMES_PROVIDER_MODEL_OPTIONS);
   const fetchFn = params.fetchFn ?? (globalThis.fetch as unknown as FetchLike | undefined);
   if (typeof fetchFn !== "function") {
     return fallbackModels;
