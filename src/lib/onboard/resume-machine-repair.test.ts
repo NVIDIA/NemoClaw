@@ -14,6 +14,7 @@ import {
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import { repairResumeMachineSnapshot, resumeMachineState } from "./resume-machine-repair";
+import { classifyResumeMachineRepair } from "./resume-repair-policy";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
 /**
@@ -115,6 +116,62 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
 }
 
 describe("resume machine repair", () => {
+  it("classifies terminal resume repair policy decisions", () => {
+    const failed = createFailedSession((current) => {
+      current.failure = {
+        step: "gateway",
+        message: "gateway failed",
+        recordedAt: "2026-06-01T00:00:00.000Z",
+      };
+    });
+    const reopenedComplete = createSession({
+      resumable: true,
+      status: "in_progress",
+      lastCompletedStep: "gateway",
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 9,
+      },
+    });
+    const completed = createSession({
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "complete",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 3,
+      },
+    });
+    completed.resumable = false;
+    completed.status = "complete";
+    const nonterminal = createSession({
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "gateway",
+        stateEnteredAt: "2026-06-01T00:00:00.000Z",
+        revision: 3,
+      },
+    });
+
+    expect(classifyResumeMachineRepair(failed)).toEqual({
+      action: "repair",
+      reason: "failed_terminal_snapshot",
+    });
+    expect(classifyResumeMachineRepair(reopenedComplete)).toEqual({
+      action: "repair",
+      reason: "reopened_complete_snapshot",
+    });
+    expect(classifyResumeMachineRepair(completed)).toEqual({
+      action: "keep",
+      reason: "completed_nonresumable_snapshot",
+    });
+    expect(classifyResumeMachineRepair(nonterminal)).toEqual({
+      action: "keep",
+      reason: "nonterminal_snapshot",
+    });
+  });
+
   it("resumes a failed preflight session from preflight", () => {
     const session = createFailedSession((current) => {
       current.failure = {
