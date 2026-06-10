@@ -25,7 +25,6 @@ export interface FinalOnboardFlowPhaseOptions<
   branchState: "agent_setup" | "openclaw";
   agentSetupDeps: AgentSetupStateOptions<Context["agent"]>["deps"];
   policiesDeps: PoliciesStateOptions<Context["agent"], WebSearchConfig>["deps"];
-  afterPolicies?(): void;
   finalization: {
     stagedLegacyKeys: readonly string[];
     migratedLegacyKeys: ReadonlySet<string>;
@@ -91,7 +90,6 @@ export function createFinalOnboardFlowPhases<
       agent: context.agent,
       deps: options.policiesDeps,
     });
-    options.afterPolicies?.();
     return {
       context: { session: policiesResult.session } as Partial<Context>,
       result: policiesResult.stateResult,
@@ -124,12 +122,36 @@ function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateR
   return [result as OnboardStateResult];
 }
 
+function isPoliciesAppliedResult(result: OnboardStateResult): boolean {
+  return (
+    result.type === "transition" &&
+    result.next === "finalizing" &&
+    result.metadata?.state === "policies"
+  );
+}
+
+function withAfterPoliciesResultApplied(
+  runtime: OnboardMachineRunnerRuntime,
+  afterPoliciesResultApplied: (() => void) | undefined,
+): OnboardMachineRunnerRuntime {
+  if (!afterPoliciesResultApplied) return runtime;
+  return {
+    session: runtime.session.bind(runtime),
+    async applyResult(result) {
+      const session = await runtime.applyResult(result);
+      if (isPoliciesAppliedResult(result)) afterPoliciesResultApplied();
+      return session;
+    },
+  };
+}
+
 export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
+  afterPoliciesResultApplied?(): void;
 }): Promise<void> {
   const finalRuntimeSession = await options.runtime.session();
   // Keep resume and ahead-state sessions on the compatibility path for now.
@@ -151,7 +173,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   ) {
     await runFinalOnboardFlowSequence({
       context: options.context,
-      runtime: options.runtime,
+      runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
       phases: options.phases,
     });
     return;
@@ -162,6 +184,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
     const phaseResult = await phase.run(context);
     for (const stateResult of stateResults(phaseResult.result)) {
       await options.recordStateResult(stateResult);
+      if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
     }
     context = phaseResult.context;
   }

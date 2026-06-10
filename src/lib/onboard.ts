@@ -6748,9 +6748,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
-      afterPolicies: () => {
-        sandboxCancelRollback.disarm();
-      },
       finalization: {
         stagedLegacyKeys,
         migratedLegacyKeys,
@@ -6817,6 +6814,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
       recordStateResult,
+      afterPoliciesResultApplied: () => {
+        sandboxCancelRollback.disarm();
+      },
     });
     traceCompleted = true;
   } finally {
