@@ -141,7 +141,6 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
@@ -379,7 +378,6 @@ const {
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
   exitOnSandboxGpuConfigErrors,
-  formatSandboxGpuPassthroughNote,
   resolveSandboxGpuFlagFromOptions,
   validateSandboxGpuPreflight,
 } = sandboxGpuPreflight;
@@ -454,26 +452,17 @@ const {
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 const {
-  handleAgentSetupState,
-}: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
+  createCoreOnboardFlowPhases,
+  runCoreOnboardFlowSlice,
+}: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
-  handleFinalizationState,
-}: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
+  createFinalOnboardFlowPhases,
+  runFinalOnboardFlowSlice,
+}: typeof import("./onboard/machine/final-flow-phases") = require("./onboard/machine/final-flow-phases");
 const {
-  handleGatewayState,
-}: typeof import("./onboard/machine/handlers/gateway") = require("./onboard/machine/handlers/gateway");
-const {
-  handlePoliciesState,
-}: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
-const {
-  handlePreflightState,
-}: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
-const {
-  handleProviderInferenceState,
-}: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
-const {
-  handleSandboxState,
-}: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
+  createInitialOnboardFlowPhases,
+  runInitialOnboardFlowSlice,
+}: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
 const {
   advanceTo,
 }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
@@ -587,6 +576,7 @@ import {
   type SetupPresetSuggestionOptions,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
+import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
@@ -1911,7 +1901,7 @@ async function preflight(
     !sandboxGpuConfig.sandboxGpuEnabled;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
 
-  assertDockerBridgeAndContainerDnsHealthy(host);
+  assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
   if (host.runtime !== "unknown") {
     console.log(`  ✓ Container runtime: ${host.runtime}`);
@@ -2931,43 +2921,32 @@ async function createSandbox(
   // for the current sandbox creation.
   const envPlan = readMessagingPlanFromEnv();
   const currentPlan = envPlan?.sandboxName === sandboxName ? envPlan : null;
-  const hasPlanCredentials =
-    currentPlan?.credentialBindings.some((b) => b.credentialAvailable) ?? false;
-  if (hasPlanCredentials) {
-    const {
-      backfillMessagingChannels,
-      findChannelConflictsFromPlan,
-      createMessagingConflictProbe,
-    } = require("./messaging/applier") as typeof import("./messaging/applier");
-    const probe = createMessagingConflictProbe({
-      checkGatewayLiveness: () =>
-        runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
-      providerExists: (name) => providerExistsInGateway(name),
-    });
-    backfillMessagingChannels(registry, probe);
-    const conflicts = findChannelConflictsFromPlan(sandboxName, currentPlan!, registry);
-    if (conflicts.length > 0) {
-      for (const { channel, sandbox, reason } of conflicts) {
-        const detail =
-          reason === "matching-token"
-            ? `uses the same ${channel} credential`
-            : `already has ${channel} enabled, but its credential hash is unavailable`;
-        console.log(
-          `  ⚠ Sandbox '${sandbox}' ${detail}. Shared channel credentials only allow one sandbox to poll/connect — continuing may break both bridges.`,
-        );
-      }
-      if (isNonInteractive()) {
-        console.error(
-          `  Aborting: resolve the messaging channel conflict above or run \`${cliName()} <sandbox> channels stop <channel>\` / \`${cliName()} <sandbox> channels remove <channel>\` on the other sandbox.`,
-        );
-        process.exit(1);
-      }
-      if (!(await promptYesNoOrDefault("  Continue anyway?", null, false))) {
-        console.log("  Aborting sandbox creation.");
-        process.exit(1);
-      }
-    }
-  }
+  // Drop channels the operator disabled via `nemoclaw <sandbox> channels stop`.
+  // Credentials stay in the keychain; the bridge simply isn't registered with
+  // the gateway on the next rebuild. `channels start` removes the entry and
+  // the bridge comes back. Resolved before conflict detection so a *stopped*
+  // channel on this sandbox is not treated as an active consumer (a stopped
+  // Slack bridge must not block a second sandbox on the same gateway).
+  const disabledChannels: string[] =
+    require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
+  const disabledChannelNames = new Set(disabledChannels);
+  const { enforceMessagingChannelConflicts } =
+    require("./onboard/messaging-conflict-guard") as typeof import("./onboard/messaging-conflict-guard");
+  await enforceMessagingChannelConflicts({
+    sandboxName,
+    gatewayName: GATEWAY_NAME,
+    currentPlan,
+    currentSandboxDisabledChannels: disabledChannels,
+    registry,
+    checkGatewayLiveness: () =>
+      runOpenshell(["sandbox", "list"], { ignoreError: true, suppressOutput: true }).status === 0,
+    providerExists: (name) => providerExistsInGateway(name),
+    isNonInteractive,
+    promptContinue: () => promptYesNoOrDefault("  Continue anyway?", null, false),
+    cliName,
+    log: (message) => console.log(message),
+    error: (message) => console.error(message),
+  });
 
   // When enabledChannels is provided (from the toggle picker), only include
   // channels the user selected. When null (backward compat), include all.
@@ -2980,13 +2959,6 @@ async function createSandbox(
         )
       : null;
 
-  // Drop channels the operator disabled via `nemoclaw <sandbox> channels stop`.
-  // Credentials stay in the keychain; the bridge simply isn't registered with
-  // the gateway on the next rebuild. `channels start` removes the entry and
-  // the bridge comes back.
-  const disabledChannels: string[] =
-    require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
-  const disabledChannelNames = new Set(disabledChannels);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
       getChannelTokenKeys(c),
@@ -5493,468 +5465,41 @@ function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] 
   return selectedPresets.every((preset) => applied.has(preset));
 }
 
-/**
- * Prompt the user to select a policy tier (restricted / balanced / open).
- * Uses the same radio-style TUI as presetsCheckboxSelector (single-select).
- * In non-interactive mode reads NEMOCLAW_POLICY_TIER (default: balanced).
- * Returns the tier name string.
- *
- * @returns {Promise<string>}
- */
-async function selectPolicyTier(): Promise<string> {
-  const allTiers = tiers.listTiers();
-  const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
-
-  if (isNonInteractive()) {
-    const name = policyTierEnv.resolvePolicyTierFromEnv();
-    note(`  [non-interactive] Policy tier: ${name}`);
-    return name;
-  }
-
-  const RADIO_ON = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
-  const RADIO_OFF = USE_COLOR ? "\x1b[2m[ ]\x1b[0m" : "[ ]";
-
-  // ── Fallback: non-TTY ─────────────────────────────────────────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log("  Policy tier — controls which network presets are enabled:");
-    allTiers.forEach((t) => {
-      const marker = t.name === defaultTier.name ? RADIO_ON : RADIO_OFF;
-      console.log(`    ${marker} ${t.label}`);
-    });
-    console.log("");
-    const answer = await prompt(
-      `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
-    );
-    const chosen = selectFromNumberedMenuOrExit(
-      answer,
-      allTiers.indexOf(defaultTier) + 1,
-      allTiers,
-    );
-    console.log(`  Tier: ${chosen.label}`);
-    return chosen.name;
-  }
-
-  // ── Raw-mode TUI (radio — single selection) ───────────────────────
-  let cursor = allTiers.indexOf(defaultTier);
-  let selectedIdx = cursor;
-  const n = allTiers.length;
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}select${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  select    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = ["  Policy tier — controls which network presets are enabled:"];
-    allTiers.forEach((t, i) => {
-      const radio = i === selectedIdx ? RADIO_ON : RADIO_OFF;
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${radio} ${t.label}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<string>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve(allTiers[selectedIdx].name);
-      } else if (key === " ") {
-        selectedIdx = cursor;
-        redraw();
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
+function getPolicySelectionPromptHelpers(): ReturnType<typeof createPolicySelectionPromptHelpers> {
+  return createPolicySelectionPromptHelpers({
+    tiers,
+    policyTierEnv,
+    isNonInteractive,
+    note,
+    prompt,
+    selectFromNumberedMenuOrExit,
+    makeOnboardCancelExit,
+    sandboxCancelRollback,
+    useColor: USE_COLOR,
   });
 }
 
-/**
- * Combined preset selector: shows ALL available presets, pre-checks those in
- * the chosen tier, and lets the user include/exclude any preset and toggle
- * per-preset access (read vs read-write).
- *
- * Tier presets are listed first (in tier order), then remaining presets
- * alphabetically. Tier presets are pre-checked; others start unchecked.
- *
- * Keys:
- *   ↑/↓ j/k — move cursor
- *   Space    — include / exclude current preset
- *   r        — toggle read / read-write for current preset
- *   Enter    — confirm
- *
- * @param {string} tierName
- * @param {Array<{name: string}>} allPresets
- * @param {string[]} [extraSelected]  — names pre-checked even if not in tier (e.g. already-applied)
- * @returns {Promise<Array<{name: string, access: string}>>}
- */
+async function selectPolicyTier(): Promise<string> {
+  return getPolicySelectionPromptHelpers().selectPolicyTier();
+}
+
 async function selectTierPresetsAndAccess(
   tierName: string,
   allPresets: Array<{ name: string; description?: string }>,
   extraSelected: string[] = [],
 ): Promise<Array<{ name: string; access: string }>> {
-  const tierDef = tiers.getTier(tierName);
-  const tierPresetMap: Record<string, string> = {};
-  if (tierDef) {
-    for (const p of tierDef.presets) {
-      tierPresetMap[p.name] = p.access;
-    }
-  }
-
-  // Tier presets first (in tier order), then the rest in their original order.
-  const tierNames = tierDef ? tierDef.presets.map((p) => p.name) : [];
-  const tierSet = new Set(tierNames);
-  const ordered: Array<{ name: string; description?: string }> = [
-    ...tierNames
-      .map((name) => allPresets.find((p) => p.name === name))
-      .filter((p): p is { name: string; description?: string } => Boolean(p)),
-    ...allPresets.filter((p) => !tierSet.has(p.name)),
-  ];
-
-  // Initial inclusion: tier presets + any already-applied extras.
-  const included = new Set([
-    ...tierNames,
-    ...extraSelected.filter((n) => ordered.find((p) => p.name === n)),
-  ]);
-
-  // Access levels: tier defaults for tier presets, read-write default for others.
-  const accessModes: Record<string, string> = {};
-  for (const p of ordered) {
-    accessModes[p.name] = tierPresetMap[p.name] ?? "read-write";
-  }
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const O = USE_COLOR ? "\x1b[38;5;208m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const GREEN_CHECK = USE_COLOR ? `[${G}✓${R}]` : "[✓]";
-  const EMPTY_CHECK = USE_COLOR ? `${D}[ ]${R}` : "[ ]";
-  const TOGGLE_RW = USE_COLOR ? `[${O}rw${R}]` : "[rw]";
-  const TOGGLE_R = USE_COLOR ? `${D}[ r]${R}` : "[ r]";
-
-  const label = tierDef ? `  Presets  (${tierDef.label} defaults):` : "  Presets:";
-  const n = ordered.length;
-
-  // ── Non-interactive: return tier defaults silently ─────────────────
-  if (isNonInteractive()) {
-    return ordered
-      .filter((p) => included.has(p.name))
-      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
-  }
-
-  // ── Fallback: non-TTY ─────────────────────────────────────────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log(label);
-    ordered.forEach((p) => {
-      const isIncluded = included.has(p.name);
-      const isRw = accessModes[p.name] === "read-write";
-      const check = isIncluded ? GREEN_CHECK : EMPTY_CHECK;
-      const badge = isIncluded ? (isRw ? "[rw]" : "[ r]") : "    ";
-      console.log(`    ${check} ${badge} ${p.name}`);
-    });
-    console.log("");
-    const rawInclude = await prompt(
-      "  Include presets (comma-separated names, Enter to keep defaults): ",
-    );
-    if (rawInclude.trim()) {
-      const knownNames = new Set(ordered.map((p) => p.name));
-      included.clear();
-      for (const name of rawInclude
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)) {
-        if (knownNames.has(name)) {
-          included.add(name);
-        } else {
-          console.error(`  Unknown preset name ignored: ${name}`);
-        }
-      }
-    }
-    return ordered
-      .filter((p) => included.has(p.name))
-      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
-  }
-
-  // ── Raw-mode TUI ─────────────────────────────────────────────────
-  let cursor = 0;
-
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}include${R}    ${G}r${R}  ${D}toggle rw${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  include    r  toggle rw    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = [label];
-    ordered.forEach((p, i) => {
-      const isIncluded = included.has(p.name);
-      const isRw = accessModes[p.name] === "read-write";
-      const check = isIncluded ? GREEN_CHECK : EMPTY_CHECK;
-      // badge is 4 visible chars + 1 space; blank when unchecked to keep name aligned
-      const badge = isIncluded ? (isRw ? TOGGLE_RW + " " : TOGGLE_R + " ") : "     ";
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${check} ${badge}${p.name}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<Array<{ name: string; access: string }>>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve(
-          ordered
-            .filter((p) => included.has(p.name))
-            .map((p) => ({ name: p.name, access: accessModes[p.name] })),
-        );
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      } else if (key === " ") {
-        const currentPreset = ordered[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        if (included.has(name)) {
-          included.delete(name);
-        } else {
-          included.add(name);
-        }
-        redraw();
-      } else if (key === "r" || key === "R") {
-        const currentPreset = ordered[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        accessModes[name] = accessModes[name] === "read-write" ? "read" : "read-write";
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
-  });
+  return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
+    tierName,
+    allPresets,
+    extraSelected,
+  );
 }
 
-/**
- * Raw-mode TUI preset selector.
- * Keys: ↑/↓ or k/j to move, Space to toggle, a to select/unselect all, Enter to confirm.
- * Falls back to a simple line-based prompt when stdin is not a TTY.
- */
 async function presetsCheckboxSelector(
   allPresets: Array<{ name: string; description: string }>,
   initialSelected: string[],
 ): Promise<string[]> {
-  const selected = new Set<string>(initialSelected);
-  const n = allPresets.length;
-
-  // ── Zero-presets guard ────────────────────────────────────────────
-  if (n === 0) {
-    console.log("  No policy presets are available.");
-    return [];
-  }
-
-  const GREEN_CHECK = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
-
-  // ── Fallback: non-TTY or redirected stdout (piped input) ──────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log("  Available policy presets:");
-    allPresets.forEach((p) => {
-      const marker = selected.has(p.name) ? GREEN_CHECK : "[ ]";
-      console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
-    });
-    console.log("");
-    const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
-    if (!raw.trim()) {
-      console.log("  Skipping policy presets.");
-      return [];
-    }
-    const knownNames = new Set(allPresets.map((p) => p.name));
-    const chosen = [];
-    for (const name of raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)) {
-      if (knownNames.has(name)) {
-        chosen.push(name);
-      } else {
-        console.error(`  Unknown preset name ignored: ${name}`);
-      }
-    }
-    return chosen;
-  }
-
-  // ── Raw-mode TUI ─────────────────────────────────────────────────
-  let cursor = 0;
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}toggle${R}    ${G}a${R}  ${D}all/none${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  toggle    a  all/none    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = ["  Available policy presets:"];
-    allPresets.forEach((p, i) => {
-      const check = selected.has(p.name) ? GREEN_CHECK : "[ ]";
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${check} ${p.name.padEnd(14)} — ${p.description}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  // Initial paint
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<string[]>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve([...selected]);
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)(); // Ctrl+C
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      } else if (key === " ") {
-        const currentPreset = allPresets[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        if (selected.has(name)) selected.delete(name);
-        else selected.add(name);
-        redraw();
-      } else if (key === "a") {
-        if (selected.size === n) selected.clear();
-        else for (const p of allPresets) selected.add(p.name);
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
-  });
+  return getPolicySelectionPromptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
 }
 
 const computeSetupPresetSuggestions = (
@@ -6415,29 +5960,59 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
-    const preflightResult = await handlePreflightState({
+    type InitialOnboardFlowContext =
+      import("./onboard/machine/initial-flow-phases").InitialOnboardFlowContext<
+        typeof agent,
+        ReturnType<typeof nim.detectGpu>,
+        ReturnType<typeof resolveSandboxGpuConfig>
+      >;
+    const initialFlowContext: InitialOnboardFlowContext = {
       resume,
+      fresh,
       session,
+      agent,
       recordedSandboxName,
       requestedSandboxName,
+      sandboxName: recordedSandboxName || requestedSandboxName || null,
+      fromDockerfile,
+      model: session?.model || null,
+      provider: session?.provider || null,
+      endpointUrl: session?.endpointUrl || null,
+      credentialEnv: session?.credentialEnv || null,
+      hermesAuthMethod: normalizeHermesAuthMethod(session?.hermesAuthMethod),
+      hermesToolGateways: normalizeHermesToolGatewaySelections(session?.hermesToolGateways),
+      preferredInferenceApi: session?.preferredInferenceApi || null,
+      nimContainer: session?.nimContainer || null,
+      webSearchConfig: session?.webSearchConfig || null,
+      webSearchSupported: false,
+      selectedMessagingChannels,
+      gpu: null,
+      sandboxGpuConfig: null,
+      gpuPassthrough: false,
+      resumeHasResolvedGpuIntent: false,
+      requestedGpuPassthrough: opts.gpu === true,
+    };
+
+    const [preflightPhase, gatewayPhase]: readonly [
+      import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
+      import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
+    ] = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag,
       sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
       gpuRequested: opts.gpu === true,
       noGpu: opts.noGpu === true,
       env: process.env,
-      deps: {
+      recordedGpuPassthroughBeforePreflight,
+      ensureResumePreflightDashboardPortAvailable: () => {
+        if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability();
+      },
+      preflightDeps: {
         getSandbox: registry.getSandbox.bind(registry),
         getResumeSandboxGpuOverrides,
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
         assertCdiNvidiaGpuSpecPresent,
-        // Resume backstops for #3508/#3630/Podman: the cached preflight
-        // step does not capture host Docker/DNS state, and a session
-        // written by an older NemoClaw may not have run the new bridge/
-        // DNS fatal checks (mirrors the assertCdiNvidiaGpuSpecPresent
-        // resume pattern). Podman rejection runs first so users on
-        // unsupported runtimes don't see Docker-specific diagnostics.
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
@@ -6448,59 +6023,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         recordStepComplete,
         updateSession: onboardSession.updateSession,
       },
-    });
-    if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
-    session = (await recordStateResult(preflightResult.stateResult), preflightResult.session);
-    const {
-      sandboxGpuConfig,
-      resumeHasResolvedGpuIntent,
-      requestedGpuPassthrough,
-      gpuPassthrough,
-    } = preflightResult;
-    const gpu = preflightResult.gpu ?? null;
-    if (gpuPassthrough) {
-      note(
-        formatSandboxGpuPassthroughNote({
-          hostGpuPlatform: sandboxGpuConfig.hostGpuPlatform,
-          resumeHasResolvedGpuIntent,
-          recordedGpuPassthroughBeforePreflight,
-          requestedGpuPassthrough,
-          sandboxGpuMode: sandboxGpuConfig.mode,
-        }),
-      );
-    } else if (gpu?.platform === "jetson") {
-      note("  Sandbox GPU disabled by configuration on Jetson/Tegra.");
-    } else if (process.platform === "linux" && !opts.noGpu) {
-      try {
-        const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
-        if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
-          const smi = spawnSync(
-            "nvidia-smi",
-            ["--query-gpu=name", "--format=csv,noheader,nounits"],
-            { encoding: "utf-8", timeout: 5000 },
-          );
-          note(
-            smi.status === 0 && smi.stdout?.trim()
-              ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
-              : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.",
-          );
-        }
-      } catch {
-        /* lspci not available — skip hint */
-      }
-    }
-    const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
-    const gatewayResult = await handleGatewayState({
-      resume,
-      session,
-      initialGatewayReuseState: gatewaySnapshot.gatewayReuseState,
-      gpu,
-      gpuPassthrough,
+      getInitialGatewayReuseState: () =>
+        selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
       gatewayName: GATEWAY_NAME,
-      recordedSandboxName,
-      requestedSandboxName,
-      recreateSandbox: isRecreateSandbox(),
-      deps: {
+      recreateSandbox: isRecreateSandbox,
+      gatewayDeps: {
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
@@ -6529,8 +6056,24 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         recordStepComplete,
         exitProcess: (code) => process.exit(code),
       },
+      note,
     });
-    session = (await recordStateResult(gatewayResult.stateResult), gatewayResult.session);
+    const initialFlowResult = await runInitialOnboardFlowSlice({
+      context: initialFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [preflightPhase, gatewayPhase],
+      resume,
+      recordStateResult,
+    });
+
+    const initialContext = initialFlowResult.context;
+    if (!initialContext.sandboxGpuConfig) {
+      throw new Error("Preflight did not produce a sandbox GPU configuration.");
+    }
+    session = initialFlowResult.session;
+    const sandboxGpuConfig = initialContext.sandboxGpuConfig;
+    const { gpuPassthrough } = initialContext;
+    const gpu = initialContext.gpu ?? null;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
@@ -6545,183 +6088,176 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
       process.exit(1);
     }
-    const providerInferenceResult = await handleProviderInferenceState({
-      resume,
+
+    type CoreOnboardFlowContext = InitialOnboardFlowContext;
+    const coreFlowContext: CoreOnboardFlowContext = {
+      ...initialContext,
       session,
-      gpu,
       sandboxName,
-      agent,
-      forceProviderSelection: forceProviderSelectionForAgentChange,
-      initial: {
-        model: session?.model || null,
-        provider: session?.provider || null,
-        endpointUrl: session?.endpointUrl || null,
-        credentialEnv: session?.credentialEnv || null,
-        hermesAuthMethod:
-          normalizeHermesAuthMethod(session?.hermesAuthMethod) ||
-          (session?.provider === hermesProviderAuth.HERMES_PROVIDER_NAME &&
-          session?.credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-            ? HERMES_AUTH_METHOD_API_KEY
-            : null),
-        hermesToolGateways: normalizeHermesToolGatewaySelections(session?.hermesToolGateways),
-        preferredInferenceApi: session?.preferredInferenceApi || null,
-        nimContainer: session?.nimContainer || null,
-        webSearchConfig: session?.webSearchConfig || null,
-      },
       selectedMessagingChannels,
-      env: process.env,
-      constants: {
-        hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
-        hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
-        hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-      },
-      deps: {
-        normalizeHermesAuthMethod,
-        setupNim,
-        setupInference,
-        startRecordedStep,
-        recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-        skippedStepMessage,
-        ensureResumeProviderReady,
-        recordStateSkipped,
-        recordRepairEvent,
-        hydrateCredentialEnv,
-        repairLocalInferenceSystemdOverrideOrExit,
-        isNonInteractive,
-        getOpenshellBinary,
-        needsBedrockRuntimeAdapter: (providerName, url) =>
-          providerName === "compatible-anthropic-endpoint" &&
-          bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
-        isInferenceRouteReady,
-        isRoutedInferenceProvider,
-        reconcileModelRouter,
-        reupsertRoutedProvider: (p, url, ce) => {
-          const r = routedInference.upsertRoutedProvider(p, url, ce, {
-            upsertProvider,
-            hydrateCredentialEnv,
-          });
-          return {
-            ok: r.ok,
-            endpointUrl: r.endpointUrl,
-            message: r.result.message,
-            status: r.result.status,
-          };
+      gpu,
+      sandboxGpuConfig,
+      gpuPassthrough,
+    };
+
+    const [providerInferencePhase, sandboxPhase] =
+      createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+        forceProviderSelection: forceProviderSelectionForAgentChange,
+        env: process.env,
+        constants: {
+          hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
+          hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
+          hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         },
-        registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
-        promptValidatedSandboxName,
-        assessHost,
-        formatSandboxBuildEstimateNote,
-        formatOnboardConfigSummary,
-        promptYesNoOrDefault,
-        cliName,
-        log: (message) => console.log(message),
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-        deleteEnv: (name) => {
-          delete process.env[name];
+        providerDeps: {
+          normalizeHermesAuthMethod,
+          setupNim,
+          setupInference,
+          startRecordedStep,
+          recordStepComplete,
+          toSessionUpdates: (updates) =>
+            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          skippedStepMessage,
+          ensureResumeProviderReady,
+          recordStateSkipped,
+          recordRepairEvent,
+          hydrateCredentialEnv,
+          repairLocalInferenceSystemdOverrideOrExit,
+          isNonInteractive,
+          getOpenshellBinary,
+          needsBedrockRuntimeAdapter: (providerName, url) =>
+            providerName === "compatible-anthropic-endpoint" &&
+            bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+          isInferenceRouteReady,
+          isRoutedInferenceProvider,
+          reconcileModelRouter,
+          reupsertRoutedProvider: (p, url, ce) => {
+            const r = routedInference.upsertRoutedProvider(p, url, ce, {
+              upsertProvider,
+              hydrateCredentialEnv,
+            });
+            return {
+              ok: r.ok,
+              endpointUrl: r.endpointUrl,
+              message: r.result.message,
+              status: r.result.status,
+            };
+          },
+          registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+          promptValidatedSandboxName,
+          assessHost,
+          formatSandboxBuildEstimateNote,
+          formatOnboardConfigSummary,
+          promptYesNoOrDefault,
+          cliName,
+          log: (message) => console.log(message),
+          error: (message) => console.error(message),
+          exitProcess: (code) => process.exit(code),
+          deleteEnv: (name) => {
+            delete process.env[name];
+          },
         },
-      },
+        sandbox: {
+          resumeAgentChanged,
+          controlUiPort: opts.controlUiPort || null,
+          rootDir: ROOT,
+        },
+        sandboxDeps: {
+          resolvePath: path.resolve,
+          agentSupportsWebSearch,
+          note,
+          updateSession: onboardSession.updateSession,
+          getStoredMessagingChannelConfig,
+          hydrateMessagingChannelConfig,
+          messagingChannelConfigsEqual,
+          persistMessagingChannelConfigToSession,
+          getSandboxReuseState,
+          computeTelegramRequireMention,
+          hasSandboxGpuDrift,
+          hasWechatConfigDrift,
+          getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
+          normalizeHermesToolGatewaySelections,
+          stringSetsEqual,
+          removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
+          repairRecordedSandbox,
+          ensureValidatedBraveSearchCredential,
+          isBackToSelection,
+          configureWebSearch,
+          startRecordedStep,
+          getRecordedMessagingChannelsForResume,
+          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
+          setupMessagingChannels,
+          readMessagingChannelConfigFromEnv,
+          readMessagingPlanFromEnv,
+          writePlanToEnv,
+          getRegistrySandboxMessagingPlan,
+          promptValidatedSandboxName,
+          selectResourceProfileForSandbox: () =>
+            selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
+          stopStaleDashboardListenersForSandbox,
+          listRegistrySandboxes: registry.listSandboxes,
+          createSandbox,
+          updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+          getSandboxAgentRegistryFields,
+          recordStepComplete,
+          toSessionUpdates: (updates) =>
+            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          skippedStepMessage,
+          recordStateSkipped,
+          recordRepairEvent,
+          error: (message) => console.error(message),
+          exitProcess: (code) => process.exit(code),
+        },
+      });
+
+    const coreFlowResult = await runCoreOnboardFlowSlice({
+      context: coreFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [providerInferencePhase, sandboxPhase],
+      resume,
+      recordStateResult,
     });
-    await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(
-      providerInferenceResult.stateResults,
-    );
-    sandboxName = providerInferenceResult.sandboxName;
-    const {
+
+    const coreContext = coreFlowResult.context;
+    session = coreContext.session;
+    sandboxName = coreContext.sandboxName;
+    if (!sandboxName || !coreContext.model || !coreContext.provider) {
+      throw new Error("Onboarding state is incomplete after sandbox setup.");
+    }
+    const model = coreContext.model;
+    const provider = coreContext.provider;
+    const endpointUrl = coreContext.endpointUrl;
+    const credentialEnv = coreContext.credentialEnv;
+    const hermesAuthMethod = coreContext.hermesAuthMethod;
+    const hermesToolGateways = coreContext.hermesToolGateways;
+    const nimContainer = coreContext.nimContainer;
+    let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
+    const webSearchSupported = coreContext.webSearchSupported;
+
+    const finalFlowContext: CoreOnboardFlowContext = {
+      ...coreContext,
+      session,
+      sandboxName,
       model,
       provider,
       endpointUrl,
       credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,
-      preferredInferenceApi,
-      nimContainer,
-    } = providerInferenceResult;
-    let webSearchConfig = providerInferenceResult.webSearchConfig as WebSearchConfig | null;
-
-    const sandboxStateResult = await handleSandboxState({
-      resume,
-      fresh,
-      resumeAgentChanged,
-      session: providerInferenceResult.session,
-      sandboxName,
-      model,
-      provider,
       nimContainer,
       webSearchConfig,
-      selectedMessagingChannels,
-      fromDockerfile,
-      agent,
-      gpu,
-      preferredInferenceApi,
-      sandboxGpuConfig,
-      hermesToolGateways,
-      controlUiPort: opts.controlUiPort || null,
-      rootDir: ROOT,
-      deps: {
-        resolvePath: path.resolve,
-        agentSupportsWebSearch,
-        note,
-        updateSession: onboardSession.updateSession,
-        getStoredMessagingChannelConfig,
-        hydrateMessagingChannelConfig,
-        messagingChannelConfigsEqual,
-        persistMessagingChannelConfigToSession,
-        getSandboxReuseState,
-        computeTelegramRequireMention,
-        hasSandboxGpuDrift,
-        hasWechatConfigDrift,
-        getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
-        normalizeHermesToolGatewaySelections,
-        stringSetsEqual,
-        removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
-        repairRecordedSandbox,
-        ensureValidatedBraveSearchCredential,
-        isBackToSelection,
-        configureWebSearch,
-        startRecordedStep,
-        getRecordedMessagingChannelsForResume,
-        getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
-        setupMessagingChannels,
-        readMessagingChannelConfigFromEnv,
-        readMessagingPlanFromEnv,
-        writePlanToEnv,
-        getRegistrySandboxMessagingPlan,
-        promptValidatedSandboxName,
-        selectResourceProfileForSandbox: () =>
-          selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
-        stopStaleDashboardListenersForSandbox,
-        listRegistrySandboxes: registry.listSandboxes,
-        createSandbox,
-        updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
-        getSandboxAgentRegistryFields,
-        recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-        skippedStepMessage,
-        recordStateSkipped,
-        recordRepairEvent,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    });
-    session = (await recordStateResult(sandboxStateResult.stateResult), sandboxStateResult.session);
-    sandboxName = sandboxStateResult.sandboxName;
-    webSearchConfig = sandboxStateResult.webSearchConfig ?? null;
-    selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
-    const webSearchSupported = sandboxStateResult.webSearchSupported;
+      selectedMessagingChannels: coreContext.selectedMessagingChannels,
+      webSearchSupported,
+    };
+    let liveFinalFlowContext = finalFlowContext;
 
-    const agentSetupResult = await handleAgentSetupState({
-      agent,
-      sandboxName,
-      model,
-      provider,
-      resume,
-      session,
-      hermesAuthMethod,
-      hermesToolGateways,
-      deps: {
+    const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
+      CoreOnboardFlowContext,
+      import("./dashboard/contract").DashboardDeliveryChain,
+      import("./verify-deployment").VerifyDeploymentResult
+    >({
+      branchState: agent ? "agent_setup" : "openclaw",
+      agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({
           step,
@@ -6736,7 +6272,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepFailed,
           skippedStepMessage,
         }),
-        ensureAgentDashboardForward,
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         recordStepSkipped,
         isOpenclawReady,
         skippedStepMessage,
@@ -6748,31 +6285,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) =>
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
-    });
-    await recordStateResult(agentSetupResult.stateResult);
-
-    const policiesResult = await handlePoliciesState({
-      resume,
-      sandboxName,
-      provider,
-      model,
-      endpointUrl,
-      credentialEnv,
-      selectedMessagingChannels,
-      webSearchConfig,
-      webSearchSupported,
-      hermesToolGateways,
-      agent,
-      deps: {
+      policiesDeps: {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
-          verifyCompatibleEndpointSandboxSmoke({
-            ...options,
-            runOpenshell,
-            redact,
-          }),
+          verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell, redact }),
         preparePolicyPresetResumeSelection: (name, options) =>
           preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,
@@ -6786,23 +6304,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         persistAppliedPolicyPresets: policyPresetCarry.persistFinalizedPolicyPresets,
       },
-    });
-    await recordStateResult(policiesResult.stateResult);
-    sandboxCancelRollback.disarm(); // #4614: policies confirmed, past the cancellable window
-
-    const finalizationResult = await handleFinalizationState({
-      sandboxName,
-      model,
-      provider,
-      nimContainer,
-      agent,
-      hermesAuthMethod,
-      hermesToolGateways,
-      stagedLegacyKeys,
-      migratedLegacyKeys,
-      webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
-      deps: {
-        ensureAgentDashboardForward,
+      finalization: {
+        stagedLegacyKeys,
+        migratedLegacyKeys,
+        webSearchEnabled: (config) => braveProviderProfile.shouldEnableBraveWebSearch(config),
+      },
+      finalizationDeps: {
+        ensureAgentDashboardForward: (name, selectedAgent) =>
+          selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
         setDefaultSandbox: registry.setDefault,
         verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
@@ -6816,7 +6325,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
         verifyDeployment: async (name, chain) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.verifyDeployment(name, chain, {
             executeSandboxCommand: (sandbox: string, script: string) =>
               executeSandboxCommandForVerification(sandbox, script),
@@ -6838,13 +6348,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             },
             captureForwardList: () =>
               runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
+            getMessagingChannels: () => liveFinalFlowContext.selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) =>
               providerExistsInGateway(providerName),
           });
         },
         formatVerificationDiagnostics: (result) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+          const verifyDeploymentModule: typeof import("./verify-deployment") =
+            require("./verify-deployment");
           return verifyDeploymentModule.formatVerificationDiagnostics(result);
         },
         printDashboard,
@@ -6852,7 +6363,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-    await recordStateResult(finalizationResult.stateResult);
+
+    await runFinalOnboardFlowSlice({
+      context: finalFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [branchSetupPhase, policiesPhase, finalizationPhase],
+      resume,
+      recordStateResult,
+      afterPoliciesResultApplied: () => {
+        sandboxCancelRollback.disarm();
+      },
+      onContextUpdated: (context) => {
+        liveFinalFlowContext = context;
+      },
+    });
     traceCompleted = true;
   } finally {
     releaseOnboardLock();

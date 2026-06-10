@@ -218,6 +218,58 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("provider client posts JSON bodies with --data-raw", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = JSON.stringify({ ok: true });
+    const provider = new ProviderClient(runner);
+    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/chat/completions", {
+      allowedHosts: ["api.example.test"],
+    });
+
+    await expect(
+      provider.requestJson(endpoint, {
+        body: '{"messages":[]}',
+        curlMaxTimeSeconds: 5,
+        headers: ["Content-Type: application/json"],
+      }),
+    ).resolves.toMatchObject({ json: { ok: true } });
+
+    expect(runner.calls[0]?.args).toEqual([
+      "-fsS",
+      "--max-time",
+      "5",
+      "-H",
+      "Content-Type: application/json",
+      "--data-raw",
+      '{"messages":[]}',
+      "https://api.example.test/v1/chat/completions",
+    ]);
+  });
+
+  it("provider client rejects curl-sensitive request options before command construction", async () => {
+    const endpoint = trustedProviderEndpoint("https://api.example.test/v1/models", {
+      allowedHosts: ["api.example.test"],
+    });
+
+    for (const options of [
+      { body: "@/etc/passwd" },
+      { headers: ["@/tmp/headers"] },
+      { headers: ["Authorization: Bearer token\nX-Leak: value"] },
+      { curlMaxTimeSeconds: 0 },
+      { curlMaxTimeSeconds: -1 },
+      { curlMaxTimeSeconds: Number.NaN },
+      { curlMaxTimeSeconds: Number.POSITIVE_INFINITY },
+    ]) {
+      const runner = new FakeRunner();
+      const provider = new ProviderClient(runner);
+
+      await expect(provider.requestJson(endpoint, options)).rejects.toThrow(
+        /@file|CR or LF|finite positive/,
+      );
+      expect(runner.calls).toEqual([]);
+    }
+  });
+
   it("provider client does not follow redirects after endpoint validation", async () => {
     const runner = new FakeRunner();
     runner.stdout = JSON.stringify({ ok: true });

@@ -59,6 +59,13 @@ export interface SandboxEntry {
   policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
+  // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
+  // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
+  // it against the running NemoClaw build so an image/build change with an
+  // unchanged agent version is still detected as needing a rebuild. Custom-image
+  // (`--from`) sandboxes are intentionally left without a fingerprint so they
+  // are never auto-rebuilt onto the default image (#5026).
+  nemoclawVersion?: string | null;
   imageTag?: string | null;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
@@ -340,6 +347,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
       messagingChannels: entry.messagingChannels || [],
       messagingChannelConfig:
@@ -404,6 +412,36 @@ export function removeSandbox(name: string): boolean {
     }
     save(data);
     return true;
+  });
+}
+
+/**
+ * Restore a previously-removed sandbox entry verbatim under the registry lock,
+ * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
+ * fresh entry from known fields). Used to roll back a failed stale-sandbox
+ * rebuild recovery (#4497): the entry was removed before the recreate, and on
+ * failure it must come back intact. Operates on the CURRENT registry (it does
+ * not clobber other sandboxes' entries another command added during the rebuild
+ * window).
+ *
+ * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
+ * performed: when this sandbox was the default, `removeSandbox` reassigned
+ * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
+ * it back. This is best-effort "undo my operation" — a deliberate default change
+ * by a concurrent command during the rebuild window is an inherent race and may
+ * be overwritten.
+ */
+export function restoreSandboxEntry(
+  entry: SandboxEntry,
+  options: { reclaimDefault?: string | null } = {},
+): void {
+  withLock(() => {
+    const data = load();
+    data.sandboxes[entry.name] = entry;
+    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
+      data.defaultSandbox = options.reclaimDefault;
+    }
+    save(data);
   });
 }
 

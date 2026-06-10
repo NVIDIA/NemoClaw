@@ -3,7 +3,7 @@
 
 /**
  * Parity test: the framework's local secret-pattern set
- * (test/e2e-scenario/scenarios/orchestrators/redaction.ts) must stay in
+ * (test/e2e-scenario/framework/redaction.ts) must stay in
  * lockstep with the canonical product source
  * (src/lib/security/secret-patterns.ts).
  *
@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_PATTERNS as FRAMEWORK_CONTEXT_PATTERNS,
   TOKEN_PREFIX_PATTERNS as FRAMEWORK_TOKEN_PREFIX_PATTERNS,
-} from "../scenarios/orchestrators/redaction.ts";
+} from "../framework/redaction.ts";
 import {
   CONTEXT_PATTERNS as PRODUCT_CONTEXT_PATTERNS,
   TOKEN_PREFIX_PATTERNS as PRODUCT_TOKEN_PREFIX_PATTERNS,

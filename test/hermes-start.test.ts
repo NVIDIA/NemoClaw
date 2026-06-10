@@ -382,6 +382,7 @@ function lstatIfPresent(entry: string): fs.Stats | null {
 
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
+  liveGatewayArgv?: string[];
   orphanSocat?: boolean;
   orphanDashboardSocat?: boolean;
   staleLock?: boolean;
@@ -430,7 +431,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
   if (opts.staleLock !== false) fs.writeFileSync(runtimeLock, "stale lock");
   if (opts.liveGateway) {
-    writeFakeProcCmdline(procRoot, 123, ["/usr/local/bin/hermes", "gateway", "run"]);
+    writeFakeProcCmdline(
+      procRoot,
+      123,
+      opts.liveGatewayArgv ?? ["/usr/local/bin/hermes", "gateway", "run"],
+    );
   }
   if (opts.orphanSocat) {
     writeFakeProcCmdline(procRoot, 456, [
@@ -1060,6 +1065,21 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
   it("preserves Hermes runtime state when a gateway process is alive", () => {
     const run = runHermesGatewayRuntimeCleanup({ liveGateway: true, orphanSocat: true });
+
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(true);
+    expect(run.runtimeLockExists).toBe(true);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.killLog).toBe("");
+    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+  });
+
+  it("preserves Hermes runtime state when the wrapped gateway execs hermes.real", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      liveGateway: true,
+      liveGatewayArgv: ["/usr/local/bin/hermes.real", "gateway", "run"],
+      orphanSocat: true,
+    });
 
     expect(run.result.status).toBe(0);
     expect(run.runtimePidExists).toBe(true);

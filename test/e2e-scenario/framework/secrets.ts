@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redactString } from "../scenarios/orchestrators/redaction.ts";
+import { redactString } from "./redaction.ts";
 
 const SENSITIVE_NAME_PATTERN = /(api[_-]?key|token|secret|password|credential)/i;
 
@@ -10,7 +10,7 @@ const SENSITIVE_NAME_PATTERN = /(api[_-]?key|token|secret|password|credential)/i
  *
  * Holds the per-test view of `process.env` and lets fixtures discover
  * sensitive values by name. Redaction itself is owned by the canonical
- * entry point in scenarios/orchestrators/redaction.ts; this class only
+ * entry point in framework/redaction.ts; this class only
  * supplies the explicit values it knows about and delegates. There is
  * no separate fixture redaction pattern source.
  */

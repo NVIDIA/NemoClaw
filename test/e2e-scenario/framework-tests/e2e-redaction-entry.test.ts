@@ -18,7 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import { SecretStore } from "../framework/secrets.ts";
-import { redactString } from "../scenarios/orchestrators/redaction.ts";
+import { redactString } from "../framework/redaction.ts";
 
 describe("framework redaction entry point", () => {
   it("redacts explicit values with [REDACTED] and canonical shapes with <REDACTED>", () => {

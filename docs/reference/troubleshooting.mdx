@@ -1129,6 +1129,47 @@ CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 If you need to run multiple sandboxes at different ports at the same time, see
 [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
+### Control UI config endpoint returns 404 or non-JSON
+
+The Control UI loads its runtime configuration from a gateway endpoint, not from a static
+`controlui.bootstrap.config.json` file. No `controlui.bootstrap.config.json` path is served,
+so requesting it returns `HTTP 404 Not Found` with a short plain-text body, and piping that
+response to `jq` fails with a parse error such as `Invalid numeric literal`.
+
+<AgentOnly variant="openclaw">
+
+The supported Control UI config endpoint is `/__openclaw/control-ui-config.json`, served by
+the OpenClaw gateway on the forwarded dashboard port. It is gated by the gateway auth token:
+
+- An unauthenticated request returns `HTTP 401 Unauthorized` with a JSON body
+  (`{"error":{"message":"Unauthorized","type":"unauthorized"}}`), which is already valid JSON.
+- An authenticated request returns `HTTP 200 OK` with the Control UI config as JSON.
+
+Resolve the forwarded dashboard port, then authenticate with the gateway token from
+`$$nemoclaw <name> gateway-token`:
+
+```bash
+openshell forward list                       # note the dashboard PORT for the sandbox
+export DASH_PORT=<port>
+TOKEN=$($$nemoclaw <name> gateway-token --quiet)
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:${DASH_PORT}/__openclaw/control-ui-config.json" | jq empty \
+  && echo "Control UI config is valid JSON"
+```
+
+The token is sensitive; treat it like a password and do not log, share, or commit it. For
+browser access, use the tokenized URL from `$$nemoclaw <name> dashboard-url` instead of
+calling the config endpoint directly.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes manages its own dashboard sessions and does not expose an OpenClaw gateway auth token
+or a `/__openclaw/control-ui-config.json` endpoint. Use `nemohermes <name> status` to see the
+dashboard and API endpoints for a Hermes sandbox.
+
+</AgentOnly>
+
 ### Ollama auth proxy did not start
 
 NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated

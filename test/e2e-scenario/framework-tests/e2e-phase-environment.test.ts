@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { ArtifactSink } from "../framework/artifacts.ts";
 import { HostCliClient, type CommandRunner } from "../framework/clients/index.ts";
 import type { E2EScenarioFixtures } from "../framework/e2e-test.ts";
 import { EnvironmentPhaseFixture, type DockerRuntimeReady } from "../framework/phases/index.ts";
@@ -33,6 +38,10 @@ function shellResult(exitCode: number, output = ""): ShellProbeResult {
       result: "/tmp/result.json",
     },
   };
+}
+
+function readJson(filePath: string): unknown {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 class FakeRunner implements CommandRunner {
@@ -307,6 +316,59 @@ describe("environment phase fixture", () => {
     await expect(
       environment.assertReady({ ...cloudOpenClawEnvironment, runtime: "podman-running" }),
     ).rejects.toThrow(/Unsupported scenario runtime 'podman-running'/);
+  });
+
+  it("writes an environment phase result artifact on success", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-environment-artifacts-"));
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      runner.enqueue(shellResult(0, "Docker is available\n"));
+      const artifacts = new ArtifactSink(tmp);
+      const environment = new EnvironmentPhaseFixture(new HostCliClient(runner), artifacts);
+
+      await environment.assertReady(cloudOpenClawEnvironment);
+
+      expect(readJson(path.join(tmp, "environment.result.json"))).toMatchObject({
+        phase: "environment",
+        status: "passed",
+        environment: {
+          platform: "ubuntu-local",
+          install: "repo-current",
+          runtime: "docker-running",
+          onboarding: "cloud-openclaw",
+          cliPath: "nemoclaw",
+        },
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes an environment phase result artifact on failure", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-environment-artifacts-"));
+    try {
+      const artifacts = new ArtifactSink(tmp);
+      const environment = new EnvironmentPhaseFixture(
+        new HostCliClient(new FakeRunner()),
+        artifacts,
+      );
+
+      await expect(
+        environment.assertReady({ ...cloudOpenClawEnvironment, install: "tarball" }),
+      ).rejects.toThrow(/Unsupported scenario install 'tarball'/);
+
+      expect(readJson(path.join(tmp, "environment.result.json"))).toMatchObject({
+        phase: "environment",
+        status: "failed",
+        environment: {
+          install: "tarball",
+        },
+        error: "Unsupported scenario install 'tarball'.",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("exposes the environment phase on the Vitest scenario context", () => {

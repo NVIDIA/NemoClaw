@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { buildChildEnv } from "../scenarios/orchestrators/redaction.ts";
+import { buildChildEnv } from "./redaction.ts";
 
 const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "DOCKER_CONFIG",
@@ -16,8 +16,8 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
 export function buildAvailabilityProbeEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
-  // Availability probes run outside PhaseOrchestrator, but they need the
-  // same child-env and PATH policy as scenario steps. Add only Docker
+  // Availability probes run outside live scenario phases, but they need
+  // the same child-env and PATH policy. Add only Docker
   // discovery knobs on top of the shared framework boundary.
   return buildChildEnv(base, {
     additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
