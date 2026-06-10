@@ -16,8 +16,8 @@
  *   3. Runs `test/openclaw-tui-chat-correlation.test.ts` with
  *      `NEMOCLAW_ISSUE_2603_LIVE=1`, which uploads a websocket repro
  *      driver into the sandbox, replays the three-prompt sequence
- *      against the in-sandbox OpenClaw gateway, and asserts no empty
- *      finals, no uncorrelated replies, no duplicated user turns.
+ *      against the in-sandbox OpenClaw gateway, and asserts ordered,
+ *      non-empty, correlated replies plus ordered, non-duplicated user turns.
  *
  * This file ports the live block (the `it.runIf(NEMOCLAW_ISSUE_2603_LIVE)`
  * case) into the typed scenario framework. The three host-side unit
@@ -100,6 +100,8 @@ type Issue2603Analysis = {
   missingReplies: string[];
   duplicateReplies: { replyToken: string; count: number }[];
   uncorrelatedReplies: UncorrelatedReply[];
+  finalReplyOrder: string[];
+  userTurnOrder: string[];
   missingUserTurns: DuplicateUserTurn[];
   duplicateUserTurns: DuplicateUserTurn[];
 };
@@ -191,17 +193,26 @@ function analyzeIssue2603Trace({
       count: finalReplyCounts.get(entry.replyToken) ?? 0,
     }))
     .filter((entry) => entry.count > 1);
+  const finalReplyOrder = chatEvents
+    .filter((event) => event.state === "final")
+    .flatMap((event) =>
+      sentRuns
+        .filter((entry) => event.text.includes(entry.replyToken))
+        .map((entry) => entry.replyToken),
+    );
 
-  const userPromptCounts = countBy(
-    historyMessages
-      .filter((message) => message?.role === "user")
-      .map((message) => textFromMessage(message).trim())
-      .filter(Boolean),
-  );
+  const userMessages = historyMessages
+    .filter((message) => message?.role === "user")
+    .map((message) => textFromMessage(message).trim())
+    .filter(Boolean);
+  const userPromptCounts = countBy(userMessages);
   const userTurnCounts = sentRuns.map((entry) => ({
     promptToken: entry.promptToken,
     count: userPromptCounts.get(entry.message) ?? 0,
   }));
+  const userTurnOrder = userMessages.flatMap((message) =>
+    sentRuns.filter((entry) => entry.message === message).map((entry) => entry.promptToken),
+  );
   const missingUserTurns = userTurnCounts.filter((entry) => entry.count < 1);
   const duplicateUserTurns = userTurnCounts.filter((entry) => entry.count > 1);
 
@@ -211,6 +222,8 @@ function analyzeIssue2603Trace({
     missingReplies,
     duplicateReplies,
     uncorrelatedReplies,
+    finalReplyOrder,
+    userTurnOrder,
     missingUserTurns,
     duplicateUserTurns,
   };
@@ -531,15 +544,23 @@ test(
       2,
     );
 
-    // #2603 contract — every submitted run produces a non-empty final
-    // and every reply correlates to the run that accepted the prompt.
+    // #2603 contract — every submitted run produces a non-empty final,
+    // every reply correlates to the run that accepted the prompt, and
+    // the observed user turns remain in submitted A/B/C order.
     expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
     expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
+    expect(analysis.userTurnOrder, failureSummary).toEqual(
+      repro.sentRuns.map((entry) => entry.promptToken),
+    );
 
     // #3145 contract — no missing replies, no duplicate replies, no
-    // history corruption (missing or duplicated user turns).
+    // out-of-order final replies, and no history corruption (missing or
+    // duplicated user turns).
     expect(analysis.missingReplies, failureSummary).toEqual([]);
     expect(analysis.duplicateReplies, failureSummary).toEqual([]);
+    expect(analysis.finalReplyOrder, failureSummary).toEqual(
+      repro.sentRuns.map((entry) => entry.replyToken),
+    );
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
   },
