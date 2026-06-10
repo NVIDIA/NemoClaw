@@ -55,6 +55,14 @@ const Module = require("module");
 const originalLoad = Module._load;
 const calls = [];
 
+function isRootRegistryRequest(request, parent) {
+  if (request.endsWith("/dist/lib/registry") || request.endsWith("/dist/lib/registry.js")) {
+    return true;
+  }
+  if (request !== "./registry") return false;
+  return parent && parent.filename && parent.filename.endsWith("/dist/lib/onboard.js");
+}
+
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "./adapters/openshell/resolve" || request.endsWith("/adapters/openshell/resolve")) {
     return { resolveOpenshell: () => "/usr/bin/openshell" };
@@ -113,7 +121,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
       },
     };
   }
-  if (request === "./registry" || request.endsWith("/registry")) {
+  if (isRootRegistryRequest(request, parent)) {
     return {
       updateSandbox: (_name, patch) => calls.push(["registry.updateSandbox", patch]),
       getSandbox: () => null,
