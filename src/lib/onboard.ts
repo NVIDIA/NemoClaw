@@ -461,11 +461,9 @@ const {
   handlePoliciesState,
 }: typeof import("./onboard/machine/handlers/policies") = require("./onboard/machine/handlers/policies");
 const {
-  handleProviderInferenceState,
-}: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
-const {
-  handleSandboxState,
-}: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
+  createCoreOnboardFlowPhases,
+  runCoreOnboardFlowSlice,
+}: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
@@ -6444,7 +6442,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       requestedGpuPassthrough: opts.gpu === true,
     };
 
-    const [preflightPhase, gatewayPhase] = createInitialOnboardFlowPhases({
+    const [preflightPhase, gatewayPhase]: readonly [
+      import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
+      import("./onboard/machine/sequence-runner").OnboardSequencePhase<InitialOnboardFlowContext>,
+    ] = createInitialOnboardFlowPhases({
       explicitSandboxGpuFlag,
       sandboxGpuDevice: opts.sandboxGpuDevice ?? null,
       gpuRequested: opts.gpu === true,
@@ -6520,7 +6521,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
     session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const gpu = initialContext.gpu;
+    const { gpuPassthrough } = initialContext;
+    const gpu = initialContext.gpu ?? null;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
     // A pre-fix session may carry sandboxName even though sandbox creation
@@ -6535,172 +6537,152 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
       process.exit(1);
     }
-    const providerInferenceResult = await handleProviderInferenceState({
-      resume,
-      session,
-      gpu,
-      sandboxName,
-      agent,
-      forceProviderSelection: forceProviderSelectionForAgentChange,
-      initial: {
-        model: session?.model || null,
-        provider: session?.provider || null,
-        endpointUrl: session?.endpointUrl || null,
-        credentialEnv: session?.credentialEnv || null,
-        hermesAuthMethod:
-          normalizeHermesAuthMethod(session?.hermesAuthMethod) ||
-          (session?.provider === hermesProviderAuth.HERMES_PROVIDER_NAME &&
-          session?.credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-            ? HERMES_AUTH_METHOD_API_KEY
-            : null),
-        hermesToolGateways: normalizeHermesToolGatewaySelections(session?.hermesToolGateways),
-        preferredInferenceApi: session?.preferredInferenceApi || null,
-        nimContainer: session?.nimContainer || null,
-        webSearchConfig: session?.webSearchConfig || null,
-      },
-      selectedMessagingChannels,
-      env: process.env,
-      constants: {
-        hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
-        hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
-        hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-      },
-      deps: {
-        normalizeHermesAuthMethod,
-        setupNim,
-        setupInference,
-        startRecordedStep,
-        recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-        skippedStepMessage,
-        ensureResumeProviderReady,
-        recordStateSkipped,
-        recordRepairEvent,
-        hydrateCredentialEnv,
-        repairLocalInferenceSystemdOverrideOrExit,
-        isNonInteractive,
-        getOpenshellBinary,
-        needsBedrockRuntimeAdapter: (providerName, url) =>
-          providerName === "compatible-anthropic-endpoint" &&
-          bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
-        isInferenceRouteReady,
-        isRoutedInferenceProvider,
-        reconcileModelRouter,
-        reupsertRoutedProvider: (p, url, ce) => {
-          const r = routedInference.upsertRoutedProvider(p, url, ce, {
-            upsertProvider,
-            hydrateCredentialEnv,
-          });
-          return {
-            ok: r.ok,
-            endpointUrl: r.endpointUrl,
-            message: r.result.message,
-            status: r.result.status,
-          };
-        },
-        registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
-        promptValidatedSandboxName,
-        assessHost,
-        formatSandboxBuildEstimateNote,
-        formatOnboardConfigSummary,
-        promptYesNoOrDefault,
-        cliName,
-        log: (message) => console.log(message),
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-        deleteEnv: (name) => {
-          delete process.env[name];
-        },
-      },
-    });
-    await onboardRuntimeBoundary.recordStateResultsWithStepCompatibility(
-      providerInferenceResult.stateResults,
-    );
-    sandboxName = providerInferenceResult.sandboxName;
-    const {
-      model,
-      provider,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-      preferredInferenceApi,
-      nimContainer,
-    } = providerInferenceResult;
-    let webSearchConfig = providerInferenceResult.webSearchConfig as WebSearchConfig | null;
 
-    const sandboxStateResult = await handleSandboxState({
-      resume,
-      fresh,
-      resumeAgentChanged,
-      session: providerInferenceResult.session,
+    type CoreOnboardFlowContext = InitialOnboardFlowContext;
+    const coreFlowContext: CoreOnboardFlowContext = {
+      ...initialContext,
+      session,
       sandboxName,
-      model,
-      provider,
-      nimContainer,
-      webSearchConfig,
       selectedMessagingChannels,
-      fromDockerfile,
-      agent,
       gpu,
-      preferredInferenceApi,
       sandboxGpuConfig,
-      hermesToolGateways,
-      controlUiPort: opts.controlUiPort || null,
-      rootDir: ROOT,
-      deps: {
-        resolvePath: path.resolve,
-        agentSupportsWebSearch,
-        note,
-        updateSession: onboardSession.updateSession,
-        getStoredMessagingChannelConfig,
-        hydrateMessagingChannelConfig,
-        messagingChannelConfigsEqual,
-        persistMessagingChannelConfigToSession,
-        getSandboxReuseState,
-        computeTelegramRequireMention,
-        hasSandboxGpuDrift,
-        hasWechatConfigDrift,
-        getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
-        normalizeHermesToolGatewaySelections,
-        stringSetsEqual,
-        removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
-        repairRecordedSandbox,
-        ensureValidatedBraveSearchCredential,
-        isBackToSelection,
-        configureWebSearch,
-        startRecordedStep,
-        getRecordedMessagingChannelsForResume,
-        getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
-        setupMessagingChannels,
-        readMessagingChannelConfigFromEnv,
-        readMessagingPlanFromEnv,
-        writePlanToEnv,
-        getRegistrySandboxMessagingPlan,
-        promptValidatedSandboxName,
-        selectResourceProfileForSandbox: () =>
-          selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
-        stopStaleDashboardListenersForSandbox,
-        listRegistrySandboxes: registry.listSandboxes,
-        createSandbox,
-        updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
-        getSandboxAgentRegistryFields,
-        recordStepComplete,
-        toSessionUpdates: (updates) =>
-          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-        skippedStepMessage,
-        recordStateSkipped,
-        recordRepairEvent,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
+      gpuPassthrough,
+    };
+
+    const [providerInferencePhase, sandboxPhase] =
+      createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+        forceProviderSelection: forceProviderSelectionForAgentChange,
+        env: process.env,
+        constants: {
+          hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
+          hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
+          hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+        },
+        providerDeps: {
+          normalizeHermesAuthMethod,
+          setupNim,
+          setupInference,
+          startRecordedStep,
+          recordStepComplete,
+          toSessionUpdates: (updates) =>
+            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          skippedStepMessage,
+          ensureResumeProviderReady,
+          recordStateSkipped,
+          recordRepairEvent,
+          hydrateCredentialEnv,
+          repairLocalInferenceSystemdOverrideOrExit,
+          isNonInteractive,
+          getOpenshellBinary,
+          needsBedrockRuntimeAdapter: (providerName, url) =>
+            providerName === "compatible-anthropic-endpoint" &&
+            bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+          isInferenceRouteReady,
+          isRoutedInferenceProvider,
+          reconcileModelRouter,
+          reupsertRoutedProvider: (p, url, ce) => {
+            const r = routedInference.upsertRoutedProvider(p, url, ce, {
+              upsertProvider,
+              hydrateCredentialEnv,
+            });
+            return {
+              ok: r.ok,
+              endpointUrl: r.endpointUrl,
+              message: r.result.message,
+              status: r.result.status,
+            };
+          },
+          registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+          promptValidatedSandboxName,
+          assessHost,
+          formatSandboxBuildEstimateNote,
+          formatOnboardConfigSummary,
+          promptYesNoOrDefault,
+          cliName,
+          log: (message) => console.log(message),
+          error: (message) => console.error(message),
+          exitProcess: (code) => process.exit(code),
+          deleteEnv: (name) => {
+            delete process.env[name];
+          },
+        },
+        sandbox: {
+          resumeAgentChanged,
+          controlUiPort: opts.controlUiPort || null,
+          rootDir: ROOT,
+        },
+        sandboxDeps: {
+          resolvePath: path.resolve,
+          agentSupportsWebSearch,
+          note,
+          updateSession: onboardSession.updateSession,
+          getStoredMessagingChannelConfig,
+          hydrateMessagingChannelConfig,
+          messagingChannelConfigsEqual,
+          persistMessagingChannelConfigToSession,
+          getSandboxReuseState,
+          computeTelegramRequireMention,
+          hasSandboxGpuDrift,
+          hasWechatConfigDrift,
+          getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
+          normalizeHermesToolGatewaySelections,
+          stringSetsEqual,
+          removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
+          repairRecordedSandbox,
+          ensureValidatedBraveSearchCredential,
+          isBackToSelection,
+          configureWebSearch,
+          startRecordedStep,
+          getRecordedMessagingChannelsForResume,
+          getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
+          setupMessagingChannels,
+          readMessagingChannelConfigFromEnv,
+          readMessagingPlanFromEnv,
+          writePlanToEnv,
+          getRegistrySandboxMessagingPlan,
+          promptValidatedSandboxName,
+          selectResourceProfileForSandbox: () =>
+            selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
+          stopStaleDashboardListenersForSandbox,
+          listRegistrySandboxes: registry.listSandboxes,
+          createSandbox,
+          updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+          getSandboxAgentRegistryFields,
+          recordStepComplete,
+          toSessionUpdates: (updates) =>
+            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          skippedStepMessage,
+          recordStateSkipped,
+          recordRepairEvent,
+          error: (message) => console.error(message),
+          exitProcess: (code) => process.exit(code),
+        },
+      });
+
+    const coreFlowResult = await runCoreOnboardFlowSlice({
+      context: coreFlowContext,
+      runtime: onboardRuntimeBoundary.getRuntime(),
+      phases: [providerInferencePhase, sandboxPhase],
+      resume,
+      recordStateResult,
     });
-    session = (await recordStateResult(sandboxStateResult.stateResult), sandboxStateResult.session);
-    sandboxName = sandboxStateResult.sandboxName;
-    webSearchConfig = sandboxStateResult.webSearchConfig ?? null;
-    selectedMessagingChannels = sandboxStateResult.selectedMessagingChannels;
-    const webSearchSupported = sandboxStateResult.webSearchSupported;
+
+    const coreContext = coreFlowResult.context;
+    session = coreContext.session;
+    sandboxName = coreContext.sandboxName;
+    if (!sandboxName || !coreContext.model || !coreContext.provider) {
+      throw new Error("Onboarding state is incomplete after sandbox setup.");
+    }
+    const model = coreContext.model;
+    const provider = coreContext.provider;
+    const endpointUrl = coreContext.endpointUrl;
+    const credentialEnv = coreContext.credentialEnv;
+    const hermesAuthMethod = coreContext.hermesAuthMethod;
+    const hermesToolGateways = coreContext.hermesToolGateways;
+    const nimContainer = coreContext.nimContainer;
+    let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
+    selectedMessagingChannels = coreContext.selectedMessagingChannels;
+    const webSearchSupported = coreContext.webSearchSupported;
 
     const agentSetupResult = await handleAgentSetupState({
       agent,
