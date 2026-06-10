@@ -1,7 +1,12 @@
 {
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "version": 1,
-  "statusValues": ["not-migrated", "bridge-probe", "covered", "retired"],
+  "statusValues": [
+    "not-migrated",
+    "bridge-probe",
+    "covered",
+    "retired"
+  ],
   "deletionReadiness": {
     "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 records an explicit retirement decision.",
     "requires": [
@@ -487,17 +492,6 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
-      "legacyScript": "test/e2e/test-onboard-inference-smoke.sh",
-      "domain": "inference",
-      "ownerIssue": "#4349",
-      "status": "not-migrated",
-      "targetVitestScenarios": [],
-      "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
-    },
-    {
       "legacyScript": "test/e2e/test-onboard-negative-paths.sh",
       "domain": "smoke-onboarding",
       "ownerIssue": "#4348",
@@ -601,11 +595,13 @@
       "domain": "sandbox-lifecycle",
       "ownerIssue": "#4355",
       "status": "covered",
-      "targetVitestScenarios": ["test/e2e-scenario/live/openshell-version-pin.test.ts"],
+      "targetVitestScenarios": [
+        "test/e2e-scenario/live/openshell-version-pin.test.ts"
+      ],
       "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Covered by free-standing live test (PR #5107). Hermetic installer-script behavioral test — stubs PATH binaries, runs scripts/install-openshell.sh, asserts the four [PASS] outcomes from the legacy bash guard. Not registry-driven; dispatched as a discrete openshell-version-pin-vitest job in e2e-vitest-scenarios.yaml. Bash guard retained in regression-e2e.yaml; deletion is a follow-up PR with #4357 approval.",
+      "notes": "Covered by free-standing live test (PR #5107). Hermetic installer-script behavioral test \u2014 stubs PATH binaries, runs scripts/install-openshell.sh, asserts the four [PASS] outcomes from the legacy bash guard. Not registry-driven; dispatched as a discrete openshell-version-pin-vitest job in e2e-vitest-scenarios.yaml. Bash guard retained in regression-e2e.yaml; deletion is a follow-up PR with #4357 approval.",
       "frozenAtSha": "3d9c01931f598cf2450bd88028cb3b44bcf367b0",
       "convergenceEvidence": {
         "redRunUrl": null,
@@ -816,7 +812,9 @@
       "ownerIssue": "#4354",
       "status": "bridge-probe",
       "targetVitestScenarios": [],
-      "bridgeProbes": ["test/e2e/brev-e2e.test.ts"],
+      "bridgeProbes": [
+        "test/e2e/brev-e2e.test.ts"
+      ],
       "retiredReason": "",
       "deletionReady": false,
       "notes": "Already uses Vitest, but still dispatches legacy remote shell suites; keep as a bridge until remote execution uses shared fixtures."
@@ -825,7 +823,9 @@
   "internalSurfaces": [
     {
       "id": "typed-shell-orchestrators",
-      "paths": ["test/e2e-scenario/scenarios/orchestrators"],
+      "paths": [
+        "test/e2e-scenario/scenarios/orchestrators"
+      ],
       "domain": "scenario-runner",
       "ownerIssue": "#4357",
       "status": "retired",
@@ -839,7 +839,9 @@
     },
     {
       "id": "legacy-bash-scenario-workers",
-      "paths": ["test/e2e-scenario/nemoclaw_scenarios"],
+      "paths": [
+        "test/e2e-scenario/nemoclaw_scenarios"
+      ],
       "domain": "scenario-runner",
       "ownerIssue": "#4357",
       "status": "retired",
@@ -853,7 +855,9 @@
     },
     {
       "id": "legacy-onboarding-assertion-workers",
-      "paths": ["test/e2e-scenario/onboarding_assertions"],
+      "paths": [
+        "test/e2e-scenario/onboarding_assertions"
+      ],
       "domain": "smoke-onboarding",
       "ownerIssue": "#4348",
       "status": "retired",
@@ -867,7 +871,9 @@
     },
     {
       "id": "legacy-validation-suites",
-      "paths": ["test/e2e-scenario/validation_suites"],
+      "paths": [
+        "test/e2e-scenario/validation_suites"
+      ],
       "domain": "runtime-suites",
       "ownerIssue": "#4357",
       "status": "retired",
