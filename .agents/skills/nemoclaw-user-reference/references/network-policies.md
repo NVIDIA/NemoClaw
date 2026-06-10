@@ -16,8 +16,12 @@ Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-
 
 | Path | Access |
 |---|---|
-| `/sandbox`, `/tmp`, `/dev/null` | Read-write |
+| `/sandbox`, `/tmp`, `/dev/null`, `/dev/pts` | Read-write |
 | `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, `/var/log` | Read-only |
+
+`/dev/pts` is the pseudo-terminal (devpts) directory.
+It is writable so PTY-based tools (`tmux`, `script`, and interactive shells) can allocate a terminal.
+Without it, those tools fail with `fork failed: Permission denied`.
 
 The sandbox process runs as a dedicated `sandbox` user and group.
 Landlock LSM enforcement applies on a best-effort basis.

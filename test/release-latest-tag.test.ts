@@ -31,9 +31,11 @@ function testEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     GIT_AUTHOR_EMAIL: "release-test@example.com",
     GIT_COMMITTER_NAME: "Release Test",
     GIT_COMMITTER_EMAIL: "release-test@example.com",
-    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_COUNT: "2",
     GIT_CONFIG_KEY_0: "tag.gpgSign",
     GIT_CONFIG_VALUE_0: "false",
+    GIT_CONFIG_KEY_1: "commit.gpgSign",
+    GIT_CONFIG_VALUE_1: "false",
     ...extra,
   });
 }
@@ -122,11 +124,13 @@ function runReleaseLatestWithoutIdentity(
   fs.mkdirSync(home);
   fs.mkdirSync(xdgConfigHome);
   const env = baseEnv({
-    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_COUNT: "3",
     GIT_CONFIG_KEY_0: "user.useConfigOnly",
     GIT_CONFIG_VALUE_0: "true",
     GIT_CONFIG_KEY_1: "tag.gpgSign",
     GIT_CONFIG_VALUE_1: "false",
+    GIT_CONFIG_KEY_2: "commit.gpgSign",
+    GIT_CONFIG_VALUE_2: "false",
     GITHUB_STEP_SUMMARY: fixture.summary,
     HOME: home,
     RELEASE_TAG: releaseTag,

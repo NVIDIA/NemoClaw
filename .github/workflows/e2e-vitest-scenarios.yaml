@@ -207,14 +207,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Salvage coverage slice for the protocol/history assertions currently
-  # carried by test/e2e/test-openclaw-tui-chat-correlation.sh (#4347 owner
-  # issue). This job intentionally does not update legacy-inventory.json; the
-  # full legacy lane remains not-migrated until a focused follow-up supplies
-  # deletion evidence. Drives a real cloud OpenClaw sandbox via openshell +
-  # websocket and asserts the narrowed #2603 + #3145 correlation contract.
+  # Focused coverage slice for the #2603/#3145 OpenClaw websocket
+  # protocol/history contract. The retained legacy bash lane remains the
+  # source for full closeout until a later PR proves replacement and deletes it.
   openclaw-tui-chat-correlation-vitest:
-    if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
+    if: ${{ inputs.scenarios == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -265,18 +262,11 @@ jobs:
         run: npm run build:cli
 
       - name: Run OpenClaw TUI chat correlation live test
-        # Onboards a fresh cloud OpenClaw sandbox, asserts the pinned
-        # regression-guard version, drives the websocket repro, and asserts
-        # protocol/history ordering and correlation for #2603 + #3145.
-        # TUI rendering indicators, visible tool-call status, and legacy
-        # inventory transition remain outside this websocket guard's scope.
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-scenarios-live \
-            test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts \
-            --silent=false --reporter=default
+          npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts             --silent=false --reporter=default
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()

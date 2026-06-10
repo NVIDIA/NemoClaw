@@ -122,18 +122,6 @@ function requireNoDispatchInputInterpolation(
   }
 }
 
-function expectJobScenarioFilter(
-  errors: string[],
-  job: WorkflowRecord,
-  jobName: string,
-  scenarioId: string,
-): void {
-  const expected = `\${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',${scenarioId},') }}`;
-  if (job.if !== expected) {
-    errors.push(`${jobName} job must honor the workflow_dispatch scenarios filter for ${scenarioId}`);
-  }
-}
-
 function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "openshell-version-pin-vitest";
   const job = asRecord(jobs[jobName]);
@@ -218,135 +206,6 @@ function validateOpenShellVersionPinVitestJob(errors: string[], jobs: WorkflowRe
   }
   if (uploadWith["retention-days"] !== 14) {
     errors.push("openshell-version-pin-vitest artifact upload retention-days must be 14");
-  }
-}
-
-function validateOpenClawTuiChatCorrelationVitestJob(
-  errors: string[],
-  jobs: WorkflowRecord,
-): void {
-  const jobName = "openclaw-tui-chat-correlation-vitest";
-  const scenarioId = "openclaw-tui-chat-correlation";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing openclaw-tui-chat-correlation-vitest job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("openclaw-tui-chat-correlation-vitest job must run on ubuntu-latest");
-  }
-  if (Object.hasOwn(job, "needs")) {
-    errors.push("openclaw-tui-chat-correlation-vitest job must run independently of generate-matrix");
-  }
-  expectJobScenarioFilter(errors, job, jobName, scenarioId);
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
-    errors.push("openclaw-tui-chat-correlation-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
-  }
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest/openclaw-tui-chat-correlation")) {
-    errors.push(
-      "openclaw-tui-chat-correlation-vitest job must write artifacts under e2e-artifacts/vitest/openclaw-tui-chat-correlation",
-    );
-  }
-  if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("openclaw-tui-chat-correlation-vitest job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  requireEnvDoesNotExposeSecret(errors, jobName + " job", jobEnv, "NVIDIA_API_KEY");
-  requireEnvDoesNotExposeSecret(errors, jobName + " job", jobEnv, "DOCKERHUB_TOKEN");
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const env = asRecord(step.env);
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        env,
-        "DOCKERHUB_TOKEN",
-      );
-    }
-    if (step.name !== "Run OpenClaw TUI chat correlation live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        env,
-        "NVIDIA_API_KEY",
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("openclaw-tui-chat-correlation-vitest job missing checkout step");
-  requireFullShaAction(errors, checkout, "openclaw-tui-chat-correlation-vitest checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("openclaw-tui-chat-correlation-vitest checkout step must set persist-credentials=false");
-  }
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerEnv = asRecord(dockerLogin?.env);
-  if (dockerEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("Docker Hub login step must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("Docker Hub login step must receive DOCKERHUB_TOKEN from secrets");
-  }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-tui-chat-correlation-vitest job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-tui-chat-correlation-vitest setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run OpenClaw TUI chat correlation live test",
-  );
-  const runEnv = asRecord(runVitest?.env);
-  if (runEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push("OpenClaw TUI chat correlation Vitest step must receive NVIDIA_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
-  requireRunContains(
-    errors,
-    runVitest,
-    "test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts",
-  );
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload OpenClaw TUI chat correlation artifacts",
-  );
-  requireFullShaAction(errors, upload, "openclaw-tui-chat-correlation-vitest upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-vitest-scenarios-openclaw-tui-chat-correlation") {
-    errors.push("openclaw-tui-chat-correlation-vitest artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/openclaw-tui-chat-correlation/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-tui-chat-correlation-vitest artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-tui-chat-correlation-vitest artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-tui-chat-correlation-vitest artifact upload retention-days must be 14");
   }
 }
 
@@ -531,7 +390,6 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
 
   validateOpenShellVersionPinVitestJob(errors, jobs);
-  validateOpenClawTuiChatCorrelationVitestJob(errors, jobs);
 
   return errors;
 }

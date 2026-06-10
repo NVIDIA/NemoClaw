@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "../framework/e2e-test.ts";
-import type { LifecycleProfile } from "../framework/phases/index.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import type { LifecycleProfile } from "../fixtures/phases/index.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 import { liveScenarioSupport, liveScenarioTestName } from "../scenarios/runtime-support.ts";
 import { buildLiveScenarioRunPlan } from "./run-plan.ts";

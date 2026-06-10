@@ -88,18 +88,18 @@ export function buildScenarioComment({
   const optionalLine = recommendationLine(optional);
   const dispatch =
     required.length > 0
-      ? `\n\n**Dispatch required scenario E2E:**\n${required.map((item) => `- \`${item.dispatchCommand}\``).join("\n")}`
+      ? `\n\n**Dispatch required Vitest E2E scenarios:**\n${required.map((item) => `- \`${item.dispatchCommand}\``).join("\n")}`
       : "";
   const run = runUrl ? `\n\n[Workflow run](${runUrl})` : "";
 
   return `${marker}
-## E2E Scenario Advisor Recommendation
+## Vitest E2E Scenario Recommendation
 
-**Required scenario E2E:** ${requiredLine}
-**Optional scenario E2E:** ${optionalLine}${dispatch}${run}
+**Required Vitest E2E scenarios:** ${requiredLine}
+**Optional Vitest E2E scenarios:** ${optionalLine}${dispatch}${run}
 
 <details>
-<summary>Full scenario advisor summary</summary>
+<summary>Full Vitest E2E advisor summary</summary>
 
 ${summary.trim()}
 
