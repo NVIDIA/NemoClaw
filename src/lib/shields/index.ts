@@ -24,6 +24,7 @@ const {
   buildPolicySetCommand,
   parseCurrentPolicy,
   resolvePermissivePolicyPath,
+  resolveAllowAllPolicyPath,
 } = require("../policy");
 const {
   parseDuration,
@@ -906,15 +907,19 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   // 2. Determine and apply relaxed policy
   let policyFile: string;
   let policyFileIsTemp = false;
-  if (policyName === "permissive") {
-    const basePath = resolvePermissivePolicyPath(sandboxName);
+  if (policyName === "permissive" || policyName === "allow-all") {
+    const basePath =
+      policyName === "allow-all"
+        ? resolveAllowAllPolicyPath(sandboxName)
+        : resolvePermissivePolicyPath(sandboxName);
     // Union the live sandbox's filesystem_policy.read_only/read_write into
-    // the static permissive baseline. OpenShell rejects removal of those
-    // paths on a live sandbox, and runtime-injected entries (/proc on
-    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
-    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
-    // policyYaml is the pre-parsed body we already captured for the
-    // snapshot above — reuse it instead of re-fetching.
+    // the static baseline. OpenShell rejects removal of those paths on a live
+    // sandbox, and runtime-injected entries (/proc on GPU, /opt/hermes on
+    // Hermes, /home/linuxbrew on post-#3913 OpenClaw, etc.) are not present in
+    // the static YAML. See #3942, #3957, #3168. policyYaml is the pre-parsed
+    // body we already captured for the snapshot above — reuse it instead of
+    // re-fetching. (allow-all reuses the same FS-union helper; only its
+    // network_policies differ — a single catch-all host: "*".)
     policyFile = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: policyYaml,
       readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
@@ -924,7 +929,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
     policyFile = path.resolve(policyName);
   } else {
     console.error(
-      `  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`,
+      `  Unknown policy "${policyName}". Use "permissive", "allow-all", or a path to a YAML file.`,
     );
     return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
   }
@@ -1341,16 +1346,16 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
 // ---------------------------------------------------------------------------
 
 export {
-  shieldsDown,
-  shieldsUp,
-  shieldsStatus,
-  isShieldsDown,
-  getShieldsPosture,
-  killTimer,
-  deriveShieldsMode,
-  parseDuration,
-  lockAgentConfig,
-  unlockAgentConfig,
-  MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
+  deriveShieldsMode,
+  getShieldsPosture,
+  isShieldsDown,
+  killTimer,
+  lockAgentConfig,
+  MAX_TIMEOUT_SECONDS,
+  parseDuration,
+  shieldsDown,
+  shieldsStatus,
+  shieldsUp,
+  unlockAgentConfig,
 };

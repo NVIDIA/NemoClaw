@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
-import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
 import { shieldsTimeoutDurationFlag } from "../../../lib/cli/duration-flags";
-import * as shields from "../../../lib/shields/index";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
+import * as shields from "../../../lib/shields/index";
 
 export default class ShieldsDownCommand extends NemoClawCommand {
   static id = "sandbox:shields:down";
@@ -14,12 +13,16 @@ export default class ShieldsDownCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Lower sandbox security shields";
   static description = "Temporarily lower sandbox shields.";
-  static usage = ["<name> [--timeout 5m] [--reason <text>] [--policy permissive]"];
+  static usage = ["<name> [--timeout 5m] [--reason <text>] [--policy permissive|allow-all]"];
   static args = { sandboxName: sandboxNameArg };
   static flags = {
     timeout: shieldsTimeoutDurationFlag({ description: "Duration before shields are restored" }),
     reason: Flags.string({ description: "Reason for lowering shields" }),
-    policy: Flags.string({ description: "Policy to apply while shields are down" }),
+    policy: Flags.string({
+      description:
+        'Policy while shields are down: "permissive" (full access on known hosts), ' +
+        '"allow-all" (catch-all egress to any host — dev/testing only), or a path to a YAML file',
+    }),
   };
 
   public async run(): Promise<void> {

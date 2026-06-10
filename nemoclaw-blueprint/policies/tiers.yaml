@@ -43,3 +43,14 @@ tiers:
       - { name: whatsapp,     access: read-write }
       - { name: jira,         access: read-write }
       - { name: outlook,      access: read-write }
+
+  # DANGER: disables egress filtering. Unlike the other tiers, allow-all does
+  # NOT layer presets onto the deny-by-default base — it swaps the base policy
+  # for openclaw-sandbox-allow-all.yaml (a catch-all host: "*"), so the agent can
+  # reach ANY public host. SSRF / private-network blocking still applies. Has no
+  # presets by design; the catch-all makes per-service presets moot. Opt in only
+  # for trusted dev/testing. See docs/reference/network-policies.mdx.
+  - name: allow-all
+    label: Allow All (no egress filtering — dev/testing only)
+    description: Catch-all egress to any public host. Swaps the base policy for the allow-all catch-all; presets do not apply. Maximum scope — you accept full responsibility.
+    presets: []

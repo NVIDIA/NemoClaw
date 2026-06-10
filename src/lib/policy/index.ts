@@ -3,7 +3,7 @@
 //
 // Policy preset management — list, load, merge, and apply presets.
 
-import type { JsonValue, JsonObject } from "../core/json-types";
+import type { JsonObject, JsonValue } from "../core/json-types";
 
 const fs = require("fs");
 const path = require("path");
@@ -13,6 +13,8 @@ const YAML = require("yaml");
 const { ROOT, run, runCapture } = require("../runner");
 const registry = require("../state/registry");
 const { loadAgent } = require("../agent/defs");
+const { cleanupTempDir } = require("../onboard/temp-files");
+const { buildRuntimePermissivePolicy } = require("../shields/permissive-runtime");
 // Late-binding access via the module exports so tests can spy on
 // resolveOpenshell without rewiring requires.
 const openshellResolveModule = require("../adapters/openshell/resolve");
@@ -1228,6 +1230,23 @@ const PERMISSIVE_POLICY_PATH = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 
+const ALLOW_ALL_POLICY_PATH = path.join(
+  ROOT,
+  "nemoclaw-blueprint",
+  "policies",
+  "openclaw-sandbox-allow-all.yaml",
+);
+
+/**
+ * Resolve the on-disk path to the allow-all catch-all policy. Unlike the
+ * permissive policy there is no agent-specific variant: the catch-all
+ * (`host: "*"`) is agent-independent, and live filesystem paths are unioned in
+ * at apply time via {@link buildRuntimePermissivePolicy}.
+ */
+function resolveAllowAllPolicyPath(_sandboxName?: string): string {
+  return ALLOW_ALL_POLICY_PATH;
+}
+
 /**
  * Resolve the on-disk path to the permissive policy YAML for the given
  * sandbox, honoring the agent-specific override registered in
@@ -1271,35 +1290,75 @@ function applyPermissivePolicy(sandboxName: string): void {
   console.log("  Applied permissive policy.");
 }
 
+/**
+ * Apply the allow-all catch-all policy to a running sandbox. Unions the live
+ * sandbox's filesystem paths into the static allow-all baseline (OpenShell
+ * rejects path removals on a live sandbox; runtime-injected paths such as /proc
+ * on GPU or /opt/hermes are absent from the static YAML). Mirrors the runtime
+ * handling used by `shields down`.
+ */
+function applyAllowAllPolicy(sandboxName: string): void {
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+    );
+  }
+
+  const basePath = resolveAllowAllPolicyPath(sandboxName);
+  if (!fs.existsSync(basePath)) {
+    throw new Error(`Allow-all policy not found: ${basePath}`);
+  }
+
+  assertOpenshellResolvable();
+  const livePolicyYaml = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  const policyFile = buildRuntimePermissivePolicy(basePath, {
+    livePolicyYaml: livePolicyYaml || null,
+    readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+  });
+  const isTemp = policyFile !== basePath;
+  console.log("  Applying allow-all policy...");
+  try {
+    run(buildPolicySetCommand(policyFile, sandboxName));
+  } finally {
+    if (isTemp) cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+  }
+  console.log("  Applied allow-all policy.");
+}
+
 export {
-  PRESETS_DIR,
-  PERMISSIVE_POLICY_PATH,
-  listPresets,
-  loadPreset,
-  getPresetEndpoints,
-  getPresetValidationWarning,
-  setupPolicyPresetSupported,
-  filterSetupPolicyPresets,
-  listSetupPolicyPresets,
+  ALLOW_ALL_POLICY_PATH,
+  applyAllowAllPolicy,
+  applyPermissivePolicy,
+  applyPreset,
+  applyPresetContent,
+  applyPresets,
+  assertOpenshellResolvable,
+  buildPolicyGetCommand,
+  buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
-  parseCurrentPolicy,
-  buildPolicySetCommand,
-  buildPolicyGetCommand,
-  assertOpenshellResolvable,
-  mergePresetIntoPolicy,
-  mergePresetNamesIntoPolicy,
-  removePresetFromPolicy,
-  applyPreset,
-  applyPresets,
-  applyPresetContent,
-  loadPresetFromFile,
-  removePreset,
-  applyPermissivePolicy,
-  resolvePermissivePolicyPath,
+  filterSetupPolicyPresets,
   getAppliedPresets,
   getGatewayPresets,
+  getPresetEndpoints,
+  getPresetValidationWarning,
   listCustomPresets,
-  selectFromList,
+  listPresets,
+  listSetupPolicyPresets,
+  loadPreset,
+  loadPresetFromFile,
+  mergePresetIntoPolicy,
+  mergePresetNamesIntoPolicy,
+  PERMISSIVE_POLICY_PATH,
+  PRESETS_DIR,
+  parseCurrentPolicy,
+  removePreset,
+  removePresetFromPolicy,
+  resolveAllowAllPolicyPath,
+  resolvePermissivePolicyPath,
   selectForRemoval,
+  selectFromList,
+  setupPolicyPresetSupported,
 };

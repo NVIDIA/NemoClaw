@@ -67,6 +67,13 @@ The baseline policy is always applied regardless of the selected tier.
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging and productivity. |
+| Allow All | None — swaps the base policy | Catch-all egress to any public host (no network filtering). Opt-in for trusted dev/testing only. |
+
+<Warning>
+The **Allow All** tier disables egress filtering. Instead of layering presets onto the deny-by-default baseline, it swaps the base policy for `nemoclaw-blueprint/policies/openclaw-sandbox-allow-all.yaml`, a single catch-all (`host: "*"`) that lets the agent reach **any** public host on ports 80/443. Every reachable host is a potential data-exfiltration path for workspace files, credentials, or conversation history. SSRF and private-network blocking still apply — `localhost`, link-local, and RFC1918 ranges remain blocked — but no HTTP-level filtering is performed. Use it only for trusted development or testing, and prefer a specific tier plus presets, or [operator approval](#operator-approval-flow), for everything else.
+</Warning>
+
+Allow All has no presets, so the combined preset screen is skipped. Enable it non-interactively with `NEMOCLAW_POLICY_TIER=allow-all`, or apply it to an already-running sandbox with `nemoclaw sandbox:shields:down <name> --policy allow-all`.
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.

@@ -73,6 +73,13 @@ export type SetupPolicySelectionDeps = {
   ) => void;
   selectPolicyTier: () => Promise<string>;
   setPolicyTier?: (sandboxName: string, tierName: string) => void;
+  /**
+   * Apply the allow-all catch-all policy to a running sandbox. Used when the
+   * "allow-all" tier is chosen interactively (a fresh onboard creates with the
+   * default base, so the catch-all must be applied post-create). Env/recreate
+   * allow-all sandboxes already boot with the catch-all base.
+   */
+  applyAllowAllPolicy?: (sandboxName: string) => void;
   selectTierPresetsAndAccess: (
     tierName: string,
     presets: Preset[],
@@ -330,6 +337,22 @@ async function setupPoliciesWithSelectionInner(
 
   const tierName = await deps.selectPolicyTier();
   deps.setPolicyTier?.(sandboxName, tierName);
+
+  // Allow-all is a catch-all posture, not a preset bundle. Apply the catch-all
+  // policy directly and skip preset selection entirely. (Env/recreate
+  // allow-all already booted with the catch-all base; this covers the
+  // interactive fresh-onboard case, and is idempotent for the others.)
+  if (tierName === "allow-all") {
+    if (onSelection) onSelection([]);
+    if (!deps.waitForSandboxReady(sandboxName)) {
+      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
+      process.exit(1);
+    }
+    deps.note("  Applying allow-all policy: catch-all egress to any host (no network filtering).");
+    deps.applyAllowAllPolicy?.(sandboxName);
+    return [];
+  }
+
   const suggestions = pruneDisabledPresets(
     computeSetupPresetSuggestions(deps, tierName, {
       enabledChannels,

@@ -104,6 +104,10 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 | Risk if relaxed | Each allowed endpoint is a potential data exfiltration path. The agent can send workspace content, credentials, or conversation history to any reachable host. |
 | Recommendation | Add only endpoints the agent needs for its task. Prefer operator approval for one-off requests over permanently widening the baseline. |
 
+<Warning>
+The **Allow All** policy tier (`NEMOCLAW_POLICY_TIER=allow-all`) and `nemoclaw sandbox:shields:down <name> --policy allow-all` disable egress filtering entirely with a catch-all `host: "*"` rule. This removes the deny-by-default protection above for the selected sandbox: the agent can reach **any** public host. SSRF and private-network blocking still apply (`localhost`, link-local, and RFC1918 ranges stay blocked), but no host, method, or path filtering is performed. Treat allow-all as trusted-development-only. It is never the shipped default — deny-by-default remains in effect unless you opt in.
+</Warning>
+
 ### Binary-Scoped Endpoint Rules
 
 Each network policy entry restricts which executables can reach the endpoint using the `binaries` field.

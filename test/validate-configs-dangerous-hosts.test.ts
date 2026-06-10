@@ -16,6 +16,8 @@ import {
   ROUTER_API_BASE_HOST_ALLOWLIST,
   findDangerousHosts,
   findDangerousRouterApiBases,
+  isAllowAllPolicyFile,
+  isBareWildcardHost,
   isDangerousHost,
 } from "../scripts/validate-configs";
 
@@ -57,6 +59,49 @@ describe("isDangerousHost", () => {
   it("covers the full DANGEROUS_HOSTS set", () => {
     for (const host of DANGEROUS_HOSTS) {
       expect(isDangerousHost(host)).toBe(true);
+    }
+  });
+});
+
+describe("isAllowAllPolicyFile (allow-all exemption scope)", () => {
+  it.each([
+    "nemoclaw-blueprint/policies/openclaw-sandbox-allow-all.yaml",
+    "openclaw-sandbox-allow-all.yaml",
+    "agents/hermes/policy-allow-all.yml",
+    "C:\\repo\\policies\\some-allow-all.yaml",
+  ])("treats %s as an allow-all file", (file) => {
+    expect(isAllowAllPolicyFile(file)).toBe(true);
+  });
+
+  it.each([
+    "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+    "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+    "nemoclaw-blueprint/policies/presets/slack.yaml",
+    "allow-all.json",
+    "allow-all-extra.yaml",
+  ])("does not treat %s as an allow-all file", (file) => {
+    expect(isAllowAllPolicyFile(file)).toBe(false);
+  });
+});
+
+describe("isBareWildcardHost (exempted family — bare wildcard only)", () => {
+  it.each(["*", "*:443", "  *  ", "*:80"])("flags %s as a bare wildcard", (host) => {
+    expect(isBareWildcardHost(host)).toBe(true);
+  });
+
+  it.each(["0.0.0.0", "0.0.0.0/0", "::", "::/0", "*.example.com", "example.com"])(
+    "does not treat %s as a bare wildcard",
+    (host) => {
+      expect(isBareWildcardHost(host)).toBe(false);
+    },
+  );
+
+  it("never exempts IP catch-alls even though they are dangerous", () => {
+    // These remain blocked everywhere — including in allow-all files — so a typo
+    // can never silently widen egress to a raw address range.
+    for (const host of ["0.0.0.0/0", "::/0"]) {
+      expect(isDangerousHost(host)).toBe(true);
+      expect(isBareWildcardHost(host)).toBe(false);
     }
   });
 });

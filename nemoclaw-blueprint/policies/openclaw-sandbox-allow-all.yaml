@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Allow-all network posture — opt-in via the "allow-all" policy tier
+# (NEMOCLAW_POLICY_TIER=allow-all) or `shields down --policy allow-all`.
+#
+# A single catch-all network policy (host: "*") permits egress to ANY public
+# host on ports 80/443 with full L7 access. This is the only NemoClaw policy
+# that uses a bare "*" host; the dangerous-host guardrail in
+# scripts/validate-configs.ts exempts files named *-allow-all.yaml for exactly
+# this reason (subdomain wildcards remain the norm everywhere else).
+#
+# WARNING: This disables egress filtering. Every reachable host becomes a
+# potential data-exfiltration path (workspace files, credentials, conversation
+# history). SSRF / private-network blocking (ssrf.ts, private-networks.ts) still
+# applies — localhost, link-local, and RFC1918 ranges remain blocked. Do not use
+# in production. Prefer a specific tier + presets, or operator approval, instead.
+#
+# NOTE: bare host "*" support in the OpenShell L7 proxy must be verified on a
+# live sandbox before relying on this file. If the proxy rejects "*", switch the
+# endpoints below to `enforcement: audit` (log-only, non-blocking). See the
+# allow-all rollout task / docs/reference/network-policies.mdx.
+
+version: 1
+
+filesystem_policy:
+  # Mirrors openclaw-sandbox-permissive.yaml. OpenShell rejects include_workdir
+  # changes and filesystem path removals on live sandboxes.
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+  read_write:
+    - /tmp
+    - /dev/null
+    - /sandbox/.openclaw
+    - /sandbox/.nemoclaw
+    - /home/linuxbrew
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  allow_all:
+    name: allow_all
+    endpoints:
+      - host: "*"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+      - host: "*"
+        port: 80
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }

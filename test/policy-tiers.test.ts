@@ -67,13 +67,13 @@ function mustGetTier(name: string): Tier {
 
 describe("tiers", () => {
   describe("listTiers", () => {
-    it("returns exactly 3 tiers", () => {
-      expect(tiers.listTiers()).toHaveLength(3);
+    it("returns exactly 4 tiers", () => {
+      expect(tiers.listTiers()).toHaveLength(4);
     });
 
-    it("tiers are ordered restricted → balanced → open", () => {
+    it("tiers are ordered restricted → balanced → open → allow-all", () => {
       const names = tiers.listTiers().map((tier: Tier) => tier.name);
-      expect(names).toEqual(["restricted", "balanced", "open"]);
+      expect(names).toEqual(["restricted", "balanced", "open", "allow-all"]);
     });
 
     it("each tier has name, label, description, and presets array", () => {
@@ -85,9 +85,9 @@ describe("tiers", () => {
       }
     });
 
-    it("labels are human-readable capitalised strings", () => {
+    it("first three labels are human-readable capitalised strings", () => {
       const labels = tiers.listTiers().map((tier: Tier) => tier.label);
-      expect(labels).toEqual(["Restricted", "Balanced", "Open"]);
+      expect(labels.slice(0, 3)).toEqual(["Restricted", "Balanced", "Open"]);
     });
   });
 
@@ -107,8 +107,27 @@ describe("tiers", () => {
       expect(tier.name).toBe("open");
     });
 
+    it("returns the allow-all tier", () => {
+      const tier = mustGetTier("allow-all");
+      expect(tier.name).toBe("allow-all");
+    });
+
     it("returns null for an unknown tier", () => {
       expect(tiers.getTier("nonexistent")).toBeNull();
+    });
+  });
+
+  describe("tier: allow-all", () => {
+    it("has no presets — it swaps the base policy instead of layering presets", () => {
+      expect(mustGetTier("allow-all").presets).toHaveLength(0);
+    });
+
+    it("label and description warn it is dev/testing only", () => {
+      const tier = mustGetTier("allow-all");
+      expect(tier.label.toLowerCase()).toContain("allow all");
+      expect(`${tier.label} ${tier.description}`.toLowerCase()).toMatch(
+        /dev|testing|no egress filtering|catch-all/,
+      );
     });
   });
 

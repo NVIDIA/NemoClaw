@@ -9,7 +9,7 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
@@ -46,6 +46,7 @@ function discoverTargets(): ConfigTarget[] {
       files: [
         "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
         "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-allow-all.yaml",
       ],
     },
     {
@@ -209,6 +210,24 @@ interface DangerousHostFinding {
   host: string;
 }
 
+/**
+ * Designated allow-all policy files (basename `*-allow-all.yaml`) are the one
+ * place a bare catch-all `host: "*"` is intentional — they implement the opt-in
+ * allow-all posture. Such files are exempted ONLY for the bare wildcard family
+ * (`*` / `*:port`); IP catch-alls (`0.0.0.0/0`, `::/0`, …) stay rejected
+ * everywhere so a typo can never silently widen egress to raw address ranges.
+ */
+function isAllowAllPolicyFile(file: string): boolean {
+  const base = file.replaceAll("\\", "/").split("/").pop() ?? "";
+  return /-allow-all\.ya?ml$/.test(base);
+}
+
+/** True for the bare wildcard catch-all family ("*" / "*:443"), excluding IP catch-alls. */
+function isBareWildcardHost(host: string): boolean {
+  const trimmed = host.trim();
+  return trimmed === "*" || trimmed.startsWith("*:");
+}
+
 const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["integrate.api.nvidia.com"]);
 
 /**
@@ -339,7 +358,15 @@ function main(): void {
       const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
       // Semantic check: walk the parsed doc and reject catch-all hosts.
       // Runs regardless of schema outcome so operators see all issues at once.
-      const dangerous = [...findDangerousHosts(data), ...findDangerousRouterApiBases(data)];
+      // Designated allow-all files may use the bare wildcard ("*"/"*:port") on
+      // purpose; everything else (and all IP catch-alls) stays rejected.
+      const allowBareWildcard = isAllowAllPolicyFile(file);
+      const dangerous = [
+        ...findDangerousHosts(data).filter(
+          (finding) => !(allowBareWildcard && isBareWildcardHost(finding.host)),
+        ),
+        ...findDangerousRouterApiBases(data),
+      ];
 
       if (schemaErrors > 0 || dangerous.length > 0) {
         console.error(`FAIL: ${file}`);
@@ -373,11 +400,13 @@ function main(): void {
 // Export for unit tests without re-running main().
 export {
   DANGEROUS_HOSTS,
-  ROUTER_API_BASE_HOST_ALLOWLIST,
-  isDangerousHost,
+  discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,
-  discoverTargets,
+  isAllowAllPolicyFile,
+  isBareWildcardHost,
+  isDangerousHost,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
 };
 
 // Only run main() when invoked directly (skip on test `import`).

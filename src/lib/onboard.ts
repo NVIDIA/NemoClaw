@@ -3364,7 +3364,23 @@ async function createSandbox(
     "policies",
     "openclaw-sandbox.yaml",
   );
-  const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  let basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  // Allow-all is not a preset bundle — it swaps the base policy for the
+  // catch-all (host: "*"). At create time the tier is known only when it comes
+  // from the environment (non-interactive) or a recorded recreate; interactive
+  // fresh onboards choose the tier post-create and apply it via
+  // setupPoliciesWithSelection. Swapping the base here means an env/recreate
+  // allow-all sandbox boots permissive from the very first request.
+  const recordedTier = registry.getSandbox(sandboxName)?.policyTier ?? null;
+  const envTier = (process.env.NEMOCLAW_POLICY_TIER || "").trim().toLowerCase();
+  const allowAllAtCreate =
+    envTier === "allow-all" || (recordedTier === "allow-all" && !envTier);
+  if (allowAllAtCreate) {
+    basePolicyPath = policies.ALLOW_ALL_POLICY_PATH;
+    console.log(
+      "  Policy tier 'allow-all': booting with catch-all egress (no network filtering).",
+    );
+  }
   const tokensByEnvKey = Object.fromEntries(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
@@ -6335,6 +6351,7 @@ async function setupPoliciesWithSelection(
       syncPresetSelection,
       selectPolicyTier,
       setPolicyTier: (sandbox, tierName) => registry.updateSandbox(sandbox, { policyTier: tierName }),
+      applyAllowAllPolicy: (sandbox) => policies.applyAllowAllPolicy(sandbox),
       selectTierPresetsAndAccess,
       parsePolicyPresetEnv,
       env: process.env,
