@@ -14,18 +14,15 @@
  * rendering indicators and visible tool-call status stay out of scope.
  */
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
-import {
-  trustedSandboxShellScript,
-  type SandboxClient,
-} from "../fixtures/clients/sandbox.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -147,9 +144,7 @@ function analyzeIssue2603Trace({
   historyMessages,
 }: Issue2603Trace): Issue2603Analysis {
   const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
-  const expectedRunByReplyToken = new Map(
-    sentRuns.map((entry) => [entry.replyToken, entry.runId]),
-  );
+  const expectedRunByReplyToken = new Map(sentRuns.map((entry) => [entry.replyToken, entry.runId]));
   const chatEvents = compactChatEvents(events);
 
   const emptyFinalsForSubmittedRuns = chatEvents.filter(
@@ -166,15 +161,9 @@ function analyzeIssue2603Trace({
   for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
     for (const event of chatEvents) {
       if (!event.text.includes(replyToken)) continue;
-      visibleReplyCounts.set(
-        replyToken,
-        (visibleReplyCounts.get(replyToken) ?? 0) + 1,
-      );
+      visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
       if (event.state === "final") {
-        finalReplyCounts.set(
-          replyToken,
-          (finalReplyCounts.get(replyToken) ?? 0) + 1,
-        );
+        finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
       }
       if (event.runId !== expectedRunId) {
         uncorrelatedReplies.push({
@@ -213,9 +202,7 @@ function analyzeIssue2603Trace({
     count: userPromptCounts.get(entry.message) ?? 0,
   }));
   const userTurnOrder = userMessages.flatMap((message) =>
-    sentRuns
-      .filter((entry) => entry.message === message)
-      .map((entry) => entry.promptToken),
+    sentRuns.filter((entry) => entry.message === message).map((entry) => entry.promptToken),
   );
   const missingUserTurns = userTurnCounts.filter((entry) => entry.count < 1);
   const duplicateUserTurns = userTurnCounts.filter((entry) => entry.count > 1);
@@ -242,12 +229,7 @@ function analyzeIssue2603Trace({
 // subscription/readiness ack or the 10x sweep stops flagging this
 // signature without the guard.
 function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
-  if (
-    repro.error ||
-    !Array.isArray(repro.sentRuns) ||
-    !Array.isArray(repro.events)
-  )
-    return false;
+  if (repro.error || !Array.isArray(repro.sentRuns) || !Array.isArray(repro.events)) return false;
   const analysis = analyzeIssue2603Trace(repro);
   return (
     repro.sentRuns.length === 3 &&
@@ -406,15 +388,11 @@ async function ensureSandboxGatewayRunning(
     `|| (nohup openclaw gateway run --port ${SANDBOX_GATEWAY_PORT} >/tmp/openclaw-issue2603-gateway.log 2>&1 & sleep 10)`,
     `&& curl -fsS http://127.0.0.1:${SANDBOX_GATEWAY_PORT}/health >/dev/null`,
   ].join(" ");
-  const result = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(healthScript),
-    {
-      artifactName: "ensure-sandbox-gateway-running",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(healthScript), {
+    artifactName: "ensure-sandbox-gateway-running",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
   if (result.exitCode !== 0) {
     throw new Error(
       `in-sandbox OpenClaw gateway did not become reachable on port ${SANDBOX_GATEWAY_PORT}\n` +
@@ -434,15 +412,10 @@ async function runLiveIssue2603Repro(
   const remoteScript = `/tmp/${LIVE_SCRIPT_NAME}`;
   writeFileSync(localScript, buildLiveReproScript(), "utf8");
   try {
-    const upload = await sandbox.upload(
-      sandboxName,
-      localScript,
-      remoteScript,
-      {
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
+    const upload = await sandbox.upload(sandboxName, localScript, remoteScript, {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
     if (upload.exitCode !== 0) {
       throw new Error(
         `failed to upload live repro script\nstdout:\n${upload.stdout}\nstderr:\n${upload.stderr}`,
@@ -472,9 +445,7 @@ async function runLiveIssue2603Repro(
         `live repro did not emit ISSUE2603_RESULT.\nstdout:\n${driver.stdout}\nstderr:\n${driver.stderr}`,
       );
     }
-    return JSON.parse(
-      resultLine.slice("ISSUE2603_RESULT ".length),
-    ) as LiveIssue2603Trace;
+    return JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as LiveIssue2603Trace;
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -528,15 +499,11 @@ test(
     // and openshell needs PATH (~/.local/bin on Ubuntu runners) to
     // resolve. Phase fixtures (state-validation, runtime, lifecycle)
     // all follow this same convention.
-    const versionResult = await sandbox.exec(
-      instance.sandboxName,
-      ["openclaw", "--version"],
-      {
-        artifactName: "openclaw-version-pinned",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
+    const versionResult = await sandbox.exec(instance.sandboxName, ["openclaw", "--version"], {
+      artifactName: "openclaw-version-pinned",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
     expect(versionResult.exitCode).toBe(0);
     expect(
       versionResult.stdout,
@@ -546,11 +513,10 @@ test(
     ).toContain(EXPECTED_OPENCLAW_VERSION);
 
     // Drive the websocket repro and capture the trace ──────────────
-    const { repro, attempts } =
-      await runLiveIssue2603ReproWithEventCaptureRetry(
-        sandbox,
-        instance.sandboxName,
-      );
+    const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry(
+      sandbox,
+      instance.sandboxName,
+    );
 
     await artifacts.writeJson("issue2603-trace.json", {
       sentRuns: repro.sentRuns,
