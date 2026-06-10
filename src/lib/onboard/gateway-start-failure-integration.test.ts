@@ -19,17 +19,28 @@
 //   2. A composition test that runs the same helper sequence the call site
 //      uses (classify → handleFinal → exitProcess(1)).
 //
-// What this file deliberately DOES NOT cover (gap documented as it.todo
-// at the bottom of the suite, with a follow-up issue tracking the
-// refactor): direct executable proof that startGatewayWithOptions, on a
-// docker-unreachable streamGatewayStart() result, (a) throws
-// pRetry.AbortError instead of retrying, (b) never logs "Waiting for
-// gateway health...", and (c) never calls openshell `status` or
-// `gateway info` probes. Closing that gap requires either mocking the
-// ~10 module-internal closures `startGatewayWithOptions` touches before
-// reaching streamGatewayStart, or extracting the inner pRetry async body
-// into an exported helper that takes streamGatewayStart as a DI
-// parameter. Both changes are out of scope for the retirement PR.
+// Caller-level (process-level) coverage of the #2347 contracts already
+// exists in test/onboard.test.ts:
+//
+//   it("fast-fails gateway start before health polling when Docker is
+//      unreachable (#2347)", ...)
+//
+// That test spawns a child Node process with a PATH-shimmed openshell
+// binary returning the Docker socket-not-found signature, mocks p-retry,
+// loads the compiled startGateway() from dist/lib/onboard.js, and
+// asserts: exit code 1, "Docker daemon is not running" in stderr, the
+// "colima start" macOS hint, NO "Waiting for gateway health...", and NO
+// post-start status/gateway-info probe output. Together with the helper
+// + composition tests in this file, those caller-level contracts are
+// fully covered.
+//
+// The remaining narrow gap (one it.todo below) is direct evidence that
+// dockerUnreachable=true is forwarded to handleFinalGatewayStartFailure
+// SPECIFICALLY (vs some other exit path that also yields exit 1) — the
+// distinguishing wire-format signal would be the absence of "Cleaning
+// up failed gateway state..." output that the non-Docker-unreachable
+// branch prints. test/onboard.test.ts does not grep for that absence.
+// Closing that narrow gap is tracked in follow-up issue #5113.
 
 import { describe, expect, it, vi } from "vitest";
 // `handleFinalGatewayStartFailure` is exposed via `module.exports = {...}` at
@@ -310,42 +321,24 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
     });
   });
 
-  // ── Documented coverage gap: caller-level contracts that need a
-  //    behavior-level seam (out of scope for this retirement PR) ─────────
+  // ── Narrow remaining gap: distinguish dockerUnreachable=true from other
+  //    exit-1 paths via cleanup-messaging absence ───────────────────────
   //
-  // The legacy bash script directly executed `startGateway()` with a
-  // PATH-shimmed openshell binary and asserted runtime behavior of the
-  // call site. The unit + composition tests above cover the same ground
-  // for everything reachable through already-exported helpers, but three
-  // call-site contracts cannot be proven without driving the actual
-  // `startGatewayWithOptions` orchestrator past its ~200 lines of
-  // gateway-reuse / ssh-keygen / known_hosts / docker-driver-detect
-  // preamble. Doing that in a focused way requires either:
-  //
-  //   (a) ~10 vi.mock() calls on module-internal closures inside
-  //       onboard.ts (brittle), or
-  //   (b) a small refactor extracting the inner pRetry async body of
-  //       startGatewayWithOptions into an exported helper that takes
-  //       streamGatewayStart as a DI parameter.
-  //
-  // Both are out of scope for this retirement PR. Follow-up issue
-  // [#5113](https://github.com/NVIDIA/NemoClaw/issues/5113) tracks
-  // landing option (b) and converting these `it.todo` placeholders into
-  // real assertions. Until then, the
-  // primary safety net for these contracts is code review on
-  // src/lib/onboard.ts:startGatewayWithOptions plus the existing
-  // classifyGatewayStartFailure / printDockerDaemonRecovery /
-  // handleFinalGatewayStartFailure unit tests above.
+  // test/onboard.test.ts:"fast-fails gateway start before health polling
+  // when Docker is unreachable (#2347)" already proves at the process
+  // level: exit 1, recovery guidance printed, no health-poll loop entry,
+  // and no status/gateway-info probes. What it does NOT directly assert
+  // is that handleFinalGatewayStartFailure was called with
+  // dockerUnreachable=true SPECIFICALLY — the distinguishing signal is
+  // the absence of the "Cleaning up failed gateway state..." line that
+  // the alternative branch prints. Asserting on that absence requires
+  // either extending test/onboard.test.ts or extracting attemptGatewayStart
+  // per follow-up issue
+  // [#5113](https://github.com/NVIDIA/NemoClaw/issues/5113).
 
-  describe("call-site contracts (caller-level coverage gap)", () => {
+  describe("call-site contracts (narrow remaining gap)", () => {
     it.todo(
-      "startGateway aborts via pRetry.AbortError without entering health-poll loop on docker-unreachable streamGatewayStart output",
-    );
-    it.todo(
-      "startGateway never invokes openshell `status` or `gateway info` after docker-unreachable streamGatewayStart output",
-    );
-    it.todo(
-      "startGateway forwards dockerUnreachable=true to handleFinalGatewayStartFailure (no doctor logs collection, no destroyGateway cleanup) when streamGatewayStart returns docker-unreachable signature",
+      "on docker-unreachable streamGatewayStart output, handleFinalGatewayStartFailure is invoked with dockerUnreachable=true (proven by absence of 'Cleaning up failed gateway state...' in output, vs the non-docker-unreachable branch that prints it)",
     );
   });
 
