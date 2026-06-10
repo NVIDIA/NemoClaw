@@ -267,17 +267,6 @@
       "notes": "Initial completeness row; classify detailed coverage and deletion evidence in the owning migration issue before deleting."
     },
     {
-      "legacyScript": "test/e2e/test-docker-unreachable-gateway-start.sh",
-      "domain": "sandbox-lifecycle",
-      "ownerIssue": "#4355",
-      "status": "not-migrated",
-      "targetVitestScenarios": [],
-      "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "PR #5109 added Vitest helper coverage at src/lib/onboard/gateway-start-failure-integration.test.ts (two-layer strategy: unit tests of printDockerDaemonRecovery + handleFinalGatewayStartFailure, plus a composition test running the same classify -> handleFinal -> exitProcess(1) sequence the call site uses). Full retirement (delete this script + remove the docker-unreachable-gateway-start-e2e job in regression-e2e.yaml) was deferred per PR Review Advisor feedback because three caller-level contracts (no health-poll loop entry, no openshell status/gateway-info probes after gateway-start failure, dockerUnreachable forwarded to handleFinalGatewayStartFailure) are not directly proven without a behavior-level seam in startGatewayWithOptions. Follow-up issue #5113 tracks extracting attemptGatewayStart and converting the three it.todo placeholders into real assertions; deletion + retirement happen in a follow-up PR after that lands. Refs: #2347, #4355, #5113."
-    },
-    {
       "legacyScript": "test/e2e/test-docs-validation.sh",
       "domain": "support-diagnostics",
       "ownerIssue": "#4347",
