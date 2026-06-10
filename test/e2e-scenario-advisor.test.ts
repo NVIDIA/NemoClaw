@@ -57,6 +57,8 @@ describe("E2E scenario advisor — prompt construction", () => {
     expect(systemPrompt.length).toBeGreaterThan(0);
     expect(systemPrompt).toContain("test-schema");
     expect(systemPrompt).toContain(VITEST_SCENARIO_WORKFLOW);
+    expect(systemPrompt).toContain("trusted advisor checkout");
+    expect(systemPrompt).toContain("recommend the `e2e-scenarios-all` fan-out");
     expect(systemPrompt).not.toContain("e2e-scenarios-all.yaml");
     expect(systemPrompt).not.toContain("e2e-scenarios.yaml");
   });

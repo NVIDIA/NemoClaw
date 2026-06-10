@@ -29,6 +29,12 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+// Intentionally resolves relative to the trusted advisor checkout, not the
+// analyzed PR workdir. The workflow runs this script from trusted `main` while
+// `process.cwd()` points at inert PR data, so normalization must not execute
+// PR-local registry/runtime-support code. PRs that add or newly wire scenarios
+// should use the fan-out recommendation until the trusted checkout knows their
+// targeted IDs are live-supported.
 import { getScenario } from "../../test/e2e-scenario/scenarios/registry.ts";
 import { liveScenarioSupport } from "../../test/e2e-scenario/scenarios/runtime-support.ts";
 
@@ -240,6 +246,7 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "- The only allowed workflow is `e2e-vitest-scenarios.yaml`.",
     "- Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
     "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`.",
+    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a scenario that is not live-supported on trusted `main` yet, recommend the `e2e-scenarios-all` fan-out rather than a targeted dispatch.",
     "- A `suiteFilter` may be set on a recommendation as analytical metadata explaining why the scenario was selected. It must NOT leak into the dispatch command.",
     "- `relevantChangedFiles` must be the subset of `changedFiles` under `test/e2e-scenario/`, `.github/workflows/e2e-vitest-scenarios.yaml`, or other directly scenario-relevant paths.",
     "",
