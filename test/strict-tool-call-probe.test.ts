@@ -20,14 +20,18 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 //
 // Why subprocess: the validation path drives `curl` via spawnSync with a
 // tight process timeout. Driving the entire scenario set through a fresh
-// `node <driver>` child mirrors the legacy script (and #5119's
+// `tsx <driver>` child mirrors the legacy script (and #5119's
 // onboard-gateway-docker-unreachable.test.ts) and keeps the behavior under
 // test identical to production runtime conditions — bypassing Vitest's
 // worker pool, fetch shim, and signal handling, all of which can interfere
 // with the in-process curl subprocess used by validateOpenAiLikeSelection.
+//
+// The driver is `.ts` (executed via tsx) rather than `.cjs` per the
+// codebase-growth guardrail that forbids newly added .js/.cjs/.mjs files.
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.cjs");
+const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
+const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.ts");
 
 const EXPECTED_PASS_MARKERS = [
   "[PASS] strict validation succeeds with structured tool_calls",
@@ -41,7 +45,7 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
     "validates Local Ollama strict tool-call enforcement against a hermetic mock",
     testTimeoutOptions(120_000),
     () => {
-      const result = spawnSync(process.execPath, [DRIVER], {
+      const result = spawnSync(TSX, [DRIVER], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: { ...process.env, NEMOCLAW_TEST_NO_SLEEP: "1" },

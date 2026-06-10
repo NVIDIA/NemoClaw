@@ -1,10 +1,11 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
 // Process-level driver for the Local Ollama strict Chat Completions
 // tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
-// `node <driver>`; not picked up by Vitest's discovery (`.cjs`, lives
-// under test/fixtures/).
+// `tsx <driver>`; not picked up by Vitest's discovery (lives under
+// test/fixtures/, which is excluded from the test glob).
 //
 // Mirrors the inline `node -e` block from the retired
 // test/e2e/test-strict-tool-call-probe.sh, retained here so the
@@ -13,23 +14,33 @@
 // no Vitest worker shims). Refs #4537, #4349, #5098, #5119.
 //
 // CWD must be the repo root; cli build artifacts under dist/ are required.
-"use strict";
+//
+// Authored as TypeScript (rather than .cjs) per the codebase-growth
+// guardrail forbidding newly added .js/.cjs/.mjs files. Body is JS-shaped
+// because the embedded `node -e` strings must remain plain CommonJS for
+// the spawned children, and the dist/lib/* targets are CJS modules.
+// `@ts-nocheck` keeps the surface unchanged from the retired bash heredoc.
 
-const assert = require("node:assert/strict");
-const { spawn, spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 process.env.NO_PROXY = [process.env.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",");
 process.env.no_proxy = [process.env.no_proxy, "127.0.0.1", "localhost"].filter(Boolean).join(",");
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
-const {
-  createInferenceSelectionValidationHelpers,
-} = require(path.join(REPO_ROOT, "dist", "lib", "onboard", "inference-selection-validation"));
-const localInference = require(path.join(REPO_ROOT, "dist", "lib", "inference", "local"));
+const requireFromHere = createRequire(import.meta.url);
+const { createInferenceSelectionValidationHelpers } = requireFromHere(
+  path.join(REPO_ROOT, "dist", "lib", "onboard", "inference-selection-validation"),
+);
+const localInference = requireFromHere(path.join(REPO_ROOT, "dist", "lib", "inference", "local"));
 
 function assertStrictPayload(payload) {
   assert.equal(payload.model, "mock-tool-model");
@@ -317,7 +328,9 @@ console.error = (...args) => lines.push(args.join(" "));
     assert.equal(requests[0].method, "POST");
     assert.equal(requests[0].url, "/v1/chat/completions");
     assertStrictPayload(requests[0].body);
-    console.log("[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation");
+    console.log(
+      "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
+    );
   });
 
   await withMockEndpoint("transient-502", async (endpoint, readRequests) => {
