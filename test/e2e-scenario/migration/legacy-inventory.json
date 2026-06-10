@@ -3,13 +3,13 @@
   "version": 1,
   "statusValues": ["not-migrated", "bridge-probe", "covered", "retired"],
   "deletionReadiness": {
-    "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 records an explicit retirement decision.",
+    "rule": "A legacy E2E entrypoint is deletion-ready only after equivalent Vitest scenario coverage exists, or after #4357 or #5098 records an explicit retirement decision.",
     "requires": [
       "same relevant CI lane or approved replacement lane",
       "required secrets, skips, and runner requirements preserved",
       "artifact and failure evidence at least as useful as the legacy script",
       "migration status set to covered or retired",
-      "approval recorded through #4357"
+      "approval recorded through #4357 or #5098"
     ]
   },
   "entries": [
