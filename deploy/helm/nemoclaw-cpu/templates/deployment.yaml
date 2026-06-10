@@ -20,7 +20,7 @@ spec:
       labels:
         {{- include "nemoclaw-cpu.selectorLabels" . | nindent 8 }}
       annotations:
-        checksum/agent-config: {{ printf "%s%s" (.Files.Get "files/agent-server.mjs") (.Files.Get "files/cpu-spin-worker.mjs") | sha256sum }}
+        checksum/agent-config: {{ printf "%s%s%s" (.Files.Get "files/agent-server.mjs") (.Files.Get "files/agent-metrics.mjs") (.Files.Get "files/cpu-spin-worker.mjs") | sha256sum }}
       {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -44,11 +44,11 @@ spec:
           command: ["node", "/app/agent-server.mjs"]
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: {{ .Values.service.port }}
               protocol: TCP
           env:
             - name: PORT
-              value: "8080"
+              value: {{ .Values.service.port | quote }}
             - name: INFERENCE_BASE_URL
               valueFrom:
                 configMapKeyRef:
@@ -95,5 +95,7 @@ spec:
             items:
               - key: agent-server.mjs
                 path: agent-server.mjs
+              - key: agent-metrics.mjs
+                path: agent-metrics.mjs
               - key: cpu-spin-worker.mjs
                 path: cpu-spin-worker.mjs

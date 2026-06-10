@@ -7,6 +7,7 @@
 
 import http from "node:http";
 import { Worker } from "node:worker_threads";
+import { llmMetricsLines, recordLlmLatency } from "./agent-metrics.mjs";
 
 const PORT = Number(process.env.PORT || 8080);
 const BASE_URL = (process.env.INFERENCE_BASE_URL || "").replace(/\/$/, "");
@@ -81,6 +82,8 @@ async function proxyChatCompletions(req, res) {
   const spinHeader = Number(req.headers["x-nemoclaw-load-spin-ms"]);
   const spinMs = Number.isFinite(spinHeader) && spinHeader > 0 ? spinHeader : LOAD_TEST_CPU_SPIN_MS;
   await cpuSpinWorkers(spinMs, 1);
+  const llmStart = performance.now();
+  let llmOk = false;
   try {
     const hubRes = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
@@ -91,12 +94,15 @@ async function proxyChatCompletions(req, res) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(180_000),
     });
+    llmOk = hubRes.ok;
     const text = await hubRes.text();
     res.writeHead(hubRes.status, { "content-type": "application/json" });
     res.end(text);
   } catch (err) {
     res.writeHead(502, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: String(err) }));
+  } finally {
+    recordLlmLatency(performance.now() - llmStart, llmOk);
   }
 }
 
@@ -128,6 +134,7 @@ function metricsText() {
     "# HELP nemoclaw_inference_hub_reachable 1 if Inference Hub /models OK",
     "# TYPE nemoclaw_inference_hub_reachable gauge",
     `nemoclaw_inference_hub_reachable ${inferenceReachable}`,
+    ...llmMetricsLines(),
     "",
   ].join("\n");
 }

@@ -1,0 +1,2 @@
+HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
+Pods: ./scripts/get-agent-pods.sh -n {{ include "nemoclaw-gpu.namespace" . }} -w  (per-pod GPU %)

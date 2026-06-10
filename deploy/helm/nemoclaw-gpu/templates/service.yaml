@@ -1,10 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
-  namespace: {{ include "nemoclaw-cpu.namespace" . }}
+  name: {{ include "nemoclaw-gpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
   labels:
-    {{- include "nemoclaw-cpu.labels" . | nindent 4 }}
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
   annotations:
     nemoclaw.ai/agent-port: {{ .Values.service.port | quote }}
 spec:
@@ -15,4 +15,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "nemoclaw-cpu.selectorLabels" . | nindent 4 }}
+    {{- include "nemoclaw-gpu.selectorLabels" . | nindent 4 }}

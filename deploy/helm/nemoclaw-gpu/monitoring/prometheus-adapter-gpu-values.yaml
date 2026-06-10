@@ -1,5 +1,6 @@
-# prometheus-adapter: expose nemoclaw_http_inflight_requests to the HPA custom metrics API.
-# Install with scripts/install-performance-hpa.sh (sets prometheus.url automatically).
+# prometheus-adapter: expose DCGM GPU utilization and agent LLM metrics to HPA.
+# DCGM_FI_DEV_GPU_UTIL is scraped from nvidia-dcgm-exporter (GPU operator).
+# Agent /metrics (inflight, LLM latency) require ServiceMonitor on nemoclaw-gpu-agent.
 
 prometheus:
   url: http://REPLACE_PROMETHEUS_SERVICE.monitoring.svc
@@ -8,6 +9,18 @@ prometheus:
 rules:
   default: false
   custom:
+    # DCGM exporter attributes GPU util to workloads via exported_* labels (not pod/namespace).
+    - seriesQuery: 'DCGM_FI_DEV_GPU_UTIL{exported_namespace!="",exported_pod!=""}'
+      resources:
+        overrides:
+          exported_namespace:
+            resource: namespace
+          exported_pod:
+            resource: pod
+      name:
+        matches: "^(.*)$"
+        as: "gpu_utilization_percent"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
     - seriesQuery: 'nemoclaw_http_inflight_requests{namespace!="",pod!=""}'
       resources:
         overrides:

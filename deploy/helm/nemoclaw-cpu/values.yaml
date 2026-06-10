@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# --- Step 1: manual scaling (one pod per CPU) ---
+# Manual scaling: one pod per CPU (optional pre-GPU chart).
 #   helm install nemoclaw . -n nemoclaw --create-namespace --set cpuScaling.count=4
 #   helm upgrade nemoclaw . -n nemoclaw --set cpuScaling.count=2   # 2 CPUs → 2 pods
 #   kubectl scale deployment -n nemoclaw -l app.kubernetes.io/name=nemoclaw-cpu --replicas=4
@@ -31,6 +31,7 @@ namespace:
 
 service:
   type: ClusterIP
+  # Agent HTTP port (GPU chart uses 8081 — keep charts on different ports)
   port: 8080
 
 # Remote inference (no GPU in cluster) — same model path as NemoClaw on your VM
@@ -60,9 +61,19 @@ probes:
 
 nodeSelector: {}
 tolerations: []
-affinity: {}
+# Optional: prefer nodes without GPUs when your cluster has CPU-only workers.
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 80
+        preference:
+          matchExpressions:
+            - key: nvidia.com/gpu.present
+              operator: NotIn
+              values:
+                - "true"
 
-# --- Step 2: HPA (disabled until you enable) ---
+# HPA (enabled by install-hpa.sh).
 # Each agent pod requests 1 CPU (cpuScaling); HPA adds/removes pods under load.
 # Enable: helm upgrade ... -f values-step2-hpa.yaml
 autoscaling:

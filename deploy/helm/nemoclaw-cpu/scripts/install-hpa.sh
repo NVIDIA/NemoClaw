@@ -2,15 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# One-command install: metrics-server + nemoclaw-cpu with CPU-based HPA.
-# One Nemoclaw agent pod per CPU (min 1, max 7). No Prometheus required.
+# Install CPU HPA (metrics-server). Output is HPA-focused only.
 #
 # Usage:
 #   cd deploy/helm/nemoclaw-cpu
 #   source ~/.nemoclaw/secrets.env
 #   ./scripts/install-hpa.sh
-#
-# If rollout keeps failing: ./scripts/cluster-recover.sh
 
 set -euo pipefail
 
@@ -27,8 +24,6 @@ HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values-step2-hpa.yaml}"
 MIN_REPLICAS="${MIN_REPLICAS:-1}"
 MAX_REPLICAS="${MAX_REPLICAS:-7}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300}"
-
-log() { hpa_common_log "$*"; }
 
 require_cmd kubectl
 require_cmd helm
@@ -56,62 +51,31 @@ helm_install() {
     --set probes.readinessChecksInferenceHub=false \
     --set autoscaling.enabled=true \
     --set autoscaling.minReplicas="${MIN_REPLICAS}" \
-    --set autoscaling.maxReplicas="${MAX_REPLICAS}"
+    --set autoscaling.maxReplicas="${MAX_REPLICAS}" \
+    >/dev/null
 }
 
-log "Step 1: metrics-server (required for CPU HPA)"
 if command -v microk8s >/dev/null 2>&1; then
   microk8s enable metrics-server 2>/dev/null || true
 fi
 if ! kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True; then
-  echo "Waiting for metrics-server..." >&2
   for _ in $(seq 1 24); do
     kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True && break
     sleep 5
   done
 fi
 kubectl get apiservice v1beta1.metrics.k8s.io 2>/dev/null | grep -q True || {
-  echo "metrics-server not ready. Run: microk8s enable metrics-server" >&2
+  echo "metrics-server not ready — CPU HPA unavailable" >&2
   exit 1
 }
 
-log "Step 2: install agents + CPU HPA (readiness=/healthz; min=${MIN_REPLICAS} max=${MAX_REPLICAS})"
 helm_install
 hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" && helm_install || true
 
 if ! hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}"; then
-  log "Rollout failed"
   hpa_common_diagnose_rollout "${NAMESPACE}" "${DEPLOYMENT}"
-  cat <<EOF >&2
-
-Try full recovery:
-  ./scripts/cluster-recover.sh
-
-Or:
-  DELETE_DEPLOYMENT=1 DELETE_HPA=1 ./scripts/hpa-reset.sh
-
-Verify Inference Hub after pods run:
-  kubectl port-forward -n ${NAMESPACE} svc/${RELEASE}-nemoclaw-cpu-agent 8080:8080
-  curl -s http://127.0.0.1:8080/readyz
-
-EOF
   exit 1
 fi
 
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${MAX_REPLICAS}" || true
-
-log "Step 3: status"
-kubectl get hpa -n "${NAMESPACE}" 2>/dev/null || true
-kubectl get deploy,pods -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-cpu 2>/dev/null || true
-
-cat <<EOF
-
-Installed (CPU HPA — metrics-server only).
-Readiness uses /healthz so rollout succeeds; chat still needs a valid Inference Hub key.
-
-Watch:  kubectl get hpa -n ${NAMESPACE} -w && kubectl get pods -n ${NAMESPACE} -w
-Hub OK: kubectl port-forward -n ${NAMESPACE} svc/${RELEASE}-nemoclaw-cpu-agent 8080:8080 && curl -s http://127.0.0.1:8080/readyz
-Test:   ./scripts/hpa-load-test.sh
-Recover: ./scripts/cluster-recover.sh
-
-EOF
+hpa_common_print_hpa "${NAMESPACE}"

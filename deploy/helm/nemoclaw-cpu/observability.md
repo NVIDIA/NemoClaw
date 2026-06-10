@@ -15,6 +15,11 @@ CPU-based HPA only needs **metrics-server**. For **performance HPA** (inflight r
 |--------|-----|
 | `nemoclaw_http_inflight_requests` | Backpressure / queue proxy |
 | `nemoclaw_http_requests_total` | Throughput |
+| `nemoclaw_llm_request_duration_seconds` | LLM chat/completions latency histogram |
+| `nemoclaw_llm_latency_p95_milliseconds` | Rolling p95 LLM latency (ms); use with `autoscaling.mode=latency` |
+| `nemoclaw_llm_latency_p50_milliseconds` | Rolling median LLM latency (ms) |
+| `nemoclaw_llm_latency_avg_milliseconds` | Rolling average LLM latency (ms) |
+| `nemoclaw_llm_requests_total` | LLM proxy success/error counts |
 | `nemoclaw_inference_hub_reachable` | Hub health |
 
 Enable scraping: set `metrics.serviceMonitor.enabled: true` in Helm values (requires Prometheus Operator in cluster).

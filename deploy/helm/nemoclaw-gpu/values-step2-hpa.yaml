@@ -1,0 +1,65 @@
+# GPU HPA — one pod per GPU, scale on DCGM GPU utilization (%).
+# Requires: nvidia-dcgm-exporter + Prometheus + prometheus-adapter (install-hpa.sh sets up).
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  maxGpus: 4
+  mode: gpu
+  targetGPUUtilizationPercentage: 40
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Max
+
+gpuScaling:
+  oneReplicaPerGpu: true
+  count: 1
+  perPodGpu: 1
+  perPodCpuRequest: "2"
+  perPodCpuLimit: "4"
+  perPodMemory: "16Gi"
+  perPodMemoryLimit: "24Gi"
+  agentCpuRequest: "250m"
+  agentCpuLimit: "1"
+  agentMemory: "512Mi"
+  agentMemoryLimit: "1Gi"
+
+loadTest:
+  chatOnly: true
+  concurrencyPerPod: 64
+  maxTokens: 512
+  jobParallelism: 8
+  loadMultiplier: 4
+  inflightPerGpu: 1024
+  rampSec: 30
+
+probes:
+  readinessChecksInference: true
+  startupProbeSeconds: 600
+
+# Shared model cache on the GPU node — pull once, reuse across HPA replicas and restarts.
+ollama:
+  persistence:
+    enabled: true
+    hostPath: /var/lib/nemoclaw-gpu/ollama
+    size: 20Gi
+    accessMode: ReadWriteMany

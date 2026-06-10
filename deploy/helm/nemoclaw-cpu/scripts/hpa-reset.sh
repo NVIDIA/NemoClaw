@@ -39,8 +39,6 @@ HPA_VALUES="${HPA_VALUES:-${CHART_DIR}/values-step2-hpa.yaml}"
 WAIT_ROLLOUT="${WAIT_ROLLOUT:-1}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300}"
 
-log() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
-
 require_cmd kubectl
 
 if [[ "${SKIP_HELM}" != "1" ]] || [[ "${RUN_LOAD_TEST}" == "1" ]]; then
@@ -72,47 +70,33 @@ clear_pod_finalizers() {
   done
 }
 
-log "=== nemoclaw reset (namespace=${NAMESPACE}) ==="
-
 if ! namespace_exists; then
-  log "Namespace ${NAMESPACE} does not exist — nothing to clean."
   exit 0
 fi
 
-log "Step 1: delete load-test Jobs and ConfigMaps"
 kubectl delete job -n "${NAMESPACE}" -l "job-name=${JOB_NAME}" --ignore-not-found --wait=false 2>/dev/null || true
 kubectl delete job "${JOB_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
 kubectl delete configmap "${JOB_NAME}-scripts" -n "${NAMESPACE}" --ignore-not-found 2>/dev/null || true
 
 if [[ "${DELETE_HPA}" == "1" ]]; then
-  log "Step 2: delete HPA (DELETE_HPA=1)"
   kubectl delete hpa "${HPA_NAME}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
   kubectl delete hpa -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-cpu --ignore-not-found --wait=false 2>/dev/null || true
-else
-  log "Step 2: keep HPA"
 fi
 
 if [[ "${DELETE_DEPLOYMENT}" == "1" ]]; then
-  log "Step 3: delete Deployment ${DEPLOYMENT}"
   kubectl delete deployment "${DEPLOYMENT}" -n "${NAMESPACE}" --ignore-not-found --wait=false 2>/dev/null || true
-else
-  log "Step 3: keep Deployment (do not scale to 0 — HPA minReplicas is 1)"
 fi
 
-log "Step 4: force-delete all pods in ${NAMESPACE}"
 kubectl delete pods -n "${NAMESPACE}" --all --force --grace-period=0 2>/dev/null || true
 sleep 2
 clear_pod_finalizers
 kubectl delete pods -n "${NAMESPACE}" --all --force --grace-period=0 2>/dev/null || true
 
-log "Step 5: remove old ReplicaSets"
 kubectl delete rs -n "${NAMESPACE}" -l app.kubernetes.io/name=nemoclaw-cpu --ignore-not-found --wait=false 2>/dev/null || true
 hpa_common_clear_stuck_pods "${NAMESPACE}"
 
 if [[ "${SKIP_HELM}" == "1" ]]; then
-  log "SKIP_HELM=1 — kubectl cleanup only."
-  kubectl get deploy,hpa,pods -n "${NAMESPACE}" 2>/dev/null || true
-  log "Done. Run helm upgrade or ./scripts/hpa-load-test.sh when ready."
+  hpa_common_print_hpa "${NAMESPACE}"
   exit 0
 fi
 
@@ -120,15 +104,11 @@ MIN_REPLICAS="${MIN_REPLICAS:-1}"
 MAX_REPLICAS="${MAX_REPLICAS:-7}"
 
 if [[ "${DELETE_HPA}" == "1" ]]; then
-  log "Step 6a: start one agent pod (HPA off — recovery after DELETE_HPA=1)"
   if ! hpa_common_ensure_agent_ready "${NAMESPACE}" "${RELEASE}" "${CHART_DIR}" \
     "${NVIDIA_INFERENCE_HUB_API_KEY}" "${HPA_VALUES}" "${ROLLOUT_TIMEOUT}"; then
-    log "Failed to start agent — try: DELETE_DEPLOYMENT=1 ./scripts/hpa-reset.sh"
+    echo "HPA reset failed — baseline pod not ready" >&2
     exit 1
   fi
-  log "Step 6b: enable HPA (min=${MIN_REPLICAS}, max=${MAX_REPLICAS}, loadTest.cpuSpinMs=0)"
-else
-  log "Step 6: helm upgrade idle baseline (keep HPA, min=${MIN_REPLICAS}, max=${MAX_REPLICAS})"
 fi
 
 helm upgrade "${RELEASE}" "${CHART_DIR}" -n "${NAMESPACE}" \
@@ -140,7 +120,8 @@ helm upgrade "${RELEASE}" "${CHART_DIR}" -n "${NAMESPACE}" \
   --set probes.readinessChecksInferenceHub=false \
   --set autoscaling.enabled=true \
   --set autoscaling.minReplicas="${MIN_REPLICAS}" \
-  --set autoscaling.maxReplicas="${MAX_REPLICAS}"
+  --set autoscaling.maxReplicas="${MAX_REPLICAS}" \
+  >/dev/null
 
 hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" || helm upgrade "${RELEASE}" "${CHART_DIR}" -n "${NAMESPACE}" \
   --reuse-values -f "${HPA_VALUES}" \
@@ -150,45 +131,19 @@ hpa_common_kick_deployment "${NAMESPACE}" "${DEPLOYMENT}" || helm upgrade "${REL
   --set probes.readinessChecksInferenceHub=false \
   --set autoscaling.enabled=true \
   --set autoscaling.minReplicas="${MIN_REPLICAS}" \
-  --set autoscaling.maxReplicas="${MAX_REPLICAS}"
+  --set autoscaling.maxReplicas="${MAX_REPLICAS}" \
+  >/dev/null
 
 hpa_common_verify_hpa_bounds "${NAMESPACE}" "${DEPLOYMENT}" "${HPA_NAME}" "${MIN_REPLICAS}" "${MAX_REPLICAS}" || true
 
 if [[ "${WAIT_ROLLOUT}" == "1" ]]; then
   if ! hpa_common_wait_rollout "${DEPLOYMENT}" "${NAMESPACE}" "${ROLLOUT_TIMEOUT}"; then
     hpa_common_diagnose_rollout "${NAMESPACE}" "${DEPLOYMENT}"
-    log "Rollout failed — try: ./scripts/cluster-recover.sh"
   fi
 fi
 
-log "Step 7: status"
-kubectl get hpa,deploy,pods -n "${NAMESPACE}" 2>/dev/null || true
-kubectl top pods -n "${NAMESPACE}" 2>/dev/null | grep -E 'agent|NAME' || true
+hpa_common_print_hpa "${NAMESPACE}"
 
 if [[ "${RUN_LOAD_TEST}" == "1" ]]; then
-  log "Step 8: starting load test..."
   exec "${SCRIPT_DIR}/hpa-load-test.sh"
 fi
-
-cat <<EOF
-
-Reset complete.
-
-Next load test:
-  cd ${CHART_DIR}
-  source ~/.nemoclaw/secrets.env
-  ./scripts/hpa-load-test.sh
-
-Watch:
-  kubectl get hpa,pods -n ${NAMESPACE} -w
-
-If pods still stuck:
-  DELETE_DEPLOYMENT=1 ./scripts/hpa-reset.sh
-
-If HPA shows desiredReplicas=0:
-  DELETE_HPA=1 ./scripts/hpa-reset.sh
-
-Repeated rollout failures:
-  ./scripts/cluster-recover.sh
-
-EOF

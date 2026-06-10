@@ -33,7 +33,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "nemoclaw-cpu.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "nemoclaw-cpu.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-component: agent
+component: cpu-agent
+nemoclaw.ai/workload-type: cpu
 {{- end }}
 
 {{- define "nemoclaw-cpu.namespace" -}}

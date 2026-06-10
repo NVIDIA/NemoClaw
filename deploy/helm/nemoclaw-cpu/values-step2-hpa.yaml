@@ -1,4 +1,4 @@
-# Step 2: CPU HPA — one Nemoclaw agent pod per CPU, auto scale up and down.
+# CPU HPA — one agent pod per CPU.
 # Requires metrics-server: microk8s enable metrics-server
 #
 #   helm upgrade nemoclaw . -n nemoclaw -f values-step2-hpa.yaml --reuse-values \
