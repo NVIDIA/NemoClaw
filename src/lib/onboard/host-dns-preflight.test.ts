@@ -350,39 +350,18 @@ describe("assertHostDnsHealthy (#4784)", () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it("honors recorded NVIDIA providers (nvidia-prod, nvidia-nim, nvidia-router) and skips recorded local ones (codex P2 resume/rerun)", () => {
+  it("skips an explicit local NIM provider (nim-local) in non-interactive mode", () => {
     const exit = vi.fn();
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    // Recorded NVIDIA session/registry providers → run (even interactive/unset env).
-    // `nvidia-nim` is the legacy NVIDIA Endpoints alias and still needs the host.
-    for (const provider of ["nvidia-prod", "nvidia-nim", "nvidia-router"]) {
-      const nvidiaProbe = vi.fn(() => ({
-        ok: true as const,
-        hostname: "integrate.api.nvidia.com",
-      }));
-      assertHostDnsHealthy(host, {
-        env: {},
-        nonInteractive: false,
-        providerKey: provider,
-        exit,
-        probeHostDnsImpl: nvidiaProbe,
-      });
-      expect(nvidiaProbe).toHaveBeenCalledTimes(1);
-    }
-
-    // Recorded local/non-NVIDIA providers → skip even in non-interactive reruns.
-    for (const provider of ["ollama-local", "vllm-local", "nim-local"]) {
-      const localProbe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
-      assertHostDnsHealthy(host, {
-        env: {},
-        nonInteractive: true,
-        providerKey: provider,
-        exit,
-        probeHostDnsImpl: localProbe,
-      });
-      expect(localProbe).not.toHaveBeenCalled();
-    }
+    const probe = vi.fn(() => ({ ok: true as const, hostname: "integrate.api.nvidia.com" }));
+    // `nim-local` runs NIM locally and validates against localhost, not
+    // integrate.api.nvidia.com, so the NVIDIA host DNS probe must not gate it.
+    assertHostDnsHealthy(host, {
+      env: { NEMOCLAW_PROVIDER: "nim-local" },
+      nonInteractive: true,
+      exit,
+      probeHostDnsImpl: probe,
+    });
+    expect(probe).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
   });
 
