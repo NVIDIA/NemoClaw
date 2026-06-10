@@ -36,7 +36,9 @@ This document is the **GPU deployment guide** — install, operate, load-test, a
 
 This guide is written and load-tested on **4× NVIDIA L40S**. Default install and HPA bounds assume **one agent pod per GPU** (`MAX_REPLICAS=4`).
 
-![4× NVIDIA L40S — `nvidia-smi`](images/nvidia-smi-4xl40s.png)<img width="1334" height="920" alt="Screenshot 2026-06-09 at 7 01 28 PM" src="https://github.com/user-attachments/assets/a8380890-4074-43a6-968c-916b523199d2" />
+![4× NVIDIA L40S — `nvidia-smi`]
+
+<img width="1334" height="920" alt="Screenshot 2026-06-09 at 7 01 28 PM" src="https://github.com/user-attachments/assets/a8380890-4074-43a6-968c-916b523199d2" />
 
 
 | Property | Value |
@@ -125,11 +127,21 @@ Optional autoscaling demo:
 
 ```bash
 ./scripts/hpa-load-test.sh
+
+
+<img width="1888" height="826" alt="Screenshot 2026-06-09 at 7 02 00 PM" src="https://github.com/user-attachments/assets/4aa98eb1-58bd-4256-8539-df6f617d3016" />
+
+
+<img width="1400" height="204" alt="Screenshot 2026-06-09 at 3 22 51 PM" src="https://github.com/user-attachments/assets/5772ad1a-4765-4684-b34f-3a8674e2d277" />
+
+
+
+
 ./scripts/hpa-reset.sh
 ```
 
 
-<img width="1334" height="920" alt="Screenshot 2026-06-09 at 7 01 28 PM" src="https://github.com/user-attachments/assets/2600c547-2841-456b-8c8b-bf2f0a8ece2a" />
+
 
 
 If install keeps failing:
@@ -140,8 +152,6 @@ If install keeps failing:
 
 Chart: [helm/nemoclaw-gpu/](helm/nemoclaw-gpu/) · **Models (CPU vs GPU):** [helm/README.md](helm/README.md)
 
-
-<img width="1400" height="204" alt="Screenshot 2026-06-09 at 3 22 51 PM" src="https://github.com/user-attachments/assets/ab9f1327-eeed-4bb4-aca6-154c57ff8861" />
 
 
 ---
