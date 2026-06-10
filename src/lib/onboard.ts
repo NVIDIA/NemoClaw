@@ -576,6 +576,7 @@ import {
   type SetupPresetSuggestionOptions,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
+import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
@@ -5482,468 +5483,41 @@ function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] 
   return selectedPresets.every((preset) => applied.has(preset));
 }
 
-/**
- * Prompt the user to select a policy tier (restricted / balanced / open).
- * Uses the same radio-style TUI as presetsCheckboxSelector (single-select).
- * In non-interactive mode reads NEMOCLAW_POLICY_TIER (default: balanced).
- * Returns the tier name string.
- *
- * @returns {Promise<string>}
- */
-async function selectPolicyTier(): Promise<string> {
-  const allTiers = tiers.listTiers();
-  const defaultTier = allTiers.find((t) => t.name === "balanced") || allTiers[1];
-
-  if (isNonInteractive()) {
-    const name = policyTierEnv.resolvePolicyTierFromEnv();
-    note(`  [non-interactive] Policy tier: ${name}`);
-    return name;
-  }
-
-  const RADIO_ON = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
-  const RADIO_OFF = USE_COLOR ? "\x1b[2m[ ]\x1b[0m" : "[ ]";
-
-  // ── Fallback: non-TTY ─────────────────────────────────────────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log("  Policy tier — controls which network presets are enabled:");
-    allTiers.forEach((t) => {
-      const marker = t.name === defaultTier.name ? RADIO_ON : RADIO_OFF;
-      console.log(`    ${marker} ${t.label}`);
-    });
-    console.log("");
-    const answer = await prompt(
-      `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
-    );
-    const chosen = selectFromNumberedMenuOrExit(
-      answer,
-      allTiers.indexOf(defaultTier) + 1,
-      allTiers,
-    );
-    console.log(`  Tier: ${chosen.label}`);
-    return chosen.name;
-  }
-
-  // ── Raw-mode TUI (radio — single selection) ───────────────────────
-  let cursor = allTiers.indexOf(defaultTier);
-  let selectedIdx = cursor;
-  const n = allTiers.length;
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}select${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  select    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = ["  Policy tier — controls which network presets are enabled:"];
-    allTiers.forEach((t, i) => {
-      const radio = i === selectedIdx ? RADIO_ON : RADIO_OFF;
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${radio} ${t.label}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<string>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve(allTiers[selectedIdx].name);
-      } else if (key === " ") {
-        selectedIdx = cursor;
-        redraw();
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
+function getPolicySelectionPromptHelpers(): ReturnType<typeof createPolicySelectionPromptHelpers> {
+  return createPolicySelectionPromptHelpers({
+    tiers,
+    policyTierEnv,
+    isNonInteractive,
+    note,
+    prompt,
+    selectFromNumberedMenuOrExit,
+    makeOnboardCancelExit,
+    sandboxCancelRollback,
+    useColor: USE_COLOR,
   });
 }
 
-/**
- * Combined preset selector: shows ALL available presets, pre-checks those in
- * the chosen tier, and lets the user include/exclude any preset and toggle
- * per-preset access (read vs read-write).
- *
- * Tier presets are listed first (in tier order), then remaining presets
- * alphabetically. Tier presets are pre-checked; others start unchecked.
- *
- * Keys:
- *   ↑/↓ j/k — move cursor
- *   Space    — include / exclude current preset
- *   r        — toggle read / read-write for current preset
- *   Enter    — confirm
- *
- * @param {string} tierName
- * @param {Array<{name: string}>} allPresets
- * @param {string[]} [extraSelected]  — names pre-checked even if not in tier (e.g. already-applied)
- * @returns {Promise<Array<{name: string, access: string}>>}
- */
+async function selectPolicyTier(): Promise<string> {
+  return getPolicySelectionPromptHelpers().selectPolicyTier();
+}
+
 async function selectTierPresetsAndAccess(
   tierName: string,
   allPresets: Array<{ name: string; description?: string }>,
   extraSelected: string[] = [],
 ): Promise<Array<{ name: string; access: string }>> {
-  const tierDef = tiers.getTier(tierName);
-  const tierPresetMap: Record<string, string> = {};
-  if (tierDef) {
-    for (const p of tierDef.presets) {
-      tierPresetMap[p.name] = p.access;
-    }
-  }
-
-  // Tier presets first (in tier order), then the rest in their original order.
-  const tierNames = tierDef ? tierDef.presets.map((p) => p.name) : [];
-  const tierSet = new Set(tierNames);
-  const ordered: Array<{ name: string; description?: string }> = [
-    ...tierNames
-      .map((name) => allPresets.find((p) => p.name === name))
-      .filter((p): p is { name: string; description?: string } => Boolean(p)),
-    ...allPresets.filter((p) => !tierSet.has(p.name)),
-  ];
-
-  // Initial inclusion: tier presets + any already-applied extras.
-  const included = new Set([
-    ...tierNames,
-    ...extraSelected.filter((n) => ordered.find((p) => p.name === n)),
-  ]);
-
-  // Access levels: tier defaults for tier presets, read-write default for others.
-  const accessModes: Record<string, string> = {};
-  for (const p of ordered) {
-    accessModes[p.name] = tierPresetMap[p.name] ?? "read-write";
-  }
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const O = USE_COLOR ? "\x1b[38;5;208m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const GREEN_CHECK = USE_COLOR ? `[${G}✓${R}]` : "[✓]";
-  const EMPTY_CHECK = USE_COLOR ? `${D}[ ]${R}` : "[ ]";
-  const TOGGLE_RW = USE_COLOR ? `[${O}rw${R}]` : "[rw]";
-  const TOGGLE_R = USE_COLOR ? `${D}[ r]${R}` : "[ r]";
-
-  const label = tierDef ? `  Presets  (${tierDef.label} defaults):` : "  Presets:";
-  const n = ordered.length;
-
-  // ── Non-interactive: return tier defaults silently ─────────────────
-  if (isNonInteractive()) {
-    return ordered
-      .filter((p) => included.has(p.name))
-      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
-  }
-
-  // ── Fallback: non-TTY ─────────────────────────────────────────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log(label);
-    ordered.forEach((p) => {
-      const isIncluded = included.has(p.name);
-      const isRw = accessModes[p.name] === "read-write";
-      const check = isIncluded ? GREEN_CHECK : EMPTY_CHECK;
-      const badge = isIncluded ? (isRw ? "[rw]" : "[ r]") : "    ";
-      console.log(`    ${check} ${badge} ${p.name}`);
-    });
-    console.log("");
-    const rawInclude = await prompt(
-      "  Include presets (comma-separated names, Enter to keep defaults): ",
-    );
-    if (rawInclude.trim()) {
-      const knownNames = new Set(ordered.map((p) => p.name));
-      included.clear();
-      for (const name of rawInclude
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)) {
-        if (knownNames.has(name)) {
-          included.add(name);
-        } else {
-          console.error(`  Unknown preset name ignored: ${name}`);
-        }
-      }
-    }
-    return ordered
-      .filter((p) => included.has(p.name))
-      .map((p) => ({ name: p.name, access: accessModes[p.name] }));
-  }
-
-  // ── Raw-mode TUI ─────────────────────────────────────────────────
-  let cursor = 0;
-
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}include${R}    ${G}r${R}  ${D}toggle rw${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  include    r  toggle rw    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = [label];
-    ordered.forEach((p, i) => {
-      const isIncluded = included.has(p.name);
-      const isRw = accessModes[p.name] === "read-write";
-      const check = isIncluded ? GREEN_CHECK : EMPTY_CHECK;
-      // badge is 4 visible chars + 1 space; blank when unchecked to keep name aligned
-      const badge = isIncluded ? (isRw ? TOGGLE_RW + " " : TOGGLE_R + " ") : "     ";
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${check} ${badge}${p.name}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<Array<{ name: string; access: string }>>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve(
-          ordered
-            .filter((p) => included.has(p.name))
-            .map((p) => ({ name: p.name, access: accessModes[p.name] })),
-        );
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)();
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      } else if (key === " ") {
-        const currentPreset = ordered[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        if (included.has(name)) {
-          included.delete(name);
-        } else {
-          included.add(name);
-        }
-        redraw();
-      } else if (key === "r" || key === "R") {
-        const currentPreset = ordered[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        accessModes[name] = accessModes[name] === "read-write" ? "read" : "read-write";
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
-  });
+  return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
+    tierName,
+    allPresets,
+    extraSelected,
+  );
 }
 
-/**
- * Raw-mode TUI preset selector.
- * Keys: ↑/↓ or k/j to move, Space to toggle, a to select/unselect all, Enter to confirm.
- * Falls back to a simple line-based prompt when stdin is not a TTY.
- */
 async function presetsCheckboxSelector(
   allPresets: Array<{ name: string; description: string }>,
   initialSelected: string[],
 ): Promise<string[]> {
-  const selected = new Set<string>(initialSelected);
-  const n = allPresets.length;
-
-  // ── Zero-presets guard ────────────────────────────────────────────
-  if (n === 0) {
-    console.log("  No policy presets are available.");
-    return [];
-  }
-
-  const GREEN_CHECK = USE_COLOR ? "[\x1b[32m✓\x1b[0m]" : "[✓]";
-
-  // ── Fallback: non-TTY or redirected stdout (piped input) ──────────
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.log("");
-    console.log("  Available policy presets:");
-    allPresets.forEach((p) => {
-      const marker = selected.has(p.name) ? GREEN_CHECK : "[ ]";
-      console.log(`    ${marker} ${p.name.padEnd(14)} — ${p.description}`);
-    });
-    console.log("");
-    const raw = await prompt("  Select presets (comma-separated names, Enter to skip): ");
-    if (!raw.trim()) {
-      console.log("  Skipping policy presets.");
-      return [];
-    }
-    const knownNames = new Set(allPresets.map((p) => p.name));
-    const chosen = [];
-    for (const name of raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)) {
-      if (knownNames.has(name)) {
-        chosen.push(name);
-      } else {
-        console.error(`  Unknown preset name ignored: ${name}`);
-      }
-    }
-    return chosen;
-  }
-
-  // ── Raw-mode TUI ─────────────────────────────────────────────────
-  let cursor = 0;
-
-  const G = USE_COLOR ? "\x1b[32m" : "";
-  const D = USE_COLOR ? "\x1b[2m" : "";
-  const R = USE_COLOR ? "\x1b[0m" : "";
-  const HINT = USE_COLOR
-    ? `  ${G}↑/↓ j/k${R}  ${D}move${R}    ${G}Space${R}  ${D}toggle${R}    ${G}a${R}  ${D}all/none${R}    ${G}Enter${R}  ${D}confirm${R}`
-    : "  ↑/↓ j/k  move    Space  toggle    a  all/none    Enter  confirm";
-
-  const renderLines = () => {
-    const lines = ["  Available policy presets:"];
-    allPresets.forEach((p, i) => {
-      const check = selected.has(p.name) ? GREEN_CHECK : "[ ]";
-      const arrow = i === cursor ? ">" : " ";
-      lines.push(`   ${arrow} ${check} ${p.name.padEnd(14)} — ${p.description}`);
-    });
-    lines.push("");
-    lines.push(HINT);
-    return lines;
-  };
-
-  // Initial paint
-  process.stdout.write("\n");
-  const initial = renderLines();
-  for (const line of initial) process.stdout.write(`${line}\n`);
-  let lineCount = initial.length;
-
-  const redraw = () => {
-    process.stdout.write(`\x1b[${lineCount}A`);
-    const lines = renderLines();
-    for (const line of lines) process.stdout.write(`\r\x1b[2K${line}\n`);
-    lineCount = lines.length;
-  };
-
-  // Re-attach stdin to the event loop. A prior prompt cleanup may have
-  // unref'd it (sticky), and resume() alone would leave the raw-mode read
-  // detached from the loop.
-  if (typeof process.stdin.ref === "function") process.stdin.ref();
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-
-  return new Promise<string[]>((resolve) => {
-    const cleanup = () => {
-      process.stdin.setRawMode(false);
-      process.stdin.pause();
-      // Symmetric with the ref() at the entry; lets the wizard exit
-      // naturally if this is the last prompt.
-      if (typeof process.stdin.unref === "function") process.stdin.unref();
-      process.stdin.removeListener("data", onData);
-      process.removeListener("SIGTERM", onSigterm);
-    };
-
-    const onSigterm = makeOnboardCancelExit(sandboxCancelRollback, cleanup);
-    process.once("SIGTERM", onSigterm);
-
-    const onData = (key: string) => {
-      if (key === "\r" || key === "\n") {
-        cleanup();
-        process.stdout.write("\n");
-        resolve([...selected]);
-      } else if (key === "\x03") {
-        makeOnboardCancelExit(sandboxCancelRollback, cleanup)(); // Ctrl+C
-      } else if (key === "\x1b[A" || key === "k") {
-        cursor = (cursor - 1 + n) % n;
-        redraw();
-      } else if (key === "\x1b[B" || key === "j") {
-        cursor = (cursor + 1) % n;
-        redraw();
-      } else if (key === " ") {
-        const currentPreset = allPresets[cursor];
-        if (!currentPreset) return;
-        const name = currentPreset.name;
-        if (selected.has(name)) selected.delete(name);
-        else selected.add(name);
-        redraw();
-      } else if (key === "a") {
-        if (selected.size === n) selected.clear();
-        else for (const p of allPresets) selected.add(p.name);
-        redraw();
-      }
-    };
-
-    process.stdin.on("data", onData);
-  });
+  return getPolicySelectionPromptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
 }
 
 const computeSetupPresetSuggestions = (
