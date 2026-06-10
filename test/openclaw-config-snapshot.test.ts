@@ -51,7 +51,7 @@ function writeOpenClawRegistry(sandboxName: string): void {
 }
 
 describe("OpenClaw durable config file (#5027)", () => {
-  it("backs up and restores openclaw.json settings while sanitizing secrets", () => {
+  it("backs up and restores openclaw.json settings while sanitizing secrets", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -134,7 +134,12 @@ if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
   process.exit(0);
 }
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("openclaw.json")) {
-  fs.writeFileSync(path.join(dir, "openclaw.json"), readStdin());
+  const configPath = path.join(dir, "openclaw.json");
+  fs.writeFileSync(configPath, readStdin());
+  if (cmd.includes("sha256sum") && cmd.includes(".config-hash")) {
+    const digest = require("crypto").createHash("sha256").update(fs.readFileSync(configPath)).digest("hex");
+    fs.writeFileSync(path.join(dir, ".config-hash"), digest + "  openclaw.json\\n");
+  }
   process.exit(0);
 }
 process.exit(0);
@@ -204,6 +209,14 @@ process.exit(0);
       expect(after.channels.slack).toBeUndefined();
       expect(after.mcpServers.filesystem.command).toBe("npx");
       expect(after.customAgents.researcher.prompt).toBe("be thorough");
+      const expectedHash = await import("node:crypto").then(({ createHash }) =>
+        createHash("sha256")
+          .update(fs.readFileSync(path.join(openclawDir, "openclaw.json")))
+          .digest("hex"),
+      );
+      expect(fs.readFileSync(path.join(openclawDir, ".config-hash"), "utf-8")).toBe(
+        `${expectedHash}  openclaw.json\n`,
+      );
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

@@ -860,7 +860,11 @@ function backupStateFile(
   return "backed_up";
 }
 
-function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string {
+function buildStateFileRestoreCommand(
+  dir: string,
+  spec: StateFileSpec,
+  refreshOpenClawConfigHash = false,
+): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -878,7 +882,7 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     ].join("; ");
   }
 
-  return [
+  const steps = [
     `dst=${quotedRemotePath}`,
     'parent="$(dirname "$dst")"',
     '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
@@ -889,7 +893,18 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
     'mv -f "$tmp" "$dst"',
-  ].join("; ");
+  ];
+
+  if (refreshOpenClawConfigHash) {
+    steps.push(
+      'hash_file="${parent}/.config-hash"',
+      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
+      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
+      'chmod 660 "$hash_file" 2>/dev/null || true',
+    );
+  }
+
+  return steps.join("; ");
 }
 
 function buildStateFileRestoreInput(
@@ -927,7 +942,7 @@ function restoreStateFile(
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec);
+  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
   const input = buildStateFileRestoreInput(
     configFile,
