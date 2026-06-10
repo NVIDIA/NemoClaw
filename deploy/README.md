@@ -1,4 +1,4 @@
-# NemoClaw Kubernetes deployment (GPU)
+# NemoClaw Kubernetes deployment
 
 **How to run the GPU deployment:** **[README-gpu.md](README-gpu.md)** — install, port-forward, HPA, load test, architecture, metrics, ports, and troubleshooting.
 
