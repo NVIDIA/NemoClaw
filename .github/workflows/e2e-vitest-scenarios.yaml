@@ -159,6 +159,7 @@ jobs:
             e2e-artifacts/vitest/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/vitest/${{ matrix.id }}/actions/
             e2e-artifacts/vitest/${{ matrix.id }}/logs/
+            e2e-artifacts/vitest/${{ matrix.id }}/shell/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14

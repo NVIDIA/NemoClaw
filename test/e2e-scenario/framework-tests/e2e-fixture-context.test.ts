@@ -65,6 +65,11 @@ describe("E2E fixture primitives", () => {
       "onboarding.result.json",
       "state-validation.result.json",
     ];
+    const shellEvidenceFiles = [
+      "shell/command-evidence.result.json",
+      "shell/command-evidence.stdout.txt",
+      "shell/command-evidence.stderr.txt",
+    ];
 
     try {
       process.env.E2E_ARTIFACT_DIR = artifactParent;
@@ -75,8 +80,27 @@ describe("E2E fixture primitives", () => {
       for (const file of allowlistedFiles) {
         await artifacts.writeJson(file, { scenarioId, file });
       }
+      const controller = new AbortController();
+      const shellProbe = new ShellProbe({
+        artifacts,
+        redact: (text) => text,
+        signal: controller.signal,
+      });
+      const shellResult = await shellProbe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: ["-e", "console.log('shell evidence')"],
+          reason: "verify workflow allowlist preserves command evidence",
+        }),
+        { artifactName: "command-evidence", timeoutMs: 5_000 },
+      );
+
+      expect(shellResult.exitCode).toBe(0);
 
       for (const file of allowlistedFiles) {
+        expect(fs.existsSync(path.join(artifactParent, scenarioId, file))).toBe(true);
+      }
+      for (const file of shellEvidenceFiles) {
         expect(fs.existsSync(path.join(artifactParent, scenarioId, file))).toBe(true);
       }
       expect(

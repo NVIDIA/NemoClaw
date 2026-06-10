@@ -92,6 +92,7 @@ jobs:
           "artifact upload name must include matrix.id",
           "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json",
           "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/scenario.json",
+          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/shell/",
           "artifact upload retention-days must be 14",
           "upload-artifact action must be pinned to a full commit SHA",
         ]),

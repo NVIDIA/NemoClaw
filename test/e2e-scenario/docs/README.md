@@ -95,6 +95,7 @@ test/e2e-scenario/
 
 - `.github/workflows/e2e-vitest-scenarios.yaml` runs selected or all supported
   live Vitest scenarios and uploads an explicit artifact allowlist with
+  JSON summaries plus action, log, and shell command-evidence directories under
   14-day retention.
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and

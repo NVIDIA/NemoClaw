@@ -275,6 +275,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   );
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/actions/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/logs/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/vitest/${{ matrix.id }}/shell/");
   for (const line of uploadPath.split("\n")) {
     if (line.trim() === "e2e-artifacts/vitest/${{ matrix.id }}/") {
       errors.push("artifact upload path must not list the whole matrix artifact directory");

@@ -35,7 +35,8 @@ and artifact shape operators needed from the retired workflows:
 - per-phase `environment.result.json`, `onboarding.result.json`, and
   `state-validation.result.json`;
 - per-scenario step summary rendered from `run-plan.json`;
-- explicit artifact upload allowlist with 14-day retention.
+- explicit artifact upload allowlist with action, log, shell command-evidence,
+  and JSON summary paths plus 14-day retention.
 
 ## What Replaced It
 
