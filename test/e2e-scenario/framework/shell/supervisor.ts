@@ -66,7 +66,10 @@ export interface SuperviseResult {
 
 const DEFAULT_KILL_GRACE_MS = 5_000;
 
-export function superviseChild(child: ChildProcess, opts: SuperviseOptions): Promise<SuperviseResult> {
+export function superviseChild(
+  child: ChildProcess,
+  opts: SuperviseOptions,
+): Promise<SuperviseResult> {
   return new Promise<SuperviseResult>((resolve) => {
     const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     const pgid = child.pid;

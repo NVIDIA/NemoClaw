@@ -21,10 +21,7 @@ import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { superviseChild } from "../framework/shell/supervisor.ts";
-import {
-  trustedShellCommand,
-  validateShellToken,
-} from "../framework/shell/trusted-command.ts";
+import { trustedShellCommand, validateShellToken } from "../framework/shell/trusted-command.ts";
 
 const NUL = String.fromCharCode(0);
 
@@ -40,9 +37,9 @@ describe("framework/shell/trusted-command", () => {
   });
 
   it("trustedShellCommand rejects NUL bytes in the command", () => {
-    expect(() =>
-      trustedShellCommand({ command: `ba${NUL}sh`, reason: "test" }),
-    ).toThrowError(/command cannot contain NUL bytes/);
+    expect(() => trustedShellCommand({ command: `ba${NUL}sh`, reason: "test" })).toThrowError(
+      /command cannot contain NUL bytes/,
+    );
   });
 
   it("trustedShellCommand rejects NUL bytes in arguments", () => {
@@ -73,14 +70,20 @@ describe("framework/shell/trusted-command", () => {
 
 describe("framework/shell/supervisor", () => {
   it("returns exitCode 0 when the child exits cleanly", async () => {
-    const child = spawn("bash", ["-c", "exit 0"], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", ["-c", "exit 0"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const result = await superviseChild(child, { timeoutMs: 5_000 });
     expect(result).toMatchObject({ exitCode: 0, signal: null, timedOut: false });
     expect(result.spawnError).toBeUndefined();
   });
 
   it("returns the child's non-zero exit code verbatim", async () => {
-    const child = spawn("bash", ["-c", "exit 7"], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", ["-c", "exit 7"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const result = await superviseChild(child, { timeoutMs: 5_000 });
     expect(result.exitCode).toBe(7);
     expect(result.timedOut).toBe(false);
@@ -108,7 +111,10 @@ describe("framework/shell/supervisor", () => {
     // group. Without the supervisor's SIGKILL escalation the test
     // would hang up to its outer timeout instead of resolving.
     const script = 'trap "" TERM; sleep 30 & wait';
-    const child = spawn("bash", ["-c", script], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", ["-c", script], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const startedAt = Date.now();
     const result = await superviseChild(child, { timeoutMs: 200, killGraceMs: 200 });
     const elapsed = Date.now() - startedAt;
@@ -121,7 +127,10 @@ describe("framework/shell/supervisor", () => {
 
   it("honors an AbortSignal without flagging the run as a timeout", async () => {
     const controller = new AbortController();
-    const child = spawn("bash", ["-c", "sleep 10"], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("bash", ["-c", "sleep 10"], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     setTimeout(() => controller.abort(), 50).unref();
     const result = await superviseChild(child, {
       timeoutMs: 10_000,
