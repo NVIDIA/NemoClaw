@@ -5,8 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { githubGraphql } from "../tools/advisors/github.mts";
 import {
   buildPromptTurns,
   buildSystemPrompt,
@@ -19,7 +18,7 @@ import {
   renderSummary,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { githubGraphql } from "../tools/advisors/github.mts";
+import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -219,6 +218,9 @@ describe("PR review advisor", () => {
       "any unmet acceptance clause or security fail/warning must be represented as a finding",
     );
     expect(prompt).toContain("Source-of-truth review");
+    expect(prompt).toContain("Vitest E2E suite simplicity");
+    expect(prompt).toContain("take a closer architecture look for new systems");
+    expect(prompt).toContain("Favor focused Vitest tests and local test helpers");
     expect(prompt).toContain("what invalid state is handled");
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
