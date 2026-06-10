@@ -16,6 +16,7 @@ import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
   OnboardingPhaseFixture,
+  RuntimePhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
 import { SecretStore } from "./secrets.ts";
@@ -34,6 +35,7 @@ export interface E2EScenarioFixtures {
   environment: EnvironmentPhaseFixture;
   onboard: OnboardingPhaseFixture;
   lifecycle: LifecyclePhaseFixture;
+  runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
 }
 
@@ -87,17 +89,20 @@ export const test = base.extend<E2EScenarioFixtures>({
   state: async ({}, use) => {
     await use(new StateClient());
   },
-  environment: async ({ host }, use) => {
-    await use(new EnvironmentPhaseFixture(host));
+  environment: async ({ artifacts, host }, use) => {
+    await use(new EnvironmentPhaseFixture(host, artifacts));
   },
-  onboard: async ({ cleanup, host, secrets }, use) => {
-    await use(new OnboardingPhaseFixture(host, secrets, cleanup));
+  onboard: async ({ artifacts, cleanup, host, secrets }, use) => {
+    await use(new OnboardingPhaseFixture(host, secrets, cleanup, artifacts));
   },
   lifecycle: async ({ cleanup, host, sandbox }, use) => {
     await use(new LifecyclePhaseFixture(host, sandbox, cleanup));
   },
-  stateValidation: async ({ host, gateway, sandbox }, use) => {
-    await use(new StateValidationPhaseFixture(host, gateway, sandbox));
+  runtime: async ({ provider, sandbox }, use) => {
+    await use(new RuntimePhaseFixture(sandbox, provider));
+  },
+  stateValidation: async ({ artifacts, host, gateway, sandbox }, use) => {
+    await use(new StateValidationPhaseFixture(host, gateway, sandbox, {}, artifacts));
   },
 });
 

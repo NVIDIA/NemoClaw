@@ -2,16 +2,59 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Slash command handler for `/nemoclaw shields status`.
+ * Slash command handler for `/nemoclaw shields`.
  *
- * Read-only — reports the current shields state from inside the sandbox.
+ * Routes the optional sub-argument:
+ *   - empty / `status` — reports the current shields state (read-only).
+ *   - `up` / `down`    — returns host-only guidance pointing at the host CLI.
+ *   - anything else    — returns an `Unknown argument` message with usage.
+ *
  * Shields can only be lowered or raised from the host CLI (security invariant).
  */
 
 import type { PluginCommandResult } from "../index.js";
 import { loadState } from "../blueprint/state.js";
 
-export function slashShieldsStatus(): PluginCommandResult {
+const MAX_ARG_DISPLAY_LEN = 32;
+
+function sanitiseArgForDisplay(raw: string): string {
+  const stripped = raw.replace(/[\x00-\x1F\x7F`]/g, "?");
+  return stripped.length > MAX_ARG_DISPLAY_LEN
+    ? `${stripped.slice(0, MAX_ARG_DISPLAY_LEN)}…`
+    : stripped;
+}
+
+export function slashShieldsStatus(arg?: string): PluginCommandResult {
+  const trimmed = (arg ?? "").trim();
+
+  if (trimmed === "up" || trimmed === "down") {
+    return {
+      text: [
+        `**Shields ${trimmed}** is host-only.`,
+        "",
+        "Sandbox shields can only be raised or lowered from the host CLI:",
+        "",
+        "```",
+        `nemoclaw <name> shields ${trimmed}`,
+        "```",
+        "",
+        "Inside the sandbox, `/nemoclaw shields` is read-only. Use `/nemoclaw shields` or `/nemoclaw shields status` to see the current state.",
+      ].join("\n"),
+    };
+  }
+
+  if (trimmed !== "" && trimmed !== "status") {
+    return {
+      text: [
+        `**Unknown argument:** \`${sanitiseArgForDisplay(trimmed)}\``,
+        "",
+        "Usage: `/nemoclaw shields [status]`",
+        "",
+        "Shields can only be raised or lowered from the host CLI: `nemoclaw <name> shields up|down`.",
+      ].join("\n"),
+    };
+  }
+
   const state = loadState();
 
   if (!state.shieldsDown) {

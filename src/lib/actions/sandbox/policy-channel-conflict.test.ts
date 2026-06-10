@@ -643,4 +643,130 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).not.toContain(slackApp);
     expect(upsertMock).toHaveBeenCalledTimes(1);
   });
+
+  it("slack: a second sandbox on the SAME gateway is blocked even with a different token (#4953)", async () => {
+    const slackBot = "xoxb-alpha-bot-token";
+    const slackApp = "xapp-alpha-app-token";
+    arrangeRegistry({
+      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      // bob holds Slack on the default gateway with entirely different tokens —
+      // the credential axis would NOT flag this, but the gateway axis must.
+      others: [
+        makePlanEntry("bob", "slack", [
+          {
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            credentialHash: hashCredential("xoxb-bob-bot") as string,
+          },
+          {
+            providerEnvKey: "SLACK_APP_TOKEN",
+            credentialHash: hashCredential("xapp-bob-app") as string,
+          },
+        ]),
+      ],
+    });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    promptMock.mockResolvedValue("n"); // decline the conflict prompt
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    const text = loggedText();
+    expect(text).toContain("Slack Socket Mode is already enabled for sandbox 'bob'");
+    expect(text).not.toContain("same slack credential"); // gateway axis, not a token match
+    expect(text).not.toContain(slackBot);
+    expect(text).not.toContain(slackApp);
+    expect(conflictPromptShown()).toBe(true);
+    expect(upsertMock).not.toHaveBeenCalled(); // aborted before registering
+  });
+
+  it("slack: shared token on the same gateway reports the credential conflict first (#4953)", async () => {
+    // The credential axis runs before the gateway axis, so a shared Slack token
+    // surfaces the gateway-independent "same slack credential" warning (more
+    // actionable: it conflicts even after moving to another gateway) instead of
+    // only the same-gateway remediation.
+    const slackBot = "xoxb-shared-bot-token";
+    const slackApp = "xapp-shared-app-token";
+    arrangeRegistry({
+      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      others: [
+        makePlanEntry("bob", "slack", [
+          { providerEnvKey: "SLACK_BOT_TOKEN", credentialHash: hashCredential(slackBot) as string },
+          { providerEnvKey: "SLACK_APP_TOKEN", credentialHash: hashCredential(slackApp) as string },
+        ]),
+      ],
+    });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN" ? slackBot : key === "SLACK_APP_TOKEN" ? slackApp : null,
+    );
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+
+    await expect(addSandboxChannel("alpha", { channel: "slack" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const text = loggedText();
+    expect(text).toContain("same slack credential"); // credential axis fired first
+    expect(text).not.toContain(slackBot);
+    expect(text).not.toContain(slackApp);
+    expect(exitMock).toHaveBeenCalledWith(1);
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it("slack: a second sandbox on a DIFFERENT gateway is not gateway-blocked (#4953)", async () => {
+    const bob = makePlanEntry("bob", "slack", [
+      {
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        credentialHash: hashCredential("xoxb-bob-bot") as string,
+      },
+      {
+        providerEnvKey: "SLACK_APP_TOKEN",
+        credentialHash: hashCredential("xapp-bob-app") as string,
+      },
+    ]);
+    (bob as { gatewayName?: string }).gatewayName = "nemoclaw-9090";
+    arrangeRegistry({
+      current: { name: "alpha", messagingChannels: [] } as SandboxEntry,
+      others: [bob],
+    });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN"
+        ? "xoxb-alpha-bot"
+        : key === "SLACK_APP_TOKEN"
+          ? "xapp-alpha-app"
+          : null,
+    );
+    promptMock.mockResolvedValue("n"); // would abort if any conflict prompt were shown
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    const text = loggedText();
+    expect(text).not.toContain("Slack Socket Mode is already enabled");
+    expect(conflictPromptShown()).toBe(false);
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("slack: a gateway conflict-detection failure is fail-soft, not a crash (#4953)", async () => {
+    arrangeRegistry({ current: { name: "alpha", messagingChannels: [] } as SandboxEntry });
+    // Simulate a malformed registry read: listSandboxes throws. The Slack
+    // gateway lookup must swallow it (best-effort warning) rather than crash
+    // the add or bypass the downstream guarded credential check.
+    listSandboxesMock.mockImplementation(() => {
+      throw new Error("registry boom");
+    });
+    getCredentialMock.mockImplementation((key: string) =>
+      key === "SLACK_BOT_TOKEN"
+        ? "xoxb-alpha-bot"
+        : key === "SLACK_APP_TOKEN"
+          ? "xapp-alpha-app"
+          : null,
+    );
+    promptMock.mockResolvedValue("y"); // proceed through any "could not verify" prompt
+
+    await addSandboxChannel("alpha", { channel: "slack" });
+
+    expect(loggedText()).toContain("Could not verify Slack Socket Mode gateway conflicts");
+    expect(exitMock).not.toHaveBeenCalled();
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+  });
 });

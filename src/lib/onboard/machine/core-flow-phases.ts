@@ -9,12 +9,9 @@ import {
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
+import { runLiveOnboardFlowSlice } from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
-import type {
-  OnboardMachineRunnerResult,
-  OnboardMachineRunnerRuntime,
-  OnboardStateHandlerResult,
-} from "./runner";
+import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 export interface CoreOnboardFlowPhaseOptions<
@@ -142,11 +139,6 @@ export function createCoreOnboardFlowPhases<
   return [providerInferencePhase, sandboxPhase];
 }
 
-function stateResults(result: OnboardStateHandlerResult): readonly OnboardStateResult[] {
-  if (Array.isArray(result)) return result as readonly OnboardStateResult[];
-  return [result as OnboardStateResult];
-}
-
 export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext>(options: {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -154,7 +146,6 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  const coreRuntimeSession = await options.runtime.session();
   // Compatibility bridge for live host glue while legacy step helpers remain a
   // second machine snapshot writer. OnboardRuntimeBoundary records skipped
   // stale/already-reached transition results from handlers whose source state
@@ -162,21 +153,14 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   // Keep resume and ahead-state sessions here so provider/sandbox repair checks
   // still run. Remove this path once legacy step helpers no longer advance
   // session.machine and handler FSM results are the only transition source.
-  if (!options.resume && coreRuntimeSession.machine.state === "provider_selection") {
-    return runCoreOnboardFlowSequence({
-      context: options.context,
-      runtime: options.runtime,
-      phases: options.phases,
-    });
-  }
-
-  let context = options.context;
-  for (const phase of options.phases) {
-    const phaseResult = await phase.run(context);
-    for (const stateResult of stateResults(phaseResult.result)) {
-      await options.recordStateResult(stateResult);
-    }
-    context = phaseResult.context;
-  }
-  return { context, session: await options.runtime.session() };
+  return runLiveOnboardFlowSlice({
+    context: options.context,
+    runtime: options.runtime,
+    phases: options.phases,
+    resume: options.resume,
+    runWhenState: ["provider_selection"],
+    compatibilityWhenState: ["inference", "sandbox", "openclaw", "agent_setup"],
+    runSlice: runCoreOnboardFlowSequence,
+    applyCompatibleResult: options.recordStateResult,
+  });
 }

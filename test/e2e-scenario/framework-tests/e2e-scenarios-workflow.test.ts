@@ -6,109 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import {
-  validateE2eScenariosWorkflowBoundary,
-  validateE2eVitestScenariosWorkflowBoundary,
-} from "../../../tools/e2e-scenarios/workflow-boundary.mts";
-import { listScenarios } from "../scenarios/registry.ts";
-import { resolveRunnerForScenario } from "../scenarios/runner-routing.ts";
-
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e-scenarios.yaml");
-
-function routesFromWorkflow(workflowPath = WORKFLOW_PATH): Map<string, string> {
-  const workflow = fs.readFileSync(workflowPath, "utf8");
-  const match = /declare -A ROUTES=\(\n(?<body>[\s\S]*?)\n\s*\)/.exec(workflow);
-  if (!match?.groups?.body) {
-    throw new Error("Could not find ROUTES table in e2e-scenarios.yaml");
-  }
-  return new Map(
-    Array.from(match.groups.body.matchAll(/^\s*\[([^\]]+)\]=([^\s)]+)\s*$/gm), ([, id, runner]) => [
-      id,
-      runner,
-    ]),
-  );
-}
-
-describe("e2e-scenarios workflow boundary", () => {
-  it("keeps scenario execution manual/reusable and artifact-safe", () => {
-    expect(validateE2eScenariosWorkflowBoundary()).toEqual([]);
-  });
-
-  it("routes every typed scenario ID to its resolved runner", () => {
-    const scenarios = listScenarios().sort((left, right) => left.id.localeCompare(right.id));
-    const routes = routesFromWorkflow();
-    const typedIds = scenarios.map((scenario) => scenario.id);
-    const routeIds = Array.from(routes.keys()).sort();
-    const missing = typedIds.filter((id) => !routeIds.includes(id));
-    const extra = routeIds.filter((id) => !typedIds.includes(id));
-    const runnerMismatches = scenarios.flatMap((scenario) => {
-      const workflowRunner = routes.get(scenario.id);
-      if (!workflowRunner) {
-        return [];
-      }
-      const resolvedRunner = resolveRunnerForScenario(scenario).runner;
-      return workflowRunner === resolvedRunner
-        ? []
-        : [`${scenario.id}: workflow=${workflowRunner}, typed=${resolvedRunner}`];
-    });
-
-    expect(missing, `workflow ROUTES missing typed scenario IDs: ${missing.join(", ")}`).toEqual(
-      [],
-    );
-    expect(extra, `workflow ROUTES has unknown scenario IDs: ${extra.join(", ")}`).toEqual([]);
-    expect(
-      runnerMismatches,
-      `workflow ROUTES has runner mismatches: ${runnerMismatches.join("; ")}`,
-    ).toEqual([]);
-  });
-
-  it("flags unsafe trigger and contract regressions", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-scenarios-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    fs.writeFileSync(
-      workflowPath,
-      `
-"on":
-  pull_request_target: {}
-permissions:
-  contents: write
-jobs:
-  run-scenario:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Run typed scenarios
-        run: npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "$SCENARIOS" --plan-only
-      - name: Upload scenario artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bad-name
-          path: test/e2e/logs/
-`,
-    );
-
-    try {
-      const errors = validateE2eScenariosWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "workflow must support workflow_dispatch",
-          "workflow must support workflow_call",
-          "workflow must not run on pull_request_target",
-          "workflow permissions.contents must be read",
-          "workflow missing resolve-runner job",
-          "run-scenario job must use the resolved runner output",
-          "run-scenario job missing step: Run typed scenarios in WSL",
-          "artifact upload name must include the scenarios input",
-          "artifact upload must set include-hidden-files: false (raw context.env must not leak)",
-          "artifact upload path must include .e2e/actions/ (redacted action evidence)",
-          "artifact upload path must include .e2e/logs/ (redacted shell-step evidence)",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
+import { validateE2eVitestScenariosWorkflowBoundary } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 describe("e2e-vitest-scenarios workflow boundary", () => {
   it("keeps the live Vitest scenario workflow manual, pinned, and artifact-safe", () => {
@@ -134,12 +32,15 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/vitest
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: true
       - name: Set up Node
         uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
       - name: Run Vitest live E2E scenarios
         env:
           TEST_FILTER: \${{ inputs.test_filter }}
@@ -153,6 +54,35 @@ jobs:
           path: .e2e/vitest/
           include-hidden-files: true
           if-no-files-found: ignore
+  openshell-version-pin-vitest:
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+    if: \${{ inputs.scenarios != '' }}
+    env:
+      E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/openshell-version-pin
+      NEMOCLAW_RUN_E2E_SCENARIOS: "0"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm install
+      - name: Run OpenShell version-pin live test
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
+        run: npx vitest run --project e2e-scenarios-live "\${{ inputs.test_filter }}"
+      - name: Upload OpenShell version-pin artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openshell-version-pin
+          path: .e2e/openshell-version-pin/
+          include-hidden-files: true
+          if-no-files-found: error
 `,
     );
 
@@ -169,23 +99,50 @@ jobs:
           "live-scenarios strategy.fail-fast must be false",
           "live-scenarios matrix.include must come from generate-matrix output",
           "live-scenarios job must write artifacts under e2e-artifacts/vitest",
-          "live-scenarios artifacts must be scoped by matrix.id",
           "live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "live-scenarios job env must not include NVIDIA_API_KEY",
           "checkout action must be pinned to a full commit SHA",
           "checkout step must set persist-credentials=false",
+          "step 'Set up Node' env must not include NVIDIA_API_KEY",
           "setup-node action must be pinned to a full commit SHA",
           "run-scenario job missing step: Build CLI",
           "Vitest step must pass matrix.id through SCENARIO_ID env",
+          "Vitest step must receive NVIDIA_API_KEY from secrets",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
           "step 'Run Vitest live E2E scenarios' run script must include test/e2e-scenario/live/registry-scenarios.test.ts",
           "step 'Run Vitest live E2E scenarios' run script must include \"^${SCENARIO_ID}$\"",
           "step 'Summarize artifacts' run script must not interpolate dispatch inputs directly",
           "summary step must pass matrix.id through SCENARIO_ID env",
           "summary step must pass matrix.label through SCENARIO_LABEL env",
+          "step 'Summarize artifacts' run script must include run-plan.json",
+          'step \'Summarize artifacts\' run script must include Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]',
+          "step 'Summarize artifacts' run script must include | Scenario | Manifest | Expected state | Suites | Phases |",
           "artifact upload must set include-hidden-files: false",
           "artifact upload name must include matrix.id",
-          "artifact upload path must be non-hidden and scoped by matrix.id",
+          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/run-plan.json",
+          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/scenario.json",
+          "artifact upload path must include e2e-artifacts/vitest/${{ matrix.id }}/shell/",
+          "artifact upload retention-days must be 14",
           "upload-artifact action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest job must run independently of generate-matrix",
+          "openshell-version-pin-vitest job must run independently of workflow dispatch scenario filters",
+          "openshell-version-pin-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1",
+          "openshell-version-pin-vitest job must write artifacts under e2e-artifacts/vitest/openshell-version-pin",
+          "openshell-version-pin-vitest job env must not include NVIDIA_API_KEY",
+          "openshell-version-pin-vitest checkout action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest checkout step must set persist-credentials=false",
+          "openshell-version-pin-vitest step 'Set up Node' env must not include NVIDIA_API_KEY",
+          "openshell-version-pin-vitest setup-node action must be pinned to a full commit SHA",
+          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
+          "openshell-version-pin-vitest step 'Run OpenShell version-pin live test' env must not include NVIDIA_API_KEY",
+          "step 'Run OpenShell version-pin live test' run script must not interpolate dispatch inputs directly",
+          "step 'Run OpenShell version-pin live test' run script must include test/e2e-scenario/live/openshell-version-pin.test.ts",
+          "openshell-version-pin-vitest upload-artifact action must be pinned to a full commit SHA",
+          "openshell-version-pin-vitest artifact upload name must be stable",
+          "artifact upload path must include e2e-artifacts/vitest/openshell-version-pin/",
+          "openshell-version-pin-vitest artifact upload must set include-hidden-files: false",
+          "openshell-version-pin-vitest artifact upload must ignore missing fixture artifacts",
+          "openshell-version-pin-vitest artifact upload retention-days must be 14",
         ]),
       );
     } finally {

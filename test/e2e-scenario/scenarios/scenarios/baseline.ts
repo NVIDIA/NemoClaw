@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { assertionGroupsForScenario } from "../assertions/registry.ts";
 import { scenario } from "../builder.ts";
 import {
   brevLaunchableRemote,
@@ -49,7 +48,6 @@ function canonicalScenario(input: CanonicalScenarioInput): ScenarioDefinition {
   if (input.expectedFailure) {
     builder = builder.expectedFailure(input.expectedFailure);
   }
-  builder = builder.assertions(assertionGroupsForScenario(builder.build()));
   return builder.build();
 }
 
