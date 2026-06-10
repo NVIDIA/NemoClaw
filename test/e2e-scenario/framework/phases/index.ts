@@ -23,6 +23,17 @@ export {
   type OnboardingSecrets,
 } from "./onboarding.ts";
 export {
+  inferenceRouteUrl,
+  RuntimePhaseFixture,
+  type InferenceRoute,
+  type InferenceRuntimeChatOptions,
+  type InferenceRuntimeProbeResult,
+  type InferenceRuntimeRequestOptions,
+  type InferenceRuntimeRouteOptions,
+  type InferenceRuntimeStatusOptions,
+  type ProviderRuntimeRequestOptions,
+} from "./runtime.ts";
+export {
   StateValidationPhaseFixture,
   type StateValidationProbeResult,
   type StateValidationResult,

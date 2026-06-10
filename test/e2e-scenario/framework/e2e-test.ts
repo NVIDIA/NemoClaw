@@ -16,6 +16,7 @@ import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
   OnboardingPhaseFixture,
+  RuntimePhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
 import { SecretStore } from "./secrets.ts";
@@ -34,6 +35,7 @@ export interface E2EScenarioFixtures {
   environment: EnvironmentPhaseFixture;
   onboard: OnboardingPhaseFixture;
   lifecycle: LifecyclePhaseFixture;
+  runtime: RuntimePhaseFixture;
   stateValidation: StateValidationPhaseFixture;
 }
 
@@ -95,6 +97,9 @@ export const test = base.extend<E2EScenarioFixtures>({
   },
   lifecycle: async ({ cleanup, host, sandbox }, use) => {
     await use(new LifecyclePhaseFixture(host, sandbox, cleanup));
+  },
+  runtime: async ({ provider, sandbox }, use) => {
+    await use(new RuntimePhaseFixture(sandbox, provider));
   },
   stateValidation: async ({ host, gateway, sandbox }, use) => {
     await use(new StateValidationPhaseFixture(host, gateway, sandbox));
