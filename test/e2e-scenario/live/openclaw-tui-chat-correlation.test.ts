@@ -4,9 +4,11 @@
 /**
  * Live E2E: OpenClaw TUI/chat correlation regression guard (#2603 + #3145).
  *
- * Migrated from `test/e2e/test-openclaw-tui-chat-correlation.sh` per the
- * #5098 migration epic (#5049 free-standing pattern). The legacy bash
- * script is a thin wrapper that:
+ * Salvage coverage slice for the protocol/history assertions currently
+ * carried by `test/e2e/test-openclaw-tui-chat-correlation.sh`. This PR
+ * intentionally does not update `legacy-inventory.json`; the legacy row stays
+ * `not-migrated` until a focused follow-up has full deletion evidence. The
+ * retained bash script is a thin wrapper that:
  *
  *   1. Onboards a fresh cloud OpenClaw sandbox (test-cloud-onboard-e2e.sh).
  *   2. Asserts `openclaw --version` reports the pinned 2026.5.27 build —
@@ -20,15 +22,14 @@
  *      ordered, non-duplicated user turns. It does not claim TUI rendering
  *      coverage for pending indicators or visible tool-call status.
  *
- * This file ports the live block (the `it.runIf(NEMOCLAW_ISSUE_2603_LIVE)`
- * case) into the typed scenario framework. The three host-side unit
- * cases in `test/openclaw-tui-chat-correlation.test.ts` are not migrated
- * — they are pure data-driven Vitest unit tests on the trace analyzer
- * and are not under the bash wrapper's jurisdiction.
+ * This file reuses the live block shape (the
+ * `it.runIf(NEMOCLAW_ISSUE_2603_LIVE)` case) in the typed scenario framework.
+ * The three host-side unit cases in `test/openclaw-tui-chat-correlation.test.ts`
+ * remain pure data-driven Vitest unit tests on the trace analyzer.
  *
- * Partial migration (#5049 pattern): the legacy bash workflow remains
- * in `nightly-e2e.yaml` until this typed scenario soaks; deletion is a
- * follow-up PR with #4357 approval.
+ * Legacy bash workflow retention: `nightly-e2e.yaml` stays authoritative for
+ * the full legacy lane until a follow-up PR supplies the #5126 deletion
+ * evidence block with #4357 approval.
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -67,7 +68,8 @@ const SANDBOX_GATEWAY_PORT = 18789;
 // ─── Trace analyzer types + helpers (mirrored from
 //     test/openclaw-tui-chat-correlation.test.ts so the live test is
 //     self-contained; kept in lockstep with the unit-test analyzer
-//     via review). ────────────────────────────────────────────────────
+//     via review). This does not change the migration inventory row.
+//     ─────────────────────────────────────────────────────────────────
 
 type ChatMessage = { role?: string; text?: unknown; content?: unknown };
 type ChatEventPayload = {
@@ -551,7 +553,7 @@ test(
     // non-empty final, every reply correlates to the run that accepted
     // the prompt, and observed user turns remain in submitted A/B/C order.
     // TUI rendering indicators and visible tool-call status are covered
-    // outside this websocket-level migration.
+    // outside this websocket-level guard.
     expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
     expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
     expect(analysis.userTurnOrder, failureSummary).toEqual(
@@ -569,7 +571,7 @@ test(
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
   },
-  // 75-minute budget mirrors the legacy `openclaw-tui-chat-correlation-e2e`
+  // 75-minute budget mirrors the retained `openclaw-tui-chat-correlation-e2e`
   // job in nightly-e2e.yaml: cloud onboarding + sandbox provisioning +
   // gateway warmup + the 120-second wait-for-replies window + retry.
   75 * 60_000,

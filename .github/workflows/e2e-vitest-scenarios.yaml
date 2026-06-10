@@ -207,12 +207,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Migrated from test/e2e/test-openclaw-tui-chat-correlation.sh per the
-  # #5098 epic (#5049 free-standing pattern, #4347 owner issue). Drives a
-  # real cloud OpenClaw sandbox via openshell + websocket and asserts the
-  # protocol/history subset of the #2603 + #3145 chat-correlation contract
-  # on the pinned OpenClaw regression-guard build. TUI rendering indicators
-  # and visible tool-call status remain out of scope for this websocket guard.
+  # Salvage coverage slice for the protocol/history assertions currently
+  # carried by test/e2e/test-openclaw-tui-chat-correlation.sh (#4347 owner
+  # issue). This job intentionally does not update legacy-inventory.json; the
+  # full legacy lane remains not-migrated until a focused follow-up supplies
+  # deletion evidence. Drives a real cloud OpenClaw sandbox via openshell +
+  # websocket and asserts the narrowed #2603 + #3145 correlation contract.
   openclaw-tui-chat-correlation-vitest:
     if: ${{ inputs.scenarios == '' || contains(format(',{0},', inputs.scenarios), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
@@ -268,8 +268,8 @@ jobs:
         # Onboards a fresh cloud OpenClaw sandbox, asserts the pinned
         # regression-guard version, drives the websocket repro, and asserts
         # protocol/history ordering and correlation for #2603 + #3145.
-        # TUI rendering indicators and visible tool-call status are outside
-        # this websocket guard's scope.
+        # TUI rendering indicators, visible tool-call status, and legacy
+        # inventory transition remain outside this websocket guard's scope.
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
