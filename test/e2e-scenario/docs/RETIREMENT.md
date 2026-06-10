@@ -3,7 +3,7 @@
 
 # Typed-Shell Scenario Runner Retirement
 
-#5106 retired the typed-shell scenario runner as part of #5098 Phase 0.
+PR #5106 retired the typed-shell scenario runner as part of #5098 Phase 0.
 
 ## What Was Removed
 
