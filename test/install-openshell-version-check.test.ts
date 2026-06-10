@@ -519,4 +519,250 @@ exit 1`,
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  // Migrated from test/e2e/test-openshell-version-pin.sh (regression guard for #3474).
+  // Sister tests above ("reinstalls the pinned release when openshell is above MAX_VERSION")
+  // verify the install-openshell.sh entry point flips from hard-fail to reinstall, but stub
+  // curl/gh to fail before download. This test extends coverage end-to-end: stubs curl/gh/tar
+  // to succeed so the script downloads, verifies, extracts, and replaces the sticky 0.0.45
+  // openshell with the pinned 0.0.44 binary on disk. Mirrors the four `[PASS]` assertions of
+  // the legacy bash guard.
+  it("replaces sticky too-new openshell with pinned 0.0.44 end-to-end on Linux x86_64", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-version-pin-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const downloadLog = path.join(tmp, "downloads.log");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(downloadLog, "");
+
+      // Force Linux/x86_64 asset selection regardless of host arch (legacy script
+      // is dispatched on ubuntu-latest via regression-e2e.yaml).
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+
+      // Sticky openshell at the too-new version we expect the installer to replace.
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.45"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0`,
+      );
+
+      // Helper binaries exist so the only reason to reinstall is the too-new
+      // version, not missing Docker-driver helpers.
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell-sandbox"),
+        `#!/usr/bin/env bash
+exit 0`,
+      );
+
+      // gh succeeds and writes fake archives + matching sha256 checksum files into
+      // the requested --dir. The checksums are real digests of the fake archives
+      // so install-openshell.sh's `sha256sum -c` step passes.
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+write_asset() {
+  local asset_name="$1"
+  local asset_path="$2"
+  printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
+}
+sha256_digest() {
+  if [ -x /usr/bin/sha256sum ]; then
+    /usr/bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /bin/sha256sum ]; then
+    /bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /usr/bin/shasum ]; then
+    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
+  else
+    exit 3
+  fi
+}
+write_checksum() {
+  local checksum_file="$1"
+  local asset_name="$2"
+  local asset_path="$3"
+  [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
+  printf '%s  %s\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+}
+if [ "\${1:-}" = "release" ] && [ "\${2:-}" = "download" ]; then
+  tag="\${3:-}"
+  pattern=""
+  dir=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pattern) shift; pattern="\${1:-}" ;;
+      --dir) shift; dir="\${1:-}" ;;
+    esac
+    shift || true
+  done
+  [ -n "$tag" ] && [ -n "$pattern" ] && [ -n "$dir" ] || exit 2
+  printf 'gh download %s %s\n' "$tag" "$pattern" >> ${JSON.stringify(downloadLog)}
+  mkdir -p "$dir"
+  case "$pattern" in
+    openshell-checksums-sha256.txt)
+      asset_name="openshell-x86_64-unknown-linux-musl.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
+      ;;
+    openshell-gateway-checksums-sha256.txt)
+      asset_name="openshell-gateway-x86_64-unknown-linux-gnu.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
+      ;;
+    openshell-sandbox-checksums-sha256.txt)
+      asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+      write_checksum "$dir/$pattern" "$asset_name" "$dir/$asset_name"
+      ;;
+    *)
+      write_asset "$pattern" "$dir/$pattern"
+      ;;
+  esac
+  exit 0
+fi
+exit 1`,
+      );
+
+      // curl mirror of the gh stub for the curl fallback download path. Logs
+      // every invocation to DOWNLOAD_LOG so we can assert which release tag was
+      // requested.
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+write_asset() {
+  local asset_name="$1"
+  local asset_path="$2"
+  printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
+}
+sha256_digest() {
+  if [ -x /usr/bin/sha256sum ]; then
+    /usr/bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /bin/sha256sum ]; then
+    /bin/sha256sum "$1" | awk '{print $1}'
+  elif [ -x /usr/bin/shasum ]; then
+    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
+  else
+    exit 3
+  fi
+}
+write_checksum() {
+  local checksum_file="$1"
+  local asset_name="$2"
+  local asset_path="$3"
+  [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
+  printf '%s  %s\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+}
+printf 'curl %s\n' "$*" >> ${JSON.stringify(downloadLog)}
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="\${1:-}"
+  fi
+  shift || true
+done
+[ -n "$out" ] || exit 0
+case "$(basename "$out")" in
+  openshell-checksums-sha256.txt)
+    asset_name="openshell-x86_64-unknown-linux-musl.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
+    ;;
+  openshell-gateway-checksums-sha256.txt)
+    asset_name="openshell-gateway-x86_64-unknown-linux-gnu.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
+    ;;
+  openshell-sandbox-checksums-sha256.txt)
+    asset_name="openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz"
+    write_checksum "$out" "$asset_name" "$(dirname "$out")/$asset_name"
+    ;;
+  *)
+    write_asset "$(basename "$out")" "$out"
+    ;;
+esac`,
+      );
+
+      // tar stub: write the corresponding binary into the -C outdir. Each binary
+      // reports 0.0.44 + carries the messaging-rewrite capability marker so the
+      // post-install feature probe passes.
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+set -euo pipefail
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then
+    outdir="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$outdir" ] || exit 1
+case "$*" in
+  *openshell-gateway*) name="openshell-gateway" ;;
+  *openshell-sandbox*) name="openshell-sandbox" ;;
+  *) name="openshell" ;;
+esac
+cat > "$outdir/$name" <<'EOS'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.44"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0
+EOS
+chmod 755 "$outdir/$name"`,
+      );
+
+      // The capability probe shells out to `strings` against the installed
+      // openshell binary. Our fake openshell binaries are scripts whose contents
+      // already include the marker comments, so cat-ing them satisfies the probe.
+      writeExecutable(
+        path.join(fakeBin, "strings"),
+        `#!/usr/bin/env bash
+cat "$@" 2>/dev/null || true`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      // Assertion 1: installer-exits-zero — the happy path completes (no
+      // "above the maximum" hard-fail before download).
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+
+      // Assertion 2: download-log-contains-v0.0.44 — pinned release tag was
+      // requested from the release host.
+      const downloads = fs.readFileSync(downloadLog, "utf-8");
+      expect(downloads).toContain("v0.0.44");
+
+      // Assertion 3: download-log-excludes-v0.0.45 — the too-new sticky version
+      // is never re-fetched.
+      expect(downloads).not.toContain("v0.0.45");
+
+      // Assertion 4: replaced-openshell-reports-0.0.44 — the binary on disk in
+      // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
+      // there and it is writable) was overwritten with the pinned 0.0.44 build.
+      const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+      });
+      expect(replacedVersion.status).toBe(0);
+      expect(replacedVersion.stdout).toContain("0.0.44");
+      expect(replacedVersion.stdout).not.toContain("0.0.45");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
