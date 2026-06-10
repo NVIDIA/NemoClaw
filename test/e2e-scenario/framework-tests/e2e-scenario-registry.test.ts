@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { scenario } from "../scenarios/builder.ts";
-import { compileRunPlans } from "../scenarios/compiler.ts";
 import { buildScenarioRegistry } from "../scenarios/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -40,7 +39,7 @@ describe("deterministic scenario registry", () => {
 
     expect(() => buildScenarioRegistry([unsafe])).toThrow(/not safe for workflow regex filters/);
 
-    const result = runScenarioCli(["--scenarios", "../escape", "--plan-only"]);
+    const result = runScenarioCli(["--emit-live-matrix", "--scenarios", "../escape"]);
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(
       /Selected scenario ID '\.\.\/escape' is not safe/,
@@ -48,7 +47,7 @@ describe("deterministic scenario registry", () => {
   });
 
   it("should return actionable unknown scenario error", () => {
-    const result = runScenarioCli(["--scenarios", "does-not-exist", "--plan-only"]);
+    const result = runScenarioCli(["--emit-live-matrix", "--scenarios", "does-not-exist"]);
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/does-not-exist/);
@@ -56,39 +55,18 @@ describe("deterministic scenario registry", () => {
     expect(`${result.stdout}${result.stderr}`).toMatch(/ubuntu-repo-cloud-openclaw/);
   });
 
-  it("should compile multiple targeted scenario plans", () => {
-    const plans = compileRunPlans(["ubuntu-repo-cloud-openclaw", "ubuntu-repo-cloud-hermes"]);
-
-    expect(plans.map((plan) => plan.scenarioId)).toEqual([
-      "ubuntu-repo-cloud-openclaw",
-      "ubuntu-repo-cloud-hermes",
-    ]);
-  });
-
-  it("CLI should emit two plan sections for comma separated scenarios", () => {
+  it("CLI should emit multiple selected live matrix entries", () => {
     const result = runScenarioCli([
+      "--emit-live-matrix",
       "--scenarios",
       "ubuntu-repo-cloud-openclaw,ubuntu-repo-cloud-hermes",
-      "--plan-only",
     ]);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.match(/^Scenario: /gm)).toHaveLength(2);
-    expect(result.stdout).toContain("Scenario: ubuntu-repo-cloud-openclaw");
-    expect(result.stdout).toContain("Scenario: ubuntu-repo-cloud-hermes");
-  });
-
-  it("baseline plan should match legacy resolver semantics", () => {
-    const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
-
-    expect(plan.environment).toEqual({
-      platform: "ubuntu-local",
-      install: "repo-current",
-      runtime: "docker-running",
-      onboarding: "cloud-openclaw",
-    });
-    expect(plan.expectedStateId).toBe("cloud-openclaw-ready");
-    expect(plan.suiteIds).toEqual(["smoke", "inference", "credentials"]);
-    expect(plan.onboardingAssertionIds).toEqual(["base-installed", "preflight-passed"]);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
+      "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-cloud-hermes",
+    ]);
   });
 });

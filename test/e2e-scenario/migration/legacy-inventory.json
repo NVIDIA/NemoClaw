@@ -823,52 +823,56 @@
       "paths": ["test/e2e-scenario/scenarios/orchestrators"],
       "domain": "scenario-runner",
       "ownerIssue": "#4357",
-      "status": "not-migrated",
+      "status": "retired",
       "replacementSurface": "test/e2e-scenario/framework/phases",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Retire after the registry-driven Vitest runner owns phase ordering, expected-failure matching, cleanup, redaction, and artifact evidence."
+      "retiredReason": "Deleted by #5106 after the Vitest scenario workflow gained matrix, run-plan, per-phase result, summary, and artifact parity.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "Registry-driven Vitest execution now owns the surviving phase fixtures; the custom typed-shell orchestrator path is retired."
     },
     {
       "id": "legacy-bash-scenario-workers",
       "paths": ["test/e2e-scenario/nemoclaw_scenarios"],
       "domain": "scenario-runner",
       "ownerIssue": "#4357",
-      "status": "not-migrated",
+      "status": "retired",
       "replacementSurface": "test/e2e-scenario/framework/phases",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Install, onboarding, lifecycle, probe, fixture, and context workers are bridge adapters until equivalent Vitest fixtures or CI setup actions own those phases."
+      "retiredReason": "Deleted by #5106 with the typed-shell runner cutover; surviving live setup runs through Vitest fixtures and direct legacy bash tests remain separately inventoried.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "These bridge workers belonged to the retired scenario runner, not to the direct legacy test/e2e/test-*.sh suite."
     },
     {
       "id": "legacy-onboarding-assertion-workers",
       "paths": ["test/e2e-scenario/onboarding_assertions"],
       "domain": "smoke-onboarding",
       "ownerIssue": "#4348",
-      "status": "not-migrated",
+      "status": "retired",
       "replacementSurface": "test/e2e-scenario/framework/phases/onboarding.ts",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Retire after onboarding phase fixtures emit equivalent pass/fail evidence for base install and preflight assertions."
+      "retiredReason": "Deleted by #5106 because onboarding phase fixtures now emit onboarding.result.json and no longer dispatch shell assertion shims.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "Onboarding readiness and negative preflight evidence now live in the Vitest phase fixture layer."
     },
     {
       "id": "legacy-validation-suites",
       "paths": ["test/e2e-scenario/validation_suites"],
       "domain": "runtime-suites",
       "ownerIssue": "#4357",
-      "status": "not-migrated",
+      "status": "retired",
       "replacementSurface": "test/e2e-scenario/framework/phases",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Runtime suite assertions migrate one family at a time into typed Vitest runtime helpers before this shell suite tree can be removed."
+      "retiredReason": "Deleted by #5106 with the scenario-runner cutover; suiteIds remain registry metadata while family migrations add typed Vitest coverage or keep direct bash tests.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "This shell suite tree was only executed by the retired typed-shell scenario runner. Direct legacy bash tests remain governed by entries above."
     },
     {
       "id": "legacy-runtime-helper-libraries",
@@ -878,13 +882,14 @@
       ],
       "domain": "scenario-runner",
       "ownerIssue": "#4357",
-      "status": "not-migrated",
+      "status": "retired",
       "replacementSurface": "test/e2e-scenario/framework",
       "targetVitestScenarios": [],
       "bridgeProbes": [],
-      "retiredReason": "",
-      "deletionReady": false,
-      "notes": "Runtime helper libraries stay only while bridge shell workers need shared environment, logging, context, teardown, or report rendering behavior."
+      "retiredReason": "Deleted by #5106 because the bridge shell workers and report renderer were removed; artifact writing is owned by the Vitest fixture layer.",
+      "deletionReady": true,
+      "deletionApprovalIssue": "#5098",
+      "notes": "Redaction, command evidence, cleanup, phase results, and workflow summaries now live under test/e2e-scenario/framework and e2e-vitest-scenarios.yaml."
     }
   ]
 }

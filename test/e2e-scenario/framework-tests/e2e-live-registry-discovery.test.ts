@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { buildLiveScenarioRunPlan } from "../live/run-plan.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 import { liveScenarioSupport } from "../scenarios/runtime-support.ts";
 
@@ -26,6 +27,33 @@ describe("live Vitest registry discovery support", () => {
       "smoke",
       "inference",
       "credentials",
+    ]);
+  });
+
+  it("builds the live run-plan artifact shape from registry metadata", () => {
+    const scenario = listScenarios().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
+
+    expect(scenario).toBeTruthy();
+    expect(buildLiveScenarioRunPlan(scenario!)).toEqual({
+      scenarioId: "ubuntu-repo-cloud-openclaw",
+      manifestPath: "test/e2e-scenario/manifests/openclaw-nvidia.yaml",
+      expectedStateId: "cloud-openclaw-ready",
+      suiteIds: ["smoke", "inference", "credentials"],
+      phases: ["environment", "onboarding", "state-validation"],
+    });
+  });
+
+  it("includes the lifecycle phase in live run-plan artifacts when a scenario mutates state", () => {
+    const scenario = listScenarios().find(
+      (entry) => entry.id === "ubuntu-repo-docker-post-reboot-recovery",
+    );
+
+    expect(scenario).toBeTruthy();
+    expect(buildLiveScenarioRunPlan(scenario!).phases).toEqual([
+      "environment",
+      "onboarding",
+      "lifecycle",
+      "state-validation",
     ]);
   });
 

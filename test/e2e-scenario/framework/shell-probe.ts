@@ -8,12 +8,11 @@ import type { ArtifactSink } from "./artifacts.ts";
 /**
  * Bridge-only host shell probe for the Vitest fixture migration.
  *
- * The end state is a shared spawn/evidence helper consumed by both this
- * fixture layer and scenarios/orchestrators; that consolidation is tracked
- * separately. Until it lands, this probe mirrors the hardened shell boundary:
- * trusted descriptors, NUL-byte rejection, explicit env by default, canonical
- * redaction (routed through the single shared entry point), and detached
- * process-group termination for timeout/abort cleanup.
+ * This probe is the temporary bridge for system-boundary checks that still
+ * need a host command while the durable scenario code moves into typed
+ * Vitest fixtures. It owns trusted descriptors, NUL-byte rejection, explicit
+ * env by default, canonical redaction, and detached process-group termination
+ * for timeout/abort cleanup.
  */
 
 export interface ShellProbeRunOptions {

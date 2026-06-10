@@ -1,0 +1,56 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Typed-Shell Scenario Runner Retirement
+
+#5106 retired the typed-shell scenario runner as part of #5098 Phase 0.
+
+## What Was Removed
+
+- `.github/workflows/e2e-scenarios.yaml`
+- `.github/workflows/e2e-scenarios-all.yaml`
+- `test/e2e-scenario/scenarios/compiler.ts`
+- `test/e2e-scenario/scenarios/orchestrators/`
+- `test/e2e-scenario/scenarios/assertions/`
+- `test/e2e-scenario/scenarios/probes/`
+- `test/e2e-scenario/nemoclaw_scenarios/`
+- `test/e2e-scenario/onboarding_assertions/`
+- `test/e2e-scenario/validation_suites/`
+- `test/e2e-scenario/runtime/lib/`
+- `test/e2e-scenario/runtime/reports/`
+- `scripts/e2e/lint-conventions.ts`
+
+## Why
+
+The project chose Vitest fixtures as the scenario execution model in #4941.
+Keeping the typed-shell runner meant maintaining a second execution path with
+its own compiler, phase orchestration, shell workers, suite dispatcher, and
+workflows.
+
+Before deleting that path, the surviving Vitest workflow gained the reporting
+and artifact shape operators needed from the retired workflows:
+
+- dispatch-time matrix summary with Scenario, Runner, and Label columns;
+- per-scenario `run-plan.json`;
+- per-phase `environment.result.json`, `onboarding.result.json`, and
+  `state-validation.result.json`;
+- per-scenario step summary rendered from `run-plan.json`;
+- explicit artifact upload allowlist with 14-day retention.
+
+## What Replaced It
+
+- `test/e2e-scenario/scenarios/run.ts --emit-live-matrix` emits the live
+  GitHub Actions matrix.
+- `.github/workflows/e2e-vitest-scenarios.yaml` runs the live matrix.
+- `test/e2e-scenario/live/registry-scenarios.test.ts` executes supported
+  registry scenarios through Vitest.
+- `test/e2e-scenario/framework/` owns fixtures, clients, shell-probe bridges,
+  artifact writing, cleanup, and redaction.
+
+## What Was Not Removed
+
+Direct legacy E2E scripts under `test/e2e/test-*.sh` remain in place. Those
+scripts are governed by #5098 and
+`test/e2e-scenario/migration/legacy-inventory.json`. They should be migrated,
+augmented, or kept by family according to their KEEP_BASH, HYBRID, or
+MIGRATE_TYPED classification.

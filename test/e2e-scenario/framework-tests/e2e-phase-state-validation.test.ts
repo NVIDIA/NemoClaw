@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { ArtifactSink } from "../framework/artifacts.ts";
 import {
   GatewayClient,
   HostCliClient,
@@ -70,6 +75,10 @@ function shellResult(exitCode: number, output = ""): ShellProbeResult {
   };
 }
 
+function readJson(filePath: string): unknown {
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
 class FakeRunner implements CommandRunner {
   readonly calls: RunnerCall[] = [];
   private readonly responses: Array<ShellProbeResult | Error> = [];
@@ -111,6 +120,7 @@ function instance(overrides: Partial<NemoClawInstance> = {}): NemoClawInstance {
 function fixture(
   runner: FakeRunner,
   io: ConstructorParameters<typeof StateValidationPhaseFixture>[3] = {},
+  artifacts?: ArtifactSink,
 ): StateValidationPhaseFixture {
   const host = new HostCliClient(runner);
   return new StateValidationPhaseFixture(
@@ -118,6 +128,7 @@ function fixture(
     new GatewayClient(host),
     new SandboxClient(runner),
     io,
+    artifacts,
   );
 }
 
@@ -457,6 +468,45 @@ describe("state-validation phase fixture", () => {
     await expect(fixture(runner).from("missing-state", instance())).rejects.toThrow(
       /Unknown expected_state/,
     );
+  });
+
+  it("writes a state-validation phase result artifact on success", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-state-validation-artifacts-"));
+    try {
+      const runner = new FakeRunner();
+      runner.enqueue(shellResult(0, "nemoclaw v0.0.0\n"));
+      const fx = fixture(runner, {}, new ArtifactSink(tmp));
+
+      await fx.from("macos-cli-ready-docker-optional");
+
+      expect(readJson(path.join(tmp, "state-validation.result.json"))).toMatchObject({
+        phase: "state-validation",
+        status: "passed",
+        expectedStateId: "macos-cli-ready-docker-optional",
+        probes: ["cli-installed"],
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a state-validation phase result artifact on failure", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-state-validation-artifacts-"));
+    try {
+      const fx = fixture(new FakeRunner(), {}, new ArtifactSink(tmp));
+
+      await expect(fx.from("missing-state", instance())).rejects.toThrow(/Unknown expected_state/);
+
+      expect(readJson(path.join(tmp, "state-validation.result.json"))).toMatchObject({
+        phase: "state-validation",
+        status: "failed",
+        expectedStateId: "missing-state",
+        probes: [],
+        error: expect.stringContaining("Unknown expected_state"),
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("exposes the state-validation phase on the Vitest scenario context", () => {

@@ -6,7 +6,7 @@
  *
  * Spec ownership: redaction and child-env minimization are FRAMEWORK
  * INFRASTRUCTURE, not a per-action / per-script / per-workflow concern.
- * Children spawned by PhaseOrchestrator must (a) receive a minimal,
+ * Children spawned by framework command boundaries must (a) receive a minimal,
  * typed env (framework allowlist + per-action declared `secretEnv`
  * passthrough only), and (b) have their stdout/stderr passed through
  * redaction before any byte reaches an evidence log or
@@ -20,16 +20,13 @@
  * redaction stays in lockstep with product-runtime redaction without
  * coupling the framework to product runtime modules.
  *
- * Bash side: test/e2e-scenario/runtime/lib/context.sh::e2e_context_dump
- * already redacts on dump via _e2e_context_is_sensitive_key. Bash
- * helpers must continue to use that for diagnostic dumps; this module
- * only covers the TS-spawned-child I/O path.
- *
  * Tests:
- *   test/e2e-scenario/framework-tests/e2e-phase-orchestrators.test.ts
- *     - child output redaction before evidence persistence
- *     - parent env allowlist filtering unless declared in secretEnv
- *     - declared secretEnv passthrough
+ *   test/e2e-scenario/framework-tests/e2e-redaction-entry.test.ts
+ *   test/e2e-scenario/framework-tests/e2e-redaction-parity.test.ts
+ *   test/e2e-scenario/framework-tests/e2e-phase-environment.test.ts
+ *     - canonical token redaction parity with product runtime patterns
+ *     - explicit per-test redaction values
+ *     - child-env allowlist filtering for framework probes
  */
 
 import type { Readable, Writable } from "node:stream";
@@ -213,7 +210,7 @@ export function buildChildEnv(
   }
   Object.assign(out, opts.frameworkOverlay);
   // The install action drops nemoclaw / openshell shims under
-  // ~/.local/bin (see nemoclaw_scenarios/install/repo-current.sh).
+  // ~/.local/bin (the historical repo-current install location).
   // On Ubuntu GH runners ~/.local/bin is on the default PATH; on
   // self-hosted GPU runners and inside WSL it often is not, so the
   // onboarding action's child runs without nemoclaw on PATH and

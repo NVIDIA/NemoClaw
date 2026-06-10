@@ -6,11 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
+import type { ArtifactSink } from "../artifacts.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
-import { redactString } from "../../scenarios/orchestrators/redaction.ts";
+import { redactString } from "../redaction.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -139,19 +140,30 @@ export class OnboardingPhaseFixture {
     private readonly host: HostCliClient,
     private readonly secrets: OnboardingSecrets,
     private readonly cleanup?: OnboardingCleanup,
+    private readonly artifacts?: ArtifactSink,
   ) {}
 
   async from(
     environment: EnvironmentReady,
     options: OnboardingOptions = {},
   ): Promise<NemoClawInstance> {
-    switch (environment.onboarding) {
-      case "cloud-openclaw":
-        return await this.cloudOpenClaw(environment, options);
-      case "cloud-openclaw-no-docker":
-        return await this.cloudOpenClawNoDocker(environment, options);
-      default:
-        throw new Error(`Unsupported onboarding profile '${environment.onboarding}'.`);
+    try {
+      let result: NemoClawInstance;
+      switch (environment.onboarding) {
+        case "cloud-openclaw":
+          result = await this.cloudOpenClaw(environment, options);
+          break;
+        case "cloud-openclaw-no-docker":
+          result = await this.cloudOpenClawNoDocker(environment, options);
+          break;
+        default:
+          throw new Error(`Unsupported onboarding profile '${environment.onboarding}'.`);
+      }
+      await this.writeResult("passed", environment, result);
+      return result;
+    } catch (error) {
+      await this.writeResult("failed", environment, undefined, error);
+      throw error;
     }
   }
 
@@ -264,5 +276,24 @@ export class OnboardingPhaseFixture {
     if (!logPath) return;
     await mkdir(dirname(logPath), { recursive: true });
     await writeFile(logPath, this.redact(resultText(result), redactionValues), "utf8");
+  }
+
+  private async writeResult(
+    status: "passed" | "failed",
+    environment: EnvironmentReady,
+    instance?: NemoClawInstance,
+    error?: unknown,
+  ): Promise<void> {
+    await this.artifacts?.writeJson("onboarding.result.json", {
+      phase: "onboarding",
+      status,
+      onboarding: environment.onboarding,
+      sandboxName: instance?.sandboxName,
+      agent: instance?.agent,
+      provider: instance?.provider,
+      providerEnv: instance?.providerEnv,
+      expectedFailure: instance?.expectedFailure,
+      ...(error ? { error: error instanceof Error ? error.message : String(error) } : {}),
+    });
   }
 }
