@@ -93,8 +93,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     ).toThrow(/pre-patch sandbox restored/);
 
     const restoreRename = dockerRename.mock.calls.find(
-      (call) =>
-        String(call[0]).includes("nemoclaw-gpu-backup") && call[1] === "openshell-alpha",
+      (call) => String(call[0]).includes("nemoclaw-gpu-backup") && call[1] === "openshell-alpha",
     );
     expect(restoreRename).toBeDefined();
     expect(dockerStart).toHaveBeenCalledWith(

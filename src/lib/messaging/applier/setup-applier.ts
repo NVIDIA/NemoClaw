@@ -36,10 +36,7 @@ export class MessagingSetupApplier {
     return parsed;
   }
 
-  static writePlanToEnv(
-    plan: SandboxMessagingPlan,
-    options: MessagingSetupEnvOptions = {},
-  ): void {
+  static writePlanToEnv(plan: SandboxMessagingPlan, options: MessagingSetupEnvOptions = {}): void {
     const env = options.env ?? process.env;
     env[options.envKey ?? MESSAGING_SETUP_APPLIER_ENV_KEY] = this.encodePlan(plan);
   }
@@ -143,9 +140,7 @@ function assertJsonSerializable(
   }
   if (Array.isArray(value)) {
     assertAcyclicObject(value, path, visiting, () => {
-      value.forEach((entry, index) =>
-        assertJsonSerializable(entry, `${path}[${index}]`, visiting),
-      );
+      value.forEach((entry, index) => assertJsonSerializable(entry, `${path}[${index}]`, visiting));
     });
     return;
   }

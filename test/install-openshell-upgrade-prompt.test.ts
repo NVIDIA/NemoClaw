@@ -140,8 +140,12 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain("does not support 'nemoclaw backup-all'");
-    expect(result.stdout + result.stderr).not.toContain("Accepted experimental OpenShell gateway upgrade");
-    expect(result.stdout + result.stderr).not.toContain("NemoClaw can run the new automatic upgrade path now");
+    expect(result.stdout + result.stderr).not.toContain(
+      "Accepted experimental OpenShell gateway upgrade",
+    );
+    expect(result.stdout + result.stderr).not.toContain(
+      "NemoClaw can run the new automatic upgrade path now",
+    );
     expect(cliLog).toContain("--help");
     expect(cliLog.split(/\r?\n/)).not.toContain("backup-all");
     expect(openshellLog).toBe("");

@@ -25,13 +25,19 @@ describe("internal oclif namespace", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Internal: configure sandbox DNS proxy");
-    expect(result.stdout).toContain("nemoclaw internal dns setup-proxy <gateway-name> <sandbox-name>");
+    expect(result.stdout).toContain(
+      "nemoclaw internal dns setup-proxy <gateway-name> <sandbox-name>",
+    );
   });
 
   it("exposes uninstall plan commands through oclif routing", () => {
-    const result = spawnSync(process.execPath, [CLI, "internal", "uninstall", "run-plan", "--help"], {
-      encoding: "utf-8",
-    });
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "internal", "uninstall", "run-plan", "--help"],
+      {
+        encoding: "utf-8",
+      },
+    );
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("NemoClaw Uninstaller");
@@ -41,9 +47,13 @@ describe("internal oclif namespace", () => {
   });
 
   it("exposes the dev npm-link shim command through oclif routing", () => {
-    const result = spawnSync(process.execPath, [CLI, "internal", "dev", "npm-link-or-shim", "--help"], {
-      encoding: "utf-8",
-    });
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "internal", "dev", "npm-link-or-shim", "--help"],
+      {
+        encoding: "utf-8",
+      },
+    );
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Internal: link the checkout CLI or create a dev shim");

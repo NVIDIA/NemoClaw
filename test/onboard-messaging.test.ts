@@ -30,28 +30,29 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard messaging", () => {
-  it(
-    "creates providers for messaging tokens and attaches them to the sandbox",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("creates providers for messaging tokens and attaches them to the sandbox", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -135,162 +136,157 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
 
-      // Verify providers were created with the right credential keys
-      const providerCommands = payload.commands.filter((e: CommandEntry) =>
-        e.command.includes("provider create"),
-      );
-      const discordProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-discord-bridge"),
-      );
-      assert.ok(discordProvider, "expected my-assistant-discord-bridge provider create command");
-      assert.match(discordProvider.command, /--credential DISCORD_BOT_TOKEN/);
+    // Verify providers were created with the right credential keys
+    const providerCommands = payload.commands.filter((e: CommandEntry) =>
+      e.command.includes("provider create"),
+    );
+    const discordProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-discord-bridge"),
+    );
+    assert.ok(discordProvider, "expected my-assistant-discord-bridge provider create command");
+    assert.match(discordProvider.command, /--credential DISCORD_BOT_TOKEN/);
 
-      const slackProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-slack-bridge"),
-      );
-      assert.ok(slackProvider, "expected my-assistant-slack-bridge provider create command");
-      assert.match(slackProvider.command, /--credential SLACK_BOT_TOKEN/);
+    const slackProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-slack-bridge"),
+    );
+    assert.ok(slackProvider, "expected my-assistant-slack-bridge provider create command");
+    assert.match(slackProvider.command, /--credential SLACK_BOT_TOKEN/);
 
-      const telegramProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-telegram-bridge"),
-      );
-      assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
-      assert.match(telegramProvider.command, /--credential TELEGRAM_BOT_TOKEN/);
+    const telegramProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-telegram-bridge"),
+    );
+    assert.ok(telegramProvider, "expected my-assistant-telegram-bridge provider create command");
+    assert.match(telegramProvider.command, /--credential TELEGRAM_BOT_TOKEN/);
 
-      // Verify sandbox create includes --provider flags for all three
-      const createCommand = payload.commands.find((e: CommandEntry) =>
-        e.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
-      assert.match(createCommand.command, /--policy [^ ]*nemoclaw-initial-policy[^ ]*\.yaml/);
-      assert.equal(createCommand.policyReadError, undefined);
-      const policyDoc = YAML.parse(createCommand.policyContent || "") || {};
-      const slackEndpointHosts = (policyDoc.network_policies?.slack?.endpoints || []).map(
-        (entry: { host?: string }) => entry.host,
-      );
-      const slackWebsocketHosts = slackEndpointHosts
-        .filter((host: string | undefined) =>
+    // Verify sandbox create includes --provider flags for all three
+    const createCommand = payload.commands.find((e: CommandEntry) =>
+      e.command.includes("sandbox create"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
+    assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
+    assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
+    assert.match(createCommand.command, /--policy [^ ]*nemoclaw-initial-policy[^ ]*\.yaml/);
+    assert.equal(createCommand.policyReadError, undefined);
+    const policyDoc = YAML.parse(createCommand.policyContent || "") || {};
+    const slackEndpointHosts = (policyDoc.network_policies?.slack?.endpoints || []).map(
+      (entry: { host?: string }) => entry.host,
+    );
+    const slackWebsocketHosts = slackEndpointHosts
+      .filter(
+        (host: string | undefined) =>
           host === "wss-primary.slack.com" || host === "wss-backup.slack.com",
-        )
-        .sort();
-      assert.deepEqual(slackWebsocketHosts, ["wss-backup.slack.com", "wss-primary.slack.com"].sort());
+      )
+      .sort();
+    assert.deepEqual(slackWebsocketHosts, ["wss-backup.slack.com", "wss-primary.slack.com"].sort());
 
-      // Messaging tokens must NOT appear in the sandbox create command
-      // (they flow exclusively through the openshell provider credential system).
-      assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
-      assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
-      assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
-      assert.doesNotMatch(createCommand.command, /TELEGRAM_BOT_TOKEN=/);
-      assert.doesNotMatch(createCommand.command, /xoxb-test-slack-token-value/);
-      assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
-      assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
-      assert.doesNotMatch(createCommand.command, /SLACK_APP_TOKEN=/);
-      assert.doesNotMatch(createCommand.command, /NEMOCLAW_MESSAGING_PLAN_B64=/);
+    // Messaging tokens must NOT appear in the sandbox create command
+    // (they flow exclusively through the openshell provider credential system).
+    assert.doesNotMatch(createCommand.command, /test-discord-token-value/);
+    assert.doesNotMatch(createCommand.command, /123456:ABC-test-telegram-token/);
+    assert.doesNotMatch(createCommand.command, /DISCORD_BOT_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /TELEGRAM_BOT_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /xoxb-test-slack-token-value/);
+    assert.doesNotMatch(createCommand.command, /xapp-test-slack-app-token-value/);
+    assert.doesNotMatch(createCommand.command, /SLACK_BOT_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /SLACK_APP_TOKEN=/);
+    assert.doesNotMatch(createCommand.command, /NEMOCLAW_MESSAGING_PLAN_B64=/);
 
-      assert.ok(payload.messagingPlanEnv, "expected serialized messaging plan in host process env");
-      const messagingPlan = JSON.parse(
-        Buffer.from(payload.messagingPlanEnv, "base64").toString("utf8"),
-      );
-      assert.equal(messagingPlan.sandboxName, "my-assistant");
-      assert.deepEqual(
-        messagingPlan.channels.map((channel: { channelId: string }) => channel.channelId).sort(),
-        ["discord", "slack", "telegram"].sort(),
-      );
-      assert.doesNotMatch(JSON.stringify(messagingPlan), /test-discord-token-value/);
-      assert.doesNotMatch(JSON.stringify(messagingPlan), /123456:ABC-test-telegram-token/);
+    assert.ok(payload.messagingPlanEnv, "expected serialized messaging plan in host process env");
+    const messagingPlan = JSON.parse(
+      Buffer.from(payload.messagingPlanEnv, "base64").toString("utf8"),
+    );
+    assert.equal(messagingPlan.sandboxName, "my-assistant");
+    assert.deepEqual(
+      messagingPlan.channels.map((channel: { channelId: string }) => channel.channelId).sort(),
+      ["discord", "slack", "telegram"].sort(),
+    );
+    assert.doesNotMatch(JSON.stringify(messagingPlan), /test-discord-token-value/);
+    assert.doesNotMatch(JSON.stringify(messagingPlan), /123456:ABC-test-telegram-token/);
 
-      // Verify blocked credentials are NOT in the sandbox spawn environment
-      assert.ok(createCommand.env, "expected env to be captured from spawn call");
-      assert.equal(
-        createCommand.env.DISCORD_BOT_TOKEN,
-        undefined,
-        "DISCORD_BOT_TOKEN must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.SLACK_BOT_TOKEN,
-        undefined,
-        "SLACK_BOT_TOKEN must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.SLACK_APP_TOKEN,
-        undefined,
-        "SLACK_APP_TOKEN must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.TELEGRAM_BOT_TOKEN,
-        undefined,
-        "TELEGRAM_BOT_TOKEN must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.NVIDIA_API_KEY,
-        undefined,
-        "NVIDIA_API_KEY must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.KUBECONFIG,
-        undefined,
-        "KUBECONFIG must not be in sandbox env",
-      );
-      assert.equal(
-        createCommand.env.SSH_AUTH_SOCK,
-        undefined,
-        "SSH_AUTH_SOCK must not be in sandbox env",
-      );
+    // Verify blocked credentials are NOT in the sandbox spawn environment
+    assert.ok(createCommand.env, "expected env to be captured from spawn call");
+    assert.equal(
+      createCommand.env.DISCORD_BOT_TOKEN,
+      undefined,
+      "DISCORD_BOT_TOKEN must not be in sandbox env",
+    );
+    assert.equal(
+      createCommand.env.SLACK_BOT_TOKEN,
+      undefined,
+      "SLACK_BOT_TOKEN must not be in sandbox env",
+    );
+    assert.equal(
+      createCommand.env.SLACK_APP_TOKEN,
+      undefined,
+      "SLACK_APP_TOKEN must not be in sandbox env",
+    );
+    assert.equal(
+      createCommand.env.TELEGRAM_BOT_TOKEN,
+      undefined,
+      "TELEGRAM_BOT_TOKEN must not be in sandbox env",
+    );
+    assert.equal(
+      createCommand.env.NVIDIA_API_KEY,
+      undefined,
+      "NVIDIA_API_KEY must not be in sandbox env",
+    );
+    assert.equal(createCommand.env.KUBECONFIG, undefined, "KUBECONFIG must not be in sandbox env");
+    assert.equal(
+      createCommand.env.SSH_AUTH_SOCK,
+      undefined,
+      "SSH_AUTH_SOCK must not be in sandbox env",
+    );
 
-      // Belt-and-suspenders: raw token values must not appear anywhere in env
-      const envString = JSON.stringify(createCommand.env);
-      assert.ok(
-        !envString.includes("test-discord-token-value"),
-        "Discord token value must not leak into sandbox env",
-      );
-      assert.ok(
-        !envString.includes("xoxb-test-slack-token-value"),
-        "Slack bot token value must not leak into sandbox spawn env",
-      );
-      assert.ok(
-        !envString.includes("xapp-test-slack-app-token-value"),
-        "Slack app token value must not leak into sandbox spawn env",
-      );
-      assert.ok(
-        !envString.includes("123456:ABC-test-telegram-token"),
-        "Telegram token value must not leak into sandbox env",
-      );
-    },
-  );
+    // Belt-and-suspenders: raw token values must not appear anywhere in env
+    const envString = JSON.stringify(createCommand.env);
+    assert.ok(
+      !envString.includes("test-discord-token-value"),
+      "Discord token value must not leak into sandbox env",
+    );
+    assert.ok(
+      !envString.includes("xoxb-test-slack-token-value"),
+      "Slack bot token value must not leak into sandbox spawn env",
+    );
+    assert.ok(
+      !envString.includes("xapp-test-slack-app-token-value"),
+      "Slack app token value must not leak into sandbox spawn env",
+    );
+    assert.ok(
+      !envString.includes("123456:ABC-test-telegram-token"),
+      "Telegram token value must not leak into sandbox env",
+    );
+  });
 
-  it(
-    "preserves Hermes Slack policy when Slack is active at sandbox create time",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
-      try {
+  it("preserves Hermes Slack policy when Slack is active at sandbox create time", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
+    try {
       const fakeBin = path.join(tmpDir, "bin");
       const customBuildDir = path.join(tmpDir, "custom-build");
       const customDockerfilePath = path.join(customBuildDir, "Dockerfile");
@@ -298,8 +294,12 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
       const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
       const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      );
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
       );
@@ -469,39 +469,44 @@ const { createSandbox } = require(${onboardPath});
         "Hermes Slack policy must not be replaced by the generic Node Slack preset",
       );
       const slackWebsocketHosts = payload.slackEndpointHosts
-        .filter((host: string) =>
-          host === "wss-primary.slack.com" || host === "wss-backup.slack.com",
+        .filter(
+          (host: string) => host === "wss-primary.slack.com" || host === "wss-backup.slack.com",
         )
         .sort();
-      assert.deepEqual(slackWebsocketHosts, ["wss-backup.slack.com", "wss-primary.slack.com"].sort());
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it(
-    "reuses existing messaging providers during non-interactive recreate when tokens are not in the host env",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-reuse-provider-"),
+      assert.deepEqual(
+        slackWebsocketHosts,
+        ["wss-backup.slack.com", "wss-primary.slack.com"].sort(),
       );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+  it("reuses existing messaging providers during non-interactive recreate when tokens are not in the host env", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-messaging-reuse-provider-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      const script = String.raw`
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -587,83 +592,85 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "",
-          SLACK_APP_TOKEN: "",
-          TELEGRAM_BOT_TOKEN: "",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        DISCORD_BOT_TOKEN: "",
+        SLACK_BOT_TOKEN: "",
+        SLACK_APP_TOKEN: "",
+        TELEGRAM_BOT_TOKEN: "",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
 
-      const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
-        /\bprovider (create|update)\b/.test(entry.command),
-      );
-      assert.equal(
-        providerMutationCommands.length,
-        0,
-        "tokenless rebuild should not mutate providers",
-      );
+    const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
+      /\bprovider (create|update)\b/.test(entry.command),
+    );
+    assert.equal(
+      providerMutationCommands.length,
+      0,
+      "tokenless rebuild should not mutate providers",
+    );
 
-      const createCommand = payload.commands.find((entry: CommandEntry) =>
-        entry.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.equal(createCommand.dockerfileReadError, undefined);
-      assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
-      assert.match(createCommand.command, /--provider my-assistant-slack-app/);
+    const createCommand = payload.commands.find((entry: CommandEntry) =>
+      entry.command.includes("sandbox create"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.equal(createCommand.dockerfileReadError, undefined);
+    assert.match(createCommand.command, /--provider my-assistant-discord-bridge/);
+    assert.match(createCommand.command, /--provider my-assistant-slack-bridge/);
+    assert.match(createCommand.command, /--provider my-assistant-slack-app/);
 
-      const channelsLine = createCommand.dockerfileContent
-        ?.split("\n")
-        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-      const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
-      assert.deepEqual(channels, ["discord", "slack"]);
-      assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
-    },
-  );
+    const channelsLine = createCommand.dockerfileContent
+      ?.split("\n")
+      .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+    assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+    const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
+    assert.deepEqual(channels, ["discord", "slack"]);
+    assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["discord", "slack"]);
+  });
 
-  it(
-    "preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -745,92 +752,86 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          TELEGRAM_BOT_TOKEN: "",
-        },
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        TELEGRAM_BOT_TOKEN: "",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
+
+    const createCommand = payload.commands.find((entry: CommandEntry) =>
+      entry.command.includes("sandbox create"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.equal(createCommand.dockerfileReadError, undefined);
+
+    const channelsLine = createCommand.dockerfileContent
+      ?.split("\n")
+      .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+    assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+    const bakedChannels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
+    assert.deepEqual(bakedChannels, [], "disabled channel must not be baked into the image");
+    assert.doesNotMatch(
+      createCommand.command,
+      /--provider my-assistant-telegram-bridge/,
+      "disabled channel's bridge must not be attached to the new sandbox",
+    );
+
+    assert.deepEqual(
+      payload.registerCalls[0]?.messagingChannels,
+      ["telegram"],
+      "registry.messagingChannels must keep the disabled-but-configured channel so `channels start` can recover it",
+    );
+    assert.deepEqual(
+      payload.registerCalls[0]?.disabledChannels,
+      ["telegram"],
+      "registry.disabledChannels must round-trip through the rebuild",
+    );
+  });
+
+  it("bakes WhatsApp into the sandbox image without bridge providers when no messaging tokens are set", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "tokenless-whatsapp.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
       });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
-
-      const createCommand = payload.commands.find((entry: CommandEntry) =>
-        entry.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.equal(createCommand.dockerfileReadError, undefined);
-
-      const channelsLine = createCommand.dockerfileContent
-        ?.split("\n")
-        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-      const bakedChannels = JSON.parse(
-        Buffer.from(channelsLine.split("=")[1], "base64").toString(),
-      );
-      assert.deepEqual(bakedChannels, [], "disabled channel must not be baked into the image");
-      assert.doesNotMatch(
-        createCommand.command,
-        /--provider my-assistant-telegram-bridge/,
-        "disabled channel's bridge must not be attached to the new sandbox",
-      );
-
-      assert.deepEqual(
-        payload.registerCalls[0]?.messagingChannels,
-        ["telegram"],
-        "registry.messagingChannels must keep the disabled-but-configured channel so `channels start` can recover it",
-      );
-      assert.deepEqual(
-        payload.registerCalls[0]?.disabledChannels,
-        ["telegram"],
-        "registry.disabledChannels must round-trip through the rebuild",
-      );
-    },
-  );
-
-  it(
-    "bakes WhatsApp into the sandbox image without bridge providers when no messaging tokens are set",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"),
-      );
-      try {
-        const fakeBin = path.join(tmpDir, "bin");
-        const scriptPath = path.join(tmpDir, "tokenless-whatsapp.js");
-        const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-        const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-        const registryPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "state", "registry.js"),
-        );
-        const preflightPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
-        );
-        const credentialsPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
-        );
-
-        fs.mkdirSync(fakeBin, { recursive: true });
-        fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-          mode: 0o755,
-        });
-
-        const script = String.raw`
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -910,89 +911,83 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-        fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpDir,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            NEMOCLAW_NON_INTERACTIVE: "1",
-          },
-        });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-        assert.equal(result.status, 0, result.stderr);
-        const payloadLine = result.stdout
-          .trim()
-          .split("\n")
-          .slice()
-          .reverse()
-          .find((line) => line.startsWith("{") && line.endsWith("}"));
-        assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-        const payload = JSON.parse(payloadLine);
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
 
-        const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
-          /\bprovider (create|update)\b/.test(entry.command),
-        );
-        assert.equal(
-          providerMutationCommands.length,
-          0,
-          "QR-only channel selection must not create bridge providers",
-        );
-
-        const createCommand = payload.commands.find((entry: CommandEntry) =>
-          entry.command.includes("sandbox create"),
-        );
-        assert.ok(createCommand, "expected sandbox create command");
-        assert.equal(createCommand.dockerfileReadError, undefined);
-        assert.doesNotMatch(createCommand.command, /--provider \S+-bridge\b/);
-
-        const channelsLine = createCommand.dockerfileContent
-          ?.split("\n")
-          .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-        assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-        const channels = JSON.parse(
-          Buffer.from(channelsLine.split("=")[1], "base64").toString(),
-        );
-        assert.deepEqual(channels, ["whatsapp"]);
-        assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["whatsapp"]);
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it(
-    "drops WhatsApp from the rebuilt image when the registry marks it disabled",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"),
+      const providerMutationCommands = payload.commands.filter((entry: CommandEntry) =>
+        /\bprovider (create|update)\b/.test(entry.command),
       );
-      try {
-        const fakeBin = path.join(tmpDir, "bin");
-        const scriptPath = path.join(tmpDir, "disabled-whatsapp.js");
-        const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-        const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-        const registryPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "state", "registry.js"),
-        );
-        const preflightPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
-        );
-        const credentialsPath = JSON.stringify(
-          path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
-        );
+      assert.equal(
+        providerMutationCommands.length,
+        0,
+        "QR-only channel selection must not create bridge providers",
+      );
 
-        fs.mkdirSync(fakeBin, { recursive: true });
-        fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-          mode: 0o755,
-        });
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommand.dockerfileReadError, undefined);
+      assert.doesNotMatch(createCommand.command, /--provider \S+-bridge\b/);
 
-        const script = String.raw`
+      const channelsLine = createCommand.dockerfileContent
+        ?.split("\n")
+        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+      const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
+      assert.deepEqual(channels, ["whatsapp"]);
+      assert.deepEqual(payload.registerCalls[0]?.messagingChannels, ["whatsapp"]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops WhatsApp from the rebuilt image when the registry marks it disabled", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"));
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "disabled-whatsapp.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+      );
+      const preflightPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      );
+      const credentialsPath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1077,58 +1072,55 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-        fs.writeFileSync(scriptPath, script);
+      fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            HOME: tmpDir,
-            PATH: `${fakeBin}:${process.env.PATH || ""}`,
-            NEMOCLAW_NON_INTERACTIVE: "1",
-          },
-        });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
 
-        assert.equal(result.status, 0, result.stderr);
-        const payloadLine = result.stdout
-          .trim()
-          .split("\n")
-          .slice()
-          .reverse()
-          .find((line) => line.startsWith("{") && line.endsWith("}"));
-        assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-        const payload = JSON.parse(payloadLine);
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
 
-        const createCommand = payload.commands.find((entry: CommandEntry) =>
-          entry.command.includes("sandbox create"),
-        );
-        assert.ok(createCommand, "expected sandbox create command");
-        assert.equal(createCommand.dockerfileReadError, undefined);
+      const createCommand = payload.commands.find((entry: CommandEntry) =>
+        entry.command.includes("sandbox create"),
+      );
+      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommand.dockerfileReadError, undefined);
 
-        const channelsLine = createCommand.dockerfileContent
-          ?.split("\n")
-          .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
-        assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
-        const channels = JSON.parse(
-          Buffer.from(channelsLine.split("=")[1], "base64").toString(),
-        );
-        assert.deepEqual(channels, [], "disabled QR channel must not be baked into the image");
-        assert.deepEqual(
-          payload.registerCalls[0]?.messagingChannels,
-          ["whatsapp"],
-          "registry.messagingChannels must keep the disabled QR channel so `channels start` can recover it (mirrors #3381)",
-        );
-        assert.deepEqual(
-          payload.registerCalls[0]?.disabledChannels,
-          ["whatsapp"],
-          "registry.disabledChannels must round-trip through the rebuild",
-        );
-      } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
+      const channelsLine = createCommand.dockerfileContent
+        ?.split("\n")
+        .find((line: string) => line.startsWith("ARG NEMOCLAW_MESSAGING_CHANNELS_B64="));
+      assert.ok(channelsLine, "expected messaging build arg in Dockerfile");
+      const channels = JSON.parse(Buffer.from(channelsLine.split("=")[1], "base64").toString());
+      assert.deepEqual(channels, [], "disabled QR channel must not be baked into the image");
+      assert.deepEqual(
+        payload.registerCalls[0]?.messagingChannels,
+        ["whatsapp"],
+        "registry.messagingChannels must keep the disabled QR channel so `channels start` can recover it (mirrors #3381)",
+      );
+      assert.deepEqual(
+        payload.registerCalls[0]?.disabledChannels,
+        ["whatsapp"],
+        "registry.disabledChannels must round-trip through the rebuild",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
   it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1138,8 +1130,12 @@ const { createSandbox } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1207,24 +1203,23 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it(
-    "reuses sandbox when messaging providers already exist in gateway",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+  it("reuses sandbox when messaging providers already exist in gateway", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1259,80 +1254,80 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
 
-      assert.equal(payload.sandboxName, "my-assistant", "should reuse existing sandbox");
-      assert.ok(
-        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
-        "should NOT recreate sandbox when providers already exist in gateway",
-      );
-      assert.ok(
-        payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox delete")),
-        "should NOT delete sandbox when providers already exist in gateway",
-      );
+    assert.equal(payload.sandboxName, "my-assistant", "should reuse existing sandbox");
+    assert.ok(
+      payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox create")),
+      "should NOT recreate sandbox when providers already exist in gateway",
+    );
+    assert.ok(
+      payload.commands.every((entry: CommandEntry) => !entry.command.includes("sandbox delete")),
+      "should NOT delete sandbox when providers already exist in gateway",
+    );
 
-      // Providers should still be upserted on reuse (credential refresh).
-      // Since the mock reports providers as existing (run returns status 0),
-      // upsertProvider issues 'update' rather than 'create'.
-      const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
-        entry.command.includes("provider update"),
-      );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) =>
-          e.command.includes("my-assistant-discord-bridge"),
-        ),
-        "should upsert discord provider on reuse to refresh credentials",
-      );
-      assert.ok(
-        providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-slack-bridge")),
-        "should upsert slack provider on reuse to refresh credentials",
-      );
-    },
-  );
+    // Providers should still be upserted on reuse (credential refresh).
+    // Since the mock reports providers as existing (run returns status 0),
+    // upsertProvider issues 'update' rather than 'create'.
+    const providerUpserts = payload.commands.filter((entry: CommandEntry) =>
+      entry.command.includes("provider update"),
+    );
+    assert.ok(
+      providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-discord-bridge")),
+      "should upsert discord provider on reuse to refresh credentials",
+    );
+    assert.ok(
+      providerUpserts.some((e: CommandEntry) => e.command.includes("my-assistant-slack-bridge")),
+      "should upsert slack provider on reuse to refresh credentials",
+    );
+  });
 
-  it(
-    "filters messaging providers to only enabledChannels when provided",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-filter-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "enabled-channels-filter.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("filters messaging providers to only enabledChannels when provided", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-filter-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "enabled-channels-filter.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1396,82 +1391,84 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
 
-      // Only telegram provider should be created
-      const providerCommands = payload.commands.filter((e: CommandEntry) =>
-        e.command.includes("provider create"),
-      );
-      const telegramProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-telegram-bridge"),
-      );
-      assert.ok(telegramProvider, "expected telegram provider to be created");
+    // Only telegram provider should be created
+    const providerCommands = payload.commands.filter((e: CommandEntry) =>
+      e.command.includes("provider create"),
+    );
+    const telegramProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-telegram-bridge"),
+    );
+    assert.ok(telegramProvider, "expected telegram provider to be created");
 
-      // Discord and slack providers should NOT be created
-      const discordProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-discord-bridge"),
-      );
-      assert.ok(!discordProvider, "discord provider should be filtered out");
+    // Discord and slack providers should NOT be created
+    const discordProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-discord-bridge"),
+    );
+    assert.ok(!discordProvider, "discord provider should be filtered out");
 
-      const slackProvider = providerCommands.find((e: CommandEntry) =>
-        e.command.includes("my-assistant-slack-bridge"),
-      );
-      assert.ok(!slackProvider, "slack provider should be filtered out");
+    const slackProvider = providerCommands.find((e: CommandEntry) =>
+      e.command.includes("my-assistant-slack-bridge"),
+    );
+    assert.ok(!slackProvider, "slack provider should be filtered out");
 
-      // Sandbox create should only have the telegram --provider flag
-      const createCommand = payload.commands.find((e: CommandEntry) =>
-        e.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
-      assert.doesNotMatch(createCommand.command, /my-assistant-discord-bridge/);
-      assert.doesNotMatch(createCommand.command, /my-assistant-slack-bridge/);
-    },
-  );
+    // Sandbox create should only have the telegram --provider flag
+    const createCommand = payload.commands.find((e: CommandEntry) =>
+      e.command.includes("sandbox create"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.match(createCommand.command, /--provider my-assistant-telegram-bridge/);
+    assert.doesNotMatch(createCommand.command, /my-assistant-discord-bridge/);
+    assert.doesNotMatch(createCommand.command, /my-assistant-slack-bridge/);
+  });
 
-  it(
-    "creates no messaging providers when enabledChannels is empty",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-empty-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "enabled-channels-empty.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-      const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("creates no messaging providers when enabledChannels is empty", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-empty-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "enabled-channels-empty.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+    );
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
@@ -1533,69 +1530,67 @@ const { createSandbox } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const payloadLine = result.stdout
-        .trim()
-        .split("\n")
-        .slice()
-        .reverse()
-        .find((line) => line.startsWith("{") && line.endsWith("}"));
-      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(payloadLine);
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .slice()
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(payloadLine);
 
-      // No messaging providers should be created at all
-      const providerCommands = payload.commands.filter((e: CommandEntry) =>
-        e.command.includes("provider create"),
-      );
-      assert.equal(
-        providerCommands.length,
-        0,
-        "no providers should be created when enabledChannels is empty",
-      );
+    // No messaging providers should be created at all
+    const providerCommands = payload.commands.filter((e: CommandEntry) =>
+      e.command.includes("provider create"),
+    );
+    assert.equal(
+      providerCommands.length,
+      0,
+      "no providers should be created when enabledChannels is empty",
+    );
 
-      // Sandbox create should have no --provider flags for messaging bridges
-      const createCommand = payload.commands.find((e: CommandEntry) =>
-        e.command.includes("sandbox create"),
-      );
-      assert.ok(createCommand, "expected sandbox create command");
-      assert.doesNotMatch(createCommand.command, /discord-bridge/);
-      assert.doesNotMatch(createCommand.command, /slack-bridge/);
-      assert.doesNotMatch(createCommand.command, /telegram-bridge/);
-    },
-  );
+    // Sandbox create should have no --provider flags for messaging bridges
+    const createCommand = payload.commands.find((e: CommandEntry) =>
+      e.command.includes("sandbox create"),
+    );
+    assert.ok(createCommand, "expected sandbox create command");
+    assert.doesNotMatch(createCommand.command, /discord-bridge/);
+    assert.doesNotMatch(createCommand.command, /slack-bridge/);
+    assert.doesNotMatch(createCommand.command, /telegram-bridge/);
+  });
 
-  it(
-    "non-interactive setupMessagingChannels returns channels with tokens",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  it("non-interactive setupMessagingChannels returns channels with tokens", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
@@ -1625,50 +1620,50 @@ const { setupMessagingChannels } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const channels = parseStdoutJson<string[]>(result.stdout);
+    assert.equal(result.status, 0, result.stderr);
+    const channels = parseStdoutJson<string[]>(result.stdout);
 
-      // Should return only the channels that have tokens set
-      assert.ok(Array.isArray(channels), "expected an array return value");
-      assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
-      assert.ok(channels.includes("slack"), "expected slack in returned channels");
-      assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
-    },
-  );
+    // Should return only the channels that have tokens set
+    assert.ok(Array.isArray(channels), "expected an array return value");
+    assert.ok(channels.includes("telegram"), "expected telegram in returned channels");
+    assert.ok(channels.includes("slack"), "expected slack in returned channels");
+    assert.ok(!channels.includes("discord"), "discord should not be in returned channels");
+  });
 
-  it(
-    "non-interactive setupMessagingChannels drops Slack when live Slack API validation rejects the token",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "messaging-slack-live-reject.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const httpProbePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"));
+  it("non-interactive setupMessagingChannels drops Slack when live Slack API validation rejects the token", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "messaging-slack-live-reject.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const httpProbePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
@@ -1711,48 +1706,44 @@ const { setupMessagingChannels } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const channels = parseStdoutJson<string[]>(result.stdout);
+    assert.equal(result.status, 0, result.stderr);
+    const channels = parseStdoutJson<string[]>(result.stdout);
 
-      assert.ok(Array.isArray(channels), "expected an array return value");
-      assert.ok(!channels.includes("slack"), "Slack should be dropped after API rejection");
-      assert.doesNotMatch(result.stdout, /xoxb-fake-bot-token/);
-      assert.doesNotMatch(result.stderr, /xoxb-fake-bot-token/);
-    },
-  );
+    assert.ok(Array.isArray(channels), "expected an array return value");
+    assert.ok(!channels.includes("slack"), "Slack should be dropped after API rejection");
+    assert.doesNotMatch(result.stdout, /xoxb-fake-bot-token/);
+    assert.doesNotMatch(result.stderr, /xoxb-fake-bot-token/);
+  });
 
-  it(
-    "non-interactive setupMessagingChannels returns empty array when no tokens set",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "messaging-no-tokens.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  it("non-interactive setupMessagingChannels returns empty array when no tokens set", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "messaging-no-tokens.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      const script = String.raw`
+    const script = String.raw`
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 runner.run = () => ({ status: 0 });
@@ -1773,57 +1764,55 @@ const { setupMessagingChannels } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          TELEGRAM_BOT_TOKEN: "",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "",
-          SLACK_APP_TOKEN: "",
-        },
-      });
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        TELEGRAM_BOT_TOKEN: "",
+        DISCORD_BOT_TOKEN: "",
+        SLACK_BOT_TOKEN: "",
+        SLACK_APP_TOKEN: "",
+      },
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const channels = parseStdoutJson<string[]>(result.stdout);
+    assert.equal(result.status, 0, result.stderr);
+    const channels = parseStdoutJson<string[]>(result.stdout);
 
-      assert.ok(Array.isArray(channels), "expected an array return value");
-      assert.equal(channels.length, 0, "expected empty array when no tokens are set");
-    },
-  );
+    assert.ok(Array.isArray(channels), "expected an array return value");
+    assert.equal(channels.length, 0, "expected empty array when no tokens are set");
+  });
 
-  it(
-    "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "slack-format-reject.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "slack-format-reject.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      // Subscript: mocks credentials.prompt to return a bogus Slack token,
-      // exposes MESSAGING_CHANNELS so the parent can look up the Slack toggle
-      // digit, and asserts that setupMessagingChannels rejects the invalid
-      // token without persisting it. Slack is the 3rd channel in insertion
-      // order today (telegram, discord, slack) but we compute the index
-      // dynamically to avoid a brittle coupling to that ordering.
-      const script = String.raw`
+    // Subscript: mocks credentials.prompt to return a bogus Slack token,
+    // exposes MESSAGING_CHANNELS so the parent can look up the Slack toggle
+    // digit, and asserts that setupMessagingChannels rejects the invalid
+    // token without persisting it. Slack is the 3rd channel in insertion
+    // order today (telegram, discord, slack) but we compute the index
+    // dynamically to avoid a brittle coupling to that ordering.
+    const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -1857,82 +1846,82 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      // Dry run with just Enter — no toggles, empty result — used to read back
-      // Slack's 1-based index from the same subscript so the real run can
-      // press the right digit.
-      const introspect = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        },
-        input: "\n",
-      });
-      assert.equal(introspect.status, 0, introspect.stderr);
-      const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop()!);
-      const slackIdx = introspectOut.slackIndex1Based;
-      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+    // Dry run with just Enter — no toggles, empty result — used to read back
+    // Slack's 1-based index from the same subscript so the real run can
+    // press the right digit.
+    const introspect = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      input: "\n",
+    });
+    assert.equal(introspect.status, 0, introspect.stderr);
+    const introspectOut = JSON.parse(introspect.stdout.trim().split("\n").pop()!);
+    const slackIdx = introspectOut.slackIndex1Based;
+    assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
-      // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
-      // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
-      // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        },
-        input: `${slackIdx}\n`,
-      });
+    // Real run: press Slack's digit, Enter. Slack gets toggled on, prompt
+    // fires, mocked prompt returns "abcd", tokenFormat regex rejects it,
+    // channel is dropped, saveCredential never runs for SLACK_BOT_TOKEN.
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      input: `${slackIdx}\n`,
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
+    assert.equal(result.status, 0, result.stderr);
+    const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
-      assert.ok(
-        !out.result.includes("slack"),
-        `slack should have been dropped after invalid token; got ${JSON.stringify(out.result)}`,
-      );
-      assert.ok(
-        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
-        `SLACK_BOT_TOKEN should NOT have been persisted; saveCalls=${JSON.stringify(out.saveCalls)}`,
-      );
-      assert.ok(
-        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
-        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
-      );
-    },
-  );
+    assert.ok(
+      !out.result.includes("slack"),
+      `slack should have been dropped after invalid token; got ${JSON.stringify(out.result)}`,
+    );
+    assert.ok(
+      !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
+      `SLACK_BOT_TOKEN should NOT have been persisted; saveCalls=${JSON.stringify(out.saveCalls)}`,
+    );
+    assert.ok(
+      result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+      `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+    );
+  });
 
-  it(
-    "interactive setupMessagingChannels drops slack when app token fails appTokenFormat check (#1912)",
-    { timeout: 60_000 },
-    async () => {
-      const repoRoot = path.join(import.meta.dirname, "..");
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), "nemoclaw-onboard-slack-app-format-reject-"),
-      );
-      const fakeBin = path.join(tmpDir, "bin");
-      const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-      const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+  it("interactive setupMessagingChannels drops slack when app token fails appTokenFormat check (#1912)", {
+    timeout: 60_000,
+  }, async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-slack-app-format-reject-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
 
-      // Subscript: mocks prompt to return a VALID bot token but a bogus app
-      // token. Expected behavior: bot token passes the regex and persists,
-      // app token fails the regex, channel is dropped from the enabled set,
-      // and SLACK_APP_TOKEN is never saved.
-      const script = String.raw`
+    // Subscript: mocks prompt to return a VALID bot token but a bogus app
+    // token. Expected behavior: bot token passes the regex and persists,
+    // app token fails the regex, channel is dropped from the enabled set,
+    // and SLACK_APP_TOKEN is never saved.
+    const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
@@ -1967,57 +1956,56 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      // Dry run with Enter only to introspect Slack's 1-based digit.
-      const introspect = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        },
-        input: "\n",
-      });
-      assert.equal(introspect.status, 0, introspect.stderr);
-      const slackIdx = JSON.parse(introspect.stdout.trim().split("\n").pop()!).slackIndex1Based;
-      assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
+    // Dry run with Enter only to introspect Slack's 1-based digit.
+    const introspect = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      input: "\n",
+    });
+    assert.equal(introspect.status, 0, introspect.stderr);
+    const slackIdx = JSON.parse(introspect.stdout.trim().split("\n").pop()!).slackIndex1Based;
+    assert.ok(slackIdx >= 1, `unexpected slack index: ${slackIdx}`);
 
-      // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
-      // prompt returns "abcd", app-token check rejects, channel dropped.
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        },
-        input: `${slackIdx}\n`,
-      });
+    // Real run: toggle Slack on, exit UI, bot prompt returns valid, app
+    // prompt returns "abcd", app-token check rejects, channel dropped.
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      input: `${slackIdx}\n`,
+    });
 
-      assert.equal(result.status, 0, result.stderr);
-      const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
+    assert.equal(result.status, 0, result.stderr);
+    const out = JSON.parse(result.stdout.trim().split("\n").pop()!);
 
-      assert.ok(
-        !out.result.includes("slack"),
-        `slack should have been dropped after invalid app token; got ${JSON.stringify(out.result)}`,
-      );
-      assert.ok(
-        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
-        `SLACK_BOT_TOKEN should NOT be persisted until the app token also passes; saveCalls=${JSON.stringify(out.saveCalls)}`,
-      );
-      assert.ok(
-        !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_APP_TOKEN"),
-        `SLACK_APP_TOKEN should NOT have been persisted (invalid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
-      );
-      assert.ok(
-        result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
-        `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
-      );
-    },
-  );
+    assert.ok(
+      !out.result.includes("slack"),
+      `slack should have been dropped after invalid app token; got ${JSON.stringify(out.result)}`,
+    );
+    assert.ok(
+      !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_BOT_TOKEN"),
+      `SLACK_BOT_TOKEN should NOT be persisted until the app token also passes; saveCalls=${JSON.stringify(out.saveCalls)}`,
+    );
+    assert.ok(
+      !out.saveCalls.some((c: { key: string }) => c.key === "SLACK_APP_TOKEN"),
+      `SLACK_APP_TOKEN should NOT have been persisted (invalid format); saveCalls=${JSON.stringify(out.saveCalls)}`,
+    );
+    assert.ok(
+      result.stderr.includes("Invalid format") || result.stdout.includes("Invalid format"),
+      `expected 'Invalid format' warning; stderr=${result.stderr} stdout=${result.stdout}`,
+    );
+  });
 
   it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -2106,5 +2094,4 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
       );
     }
   });
-
 });

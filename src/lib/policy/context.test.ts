@@ -23,10 +23,7 @@ vi.mock("./tiers", () => ({
 import * as registry from "../state/registry";
 import * as policies from ".";
 import { getTier } from "./tiers";
-import {
-  buildPolicyContext,
-  renderPolicyContextMarkdown,
-} from "./context";
+import { buildPolicyContext, renderPolicyContextMarkdown } from "./context";
 
 const SANDBOX = "alpha";
 
@@ -60,9 +57,7 @@ function mockBuiltinPresets() {
     { file: "github.yaml", name: "github", description: "GitHub API access" },
   ]);
   vi.mocked(policies.listCustomPresets).mockReturnValue([]);
-  vi.mocked(policies.loadPreset).mockImplementation(
-    (name: string) => PRESET_CONTENT[name] ?? null,
-  );
+  vi.mocked(policies.loadPreset).mockImplementation((name: string) => PRESET_CONTENT[name] ?? null);
   vi.mocked(policies.getPresetEndpoints).mockImplementation((content: string) => {
     const hosts: string[] = [];
     const regex = /host:\s*(\S+)/g;
@@ -120,10 +115,7 @@ describe("buildPolicyContext", () => {
       description: "Full dev tooling and web search",
     });
     expect(ctx.activePresets.map((p) => p.name)).toEqual(["slack"]);
-    expect(ctx.activePresets[0].allowedHostCategories).toEqual([
-      "api.slack.com",
-      "slack.com",
-    ]);
+    expect(ctx.activePresets[0].allowedHostCategories).toEqual(["api.slack.com", "slack.com"]);
     expect(ctx.activePresets[0].source).toBe("builtin");
     expect(ctx.activePresets[0].redactedHostCount).toBe(0);
     expect(ctx.activePresets[0].verification).toBe("gateway-unavailable");
@@ -131,8 +123,9 @@ describe("buildPolicyContext", () => {
     expect(ctx.approvalPath.inspect).toBe(`nemoclaw ${SANDBOX} policy-list`);
     expect(ctx.approvalPath.add).toBe(`nemoclaw ${SANDBOX} policy-add <preset>`);
     expect(ctx.approvalPath.remove).toBe(`nemoclaw ${SANDBOX} policy-remove <preset>`);
-    expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement"))
-      .toBe(true);
+    expect(ctx.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
+      true,
+    );
   });
 
   it("marks active presets as `verified` when the gateway agrees and `registry-only` when it disagrees", () => {
@@ -233,7 +226,8 @@ describe("buildPolicyContext", () => {
     vi.mocked(registry.getCustomPolicies).mockReturnValue([
       {
         name: "internal",
-        content: "preset:\n  name: internal\nnetwork_policies:\n  internal:\n    endpoints:\n      - host: internal.example.com\n",
+        content:
+          "preset:\n  name: internal\nnetwork_policies:\n  internal:\n    endpoints:\n      - host: internal.example.com\n",
       },
     ]);
     vi.mocked(getTier).mockReturnValue(null);

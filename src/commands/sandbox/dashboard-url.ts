@@ -4,10 +4,7 @@
 import { Args } from "@oclif/core";
 import { quietFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import {
-  DashboardUrlCommandError,
-  runDashboardUrlCommand,
-} from "../../lib/dashboard-url-command";
+import { DashboardUrlCommandError, runDashboardUrlCommand } from "../../lib/dashboard-url-command";
 import type { SandboxEntry } from "../../lib/state/registry";
 
 type DashboardUrlRuntimeBridge = {
@@ -26,7 +23,10 @@ let runtimeBridgeFactory = (): DashboardUrlRuntimeBridge => {
   };
   const dashboardAccess =
     require("../../lib/onboard/dashboard-access") as typeof import("../../lib/onboard/dashboard-access");
-  const runner = require("../../lib/runner") as Pick<typeof import("../../lib/runner"), "runCapture">;
+  const runner = require("../../lib/runner") as Pick<
+    typeof import("../../lib/runner"),
+    "runCapture"
+  >;
   return {
     fetchGatewayAuthTokenFromSandbox: onboard.fetchGatewayAuthTokenFromSandbox,
     getSandbox: (sandboxName: string) => {

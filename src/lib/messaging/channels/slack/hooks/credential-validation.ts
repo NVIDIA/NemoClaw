@@ -199,11 +199,7 @@ function classifySlackProbeResult(
 export function validateSlackBotToken(token: string): SlackTokenValidationResult {
   if (shouldSkipSlackAuthValidation()) return skippedSlackValidationResult();
 
-  return classifySlackProbeResult(
-    "bot",
-    token,
-    runSlackApiProbe(token, SLACK_AUTH_TEST_URL),
-  );
+  return classifySlackProbeResult("bot", token, runSlackApiProbe(token, SLACK_AUTH_TEST_URL));
 }
 
 export function validateSlackAppToken(token: string): SlackTokenValidationResult {

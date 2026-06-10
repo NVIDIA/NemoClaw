@@ -61,9 +61,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(
-      dockerRm.mock.calls.some((call) =>
-        String(call[0]).includes("nemoclaw-gpu-backup"),
-      ),
+      dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
   });
 
@@ -86,10 +84,7 @@ describe("finalizeDockerGpuPatchBackup", () => {
   it("is a no-op when the backup was already removed by the patch helper", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const result = { ...deferredCreateResult(), backupRemoved: true };
-    const outcome = finalizeDockerGpuPatchBackup(
-      { result, supervisorReady: true },
-      { dockerRm },
-    );
+    const outcome = finalizeDockerGpuPatchBackup({ result, supervisorReady: true }, { dockerRm });
     expect(outcome).toEqual({ backupRemoved: true, rolledBack: false });
     expect(dockerRm).not.toHaveBeenCalled();
   });

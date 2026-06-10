@@ -39,13 +39,15 @@ describe("parseFrontmatter", () => {
   });
 
   it("rejects malformed YAML", () => {
-    expect(() =>
-      parseFrontmatter("---\nname: ok\ndescription: [broken\n---\n"),
-    ).toThrow("not valid YAML");
+    expect(() => parseFrontmatter("---\nname: ok\ndescription: [broken\n---\n")).toThrow(
+      "not valid YAML",
+    );
   });
 
   it("rejects non-mapping frontmatter", () => {
-    expect(() => parseFrontmatter("---\n- just\n- a list\n---\n")).toThrow("must be a YAML mapping");
+    expect(() => parseFrontmatter("---\n- just\n- a list\n---\n")).toThrow(
+      "must be a YAML mapping",
+    );
   });
 
   it("throws when frontmatter is missing entirely", () => {
@@ -201,9 +203,7 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
-    expect(paths.sessionFile).toBe(
-      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
-    );
+    expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
     expect(paths.isOpenClaw).toBe(true);
   });
 
@@ -217,9 +217,7 @@ describe("resolveSkillPaths", () => {
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
     expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
-    expect(paths.sessionFile).toBe(
-      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
-    );
+    expect(paths.sessionFile).toBe("/sandbox/.openclaw/agents/main/sessions/sessions.json");
     expect(paths.isOpenClaw).toBe(true);
   });
 
@@ -300,7 +298,10 @@ describe("postInstall", () => {
       const mirrorCmd = commands.find(
         (c) => c.includes(paths.uploadDir) && c.includes('"$HOME/.openclaw/skills/report-writer"'),
       );
-      expect(mirrorCmd, "postInstall should mirror the skill into $HOME/.openclaw/skills").toBeDefined();
+      expect(
+        mirrorCmd,
+        "postInstall should mirror the skill into $HOME/.openclaw/skills",
+      ).toBeDefined();
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
@@ -351,9 +352,9 @@ describe("verifyInstall", () => {
 
     expect(ok).toBe(true);
     // The verification command must cover the home mirror SKILL.md.
-    expect(commands.some((c) => c.includes('"$HOME/.openclaw/skills/report-writer/SKILL.md"'))).toBe(
-      true,
-    );
+    expect(
+      commands.some((c) => c.includes('"$HOME/.openclaw/skills/report-writer/SKILL.md"')),
+    ).toBe(true);
   });
 
   it("returns false when the upload dir has SKILL.md but the home mirror does not", () => {

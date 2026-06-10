@@ -57,8 +57,7 @@ describe("onboard messaging reuse", () => {
       () => false,
       () => ({ messagingChannels: ["slack"] }),
       () => [],
-      (provider) =>
-        provider === "assistant-slack-bridge" || provider === "assistant-slack-app",
+      (provider) => provider === "assistant-slack-bridge" || provider === "assistant-slack-app",
       true,
     );
 

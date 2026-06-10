@@ -17,10 +17,15 @@ function fail(stderr = "failed"): CommandResult {
 describe("runFixCoreDns", () => {
   it("skips cleanly when no supported local Docker socket is detected", () => {
     const log = vi.fn();
-    const result = runFixCoreDns({}, { env: { HOME: "/tmp/none" }, existsSocket: () => false, log });
+    const result = runFixCoreDns(
+      {},
+      { env: { HOME: "/tmp/none" }, existsSocket: () => false, log },
+    );
 
     expect(result).toEqual({ exitCode: 0, runtime: "unknown", skipped: true });
-    expect(log).toHaveBeenCalledWith("Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.");
+    expect(log).toHaveBeenCalledWith(
+      "Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.",
+    );
   });
 
   it("skips unsupported explicit Docker hosts", () => {
@@ -35,7 +40,9 @@ describe("runFixCoreDns", () => {
     );
 
     expect(result).toEqual({ exitCode: 0, runtime: "custom", skipped: true });
-    expect(log).toHaveBeenCalledWith("Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.");
+    expect(log).toHaveBeenCalledWith(
+      "Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.",
+    );
   });
 
   it("does not treat the Docker Desktop socket as Podman on macOS", () => {
@@ -54,7 +61,9 @@ describe("runFixCoreDns", () => {
 
     expect(result).toEqual({ exitCode: 0, runtime: "unknown", skipped: true });
     expect(runDocker).not.toHaveBeenCalled();
-    expect(log).toHaveBeenCalledWith("Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.");
+    expect(log).toHaveBeenCalledWith(
+      "Skipping CoreDNS patch: no supported Colima or Podman Docker socket found.",
+    );
   });
 
   it("patches CoreDNS through docker with JSON-escaped Corefile payload", () => {
@@ -163,7 +172,8 @@ describe("runSetupDnsProxy", () => {
       if (cmd.includes("get pods -n openshell -o name")) return ok("pod/box[1]-abc\n");
       if (cmd.includes("ip addr show")) return ok("10.200.0.1\n");
       if (cmd.includes("cat /tmp/dns-proxy.pid")) return ok("12345\n");
-      if (cmd.includes("cat /tmp/dns-proxy.log")) return ok("dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345\n");
+      if (cmd.includes("cat /tmp/dns-proxy.log"))
+        return ok("dns-proxy: 10.200.0.1:53 -> 10.43.0.10:53 pid=12345\n");
       if (cmd.includes("python3 -c")) return ok("ok");
       if (cmd.includes("ls /run/netns/")) return ok("sandbox-ns\n");
       if (cmd.includes("test -x")) return ok();
@@ -189,7 +199,11 @@ describe("runSetupDnsProxy", () => {
     expect(calls.some((args) => args.join(" ").includes("get service kube-dns"))).toBe(true);
     expect(calls.some((args) => args.join(" ").includes("get endpoints kube-dns"))).toBe(false);
     expect(calls.some((args) => args.includes("box[1]-abc"))).toBe(true);
-    expect(calls.some((args) => args.join(" ").includes("nohup python3 -u /tmp/dns-proxy.py '10.43.0.10' '10.200.0.1'"))).toBe(true);
+    expect(
+      calls.some((args) =>
+        args.join(" ").includes("nohup python3 -u /tmp/dns-proxy.py '10.43.0.10' '10.200.0.1'"),
+      ),
+    ).toBe(true);
     expect(log).toHaveBeenCalledWith("  DNS verification: 4 passed, 0 failed");
   });
 
@@ -204,7 +218,8 @@ describe("runSetupDnsProxy", () => {
       if (cmd.includes("get pods -n openshell -o name")) return ok("pod/box-abc\n");
       if (cmd.includes("ip addr show")) return ok("10.200.0.1\n");
       if (cmd.includes("cat /tmp/dns-proxy.pid")) return ok("12345\n");
-      if (cmd.includes("cat /tmp/dns-proxy.log")) return ok("dns-proxy: 10.200.0.1:53 -> 10.42.0.15:53 pid=12345\n");
+      if (cmd.includes("cat /tmp/dns-proxy.log"))
+        return ok("dns-proxy: 10.200.0.1:53 -> 10.42.0.15:53 pid=12345\n");
       if (cmd.includes("python3 -c")) return ok("ok");
       if (cmd.includes("ls /run/netns/")) return ok("sandbox-ns\n");
       if (cmd.includes("test -x")) return ok();

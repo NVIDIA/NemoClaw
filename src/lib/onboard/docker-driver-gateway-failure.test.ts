@@ -42,15 +42,11 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
 
   it("prints the 'failed to start' header and troubleshooting footer", () => {
     expect(() =>
-      reportDockerDriverGatewayStartFailure(
-        "/tmp/nonexistent-gateway.log",
-        makeExitState(),
-        { exitOnFailure: false },
-      ),
+      reportDockerDriverGatewayStartFailure("/tmp/nonexistent-gateway.log", makeExitState(), {
+        exitOnFailure: false,
+      }),
     ).not.toThrow();
-    const joined = errSpy.mock.calls
-      .map((c: string[]) => c.join(" "))
-      .join("\n");
+    const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
     expect(joined).toContain("Docker-driver gateway failed to start");
     expect(joined).toContain("Troubleshooting:");
     expect(joined).toContain("tail -100 /tmp/nonexistent-gateway.log");
@@ -67,40 +63,27 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
       }),
       { exitOnFailure: false },
     );
-    const joined = errSpy.mock.calls
-      .map((c: string[]) => c.join(" "))
-      .join("\n");
-    expect(joined).toContain(
-      "Gateway process exited with code 127 before becoming ready",
-    );
+    const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
+    expect(joined).toContain("Gateway process exited with code 127 before becoming ready");
   });
 
   it("omits the child-exit line when the child is still running", () => {
-    reportDockerDriverGatewayStartFailure(
-      "/tmp/nonexistent-gateway.log",
-      makeExitState(),
-      { exitOnFailure: false },
-    );
-    const joined = errSpy.mock.calls
-      .map((c: string[]) => c.join(" "))
-      .join("\n");
+    reportDockerDriverGatewayStartFailure("/tmp/nonexistent-gateway.log", makeExitState(), {
+      exitOnFailure: false,
+    });
+    const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
     expect(joined).not.toContain("before becoming ready");
   });
 
   it("includes a tail of the gateway log when the file exists", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gw-fail-"));
     const log = path.join(dir, "openshell-gateway.log");
-    fs.writeFileSync(
-      log,
-      ["line-a", "line-b", "", "line-c", "GLIBC_2.38 not found"].join("\n"),
-    );
+    fs.writeFileSync(log, ["line-a", "line-b", "", "line-c", "GLIBC_2.38 not found"].join("\n"));
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
       });
-      const joined = errSpy.mock.calls
-        .map((c: string[]) => c.join(" "))
-        .join("\n");
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("Gateway log tail");
       expect(joined).toContain("GLIBC_2.38 not found");
     } finally {
@@ -113,18 +96,15 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
     const log = path.join(dir, "openshell-gateway.log");
     fs.writeFileSync(
       log,
-      [
-        "Error: Failed to create Docker client.",
-        "Socket not found: /var/run/docker.sock",
-      ].join("\n"),
+      ["Error: Failed to create Docker client.", "Socket not found: /var/run/docker.sock"].join(
+        "\n",
+      ),
     );
     try {
       reportDockerDriverGatewayStartFailure(log, makeExitState(), {
         exitOnFailure: false,
       });
-      const joined = errSpy.mock.calls
-        .map((c: string[]) => c.join(" "))
-        .join("\n");
+      const joined = errSpy.mock.calls.map((c: string[]) => c.join(" ")).join("\n");
       expect(joined).toContain("Docker daemon is not running");
       expect(joined).toContain("Start Docker, then rerun `nemoclaw onboard`");
     } finally {
@@ -134,21 +114,17 @@ describe("reportDockerDriverGatewayStartFailure (#3111)", () => {
 
   it("calls process.exit(1) when exitOnFailure is true", () => {
     expect(() =>
-      reportDockerDriverGatewayStartFailure(
-        "/tmp/nonexistent-gateway.log",
-        makeExitState(),
-        { exitOnFailure: true },
-      ),
+      reportDockerDriverGatewayStartFailure("/tmp/nonexistent-gateway.log", makeExitState(), {
+        exitOnFailure: true,
+      }),
     ).toThrow("process.exit(1)");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("does NOT call process.exit when exitOnFailure is false", () => {
-    reportDockerDriverGatewayStartFailure(
-      "/tmp/nonexistent-gateway.log",
-      makeExitState(),
-      { exitOnFailure: false },
-    );
+    reportDockerDriverGatewayStartFailure("/tmp/nonexistent-gateway.log", makeExitState(), {
+      exitOnFailure: false,
+    });
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });

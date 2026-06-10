@@ -102,11 +102,9 @@ describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
         ),
       ).toBe(true);
       // The steer hint targets a re-prompt menu that never appears here.
-      expect(
-        errLines.some((l) =>
-          l.includes("Pick a non-Ollama provider in the next menu"),
-        ),
-      ).toBe(false);
+      expect(errLines.some((l) => l.includes("Pick a non-Ollama provider in the next menu"))).toBe(
+        false,
+      );
     } finally {
       errSpy.mockRestore();
       exitSpy.mockRestore();

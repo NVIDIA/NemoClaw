@@ -24,10 +24,20 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
      */
     setDefaultSandbox(sandboxName: string): void;
     recordPostVerifyStarted(): Promise<Session>;
-    toSessionUpdates(updates: Record<string, unknown>): NonNullable<OnboardStateCompleteResult["updates"]>;
+    toSessionUpdates(
+      updates: Record<string, unknown>,
+    ): NonNullable<OnboardStateCompleteResult["updates"]>;
     removeLegacyCredentialsFile(): void;
     cleanupStaleHostFiles(): void;
     checkAndRecoverSandboxProcesses(sandboxName: string, options: { quiet: boolean }): void;
+    /**
+     * Best-effort device-approval sweep that clears pending allowlisted
+     * CLI/webchat scope upgrades before handoff. Never throws; swallows its own
+     * failures (timeout, sandbox-exec errors). Run after process recovery
+     * because that can restart the gateway (#3573), so the sweep targets the
+     * freshly-recovered gateway (ref #4504 / #4263).
+     */
+    autoPairScopeApproval(sandboxName: string): void;
     getChatUiUrl(): string;
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
@@ -69,7 +79,11 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   migratedLegacyKeys,
   webSearchEnabled,
   deps,
-}: FinalizationStateOptions<Agent, VerifyChain, VerificationResult>): Promise<FinalizationStateResult> {
+}: FinalizationStateOptions<
+  Agent,
+  VerifyChain,
+  VerificationResult
+>): Promise<FinalizationStateResult> {
   // Reaching finalization means the policy-preset step was confirmed, so it is
   // now safe to register this sandbox as the default (#4614).
   deps.setDefaultSandbox(sandboxName);
@@ -94,6 +108,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   deps.cleanupStaleHostFiles();
   // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+  // Clear any pending allowlisted scope upgrade against the freshly-recovered
+  // gateway before verification, so onboard hands off without a stuck pairing
+  // request (#4504 / #4263). Best-effort; never blocks.
+  deps.autoPairScopeApproval(sandboxName);
 
   // Probe Brave Search egress through the L7 proxy now that the final
   // policy and provider state are live — earlier probes would race the

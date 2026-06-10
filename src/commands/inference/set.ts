@@ -14,10 +14,7 @@ function nonEmptyFlag(description: string) {
   });
 }
 
-import {
-  InferenceSetError,
-  runInferenceSet,
-} from "../../lib/actions/inference-set";
+import { InferenceSetError, runInferenceSet } from "../../lib/actions/inference-set";
 import { CLI_NAME } from "../../lib/cli/branding";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 

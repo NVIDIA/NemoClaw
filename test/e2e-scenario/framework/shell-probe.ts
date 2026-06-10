@@ -87,7 +87,10 @@ export class ShellProbe {
     this.signal = deps.signal;
   }
 
-  async run(trustedCommand: TrustedShellCommand, options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
+  async run(
+    trustedCommand: TrustedShellCommand,
+    options: ShellProbeRunOptions = {},
+  ): Promise<ShellProbeResult> {
     const command = trustedCommand.command;
     const args = [...trustedCommand.args];
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -107,7 +110,9 @@ export class ShellProbe {
       this.redact(enforcedValues.length > 0 ? enforceLocalRedaction(text) : text, redactionValues);
     const redactedCommand = [command, ...args].map(redactProbeText);
     const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
-    const writeArtifacts = async (result: Omit<ShellProbeResult, "artifacts">): Promise<ShellProbeResult["artifacts"]> => ({
+    const writeArtifacts = async (
+      result: Omit<ShellProbeResult, "artifacts">,
+    ): Promise<ShellProbeResult["artifacts"]> => ({
       stdout: await this.artifacts.writeText(`${artifactBase}.stdout.txt`, result.stdout),
       stderr: await this.artifacts.writeText(`${artifactBase}.stderr.txt`, result.stderr),
       result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
@@ -118,7 +123,9 @@ export class ShellProbe {
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true,
-      env: options.inheritEnv ? { ...process.env, ...(options.env ?? {}) } : { ...(options.env ?? {}) },
+      env: options.inheritEnv
+        ? { ...process.env, ...(options.env ?? {}) }
+        : { ...(options.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const supervised = await superviseChild(child, {

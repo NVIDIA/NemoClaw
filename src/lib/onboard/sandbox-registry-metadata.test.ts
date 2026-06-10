@@ -81,17 +81,20 @@ describe("sandbox registry metadata", () => {
     const configDir = join(tmpDir, ".nemoclaw");
     const registryFile = join(configDir, "sandboxes.json");
     mkdirSync(configDir, { recursive: true });
-    writeFileSync(registryFile, JSON.stringify({
-      sandboxes: {
-        alpha: {
-          name: "alpha",
-          model: "old-model",
-          provider: "old-provider",
-          agentVersion: "2026.5.18",
+    writeFileSync(
+      registryFile,
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "old-model",
+            provider: "old-provider",
+            agentVersion: "2026.5.18",
+          },
         },
-      },
-      defaultSandbox: "alpha",
-    }));
+        defaultSandbox: "alpha",
+      }),
+    );
 
     const readSandbox = () => JSON.parse(readFileSync(registryFile, "utf8")).sandboxes.alpha;
 

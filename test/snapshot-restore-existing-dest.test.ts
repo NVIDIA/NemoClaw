@@ -25,7 +25,10 @@ const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
 type CliRunResult = { code: number; out: string };
 
-function runCli(args: readonly string[], env: Record<string, string | undefined> = {}): CliRunResult {
+function runCli(
+  args: readonly string[],
+  env: Record<string, string | undefined> = {},
+): CliRunResult {
   try {
     const out = execFileSync("node", [CLI, ...args], {
       encoding: "utf-8",

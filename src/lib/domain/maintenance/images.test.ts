@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  findOrphanedSandboxImages,
-  getRegisteredImageTags,
-  parseSandboxImageRows,
-} from "./images";
+import { findOrphanedSandboxImages, getRegisteredImageTags, parseSandboxImageRows } from "./images";
 
 describe("maintenance image helpers", () => {
   it("parses Docker image rows and fills missing sizes", () => {
@@ -21,11 +17,7 @@ describe("maintenance image helpers", () => {
 
   it("collects registered sandbox image tags", () => {
     expect(
-      getRegisteredImageTags([
-        { imageTag: "openshell/sandbox-from:one" },
-        { imageTag: null },
-        {},
-      ]),
+      getRegisteredImageTags([{ imageTag: "openshell/sandbox-from:one" }, { imageTag: null }, {}]),
     ).toEqual(new Set(["openshell/sandbox-from:one"]));
   });
 

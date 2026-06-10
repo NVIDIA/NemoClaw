@@ -27,7 +27,9 @@ describe("vllm model registry", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     expect(deepseek).toBeDefined();
     expect(
-      selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B" } as NodeJS.ProcessEnv),
+      selectVllmModelFromEnv({
+        NEMOCLAW_VLLM_MODEL: "DeepSeek-R1-Distill-70B",
+      } as NodeJS.ProcessEnv),
     ).toEqual(deepseek);
   });
 

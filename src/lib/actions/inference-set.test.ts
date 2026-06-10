@@ -125,7 +125,7 @@ function createDeps(options: {
     return acc;
   }, {});
   const defaultSandbox =
-    options.defaultSandbox === undefined ? entries[0]?.name ?? null : options.defaultSandbox;
+    options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
   const calls = {
     runOpenshell: vi.fn(() => ({ status: options.openshellStatus ?? 0, stdout: "", stderr: "" })),
     writeSandboxConfig: vi.fn(),
@@ -798,11 +798,7 @@ describe("runInferenceSet", () => {
 
     await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
 
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith(
-      "hermes-one",
-      HERMES_TARGET,
-      config,
-    );
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes-one", HERMES_TARGET, config);
     expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes-one", {
       provider: "hermes-provider",
       model: "z-ai/glm-5.1",

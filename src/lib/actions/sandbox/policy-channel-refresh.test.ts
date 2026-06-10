@@ -47,11 +47,7 @@ const {
   removeChannelPresetIfPresent: (sandboxName: string, channelName: string) => void;
 };
 
-const POLICY_PRESETS: PresetInfo[] = [
-  { name: "npm" },
-  { name: "pypi" },
-  { name: "discord" },
-];
+const POLICY_PRESETS: PresetInfo[] = [{ name: "npm" }, { name: "pypi" }, { name: "discord" }];
 
 let logSpy: MockInstance;
 let errSpy: MockInstance;
@@ -102,9 +98,7 @@ beforeEach(() => {
   });
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
-  applyPresetContentMock = vi
-    .spyOn(policies, "applyPresetContent")
-    .mockReturnValue(true);
+  applyPresetContentMock = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
   loadPresetFromFileMock = vi.spyOn(policies, "loadPresetFromFile").mockImplementation(() => ({
     presetName: "custom",
     content: "network_policies:\n  custom:\n    host: custom.example.com\n",

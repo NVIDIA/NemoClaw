@@ -582,9 +582,7 @@ export function printDashboardUi(
   }
 
   if (token) {
-    console.log(
-      `  ${info.displayName} ${label} (auth token redacted from displayed URLs)`,
-    );
+    console.log(`  ${info.displayName} ${label} (auth token redacted from displayed URLs)`);
     console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
     for (const url of deps.buildControlUiUrls(token, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);

@@ -125,27 +125,25 @@ describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => 
   ];
 
   for (const { name, credentialEnv, value } of providers) {
-    it(
-      `hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`,
-      { timeout: TEST_TIMEOUT_MS },
-      () => {
-        const { result } = verifyCredentialHydration(credentialEnv, value);
+    it(`hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`, {
+      timeout: TEST_TIMEOUT_MS,
+    }, () => {
+      const { result } = verifyCredentialHydration(credentialEnv, value);
 
-        if (result.status !== 0) {
-          if ((result.stderr || "").includes("Cannot find module")) {
-            throw new Error(
-              `dist/lib/onboard.js not found. Run \`npm run build:cli\` before running this test.\n${result.stderr}`,
-            );
-          }
+      if (result.status !== 0) {
+        if ((result.stderr || "").includes("Cannot find module")) {
           throw new Error(
-            `Script failed (exit ${result.status}):\n${result.stderr}\n${result.stdout}`,
+            `dist/lib/onboard.js not found. Run \`npm run build:cli\` before running this test.\n${result.stderr}`,
           );
         }
+        throw new Error(
+          `Script failed (exit ${result.status}):\n${result.stderr}\n${result.stdout}`,
+        );
+      }
 
-        const payload = JSON.parse(result.stdout);
-        expect(payload.hydrated).toBe(value);
-        expect(payload.envValue).toBe(value);
-      },
-    );
+      const payload = JSON.parse(result.stdout);
+      expect(payload.hydrated).toBe(value);
+      expect(payload.envValue).toBe(value);
+    });
   }
 });

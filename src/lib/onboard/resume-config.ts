@@ -20,7 +20,9 @@ export interface ResumeConfigConflict {
   recorded: string | null;
 }
 
-export function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
+export function getRequestedSandboxNameHint(
+  opts: { sandboxName?: string | null } = {},
+): string | null {
   const raw =
     typeof opts.sandboxName === "string" && opts.sandboxName.length > 0
       ? opts.sandboxName
@@ -46,7 +48,7 @@ export function getResumeSandboxConflict(
   const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
   const requestedSandboxName = raw || null;
   const recordedSandboxName =
-    session?.steps?.sandbox?.status === "complete" ? session?.sandboxName ?? null : null;
+    session?.steps?.sandbox?.status === "complete" ? (session?.sandboxName ?? null) : null;
   if (!requestedSandboxName || !recordedSandboxName) {
     return null;
   }

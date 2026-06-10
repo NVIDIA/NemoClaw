@@ -350,10 +350,13 @@ EOF
         { mode: 0o700 },
       );
 
-      const { stderr } = runWithLib(`verify_config_integrity_if_locked ${JSON.stringify(workDir)}`, {
-        env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        expectFail: true,
-      });
+      const { stderr } = runWithLib(
+        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
+        {
+          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          expectFail: true,
+        },
+      );
       expect(stderr).toContain("Locked config is missing hash file");
     });
   });
@@ -456,7 +459,7 @@ EOF
     // Stub capsh so it is found on PATH (command -v succeeds) but reports
     // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
     const capshNoSetpcapStub = [
-      'cat >"$TMP/capsh" <<\'STUB\'',
+      "cat >\"$TMP/capsh\" <<'STUB'",
       "#!/bin/sh",
       '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
       "exit 0",
@@ -484,7 +487,9 @@ EOF
         ].join("\n"),
         { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
       );
-      expect(stdout).toContain("CAP_SETPCAP not available — cannot drop bounding-set caps via capsh");
+      expect(stdout).toContain(
+        "CAP_SETPCAP not available — cannot drop bounding-set caps via capsh",
+      );
       expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
       expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
       expect(stdout).not.toContain("Refusing to start sandbox");
@@ -522,7 +527,9 @@ EOF
       );
       const combined = `${stdout}\n${stderr}`;
       expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain(`dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`);
+      expect(combined).toContain(
+        `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
+      );
       expect(combined).not.toContain("SHOULD_NOT_REACH");
     });
 
@@ -692,11 +699,7 @@ EOF
       // Shim ulimit to always fail. The function must not abort (best-effort)
       // and must emit a [SECURITY] warning for each of the four limits.
       const { stdout } = runWithLib(
-        [
-          "ulimit() { return 1; }",
-          "harden_resource_limits 2>&1",
-          'echo "HARDEN_OK"',
-        ].join("\n"),
+        ["ulimit() { return 1; }", "harden_resource_limits 2>&1", 'echo "HARDEN_OK"'].join("\n"),
       );
       expect(stdout).toContain("HARDEN_OK");
       expect(stdout).toContain("Could not set soft nproc limit");
@@ -761,11 +764,11 @@ EOF
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
-          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "cat >\"$TMP/setpriv\" <<'STUB'",
           "#!/bin/sh",
           "exit 0",
           "STUB",
-          'cat >"$TMP/capsh" <<\'STUB\'',
+          "cat >\"$TMP/capsh\" <<'STUB'",
           "#!/bin/sh",
           '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
           "exit 1",
@@ -938,6 +941,5 @@ EOF
         rmSync(workDir, { recursive: true, force: true });
       }
     });
-
   });
 });

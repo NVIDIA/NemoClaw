@@ -69,7 +69,11 @@ afterEach(() => {
 
 describe("nemoclaw <sandbox> policy-explain (E2E)", () => {
   it("prints help text via both routing forms", () => {
-    const productGrammar = runCli({ HOME: scratchHome }, ["my-sandbox", "policy-explain", "--help"]);
+    const productGrammar = runCli({ HOME: scratchHome }, [
+      "my-sandbox",
+      "policy-explain",
+      "--help",
+    ]);
     expect(productGrammar.status).toBe(0);
     expect(productGrammar.stdout).toContain("Explain the active policy context for the sandbox");
     expect(productGrammar.stdout).toContain("--json");
@@ -115,10 +119,11 @@ describe("nemoclaw <sandbox> policy-explain (E2E)", () => {
       },
     });
 
-    const result = runCli(
-      { HOME: scratchHome },
-      ["policy-explain-json", "policy-explain", "--json"],
-    );
+    const result = runCli({ HOME: scratchHome }, [
+      "policy-explain-json",
+      "policy-explain",
+      "--json",
+    ]);
 
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -138,9 +143,9 @@ describe("nemoclaw <sandbox> policy-explain (E2E)", () => {
     expect(parsed.knownUnappliedPresets.some((p) => p.name === "slack")).toBe(true);
     expect(parsed.approvalPath.inspect).toBe("nemoclaw policy-explain-json policy-list");
     expect(parsed.approvalPath.add).toBe("nemoclaw policy-explain-json policy-add <preset>");
-    expect(parsed.supportBoundaries.some((b) => b.capability === "host allowlist enforcement")).toBe(
-      true,
-    );
+    expect(
+      parsed.supportBoundaries.some((b) => b.capability === "host allowlist enforcement"),
+    ).toBe(true);
   });
 
   it("returns an empty active-preset list when the sandbox has no policy applied", () => {
