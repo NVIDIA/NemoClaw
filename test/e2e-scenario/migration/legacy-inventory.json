@@ -616,7 +616,23 @@
       "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Covered by free-standing live test (PR #5107). Hermetic installer-script behavioral test — stubs PATH binaries, runs scripts/install-openshell.sh, asserts the four [PASS] outcomes from the legacy bash guard. Not registry-driven; dispatched as a discrete openshell-version-pin-vitest job in e2e-vitest-scenarios.yaml. Bash guard retained in regression-e2e.yaml; deletion is a follow-up PR with #4357 approval."
+      "notes": "Covered by free-standing live test (PR #5107). Hermetic installer-script behavioral test — stubs PATH binaries, runs scripts/install-openshell.sh, asserts the four [PASS] outcomes from the legacy bash guard. Not registry-driven; dispatched as a discrete openshell-version-pin-vitest job in e2e-vitest-scenarios.yaml. Bash guard retained in regression-e2e.yaml; deletion is a follow-up PR with #4357 approval.",
+      "frozenAtSha": "3d9c01931f598cf2450bd88028cb3b44bcf367b0",
+      "convergenceEvidence": {
+        "redRunUrl": null,
+        "greenRunUrlA": "https://github.com/NVIDIA/NemoClaw/actions/runs/27252871283/job/80480862915",
+        "greenRunUrlB": "https://github.com/NVIDIA/NemoClaw/actions/runs/27253022534/job/80481579156",
+        "totalPasses": 2,
+        "assertionsResolvedInOrder": [
+          "installer-exits-zero",
+          "download-log-contains-v0.0.44",
+          "download-log-excludes-v0.0.45",
+          "replaced-openshell-reports-0.0.44"
+        ],
+        "convergedAtSha": "3d9c01931f598cf2450bd88028cb3b44bcf367b0",
+        "firstDispatchPassed": true,
+        "firstDispatchPassNote": "Framework already covered the regression target; legacy script was duplicative beyond the entry-point assertions. Post-pivot verification dispatch confirmed reproducibility on the correct architectural home (test/e2e-scenario/live/)."
+      }
     },
     {
       "legacyScript": "test/e2e/test-overlayfs-autofix.sh",
