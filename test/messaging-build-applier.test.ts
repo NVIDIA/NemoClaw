@@ -48,6 +48,17 @@ function channelsB64(channels: string[]): string {
   return Buffer.from(JSON.stringify(channels)).toString("base64");
 }
 
+function wechatConfigB64(overrides: Record<string, string> = {}): string {
+  return Buffer.from(
+    JSON.stringify({
+      accountId: "primary",
+      baseUrl: "https://ilinkai.wechat.com",
+      userId: "u1",
+      ...overrides,
+    }),
+  ).toString("base64");
+}
+
 function runDryRun(envOverrides: Record<string, string> = {}) {
   const env = withLegacyMessagingPlanEnv(
     {
@@ -83,14 +94,22 @@ function parseDryRun(envOverrides: Record<string, string> = {}) {
 }
 
 describe("messaging-build-applier.mts: agent-install", () => {
-  it("pins selected external messaging plugins to OPENCLAW_VERSION", () => {
+  it("collects selected messaging plugin install specs", () => {
     const payload = parseDryRun({
       OPENCLAW_VERSION: "2026.5.22",
-      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram", "discord", "slack", "whatsapp"]),
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([
+        "telegram",
+        "discord",
+        "slack",
+        "whatsapp",
+        "wechat",
+      ]),
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
     });
 
     expect(payload.installSpecs).toEqual([
       "npm:@openclaw/discord@2026.5.22",
+      "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       "npm:@openclaw/slack@2026.5.22",
       "npm:@openclaw/whatsapp@2026.5.22",
     ]);
@@ -99,6 +118,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      WECHAT_BOT_TOKEN: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     });
   });
 
@@ -123,6 +143,18 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(payload.installSpecs).toEqual([]);
     expect(payload.doctorEnv).toEqual({
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    });
+  });
+
+  it("installs the fixed WeChat OpenClaw plugin without OPENCLAW_VERSION", () => {
+    const payload = parseDryRun({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["wechat"]),
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
+    });
+
+    expect(payload.installSpecs).toEqual(["npm:@tencent-weixin/openclaw-weixin@2.4.3"]);
+    expect(payload.doctorEnv).toEqual({
+      WECHAT_BOT_TOKEN: "openshell:resolve:env:WECHAT_BOT_TOKEN",
     });
   });
 
@@ -154,6 +186,75 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(result.stderr).toContain("NEMOCLAW_MESSAGING_PLAN_B64");
   });
 
+  it("rejects tampered package-install specs before invoking OpenClaw", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-allowlist-"));
+    const tracePath = path.join(tmp, "openclaw.trace");
+    const fakeOpenclaw = path.join(tmp, "openclaw");
+    fs.writeFileSync(
+      fakeOpenclaw,
+      [
+        "#!/usr/bin/env node",
+        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, 'invoked\\n');",
+        "process.exit(0);",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      channels: [{ channelId: "discord", active: true }],
+      credentialBindings: [],
+      agentRender: [],
+      buildSteps: [
+        {
+          channelId: "discord",
+          kind: "package-install",
+          outputId: "openclawPluginPackage",
+          required: true,
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@evil/plugin@1.0.0",
+            pin: true,
+          },
+        },
+      ],
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: tmp + ":" + (process.env.PATH || "/usr/bin:/bin"),
+            OPENCLAW_TRACE: tracePath,
+            OPENCLAW_VERSION: "2026.5.22",
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("not allowed");
+      expect(fs.existsSync(tracePath)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("runs pinned installs during agent-install without doctor env injection", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-message-plugins-"));
     const tracePath = path.join(tmp, "openclaw.trace");
@@ -180,7 +281,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
             "discord",
             "slack",
             "whatsapp",
+            "wechat",
           ]),
+          NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
         },
         "openclaw",
       );
@@ -205,6 +308,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim().split("\n")).toEqual([
         "plugins|install|npm:@openclaw/discord@2026.5.22|--pin|||",
+        "plugins|install|npm:@tencent-weixin/openclaw-weixin@2.4.3|--pin|||",
         "plugins|install|npm:@openclaw/slack@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
       ]);
@@ -323,7 +427,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const fakeOpenclaw = path.join(tmp, "openclaw");
     const channels = channelsB64(["telegram", "discord", "slack", "wechat"]);
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
     ).toString("base64");
 
     fs.writeFileSync(
@@ -416,7 +520,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-post-agent-install-"));
     const channels = channelsB64(["wechat"]);
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
     ).toString("base64");
 
     try {
@@ -486,7 +590,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       );
       expect(account).toMatchObject({
         token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-        baseUrl: "https://example",
+        baseUrl: "https://ilinkai.wechat.com",
         userId: "u1",
       });
       expect(
@@ -546,6 +650,61 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("must stay inside");
       expect(fs.existsSync(path.join(tmp, "escaped.json"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects multiline env render lines from serialized plans", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-line-injection-"));
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      channels: [{ channelId: "slack", active: true }],
+      credentialBindings: [],
+      agentRender: [
+        {
+          channelId: "slack",
+          agent: "hermes",
+          target: "~/.hermes/.env",
+          kind: "env-lines",
+          renderId: "slack-hermes-env",
+          lines: ["SLACK_ALLOWED_USERS=U123\nEVIL=1"],
+        },
+      ],
+      buildSteps: [],
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: process.env.PATH || "/usr/bin:/bin",
+            HOME: tmp,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("line breaks");
+      const envPath = path.join(tmp, ".hermes", ".env");
+      expect(fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "").not.toContain(
+        "EVIL=1",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

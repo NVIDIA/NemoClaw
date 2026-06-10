@@ -324,7 +324,10 @@ function inputReferenceBase(
 
 function readInputEnvValue(input: ChannelInputSpec): MessagingSerializableValue | undefined {
   const normalize = (raw: string | null | undefined): string | undefined => {
-    const normalized = raw?.replace(/\r/g, "").trim();
+    if (raw && /[\r\n]/.test(raw)) {
+      throw new Error("Messaging input values must not contain line breaks.");
+    }
+    const normalized = raw?.trim();
     if (!normalized || normalized.length === 0) return undefined;
     if (input.validValues && !input.validValues.includes(normalized)) return undefined;
     return normalized;

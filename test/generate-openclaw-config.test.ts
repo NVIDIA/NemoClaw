@@ -431,11 +431,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("does not crash on malformed port in CHAT_UI_URL", () => {
     const config = runConfigScript({
-      CHAT_UI_URL: "https://example.com:abc",
+      CHAT_UI_URL: "https://ilinkai.wechat.com.com:abc",
     });
     const origins = config.gateway.controlUi.allowedOrigins;
     expect(origins).toContain("http://127.0.0.1:18789");
-    expect(origins).not.toContain("https://example.com");
+    expect(origins).not.toContain("https://ilinkai.wechat.com.com");
   });
 
   it("leaves messaging render to the messaging build applier", () => {
@@ -530,7 +530,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("applies WeChat post-agent-install build-file outputs through the messaging applier", () => {
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
     const wechatConfig = Buffer.from(
-      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+      JSON.stringify({ accountId: "primary", baseUrl: "https://ilinkai.wechat.com", userId: "u1" }),
     ).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -545,6 +545,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins?.load?.paths ?? []).not.toContain(
       "/sandbox/.openclaw/extensions/openclaw-weixin",
     );
+    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
     expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
     expect(config.channels?.wechat).toBeUndefined();
   });
@@ -558,15 +559,12 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels?.wechat).toBeUndefined();
   });
 
-  it("enables the openclaw-weixin plugin entry unconditionally", () => {
-    // The plugin ships in the base image, so we activate the entry on every
-    // build. With no seeded account, the upstream auth/accounts.ts no-ops
-    // and the bridge never starts.
+  it("omits the openclaw-weixin plugin entry until WeChat is active", () => {
     const config = runConfigScript({});
-    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+    expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
-  it("preserves base-image plugin install registry entries", () => {
+  it("preserves existing plugin install registry entries without enabling WeChat", () => {
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     const installEntry = {
@@ -581,7 +579,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const config = runConfigScript({});
 
     expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
-    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+    expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
   });
 
   it("ignores malformed existing plugin install registries while regenerating config", () => {
@@ -591,7 +589,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     for (const existing of [null, { plugins: null }, { plugins: { installs: {} } }]) {
       fs.writeFileSync(configPath, JSON.stringify(existing));
       const config = runConfigScript();
-      expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+      expect(config.plugins?.entries?.["openclaw-weixin"]).toBeUndefined();
       expect(config.plugins?.installs).toBeUndefined();
     }
   });

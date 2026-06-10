@@ -488,7 +488,7 @@ describe("MessagingSetupApplier", () => {
       {
         WECHAT_BOT_TOKEN: "wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+        WECHAT_BASE_URL: "https://ilinkai.wechat.com",
         WECHAT_USER_ID: "wechat-user",
       },
       ["wechat"],
@@ -551,7 +551,7 @@ describe("MessagingSetupApplier", () => {
       JSON.parse(files["/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json"] ?? "{}"),
     ).toMatchObject({
       token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-      baseUrl: "https://ilinkai.wechat.example",
+      baseUrl: "https://ilinkai.wechat.com",
       userId: "wechat-user",
     });
     const openclawConfig = JSON.parse(files["/sandbox/.openclaw/openclaw.json"] ?? "{}");

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RenderTemplateContext } from "../../compiler/engines/template";
+import { normalizeWechatIlinkBaseUrl } from "./ilink-base-url";
 import {
   allowedIds,
   type BuiltInRenderTemplateResolver,
@@ -18,6 +19,11 @@ export const resolveWechatTemplateReference: BuiltInRenderTemplateResolver = (
 ) => {
   const wechatConfig = reference.match(/^wechatConfig[.](accountId|baseUrl|userId)$/);
   if (wechatConfig?.[1]) {
+    if (wechatConfig[1] === "baseUrl") {
+      return resolvedRenderTemplateReference(
+        normalizeWechatIlinkBaseUrl(stateValue(context, "wechatConfig.baseUrl")),
+      );
+    }
     return resolvedRenderTemplateReference(
       nonEmptyString(stateValue(context, "wechatConfig." + wechatConfig[1])),
     );

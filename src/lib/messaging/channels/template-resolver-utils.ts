@@ -49,9 +49,11 @@ export function nonEmptyString(value: unknown): string | undefined {
 }
 
 export function cleanString(value: unknown): string {
-  return String(value ?? "")
-    .replace(/\r/g, "")
-    .trim();
+  const text = String(value ?? "");
+  if (/[\r\n]/.test(text)) {
+    throw new Error("Messaging template values must not contain line breaks.");
+  }
+  return text.trim();
 }
 
 export function nonEmptyArray(values: readonly string[]): string[] | undefined {

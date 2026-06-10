@@ -74,6 +74,7 @@ export async function planAgentRender(
     );
     const lines = resolveRenderTemplatesInLines(credentialResolved, templateContext);
     if (lines.length === 0) continue;
+    assertSingleLineEnvRenderLines(manifest.id, hookOutput.id ?? result.hookId, lines);
     plans.push({
       channelId: manifest.id,
       renderId: hookOutput.id,
@@ -123,4 +124,22 @@ function isChannelRenderSpec(value: unknown): value is ChannelRenderSpec {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertSingleLineEnvRenderLines(
+  channelId: string,
+  renderId: string,
+  lines: readonly string[],
+): void {
+  for (const line of lines) {
+    if (/[\r\n]/.test(line)) {
+      throw new Error(
+        "Messaging env render '" +
+          renderId +
+          "' for " +
+          channelId +
+          " must not contain line breaks.",
+      );
+    }
+  }
 }

@@ -26,7 +26,7 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
   accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.example",
+  baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
 
@@ -212,6 +212,14 @@ describe("ManifestCompiler", () => {
       },
       {
         channelId: "wechat",
+        kind: "package-install",
+        hookId: "wechat-openclaw-package-install",
+        handler: "common.staticOutputs",
+        outputId: "openclawPluginPackage",
+        required: true,
+      },
+      {
+        channelId: "wechat",
         kind: "build-file",
         hookId: "wechat-seed-openclaw-account",
         handler: "wechat.seedOpenClawAccount",
@@ -258,6 +266,15 @@ describe("ManifestCompiler", () => {
           value: {
             manager: "openclaw-plugin",
             spec: "npm:@openclaw/discord@{{openclaw.version}}",
+            pin: true,
+          },
+        }),
+        expect.objectContaining({
+          channelId: "wechat",
+          kind: "package-install",
+          value: {
+            manager: "openclaw-plugin",
+            spec: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
             pin: true,
           },
         }),
@@ -339,6 +356,91 @@ describe("ManifestCompiler", () => {
     });
   });
 
+  it("rejects line feeds in Slack Hermes env render values", async () => {
+    for (const [envKey, value] of [
+      ["SLACK_ALLOWED_USERS", "U123\nEVIL=1"],
+      ["SLACK_ALLOWED_CHANNELS", "C123\nEVIL=1"],
+    ] as const) {
+      await expect(
+        withEnv(
+          {
+            SLACK_BOT_TOKEN: "xoxb-test-slack-token",
+            SLACK_APP_TOKEN: "xapp-test-slack-token",
+            [envKey]: value,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["slack"],
+              credentialAvailability: {
+                SLACK_BOT_TOKEN: true,
+                SLACK_APP_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/line breaks/);
+    }
+  });
+
+  it("rejects unsafe WeChat Hermes env render values", async () => {
+    const cases: Array<readonly [string, string]> = [
+      ["WECHAT_ACCOUNT_ID", "wechat-account\nEVIL=1"],
+      ["WECHAT_BASE_URL", "https://ilinkai.wechat.com\nEVIL=1"],
+      ["WECHAT_ALLOWED_IDS", "friend-one\nEVIL=1"],
+    ];
+
+    for (const [envKey, value] of cases) {
+      await expect(
+        withEnv(
+          {
+            WECHAT_ACCOUNT_ID: "wechat-account",
+            WECHAT_BASE_URL: "https://ilinkai.wechat.com",
+            WECHAT_ALLOWED_IDS: "friend-one",
+            [envKey]: value,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["wechat"],
+              credentialAvailability: {
+                WECHAT_BOT_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/line breaks/);
+    }
+  });
+
+  it("rejects non-HTTPS or non-iLink WeChat baseUrl values", async () => {
+    for (const baseUrl of ["http://ilinkai.wechat.com", "https://example.com"] as const) {
+      await expect(
+        withEnv(
+          {
+            WECHAT_ACCOUNT_ID: "wechat-account",
+            WECHAT_BASE_URL: baseUrl,
+          },
+          () =>
+            compiler().compile({
+              sandboxName: "demo",
+              agent: "hermes",
+              workflow: "rebuild",
+              isInteractive: false,
+              configuredChannels: ["wechat"],
+              credentialAvailability: {
+                WECHAT_BOT_TOKEN: true,
+              },
+            }),
+        ),
+      ).rejects.toThrow(/WeChat baseUrl/);
+    }
+  });
+
   it("does not activate a requested channel while any required manifest input is missing", async () => {
     const plan = await withEnv(
       {
@@ -394,7 +496,7 @@ describe("ManifestCompiler", () => {
     });
     expect(wechat?.inputs.find((input) => input.inputId === "baseUrl")).toMatchObject({
       kind: "config",
-      value: "https://ilinkai.wechat.example",
+      value: "https://ilinkai.wechat.com",
     });
   });
 

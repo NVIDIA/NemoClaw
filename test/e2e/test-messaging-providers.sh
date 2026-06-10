@@ -436,7 +436,7 @@ SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # made because no token exchange happens at build time.
 WECHAT_TOKEN="${WECHAT_BOT_TOKEN:-test-fake-wechat-token-e2e}"
 WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
-WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
+WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai.wechat.com}"
 WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
 WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
 # WhatsApp is QR-only, but seed host-side decoys to prove they are ignored.
@@ -2138,7 +2138,7 @@ print(','.join(bad))
   # concrete semver. The upstream plugin loader needs this install metadata
   # after OpenClaw config rewrites (plugins.entries alone is not enough),
   # and a floating spec (e.g. "@latest") would silently bypass the
-  # installer-trust pinning enforced in Dockerfile.base and
+  # installer-trust pinning enforced by the WeChat package-install allowlist and
   # wechat.seedOpenClawAccount manifest hook (WECHAT_PLUGIN_SPEC=@2.4.3).
   wechat_plugins_json=$(sandbox_exec "python3 -c \"
 import json

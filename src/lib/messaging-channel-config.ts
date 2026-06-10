@@ -46,7 +46,10 @@ export type MessagingChannelConfigEnvResolution = {
 
 function normalizeValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/[\r\n]/g, "").trim();
+  if (/[\r\n]/.test(value)) {
+    throw new Error("Messaging channel config values must not contain line breaks.");
+  }
+  const normalized = value.trim();
   return normalized || null;
 }
 

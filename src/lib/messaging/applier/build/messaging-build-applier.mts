@@ -105,6 +105,16 @@ export type BuildCommandResult = {
 
 export class MessagingBuildApplierError extends Error {}
 
+const OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES: Readonly<Record<string, string>> = {
+  discord: "@openclaw/discord",
+  slack: "@openclaw/slack",
+  whatsapp: "@openclaw/whatsapp",
+};
+
+const OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS: Readonly<Record<string, string>> = {
+  wechat: "npm:@tencent-weixin/openclaw-weixin@2.4.3",
+};
+
 export function readMessagingBuildPlanFromEnv(
   env: Env,
   agent: MessagingAgentId,
@@ -175,7 +185,7 @@ export function applyMessagingAgentRenderToEnvLines(
         `Messaging env render '${render.renderId ?? render.channelId}' is missing lines.`,
       );
     }
-    mergeEnvLines(envLines, render.lines);
+    mergeEnvLines(envLines, readEnvRenderLines(render));
   }
 }
 
@@ -240,7 +250,9 @@ export function collectOpenClawMessagingPluginInstallSpecs(
       continue;
     }
     const install = readOpenClawPackageInstall(step.value, step.outputId);
-    specs.push(resolveOpenClawPackageSpec(install.spec, env));
+    const resolvedSpec = resolveOpenClawPackageSpec(install.spec, env);
+    assertAllowedOpenClawPackageSpec(step.channelId, resolvedSpec, env);
+    specs.push(resolvedSpec);
   }
   return uniqueStrings(specs);
 }
@@ -342,7 +354,7 @@ function applyEnvRenderEntriesToLocalFile(
         `Messaging env render '${render.renderId ?? render.channelId}' is missing lines.`,
       );
     }
-    mergeEnvLines(envLines, render.lines);
+    mergeEnvLines(envLines, readEnvRenderLines(render));
   }
   mkdirSync(dirname(targetPath), { recursive: true });
   writeFileSync(targetPath, envLines.length > 0 ? `${envLines.join("\n")}\n` : "");
@@ -368,6 +380,22 @@ function applyMessagingRenderEntriesToObject(
     );
     setJsonPath(config, render.path, value);
   }
+}
+
+function readEnvRenderLines(render: MessagingRenderEntry): readonly string[] {
+  if (!Array.isArray(render.lines)) {
+    throw new MessagingBuildApplierError(
+      "Messaging env render '" + (render.renderId ?? render.channelId) + "' is missing lines.",
+    );
+  }
+  for (const line of render.lines) {
+    if (/[\r\n]/.test(line)) {
+      throw new MessagingBuildApplierError(
+        "Messaging env render '" + (render.renderId ?? render.channelId) + "' must not contain line breaks.",
+      );
+    }
+  }
+  return render.lines;
 }
 
 function finalizeHermesRenderedPlatformToolsets(config: JsonObject): void {
@@ -615,6 +643,35 @@ function resolveOpenClawPackageSpec(spec: string, env: Env): string {
     throw new MessagingBuildApplierError(`Unresolved package-install template in ${spec}`);
   }
   return resolved;
+}
+
+function assertAllowedOpenClawPackageSpec(channelId: string, resolvedSpec: string, env: Env): void {
+  const allowedSpecs = allowedOpenClawPackageSpecsForChannel(channelId, env);
+  if (!allowedSpecs.includes(resolvedSpec)) {
+    throw new MessagingBuildApplierError(
+      `Messaging package-install spec for ${channelId} is not allowed: ${resolvedSpec}`,
+    );
+  }
+}
+
+function allowedOpenClawPackageSpecsForChannel(channelId: string, env: Env): readonly string[] {
+  const versionedPackage = OPENCLAW_VERSIONED_MESSAGING_PLUGIN_PACKAGES[channelId];
+  if (versionedPackage) {
+    return ["npm:" + versionedPackage + "@" + requiredOpenClawVersion(env)];
+  }
+
+  const fixedSpec = OPENCLAW_FIXED_MESSAGING_PLUGIN_INSTALL_SPECS[channelId];
+  return fixedSpec ? [fixedSpec] : [];
+}
+
+function requiredOpenClawVersion(env: Env): string {
+  const version = (env.OPENCLAW_VERSION || "").trim();
+  if (!version) {
+    throw new MessagingBuildApplierError(
+      "OPENCLAW_VERSION is required when OpenClaw package install hooks are active",
+    );
+  }
+  return version;
 }
 
 function runCommand(args: readonly string[], env: Env): void {
