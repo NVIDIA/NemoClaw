@@ -414,13 +414,17 @@ describe("built-in channel manifests", () => {
     expect(renderJson(wechatManifest)).toContain("WEIXIN_TOKEN");
     expect(renderJson(wechatManifest)).toContain("credential.wechatBotToken.placeholder");
     expect(wechatManifest.hooks.map((hook) => hook.handler)).toEqual([
+      "common.staticOutputs",
       "wechat.ilinkLogin",
       "common.configPrompt",
       "wechat.seedOpenClawAccount",
       "wechat.healthCheck",
     ]);
     expectConfigPromptEnrollHook(wechatManifest, ["allowedIds"]);
-    expect(wechatManifest.hooks[2]?.outputs).toEqual(
+    const seedHook = wechatManifest.hooks.find(
+      (hook) => hook.id === "wechat-seed-openclaw-account",
+    );
+    expect(seedHook?.outputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "openclawWeixinAccountFile",
@@ -432,7 +436,7 @@ describe("built-in channel manifests", () => {
         }),
       ]),
     );
-    expect(wechatManifest.hooks[3]).toMatchObject({
+    expect(wechatManifest.hooks.find((hook) => hook.id === "wechat-health-check")).toMatchObject({
       id: "wechat-health-check",
       phase: "health-check",
       handler: "wechat.healthCheck",
