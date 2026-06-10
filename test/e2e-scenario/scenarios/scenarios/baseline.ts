@@ -149,6 +149,43 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     requiredSecrets: ["NVIDIA_API_KEY"],
   },
   {
+    // Failing-test-first regression scaffold for #4423. After
+    // onboarding, the lifecycle phase exercises the host-side
+    // conditions a Linux Docker-driver host can reach from
+    // `ubuntu-latest`:
+    //   1. `docker stop` the labeled sandbox container (gateway is
+    //      left HEALTHY — the OpenShell CLI on `ubuntu-latest` has
+    //      no `gateway start` subcommand and #4578's mitigation
+    //      would otherwise mask the regression target).
+    //   2. Run `nemoclaw <name> status` so any destructive
+    //      registry/container path runs against host-observable
+    //      state.
+    // The state-validation phase then asserts the host-side
+    // invariants declared by the `post-reboot-recovery-ready`
+    // expected-state: cli installed, local registry entry
+    // preserved, labeled Docker container present (running,
+    // stopped, or `*-nemoclaw-gpu-backup-*` sibling).
+    //
+    // The full DGX Spark post-reboot bug class — healthy_named
+    // gateway returning literal `NotFound` while Docker still has
+    // the labeled container — cannot be reproduced from CI without
+    // a real reboot. This scenario therefore locks in #4578's
+    // mitigation and the host-side preservation invariants any
+    // recovery path must respect; PR-A's Docker-driver recovery
+    // helper (parts 2 & 3 of ericksoa's plan) extends this scaffold,
+    // and a follow-up scenario on a controlled runner can layer in
+    // gateway/sandbox runtime probes once that helper lands.
+    id: "ubuntu-repo-docker-post-reboot-recovery",
+    manifestName: "openclaw-nvidia-post-reboot-recovery",
+    environment: ubuntuRepoDockerLifecycle("cloud-openclaw", "post-reboot-recovery"),
+    expectedStateId: "post-reboot-recovery-ready",
+    suiteIds: ["smoke"],
+    requiredSecrets: ["NVIDIA_API_KEY"],
+    description:
+      "Failing-test-first guard for #4423: post-reboot recovery must preserve " +
+      "the local registry entry and restart the labeled Docker container.",
+  },
+  {
     id: "ubuntu-repo-openai-compatible-openclaw",
     manifestName: "openclaw-openai-compatible",
     environment: ubuntuRepoDocker("openai-compatible-openclaw"),

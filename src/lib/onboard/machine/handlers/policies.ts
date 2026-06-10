@@ -114,6 +114,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
 export interface PoliciesStateResult {
   session: Session | null;
   recordedMessagingChannels: string[];
+  selectedMessagingChannels: string[];
   appliedPolicyPresets: string[];
   stateResult: OnboardStateTransitionResult;
 }
@@ -254,6 +255,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   return {
     session,
     recordedMessagingChannels,
+    selectedMessagingChannels: policyMessagingChannels,
     appliedPolicyPresets,
     stateResult: advanceTo("finalizing", {
       metadata: { state: "policies", policyPresets: appliedPolicyPresets },

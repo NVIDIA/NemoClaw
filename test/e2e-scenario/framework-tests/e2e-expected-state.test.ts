@@ -83,6 +83,50 @@ describe("probesForState maps typed expected-state into probe ids", () => {
     };
     expect(probesForState(state)).toEqual([]);
   });
+
+  it("localRegistry.expected=present emits the local-registry-entry-present probe", () => {
+    const state: ExpectedState = {
+      id: "synthetic-local-registry",
+      cli: { installed: true },
+      localRegistry: { expected: "present" },
+    };
+    expect(probesForState(state)).toEqual(["cli-installed", "local-registry-entry-present"]);
+  });
+
+  it("dockerSandboxContainer.expected=present emits the docker-sandbox-container-present probe", () => {
+    const state: ExpectedState = {
+      id: "synthetic-docker-container",
+      cli: { installed: true },
+      dockerSandboxContainer: { expected: "present" },
+    };
+    expect(probesForState(state)).toEqual(["cli-installed", "docker-sandbox-container-present"]);
+  });
+
+  it("localRegistry/dockerSandboxContainer 'absent' emits no probe today", () => {
+    // Negative-direction probes haven't landed yet. Pin the gap so a
+    // future negative-scenario PR is forced to add the absent probes.
+    const state: ExpectedState = {
+      id: "synthetic-host-absent",
+      localRegistry: { expected: "absent" },
+      dockerSandboxContainer: { expected: "absent" },
+    };
+    expect(probesForState(state)).toEqual([]);
+  });
+
+  it("post-reboot-recovery-ready locks down host-side invariants only", () => {
+    // The post-reboot scenario locks the user-visible regression
+    // surface: registry preservation and Docker container
+    // preservation. Runtime liveness probes (gateway/sandbox) are
+    // intentionally omitted because they're environmental on
+    // `ubuntu-latest` after a simulated reboot and would mask the
+    // host-side signal. See the comment on `postRebootRecoveryReady`
+    // in `scenarios/expected-states.ts`.
+    expect(probesForState(requireExpectedState("post-reboot-recovery-ready"))).toEqual([
+      "cli-installed",
+      "local-registry-entry-present",
+      "docker-sandbox-container-present",
+    ]);
+  });
 });
 
 describe("compiler emits state-validation phase actions from expected-state registry", () => {

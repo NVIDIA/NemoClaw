@@ -164,8 +164,8 @@ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/pl
 To back up every registered, running sandbox in one step, run `nemoclaw backup-all`.
 This is the recommended host-installed command before broad maintenance such as `nemoclaw update`, `nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
 
-```console
-$ nemoclaw backup-all
+```bash
+$$nemoclaw backup-all
 ```
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.

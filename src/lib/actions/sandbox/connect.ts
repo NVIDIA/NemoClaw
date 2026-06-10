@@ -42,6 +42,12 @@ import {
 } from "../../state/sandbox-session";
 import { runSetupDnsProxy } from "../dns";
 import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
+import {
+  CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} from "./connect-autopair-budget";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
@@ -188,6 +194,10 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Defense-in-depth scope-upgrade approval on the probe-only / `recover`
+    // path (#4504): the gateway is up, so deterministically clear any pending
+    // allowlisted CLI/webchat scope upgrade. Best-effort; never throws.
+    runConnectAutoPairApprovalPass(sandboxName);
     if (processCheck.forwardRecovered) {
       console.log(
         `  Probe complete: ${agentName} gateway is running in '${sandboxName}'; restored dashboard port forward.`,
@@ -199,6 +209,8 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if (processCheck.recovered) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
+    // Same defense-in-depth approval after a recovery (#4504); best-effort.
+    runConnectAutoPairApprovalPass(sandboxName);
     console.log(`  Probe complete: recovered ${agentName} gateway in '${sandboxName}'.`);
     return;
   }
@@ -727,6 +739,29 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
+// Connect/probe/finalization budget for the shared auto-pair approval pass
+// (#4504). The realistic case here is a single pending CLI/webchat scope
+// upgrade, so MAX_APPROVALS is 1 and the approve timeout matches the in-sandbox
+// watcher's RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh). The outer spawnSync cap
+// (15s) exceeds the internal worst case (2s list + 10s × 1 = 12s) plus
+// shell/python startup so a legitimate slow approve is never SIGKILLed mid-loop
+// and the allowlisted request is never stranded. Constants live in the
+// dependency-free ./connect-autopair-budget leaf so tests can assert the
+// invariant on the real values without importing this heavy module. The doctor
+// recovery surface (#4616) keeps the wider default budget in ./auto-pair-approval.
+const CONNECT_AUTO_PAIR_BUDGET = {
+  maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
+  listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+  approveTimeoutS: CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+  timeoutMs: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+} as const;
+
+// Thin wrapper so the connect/probe/finalization surfaces share one budget
+// without each caller restating it. Best-effort; never throws (#4263/#4504).
+export function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  runSandboxAutoPairApprovalPass(sandboxName, { budget: CONNECT_AUTO_PAIR_BUDGET });
+}
+
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   if (
     !sb ||
@@ -952,8 +987,8 @@ export async function connectSandbox(
   // piled up between startup and now (e.g., watcher crashed, watcher
   // deadline exhausted, multi-sandbox gateway contention). The same pass
   // is reachable without SSH via `doctor --fix` for dashboard-only users
-  // (#4616).
-  runSandboxAutoPairApprovalPass(sandboxName);
+  // (#4616). Uses the tight connect budget (#4504).
+  runConnectAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
