@@ -96,9 +96,7 @@ describe("vLLM image pull", () => {
     });
     const options = mocks.dockerPullWithProgressWatchdog.mock.calls[0][1];
     options.logLine("abc123def: Downloading 1MB/10MB");
-    expect(stdoutWrite).toHaveBeenCalledWith(
-      "  ==> abc123def: Downloading 1MB/10MB\n",
-    );
+    expect(stdoutWrite).toHaveBeenCalledWith("  ==> abc123def: Downloading 1MB/10MB\n");
   });
 
   it.each([
@@ -130,7 +128,11 @@ describe("vLLM run command", () => {
   it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
-    const cmd = buildVllmRunCommand(profile!, profile!.defaultModel, profile!.dockerRunFlags.join(" "));
+    const cmd = buildVllmRunCommand(
+      profile!,
+      profile!.defaultModel,
+      profile!.dockerRunFlags.join(" "),
+    );
     expect(cmd).toContain("docker run -d --restart unless-stopped");
     expect(cmd).toContain(`--name ${profile!.containerName}`);
     expect(cmd).toContain(":8000");

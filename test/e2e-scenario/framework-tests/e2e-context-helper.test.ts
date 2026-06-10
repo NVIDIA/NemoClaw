@@ -11,16 +11,17 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CONTEXT_LIB = path.join(REPO_ROOT, "test/e2e-scenario/runtime/lib/context.sh");
 
 function runBash(script: string, env: Record<string, string> = {}): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-c", script], {
+  return spawnSync("bash", ["--noprofile", "--norc"], {
     env: { ...process.env, ...env },
     encoding: "utf8",
+    input: script,
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
     cwd: REPO_ROOT,
   });
 }
 
 describe("E2E context helper (runtime/lib/context.sh)", () => {
-  it("context_should_write_and_source_values", () => {
+  it("context helper writes and sources values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
@@ -43,7 +44,7 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
     }
   });
 
-  it("context_require_should_fail_for_missing_value", () => {
+  it("context require fails for missing values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
@@ -61,7 +62,7 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
     }
   });
 
-  it("context_dump_should_redact_sensitive_values", () => {
+  it("context dump redacts sensitive values", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ctx-"));
     try {
       const script = `
@@ -84,5 +85,4 @@ describe("E2E context helper (runtime/lib/context.sh)", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
 });

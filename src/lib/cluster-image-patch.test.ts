@@ -75,9 +75,7 @@ describe("extractUpstreamVersion", () => {
 
   it("strips an appended digest", () => {
     expect(
-      extractUpstreamVersion(
-        "ghcr.io/nvidia/openshell/cluster:0.0.36@sha256:abc123def456",
-      ),
+      extractUpstreamVersion("ghcr.io/nvidia/openshell/cluster:0.0.36@sha256:abc123def456"),
     ).toBe("0.0.36");
   });
 
@@ -293,9 +291,7 @@ describe("ensurePatchedClusterImage", () => {
       tmpdirImpl: () => "/tmp",
     });
     const [dockerfilePath] = Array.from(fsImpl.written.keys());
-    expect(fsImpl.written.get(dockerfilePath)).toContain(
-      'CMD ["server", "--snapshotter=native"]',
-    );
+    expect(fsImpl.written.get(dockerfilePath)).toContain('CMD ["server", "--snapshotter=native"]');
     expect(fsImpl.written.get(dockerfilePath)).not.toContain('"--snapshotter=fuse-overlayfs"');
   });
 

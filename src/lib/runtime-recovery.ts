@@ -15,10 +15,7 @@ function stripAnsi(text: string | null | undefined): string {
 
 export function isOpenShellProtobufSchemaMismatch(output = ""): boolean {
   const clean = stripAnsi(output);
-  return (
-    /invalid wire type/i.test(clean) ||
-    /proto(?:buf)?(?: decode| schema| wire)/i.test(clean)
-  );
+  return /invalid wire type/i.test(clean) || /proto(?:buf)?(?: decode| schema| wire)/i.test(clean);
 }
 
 function isNonSandboxRow(line: string, firstCol: string): boolean {

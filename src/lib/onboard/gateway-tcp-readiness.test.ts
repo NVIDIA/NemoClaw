@@ -29,9 +29,7 @@ function startDummyServer(): Promise<{ port: number; close: () => Promise<void> 
       resolve({
         port: addr.port,
         close: () =>
-          new Promise<void>((res, rej) =>
-            server.close((err) => (err ? rej(err) : res())),
-          ),
+          new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
       });
     });
   });
@@ -71,9 +69,7 @@ describe("isGatewayTcpReady (#3111)", () => {
     // 10.255.255.1 is a non-routable RFC 1918 address that SYN-drops on most
     // CI runners, forcing the timeout path rather than immediate ECONNREFUSED.
     const started = Date.now();
-    await expect(isGatewayTcpReady(9, 200, "10.255.255.1")).resolves.toBe(
-      false,
-    );
+    await expect(isGatewayTcpReady(9, 200, "10.255.255.1")).resolves.toBe(false);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(2000);
   });
@@ -100,8 +96,6 @@ describe("isGatewayTcpReady (#3111)", () => {
     // default gateway port, so assert the probed argument instead of the result.
     const createConnection = vi.spyOn(net, "createConnection");
     await expect(isGatewayTcpReady(undefined, 200)).resolves.toBeTypeOf("boolean");
-    expect(createConnection).toHaveBeenCalledWith(
-      expect.objectContaining({ port: GATEWAY_PORT }),
-    );
+    expect(createConnection).toHaveBeenCalledWith(expect.objectContaining({ port: GATEWAY_PORT }));
   });
 });

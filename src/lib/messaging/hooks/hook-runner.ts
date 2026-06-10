@@ -26,9 +26,7 @@ export async function runMessagingHook(
     channelId: context.channelId,
     hookId: hook.id,
     phase: hook.phase,
-    ...(typeof context.isInteractive === "boolean"
-      ? { isInteractive: context.isInteractive }
-      : {}),
+    ...(typeof context.isInteractive === "boolean" ? { isInteractive: context.isInteractive } : {}),
     inputs: context.inputs,
     outputDeclarations: hook.outputs,
   });
@@ -52,9 +50,7 @@ function assertHookOutputsMatchDeclaration(
 
   for (const declaration of hook.outputs ?? []) {
     if (declaration.required && !Object.hasOwn(outputs, declaration.id)) {
-      throw new Error(
-        `Hook '${hook.id}' missing required output '${declaration.id}'`,
-      );
+      throw new Error(`Hook '${hook.id}' missing required output '${declaration.id}'`);
     }
   }
 

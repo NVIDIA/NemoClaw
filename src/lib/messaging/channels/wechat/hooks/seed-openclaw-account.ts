@@ -45,10 +45,9 @@ export function buildWechatSeedOpenClawAccountOutputs(
   assertSafeWechatAccountId(accountId);
   const baseUrl = optionalInputString(inputs, "wechatConfig.baseUrl");
   const userId = optionalInputString(inputs, "wechatConfig.userId");
-  const token = optionalInputString(
-    inputs,
-    "credential.wechatBotToken.placeholder",
-  ) || WECHAT_TOKEN_PLACEHOLDER;
+  const token =
+    optionalInputString(inputs, "credential.wechatBotToken.placeholder") ||
+    WECHAT_TOKEN_PLACEHOLDER;
   const savedAt = isoTimestamp(options.now);
   const pluginInstallPath = options.pluginInstallPath ?? WECHAT_PLUGIN_INSTALL_PATH;
   const pluginSpec = options.pluginSpec ?? WECHAT_PLUGIN_SPEC;
@@ -124,10 +123,7 @@ function assertSafeWechatAccountId(accountId: string): void {
   }
 }
 
-function requiredInputString(
-  inputs: MessagingHookInputMap | undefined,
-  key: string,
-): string {
+function requiredInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
   const value = optionalInputString(inputs, key);
   if (!value) {
     throw new Error(`WeChat account seeding requires ${key}.`);
@@ -135,10 +131,7 @@ function requiredInputString(
   return value;
 }
 
-function optionalInputString(
-  inputs: MessagingHookInputMap | undefined,
-  key: string,
-): string {
+function optionalInputString(inputs: MessagingHookInputMap | undefined, key: string): string {
   const value = inputs?.[key];
   return typeof value === "string" ? value.trim() : "";
 }

@@ -4,7 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
-import { hermesApiMode, normalizeInferenceApi, resolveRuntimeInferenceApi } from "./inference-route-api";
+import {
+  hermesApiMode,
+  normalizeInferenceApi,
+  resolveRuntimeInferenceApi,
+} from "./inference-route-api";
 
 vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
@@ -55,7 +59,10 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function resolve(config: ConfigObject, overrides: Partial<Parameters<typeof resolveRuntimeInferenceApi>[0]> = {}) {
+function resolve(
+  config: ConfigObject,
+  overrides: Partial<Parameters<typeof resolveRuntimeInferenceApi>[0]> = {},
+) {
   return resolveRuntimeInferenceApi({
     agentName: "openclaw",
     config,
@@ -102,7 +109,10 @@ describe("resolveRuntimeInferenceApi", () => {
         {},
         {
           currentProvider: "nvidia-prod",
-          session: session({ provider: "nvidia-prod", preferredInferenceApi: "openai-completions" }),
+          session: session({
+            provider: "nvidia-prod",
+            preferredInferenceApi: "openai-completions",
+          }),
         },
       ),
     ).toBe("anthropic-messages");

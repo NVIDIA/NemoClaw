@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
-import {
-  applyManagedToolConfig,
-  loadManagedToolGatewayMatrix,
-} from "./managed-tool-gateway.ts";
+import { applyManagedToolConfig, loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
 const REMOTE_PLATFORM_TOOLSETS = [

@@ -35,7 +35,9 @@ function isCredentialRotationInternals(value: object | null): value is Credentia
   );
 }
 
-function isRegistryModule(value: object | null): value is typeof import("../dist/lib/state/registry.js") {
+function isRegistryModule(
+  value: object | null,
+): value is typeof import("../dist/lib/state/registry.js") {
   return isRecord(value) && typeof value.getSandbox === "function";
 }
 
@@ -113,7 +115,10 @@ describe("credential rotation detection", () => {
     });
   });
 
-  function makePlanEntry(name: string, bindings: Array<{ providerEnvKey: string; credentialHash?: string }>) {
+  function makePlanEntry(
+    name: string,
+    bindings: Array<{ providerEnvKey: string; credentialHash?: string }>,
+  ) {
     return {
       name,
       messaging: {
@@ -161,7 +166,9 @@ describe("credential rotation detection", () => {
     it("returns changed: false when hashes match", () => {
       const tokenHash = hashCredentialOrThrow("same-token");
       vi.spyOn(registry, "getSandbox").mockReturnValue(
-        makePlanEntry("test-sandbox", [{ providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: tokenHash }]),
+        makePlanEntry("test-sandbox", [
+          { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: tokenHash },
+        ]),
       );
 
       const result = detectMessagingCredentialRotation("test-sandbox", [
@@ -176,7 +183,9 @@ describe("credential rotation detection", () => {
     it("returns changed: true with correct provider names when hashes differ", () => {
       const oldHash = hashCredentialOrThrow("old-token");
       vi.spyOn(registry, "getSandbox").mockReturnValue(
-        makePlanEntry("test-sandbox", [{ providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: oldHash }]),
+        makePlanEntry("test-sandbox", [
+          { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: oldHash },
+        ]),
       );
 
       const result = detectMessagingCredentialRotation("test-sandbox", [
@@ -211,7 +220,9 @@ describe("credential rotation detection", () => {
     it("treats removed tokens as changed providers", () => {
       const hash = hashCredentialOrThrow("old-token");
       vi.spyOn(registry, "getSandbox").mockReturnValue(
-        makePlanEntry("test-sandbox", [{ providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: hash }]),
+        makePlanEntry("test-sandbox", [
+          { providerEnvKey: "TELEGRAM_BOT_TOKEN", credentialHash: hash },
+        ]),
       );
 
       const result = detectMessagingCredentialRotation("test-sandbox", [

@@ -21,8 +21,7 @@ export default class SandboxStatusCommand extends NemoClawCommand {
   static args = {
     sandboxName: sandboxNameArg,
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<unknown> {
     const { args } = await this.parse(SandboxStatusCommand);

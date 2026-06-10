@@ -128,7 +128,11 @@ function countBy(values: string[]): Map<string, number> {
   return counts;
 }
 
-function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603Trace): Issue2603Analysis {
+function analyzeIssue2603Trace({
+  sentRuns,
+  events,
+  historyMessages,
+}: Issue2603Trace): Issue2603Analysis {
   const submittedRunIds = new Set(sentRuns.map((entry) => entry.runId));
   const expectedRunByReplyToken = new Map(sentRuns.map((entry) => [entry.replyToken, entry.runId]));
   const chatEvents = compactChatEvents(events);
@@ -177,11 +181,10 @@ function analyzeIssue2603Trace({ sentRuns, events, historyMessages }: Issue2603T
       .map((message) => textFromMessage(message).trim())
       .filter(Boolean),
   );
-  const userTurnCounts = sentRuns
-    .map((entry) => ({
-      promptToken: entry.promptToken,
-      count: userPromptCounts.get(entry.message) ?? 0,
-    }));
+  const userTurnCounts = sentRuns.map((entry) => ({
+    promptToken: entry.promptToken,
+    count: userPromptCounts.get(entry.message) ?? 0,
+  }));
   const missingUserTurns = userTurnCounts.filter((entry) => entry.count < 1);
   const duplicateUserTurns = userTurnCounts.filter((entry) => entry.count > 1);
 
@@ -360,7 +363,11 @@ function execOpenShell(args: string[], options: ExecStringOptions = {}): string 
   });
 }
 
-function execInSandbox(sandboxName: string, command: string, options: ExecStringOptions = {}): string {
+function execInSandbox(
+  sandboxName: string,
+  command: string,
+  options: ExecStringOptions = {},
+): string {
   return execOpenShell(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", command],
     options,
@@ -636,7 +643,10 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
         {
           role: "user",
           content: [
-            { type: "text", text: "B2603: Second task. Reply exactly B2603-REPLY and nothing else." },
+            {
+              type: "text",
+              text: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
+            },
           ],
         },
       ],

@@ -40,11 +40,7 @@ describe("explainSandboxPolicy", () => {
     const logJson = vi.fn();
     const exec = vi.fn();
 
-    const ctx = explainSandboxPolicy(
-      "alpha",
-      {},
-      { build, render, log, logJson, exec },
-    );
+    const ctx = explainSandboxPolicy("alpha", {}, { build, render, log, logJson, exec });
 
     expect(build).toHaveBeenCalledWith("alpha");
     expect(render).toHaveBeenCalledWith(ctx);

@@ -6,8 +6,8 @@ name: E2E / Vitest Scenarios
 on:
   workflow_dispatch:
     inputs:
-      test_filter:
-        description: "Optional Vitest file/name filter for test/e2e-scenario/live"
+      scenarios:
+        description: "Optional comma-separated typed scenario ids. Empty runs all live Vitest-supported scenarios."
         required: false
         default: ""
         type: string
@@ -16,16 +16,58 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.test_filter || 'all' }}
+  group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}
   cancel-in-progress: false
 
 jobs:
-  live-scenarios:
+  generate-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - id: matrix
+        name: Generate Vitest scenario matrix
+        env:
+          SCENARIOS: ${{ inputs.scenarios }}
+        run: |
+          set -euo pipefail
+          args=(--emit-live-matrix)
+          if [ -n "${SCENARIOS}" ]; then
+            if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+              exit 1
+            fi
+            args+=(--scenarios "${SCENARIOS}")
+          fi
+          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts "${args[@]}")"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  live-scenarios:
+    needs: generate-matrix
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
     env:
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/.e2e/vitest
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/${{ matrix.id }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -45,25 +87,23 @@ jobs:
 
       - name: Run Vitest live E2E scenarios
         env:
-          TEST_FILTER: ${{ inputs.test_filter }}
+          SCENARIO_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          if [ -n "${TEST_FILTER}" ]; then
-            npx vitest run --project e2e-scenarios-live "${TEST_FILTER}" --silent=false --reporter=default
-          else
-            npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
-          fi
+          npx vitest run --project e2e-scenarios-live test/e2e-scenario/live/registry-scenarios.test.ts -t "^${SCENARIO_ID}$" --silent=false --reporter=default
 
       - name: Summarize artifacts
         if: always()
         env:
-          FILTER_LABEL: ${{ inputs.test_filter || 'all' }}
+          SCENARIO_ID: ${{ matrix.id }}
+          SCENARIO_LABEL: ${{ matrix.label }}
         run: |
           {
             echo "## Vitest E2E Scenarios"
             echo
             echo "- Project: \`e2e-scenarios-live\`"
-            printf '%s%s%s\n' '- Filter: `' "${FILTER_LABEL}" '`'
+            printf '%s%s%s\n' '- Scenario: `' "${SCENARIO_ID}" '`'
+            printf '%s%s%s\n' '- Label: `' "${SCENARIO_LABEL}" '`'
             echo "- Artifact root: \`${E2E_ARTIFACT_DIR}\`"
             echo
             if [ -d "${E2E_ARTIFACT_DIR}" ]; then
@@ -78,7 +118,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-vitest-scenarios
-          path: .e2e/vitest/
-          include-hidden-files: true
+          name: e2e-vitest-scenarios-${{ matrix.id }}
+          path: e2e-artifacts/vitest/${{ matrix.id }}/
+          include-hidden-files: false
           if-no-files-found: ignore

@@ -94,10 +94,7 @@ function mergeSandboxMessagingPlans(
     ...incoming,
     channels: mergedChannels,
     disabledChannels,
-    credentialBindings: mergeByChannelId(
-      existing.credentialBindings,
-      incoming.credentialBindings,
-    ),
+    credentialBindings: mergeByChannelId(existing.credentialBindings, incoming.credentialBindings),
     networkPolicy: {
       presets: uniqueStrings(networkEntries.map((entry) => entry.presetName)),
       entries: networkEntries,
@@ -114,10 +111,7 @@ function mergeByChannelId<T extends { readonly channelId: string }>(
   incoming: readonly T[],
 ): T[] {
   const incomingChannelIds = new Set(incoming.map((entry) => entry.channelId));
-  return [
-    ...existing.filter((entry) => !incomingChannelIds.has(entry.channelId)),
-    ...incoming,
-  ];
+  return [...existing.filter((entry) => !incomingChannelIds.has(entry.channelId)), ...incoming];
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

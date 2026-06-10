@@ -85,8 +85,7 @@ const REMOTE_PROVIDER_CONFIG = {
   // names all nine families so QA scripts and operators can discover them
   // without first selecting the entry.
   hermesProvider: {
-    label:
-      "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
+    label: "Hermes Provider (Moonshot, Z-AI, MiniMax, Qwen, Xiaomi, Tencent, StepFun, xAI, Arcee)",
     providerName: "hermes-provider",
     providerType: "openai",
     credentialEnv: "OPENAI_API_KEY",
@@ -315,9 +314,10 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
         compactText(redact(r.stderr)) ||
         compactText(redact(r.stdout)) ||
         `Failed to replace provider '${name}'.`;
-      const detail = r.recoveryFailures.length > 0
-        ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
-        : "";
+      const detail =
+        r.recoveryFailures.length > 0
+          ? ` (detach failures: ${r.recoveryFailures.map((f) => `${f.sandbox}: ${compactText(redact(f.output))}`).join("; ")})`
+          : "";
       return { ok: false, status: r.status || 1, message: `${base}${detail}` };
     }
   }
