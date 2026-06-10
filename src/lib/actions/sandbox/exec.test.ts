@@ -81,15 +81,7 @@ describe("buildOpenshellExecArgs", () => {
   it("does not interpolate the sandbox name into argv strings", () => {
     const argv = buildOpenshellExecArgs("name; rm -rf /", ["echo", "ok"]);
     expect(argv).toContain("name; rm -rf /");
-    expect(argv).toEqual([
-      "sandbox",
-      "exec",
-      "--name",
-      "name; rm -rf /",
-      "--",
-      "echo",
-      "ok",
-    ]);
+    expect(argv).toEqual(["sandbox", "exec", "--name", "name; rm -rf /", "--", "echo", "ok"]);
   });
 });
 
@@ -105,9 +97,9 @@ describe("computeExitCode", () => {
   });
 
   it("falls back to 1 when the signal is unknown to os.constants.signals", () => {
-    expect(
-      computeExitCode({ status: null, signal: "SIGBOGUS" as NodeJS.Signals }),
-    ).toEqual({ code: 1 });
+    expect(computeExitCode({ status: null, signal: "SIGBOGUS" as NodeJS.Signals })).toEqual({
+      code: 1,
+    });
   });
 
   it("falls back to 1 when neither status nor signal is set", () => {

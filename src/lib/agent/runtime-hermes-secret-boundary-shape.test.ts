@@ -48,9 +48,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
   it("env-file guard runs before the ALREADY_RUNNING health probe so a poisoned gateway gets stopped", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
-    const guardIdx = script!.indexOf(
-      `python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`,
-    );
+    const guardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const probeIdx = script!.indexOf("ALREADY_RUNNING");
     expect(guardIdx).toBeGreaterThanOrEqual(0);
     expect(probeIdx).toBeGreaterThanOrEqual(0);
@@ -85,9 +83,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
       internalPort: 19119,
       tuiEnabled: false,
     });
-    const envFileIdx = script.indexOf(
-      `python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`,
-    );
+    const envFileIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const proxyEnvIdx = script.indexOf(". /tmp/nemoclaw-proxy-env.sh");
     const runtimeIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script.indexOf('"$AGENT_BIN" dashboard');

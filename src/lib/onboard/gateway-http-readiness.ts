@@ -75,10 +75,8 @@ export function isGatewayHttpReady(
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
 ): Promise<boolean> {
-  return withTraceSpan(
-    "nemoclaw.gateway.http_probe",
-    { timeout_ms: timeoutMs, url, method },
-    () => isGatewayHttpReadyImpl(timeoutMs, url, method),
+  return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
+    isGatewayHttpReadyImpl(timeoutMs, url, method),
   );
 }
 

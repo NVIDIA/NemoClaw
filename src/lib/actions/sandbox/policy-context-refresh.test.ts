@@ -104,9 +104,9 @@ describe("refreshSandboxPolicyContextFile", () => {
       failure: "no-runtime" as const,
     }));
 
-    expect(refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeVitest }).outcome).toBe(
-      "unreachable",
-    );
+    expect(
+      refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeVitest }).outcome,
+    ).toBe("unreachable");
     expect(
       refreshSandboxPolicyContextFile("alpha", { warn, unexpected, write: writeNoRuntime }).outcome,
     ).toBe("unreachable");

@@ -100,13 +100,20 @@ describe("check-docs link validation", () => {
   });
 
   it("resolves Fern extensionless and route-relative links from docs pages", () => {
-    const routeRelativePage = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
+    const routeRelativePage = path.join(
+      REPO_ROOT,
+      "docs",
+      "get-started",
+      "windows-preparation.mdx",
+    );
     const slugAliasPage = path.join(REPO_ROOT, "docs", "about", "how-it-works.mdx");
 
     const routeRelativeResult = runCheckDocs(routeRelativePage);
     const slugAliasResult = runCheckDocs(slugAliasPage);
 
-    expect(`${routeRelativeResult.stdout}${routeRelativeResult.stderr}`).not.toContain("../quickstart");
+    expect(`${routeRelativeResult.stdout}${routeRelativeResult.stderr}`).not.toContain(
+      "../quickstart",
+    );
     expect(routeRelativeResult.status).toBe(0);
     expect(`${slugAliasResult.stdout}${slugAliasResult.stderr}`).not.toContain(
       "../manage-sandboxes/sandbox-hardening",
@@ -191,7 +198,10 @@ describe("check-docs link validation", () => {
     const mdPath = path.join(tempDir, "guide.mdx");
     const navPath = path.join(tempDir, "index.yml");
     fs.writeFileSync(navPath, "navigation: []\n");
-    fs.writeFileSync(mdPath, ["# Guide", "", "[Overview](/user-guide/openclaw/about/overview)", ""].join("\n"));
+    fs.writeFileSync(
+      mdPath,
+      ["# Guide", "", "[Overview](/user-guide/openclaw/about/overview)", ""].join("\n"),
+    );
 
     const result = runCheckDocs(mdPath, { CHECK_DOCS_FERN_NAV_YML: navPath });
 
@@ -284,22 +294,18 @@ describe("check-docs link validation", () => {
     );
   });
 
-  it(
-    "fails on malformed HTML comments",
-    { timeout: 15000 },
-    () => {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
-      const mdPath = path.join(tempDir, "guide.md");
-      fs.writeFileSync(
-        mdPath,
-        ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
-      );
+  it("fails on malformed HTML comments", { timeout: 15000 }, () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
+    const mdPath = path.join(tempDir, "guide.md");
+    fs.writeFileSync(
+      mdPath,
+      ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
+    );
 
-      const result = runCheckDocs(mdPath);
+    const result = runCheckDocs(mdPath);
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
-      expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
-    },
-  );
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
+    expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+  });
 });

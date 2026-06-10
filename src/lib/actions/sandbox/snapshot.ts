@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
-import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  captureOpenshell,
+  getOpenshellBinary,
+  runOpenshell,
+} from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
@@ -102,7 +105,10 @@ function renderSnapshotTable(
 // have the legacy cluster container — trust the registered imageTag and fail
 // fast if it's missing. Only the "kubernetes" driver falls back to the
 // kubectl probe inside the gateway container.
-function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: string }): string | null {
+function resolveSrcPodImage(
+  srcName: string,
+  srcEntry?: SandboxEntry | { name: string },
+): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
@@ -366,9 +372,7 @@ export async function runSandboxSnapshot(
         const v = formatSnapshotVersion(entry);
         const nameSuffix = entry.name ? ` name=${entry.name}` : "";
         const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-        console.log(
-          `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`,
-        );
+        console.log(`  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
         console.log(`    ${manifest.backupPath}`);
       } else {
         if (result.error) {

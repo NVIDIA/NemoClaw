@@ -16,7 +16,12 @@ import { cleanupSandboxServices } from "../dist/lib/actions/sandbox/destroy.js";
 type SandboxLike = { provider?: string | null } | null;
 
 function buildDeps(sandbox: SandboxLike): {
-  deps: Required<Pick<CleanupSandboxServicesDeps, "getSandbox" | "stopAll" | "unloadOllamaModels" | "runOpenshell" | "rmSync">>;
+  deps: Required<
+    Pick<
+      CleanupSandboxServicesDeps,
+      "getSandbox" | "stopAll" | "unloadOllamaModels" | "runOpenshell" | "rmSync"
+    >
+  >;
   stopAllCalls: Array<{ sandboxName: string }>;
   unloadCalls: number;
 } {
@@ -45,11 +50,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
   it("delegates GPU unload to stopAll() exactly once when stopHostServices=true", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices(
-      "regression-2717",
-      { stopHostServices: true },
-      harness.deps,
-    );
+    cleanupSandboxServices("regression-2717", { stopHostServices: true }, harness.deps);
 
     expect(harness.deps.stopAll).toHaveBeenCalledTimes(1);
     expect(harness.stopAllCalls[0]).toEqual({ sandboxName: "regression-2717" });
@@ -62,11 +63,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
   it("calls unloadOllamaModels() exactly once for an Ollama sandbox when stopHostServices=false", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices(
-      "regression-2717",
-      { stopHostServices: false },
-      harness.deps,
-    );
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).toHaveBeenCalledTimes(1);
@@ -76,11 +73,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
   it("skips unloadOllamaModels() entirely for non-Ollama providers", () => {
     const harness = buildDeps({ provider: "nvidia-prod" });
 
-    cleanupSandboxServices(
-      "regression-2717",
-      { stopHostServices: false },
-      harness.deps,
-    );
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.stopAll).not.toHaveBeenCalled();
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
@@ -89,11 +82,7 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
   it("removes the sandbox PID dir and tears down all messaging providers", () => {
     const harness = buildDeps({ provider: "ollama-local" });
 
-    cleanupSandboxServices(
-      "regression-2717",
-      { stopHostServices: false },
-      harness.deps,
-    );
+    cleanupSandboxServices("regression-2717", { stopHostServices: false }, harness.deps);
 
     expect(harness.deps.rmSync).toHaveBeenCalledWith(
       path.join("/tmp", "nemoclaw-services-regression-2717"),

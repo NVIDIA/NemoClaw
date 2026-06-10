@@ -93,10 +93,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     fs.mkdirSync(lists);
 
     try {
-      const command = extractAptInstallCommand(dockerfile).replaceAll(
-        "/var/lib/apt/lists",
-        lists,
-      );
+      const command = extractAptInstallCommand(dockerfile).replaceAll("/var/lib/apt/lists", lists);
       const { result, calls } = runLoggedShell(command, tmp);
 
       expect(result.status).toBe(0);

@@ -152,9 +152,7 @@ export function ensureHermesDashboardForwardIfEnabled({
   return true;
 }
 
-export function formatHermesDashboardForwardFailure(
-  state: HermesDashboardOnboardState,
-): string {
+export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
   return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, or set ${HERMES_DASHBOARD_PORT_ENV} to another port.`;
 }

@@ -52,7 +52,8 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
     const binDir = path.join(root, "bin");
     fs.mkdirSync(binDir);
-    const installStub = options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
+    const installStub =
+      options.gatewayRawOutput !== undefined || options.gatewayModel !== undefined;
     if (installStub) {
       const payload =
         options.gatewayRawOutput !== undefined
@@ -113,9 +114,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
         }
       })
       .join(path.delimiter);
-    const pathValue = installStub
-      ? `${binDir}${path.delimiter}${scrubbedPath}`
-      : scrubbedPath;
+    const pathValue = installStub ? `${binDir}${path.delimiter}${scrubbedPath}` : scrubbedPath;
     const result = spawnSync("bash", [script], {
       encoding: "utf-8",
       env: { ...process.env, ...options.env, PATH: pathValue },

@@ -91,7 +91,11 @@ describe("composeSandboxConfigBody", () => {
 
     const written = composeSandboxConfigBody(malicious, HERMES_TARGET);
 
-    expect(written.split(/\r?\n/).every((line) => !line || line.startsWith("#") || !line.startsWith("gateway"))).toBe(true);
+    expect(
+      written
+        .split(/\r?\n/)
+        .every((line) => !line || line.startsWith("#") || !line.startsWith("gateway")),
+    ).toBe(true);
     const parsed = YAML.parse(written) as Record<string, unknown>;
     // Header-injected keys must NOT appear in the parsed document.
     expect(parsed.gateway).toBeUndefined();

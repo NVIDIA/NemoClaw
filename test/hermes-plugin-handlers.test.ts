@@ -6,7 +6,14 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const PLUGIN_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "plugin", "__init__.py");
+const PLUGIN_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "plugin",
+  "__init__.py",
+);
 
 function runPython(script: string): string {
   return execFileSync("python3", ["-c", script, PLUGIN_PATH], {
@@ -218,9 +225,7 @@ print(json.dumps(result))
     );
     expect(result.browser_cache).toEqual([null, false]);
     expect(result.browser_sessions).toEqual({});
-    expect(result.firecrawl_url).toBe(
-      "http://host.openshell.internal:11436/firecrawl/v2/search",
-    );
+    expect(result.firecrawl_url).toBe("http://host.openshell.internal:11436/firecrawl/v2/search");
   });
 
   it("normalizes raw messaging pseudo-tool responses before delivery", () => {
@@ -308,18 +313,14 @@ print(json.dumps(result))
     expect(result.targeted).toBe("Hello! I am Hermes.");
     expect(result.class_patch).toBe("Hello from the first message.");
     // No-platform body: original send_message: text is left intact
-    expect(result.untargeted).toBe(
-      "send_message: this is documentation, not a delivery target",
-    );
+    expect(result.untargeted).toBe("send_message: this is documentation, not a delivery target");
     // Cross-platform target (telegram chat, slack target): must NOT be
     // silently delivered into the telegram chat. The raw send_message: text
     // is preserved so dispatch / error surfaces upstream. (#4175 review.)
     expect(result.cross_platform_blocked).toBe(
       'send_message: "to slack: leaked into telegram chat"',
     );
-    expect(result.class_patch_cross).toBe(
-      'send_message: "to slack: should not leak to telegram"',
-    );
+    expect(result.class_patch_cross).toBe('send_message: "to slack: should not leak to telegram"');
     // Unknown current-platform context: refuse to normalize even when the
     // target platform is valid, so a stray pseudo-call outside a known
     // messaging session doesn't get delivered into the wrong chat.
@@ -465,9 +466,7 @@ print(json.dumps({
     expect(result.telegram_same).toBe("Hello from gateway.");
     // Cross-platform target on the same Telegram session: preserved verbatim
     // — proves the anchor refuses to silently deliver into the wrong chat.
-    expect(result.telegram_cross).toBe(
-      'send_message: "to slack: leaked into telegram chat"',
-    );
+    expect(result.telegram_cross).toBe('send_message: "to slack: leaked into telegram chat"');
     // Subsequent Discord-turn hook path: anchor follows the new platform.
     expect(result.discord_same).toBe("Hello from gateway.");
     // Stale-target after platform switch (telegram body on a discord turn):
@@ -513,7 +512,9 @@ print(json.dumps({"context": context}))
     const { context } = JSON.parse(output) as { context: string };
 
     expect(context).toContain("Current Hermes messaging platform: telegram");
-    expect(context).toContain("Reply to the current telegram chat by returning normal assistant text");
+    expect(context).toContain(
+      "Reply to the current telegram chat by returning normal assistant text",
+    );
     expect(context).toContain("never write raw text such as `send_message:");
   });
 });

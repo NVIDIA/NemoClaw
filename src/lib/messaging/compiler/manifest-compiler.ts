@@ -52,12 +52,8 @@ export class ManifestCompiler {
       planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []),
     );
     const networkPolicy = planNetworkPolicy(manifests, context);
-    const agentRender = manifests.flatMap((manifest) =>
-      planAgentRender(manifest, context),
-    );
-    const buildSteps = manifests.flatMap((manifest) =>
-      planBuildSteps(manifest, context.agent),
-    );
+    const agentRender = manifests.flatMap((manifest) => planAgentRender(manifest, context));
+    const buildSteps = manifests.flatMap((manifest) => planBuildSteps(manifest, context.agent));
     const stateUpdates = manifests.flatMap((manifest) => planStateUpdates(manifest));
     const healthChecks = manifests.flatMap((manifest) => planHealthChecks(manifest));
 
@@ -112,12 +108,8 @@ export class ManifestCompiler {
     const requested = configured;
     const requestedActive = !disabled && requested;
     const resolvedInputs = await resolveChannelInputs(manifest, context, this.hooks, {
-      runEnrollment:
-        selected && requestedActive && isEnrollmentWorkflow(context.workflow),
-      runEnrollmentChecks:
-        selected &&
-        requestedActive &&
-        isEnrollmentWorkflow(context.workflow),
+      runEnrollment: selected && requestedActive && isEnrollmentWorkflow(context.workflow),
+      runEnrollmentChecks: selected && requestedActive && isEnrollmentWorkflow(context.workflow),
       isInteractive: context.isInteractive,
     });
     const requiredInputsAvailable = hasRequiredInputsAvailable(manifest, resolvedInputs.inputs);
@@ -130,8 +122,7 @@ export class ManifestCompiler {
       active,
       selected,
       configured: configured && !resolvedInputs.skipped,
-      disabled:
-        disabled || resolvedInputs.skipped || (requestedActive && !requiredInputsAvailable),
+      disabled: disabled || resolvedInputs.skipped || (requestedActive && !requiredInputsAvailable),
       inputs: resolvedInputs.inputs,
       hooks: requested
         ? manifest.hooks
@@ -199,13 +190,7 @@ async function resolveChannelInputs(
   let skipped = false;
   for (const hook of enrollmentHooks) {
     if (!shouldRunEnrollmentHook(hook, inputs)) continue;
-    const result = await runCompilerHook(
-      manifest,
-      hook,
-      hooks,
-      hookInputs,
-      options.isInteractive,
-    );
+    const result = await runCompilerHook(manifest, hook, hooks, hookInputs, options.isInteractive);
     if (!result) {
       skipped = true;
       break;
@@ -419,10 +404,7 @@ function mergeHookOutputsIntoInputs(
   return next;
 }
 
-function hasDeclaredHookInputs(
-  inputs: MessagingHookInputMap,
-  hook: ChannelHookSpec,
-): boolean {
+function hasDeclaredHookInputs(inputs: MessagingHookInputMap, hook: ChannelHookSpec): boolean {
   return (hook.inputs ?? []).every((inputKey) => Object.hasOwn(inputs, inputKey));
 }
 

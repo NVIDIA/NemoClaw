@@ -16,8 +16,7 @@ export default class InternalDnsFixCoreDnsCommand extends NemoClawCommand {
   static args = {
     gatewayName: Args.string({ description: "OpenShell gateway name", required: false }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(InternalDnsFixCoreDnsCommand);

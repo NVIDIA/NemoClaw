@@ -55,7 +55,9 @@ function expectedPlatform(platformId: string): { os: string; executionTarget: st
   return mapping[platformId];
 }
 
-function expectedRuntime(runtimeId: string): { containerEngine: string; containerDaemon: string } | undefined {
+function expectedRuntime(
+  runtimeId: string,
+): { containerEngine: string; containerDaemon: string } | undefined {
   const mapping: Record<string, { containerEngine: string; containerDaemon: string }> = {
     "docker-running": { containerEngine: "docker", containerDaemon: "running" },
     "gpu-docker-cdi": { containerEngine: "docker", containerDaemon: "running" },
@@ -65,7 +67,10 @@ function expectedRuntime(runtimeId: string): { containerEngine: string; containe
   return mapping[runtimeId];
 }
 
-function validateManifestCompatibility(scenario: ScenarioDefinition, manifest?: NemoClawInstanceManifest) {
+function validateManifestCompatibility(
+  scenario: ScenarioDefinition,
+  manifest?: NemoClawInstanceManifest,
+) {
   if (!manifest || !scenario.environment) {
     return;
   }
@@ -81,7 +86,10 @@ function validateManifestCompatibility(scenario: ScenarioDefinition, manifest?: 
   const runtime = expectedRuntime(scenario.environment.runtime);
   if (runtime) {
     const actual = manifest.spec.setup.runtime;
-    if (actual.containerEngine !== runtime.containerEngine || actual.containerDaemon !== runtime.containerDaemon) {
+    if (
+      actual.containerEngine !== runtime.containerEngine ||
+      actual.containerDaemon !== runtime.containerDaemon
+    ) {
       throw new Error(
         `Scenario ${scenario.id} incompatible with manifest runtime: expected ${runtime.containerEngine}/${runtime.containerDaemon}, got ${actual.containerEngine}/${actual.containerDaemon}`,
       );
@@ -313,7 +321,9 @@ function validateExpectedFailure(scenarioId: string, contract: ExpectedFailureCo
   }
   if (contract.forbiddenSideEffects !== undefined) {
     if (!Array.isArray(contract.forbiddenSideEffects)) {
-      throw new Error(`Scenario ${scenarioId} expectedFailure.forbiddenSideEffects must be an array`);
+      throw new Error(
+        `Scenario ${scenarioId} expectedFailure.forbiddenSideEffects must be an array`,
+      );
     }
     for (const entry of contract.forbiddenSideEffects) {
       if (typeof entry !== "string" || entry.trim().length === 0) {
@@ -399,7 +409,9 @@ export function renderPlanText(plans: RunPlan[]): string {
       lines.push(`Runner requirements: ${plan.runnerRequirements.join(", ")}`);
     }
     if (plan.skippedCapabilities.length > 0) {
-      lines.push(`Skipped capabilities: ${plan.skippedCapabilities.map((entry) => entry.id ?? "unnamed").join(", ")}`);
+      lines.push(
+        `Skipped capabilities: ${plan.skippedCapabilities.map((entry) => entry.id ?? "unnamed").join(", ")}`,
+      );
     }
     if (plan.expectedFailure) {
       lines.push(`Expected failure: ${JSON.stringify(plan.expectedFailure)}`);
@@ -426,9 +438,10 @@ export function renderPlanText(plans: RunPlan[]): string {
         if (action.timeoutSeconds) {
           policy.push(`timeout=${action.timeoutSeconds}s`);
         }
-        const target = action.kind === "shell-fn"
-          ? `${action.fn ?? ""}${action.arg ? ` ${action.arg}` : ""}`.trim()
-          : action.scriptRef;
+        const target =
+          action.kind === "shell-fn"
+            ? `${action.fn ?? ""}${action.arg ? ` ${action.arg}` : ""}`.trim()
+            : action.scriptRef;
         const policySuffix = policy.length > 0 ? ` (${policy.join(", ")})` : "";
         const targetSuffix = target ? ` -> ${target}` : "";
         lines.push(`  Action: ${action.id}${policySuffix}${targetSuffix}`);
@@ -454,7 +467,10 @@ export function renderPlanText(plans: RunPlan[]): string {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function writePlanArtifacts(plans: RunPlan[], contextDir: string): { jsonPath: string; summaryPath: string } {
+export function writePlanArtifacts(
+  plans: RunPlan[],
+  contextDir: string,
+): { jsonPath: string; summaryPath: string } {
   const outputDir = path.join(contextDir, ".e2e");
   fs.mkdirSync(outputDir, { recursive: true });
   const jsonPath = path.join(outputDir, "run-plan.json");

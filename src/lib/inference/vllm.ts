@@ -5,11 +5,7 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-import {
-  dockerCapture,
-  dockerPullWithProgressWatchdog,
-  dockerSpawn,
-} from "../adapters/docker";
+import { dockerCapture, dockerPullWithProgressWatchdog, dockerSpawn } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { runCapture, runShell } from "../runner";
@@ -26,12 +22,12 @@ import { resolveVllmInstallModel } from "./vllm-prompt";
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
 export interface VllmProfile {
-  name: string;            // human label, e.g. "DGX Spark"
+  name: string; // human label, e.g. "DGX Spark"
   // Platform key matched against `VllmModelDef.platforms` when the picker
   // filters the registry. Decoupled from `name` so future user-facing label
   // tweaks don't change which models are offered.
   platform: VllmPlatform;
-  image: string;           // container image
+  image: string; // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
   // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
@@ -516,7 +512,9 @@ export async function installVllm(
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
   console.log(`    Image: ${profile.image}`);
-  console.log(`    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`);
+  console.log(
+    `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
+  );
   if (!opts.hasImage) console.log("    Image download on first run, cached after");
   console.log("    Model download on first run, cached after");
   console.log("");

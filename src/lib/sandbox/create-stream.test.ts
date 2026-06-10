@@ -252,7 +252,8 @@ describe("sandbox-create-stream", () => {
     const promise = streamSandboxCreate("echo create", process.env, {
       spawnImpl: () => child,
       readyCheck: () => false,
-      failureCheck: () => "Docker GPU patch failed while OpenShell sandbox create was still waiting.",
+      failureCheck: () =>
+        "Docker GPU patch failed while OpenShell sandbox create was still waiting.",
       pollIntervalMs: 5,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,

@@ -90,9 +90,7 @@ function runProbe(probe: string, opts: { withPreload?: boolean } = {}): any {
     writeFakeModules(tempDir);
     const probePath = path.join(tempDir, "probe.mjs");
     fs.writeFileSync(probePath, probe);
-    const args = opts.withPreload
-      ? ["--require", PRELOAD_SOURCE, probePath]
-      : [probePath];
+    const args = opts.withPreload ? ["--require", PRELOAD_SOURCE, probePath] : [probePath];
     const r = spawnSync(process.execPath, args, {
       cwd: tempDir,
       encoding: "utf-8",
@@ -296,30 +294,31 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
   });
 
-  it.each(["foo", "http://127.0.0.1:18789", "127.0.0.1:18789"])(
-    "refuses to pair when OPENCLAW_GATEWAY_URL is not a ws:// URL (%s)",
-    (badUrl) => {
-      const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-        gatewayUrl: badUrl,
-        preloadPresent: true,
-      });
-      expect(r.stderr).toContain("is not a ws:// gateway URL");
-      expect(r.stdout).toContain("GUARD_EXIT=1");
-      expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
-    },
-  );
+  it.each([
+    "foo",
+    "http://127.0.0.1:18789",
+    "127.0.0.1:18789",
+  ])("refuses to pair when OPENCLAW_GATEWAY_URL is not a ws:// URL (%s)", (badUrl) => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: badUrl,
+      preloadPresent: true,
+    });
+    expect(r.stderr).toContain("is not a ws:// gateway URL");
+    expect(r.stdout).toContain("GUARD_EXIT=1");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+  });
 
-  it.each(["ws://127.0.0.1:18789", "wss://gateway.internal:443"])(
-    "accepts ws:// and wss:// gateway URLs (%s)",
-    (goodUrl) => {
-      const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-        gatewayUrl: goodUrl,
-        preloadPresent: true,
-      });
-      expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
-      expect(r.stdout).toContain("GUARD_EXIT=0");
-    },
-  );
+  it.each([
+    "ws://127.0.0.1:18789",
+    "wss://gateway.internal:443",
+  ])("accepts ws:// and wss:// gateway URLs (%s)", (goodUrl) => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: goodUrl,
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+  });
 
   it("injects the compact-QR preload into NODE_OPTIONS for the login", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
