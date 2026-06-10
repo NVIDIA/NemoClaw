@@ -113,6 +113,31 @@ describe("pollWechatQrStatus", () => {
     expect(result.ilink_user_id).toBe("user-abc");
   });
 
+  it("does not leak the secret-ish qrcode token or query parameter if debug logging is enabled", async () => {
+    const qrToken = "secret-qr-cookie";
+    const debugEvents: string[] = [];
+    const { fetch, calls } = makeFetch(() => ({
+      ok: true,
+      status: 200,
+      body: JSON.stringify({ status: "wait" }),
+    }));
+
+    await pollWechatQrStatus({
+      baseUrl: "https://ilinkai.weixin.qq.com",
+      qrcode: qrToken,
+      fetch,
+      onDebug: (event) => debugEvents.push(event),
+    });
+
+    expect(calls[0]?.url).toContain(`qrcode=${qrToken}`);
+    const debugText = debugEvents.join("\n");
+    expect(debugText).toContain(
+      "poll request → https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status",
+    );
+    expect(debugText).not.toContain(qrToken);
+    expect(debugText).not.toContain("qrcode=");
+  });
+
   it("returns 'wait' on transport-level failure so the orchestrator simply retries", async () => {
     const failing: FetchLike = async () => {
       throw new Error("ECONNRESET");
