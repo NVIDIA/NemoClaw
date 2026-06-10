@@ -184,7 +184,7 @@ describe("E2E scenario advisor — normalization contract", () => {
         ],
         optional: [
           {
-            id: "ubuntu-repo-cloud-hermes",
+            id: "ubuntu-repo-docker-post-reboot-recovery",
             workflow: VITEST_SCENARIO_WORKFLOW,
             // Model claims this optional item is actually required.
             required: true,
@@ -263,13 +263,19 @@ describe("E2E scenario advisor — normalization contract", () => {
     expect(normalized.required.map((item) => item.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
   });
 
-  it("drops unknown registry ids while preserving the synthetic fan-out id", () => {
+  it("drops unknown or unsupported registry ids while preserving live-supported ids and fan-out", () => {
     const raw = {
       required: [
         {
           id: "valid-kebab-but-not-in-registry",
           workflow: VITEST_SCENARIO_WORKFLOW,
           reason: "model invented a scenario",
+          dispatchCommand: "gh ...",
+        },
+        {
+          id: "ubuntu-repo-cloud-hermes",
+          workflow: VITEST_SCENARIO_WORKFLOW,
+          reason: "registry scenario not wired for live Vitest fixtures",
           dispatchCommand: "gh ...",
         },
         {
@@ -316,7 +322,7 @@ describe("E2E scenario advisor — normalization contract", () => {
           dispatchCommand: "gh ...",
         },
         {
-          id: "ubuntu-repo-cloud-hermes",
+          id: "ubuntu-repo-docker-post-reboot-recovery",
           workflow: VITEST_SCENARIO_WORKFLOW,
           required: false,
           reason: "adjacent",
@@ -327,7 +333,9 @@ describe("E2E scenario advisor — normalization contract", () => {
       confidence: "medium",
     };
     const normalized = normalizeScenarioAdvisorResult(raw, metadata());
-    expect(normalized.optional.map((item) => item.id)).toEqual(["ubuntu-repo-cloud-hermes"]);
+    expect(normalized.optional.map((item) => item.id)).toEqual([
+      "ubuntu-repo-docker-post-reboot-recovery",
+    ]);
   });
 
   it("filters relevantChangedFiles to the metadata changedFiles set", () => {

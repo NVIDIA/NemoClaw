@@ -30,6 +30,7 @@ import {
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
 import { getScenario } from "../../test/e2e-scenario/scenarios/registry.ts";
+import { liveScenarioSupport } from "../../test/e2e-scenario/scenarios/runtime-support.ts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -230,12 +231,12 @@ export function buildSystemPrompt(schema: AdvisorSchema): string {
     "",
     "Decision policy:",
     "- Required (all scenarios): changes to scenario runtime/runner code, scenario catalog metadata, expected-state metadata, live support classification, shared fixtures, or the Vitest scenario workflow itself. Recommend the `e2e-scenarios-all` fan-out through `e2e-vitest-scenarios.yaml`.",
-    "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of typed scenario IDs that exercises the changed surface.",
+    "- Required (targeted): fixture, live test, manifest, runtime-support, or scenario changes that affect a specific subset. Recommend the smallest set of live-supported typed scenario IDs that exercises the changed surface.",
     "- Optional: adjacent scenarios that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner scenarios (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
     "- None: docs-only, comment-only, tests-only outside `test/e2e-scenario/`, or changes that cannot affect scenario E2E behavior. Set `noScenarioE2eReason` and return empty `required`/`optional` arrays.",
     "",
     "Hard rules:",
-    "- Only recommend typed scenario IDs that exist in the registry or the synthetic fan-out id `e2e-scenarios-all`. Do not invent IDs.",
+    "- Only recommend live-supported typed scenario IDs that exist in the registry or the synthetic fan-out id `e2e-scenarios-all`. Do not invent IDs.",
     "- The only allowed workflow is `e2e-vitest-scenarios.yaml`.",
     "- Each `dispatchCommand` for a single-scenario recommendation MUST be exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref> --field scenarios=<id>`.",
     "- For the fan-out, use exactly: `gh workflow run e2e-vitest-scenarios.yaml --ref <pr-head-ref>` and set `id`/`workflow` to `e2e-scenarios-all`/`e2e-vitest-scenarios.yaml`.",
@@ -325,7 +326,13 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
     // trust the model to author shell-safe dispatch commands.
     if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
     if (!SCENARIO_ID_PATTERN.test(id)) continue;
-    if (id !== SCENARIO_ALL_ID && !getScenario(id)) continue;
+    const scenarioDefinition = id === SCENARIO_ALL_ID ? undefined : getScenario(id);
+    if (
+      id !== SCENARIO_ALL_ID &&
+      (!scenarioDefinition || !liveScenarioSupport(scenarioDefinition).supported)
+    ) {
+      continue;
+    }
     if (seen.has(id)) continue;
     seen.add(id);
     const scenario = stringOrUndefined(item.scenario);
