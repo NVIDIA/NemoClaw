@@ -578,14 +578,14 @@
       "legacyScript": "test/e2e/test-openclaw-tui-chat-correlation.sh",
       "domain": "support-diagnostics",
       "ownerIssue": "#4347",
-      "status": "bridge-probe",
-      "targetVitestScenarios": [],
-      "bridgeProbes": [
+      "status": "covered",
+      "targetVitestScenarios": [
         "test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts"
       ],
+      "bridgeProbes": [],
       "retiredReason": "",
       "deletionReady": false,
-      "notes": "Migration in progress: free-standing live test at test/e2e-scenario/live/openclaw-tui-chat-correlation.test.ts; bash wrapper retained until soak (#5049 partial-migration pattern)."
+      "notes": "Covered by free-standing live test (PR #5150). Drives a real cloud OpenClaw sandbox via openshell + websocket; asserts pinned 2026.5.27 OpenClaw + #2603/#3145 chat-correlation contract (no empty finals, no uncorrelated replies, no missing/duplicate replies, no missing/duplicate user turns). Free-standing job openclaw-tui-chat-correlation-vitest in e2e-vitest-scenarios.yaml (#5049 partial-migration pattern). Bash workflow retained in nightly-e2e.yaml until soak; deletion is a follow-up PR with #4357 approval."
     },
     {
       "legacyScript": "test/e2e/test-openshell-gateway-upgrade.sh",
