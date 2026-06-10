@@ -32,12 +32,15 @@ jobs:
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/vitest
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: true
       - name: Set up Node
         uses: actions/setup-node@v4
+        env:
+          NVIDIA_API_KEY: \${{ secrets.NVIDIA_API_KEY }}
       - name: Run Vitest live E2E scenarios
         env:
           TEST_FILTER: \${{ inputs.test_filter }}
@@ -67,13 +70,15 @@ jobs:
           "live-scenarios strategy.fail-fast must be false",
           "live-scenarios matrix.include must come from generate-matrix output",
           "live-scenarios job must write artifacts under e2e-artifacts/vitest",
-          "live-scenarios artifacts must be scoped by matrix.id",
           "live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI",
+          "live-scenarios job env must not include NVIDIA_API_KEY",
           "checkout action must be pinned to a full commit SHA",
           "checkout step must set persist-credentials=false",
+          "step 'Set up Node' env must not include NVIDIA_API_KEY",
           "setup-node action must be pinned to a full commit SHA",
           "run-scenario job missing step: Build CLI",
           "Vitest step must pass matrix.id through SCENARIO_ID env",
+          "Vitest step must receive NVIDIA_API_KEY from secrets",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
           "step 'Run Vitest live E2E scenarios' run script must include test/e2e-scenario/live/registry-scenarios.test.ts",
           "step 'Run Vitest live E2E scenarios' run script must include \"^${SCENARIO_ID}$\"",
@@ -81,6 +86,7 @@ jobs:
           "summary step must pass matrix.id through SCENARIO_ID env",
           "summary step must pass matrix.label through SCENARIO_LABEL env",
           "step 'Summarize artifacts' run script must include run-plan.json",
+          'step \'Summarize artifacts\' run script must include Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]',
           "step 'Summarize artifacts' run script must include | Scenario | Manifest | Expected state | Suites | Phases |",
           "artifact upload must set include-hidden-files: false",
           "artifact upload name must include matrix.id",

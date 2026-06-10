@@ -67,6 +67,17 @@ function requireUploadPathContains(errors: string[], uploadPath: string, expecte
   }
 }
 
+function requireEnvDoesNotExposeSecret(
+  errors: string[],
+  owner: string,
+  env: WorkflowRecord,
+  secretName: string,
+): void {
+  if (Object.hasOwn(env, secretName)) {
+    errors.push(`${owner} env must not include ${secretName}`);
+  }
+}
+
 function requireWorkflowDispatch(errors: string[], triggers: WorkflowRecord): WorkflowRecord {
   const workflowDispatch = asRecord(triggers.workflow_dispatch);
   if (Object.keys(workflowDispatch).length === 0) errors.push("workflow must support workflow_dispatch");
@@ -173,15 +184,26 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest")) {
     errors.push("live-scenarios job must write artifacts under e2e-artifacts/vitest");
   }
-  if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
-    errors.push("live-scenarios artifacts must be scoped by matrix.id");
+  if (stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("${{ matrix.id }}")) {
+    errors.push("live-scenarios job E2E_ARTIFACT_DIR must be the Vitest artifact parent");
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
     errors.push("live-scenarios job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
+  requireEnvDoesNotExposeSecret(errors, "live-scenarios job", jobEnv, "NVIDIA_API_KEY");
 
   const steps = asSteps(liveScenarios.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    if (step.name !== "Run Vitest live E2E scenarios") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        "NVIDIA_API_KEY",
+      );
+    }
+  }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
   if (!checkout) errors.push("live-scenarios job missing checkout step");
@@ -202,6 +224,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (runVitestEnv.SCENARIO_ID !== "${{ matrix.id }}") {
     errors.push("Vitest step must pass matrix.id through SCENARIO_ID env");
   }
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push("Vitest step must receive NVIDIA_API_KEY from secrets");
+  }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-scenarios-live");
   requireRunContains(errors, runVitest, "test/e2e-scenario/live/registry-scenarios.test.ts");
   requireRunContains(errors, runVitest, '"^${SCENARIO_ID}$"');
@@ -215,6 +240,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     errors.push("summary step must pass matrix.label through SCENARIO_LABEL env");
   }
   requireRunContains(errors, summary, "run-plan.json");
+  requireRunContains(errors, summary, 'Path(os.environ["E2E_ARTIFACT_DIR"]) / os.environ["SCENARIO_ID"]');
   requireRunContains(errors, summary, "| Scenario | Manifest | Expected state | Suites | Phases |");
   requireRunContains(errors, summary, "SCENARIO_ID");
 

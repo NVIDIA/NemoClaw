@@ -54,3 +54,20 @@ scripts are governed by #5098 and
 `test/e2e-scenario/migration/legacy-inventory.json`. They should be migrated,
 augmented, or kept by family according to their KEEP_BASH, HYBRID, or
 MIGRATE_TYPED classification.
+
+That includes the security and messaging contracts that the deleted typed-shell
+validation suites used to mirror. Until #5098 migrates those families into
+Vitest scenario fixtures, the active source of truth remains:
+
+- `test/e2e/test-credential-sanitization.sh` and
+  `test/e2e/test-credential-migration.sh` for credential leak prevention and
+  host credential-store hardening.
+- `test/e2e/test-network-policy.sh`, `test/e2e/test-brave-search-e2e.sh`, and
+  `test/e2e/test-openshell-gateway-upgrade.sh` for network policy and gateway
+  credential-rewrite behavior.
+- `test/e2e/test-shields-config.sh` for shields, config permissions, and
+  redacted config output.
+- `test/e2e/test-telegram-injection.sh`, `test/e2e/test-messaging-providers.sh`,
+  `test/e2e/test-channels-add-remove.sh`, and
+  `test/e2e/test-channels-stop-start.sh` for messaging injection, channel
+  policy preservation, bridge credential isolation, and provider rewrite paths.
