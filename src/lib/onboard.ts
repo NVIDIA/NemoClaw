@@ -89,6 +89,9 @@ const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
 const {
+  promptForInferenceProviderSelection,
+}: typeof import("./onboard/provider-selection-prompt") = require("./onboard/provider-selection-prompt");
+const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const {
@@ -4197,31 +4200,14 @@ async function setupNim(
             : `  [non-interactive] Provider: ${selected.key}`,
         );
       } else {
-        const suggestions: string[] = [];
-        if (vllmRunning) suggestions.push("vLLM");
-        if (ollamaRunning) suggestions.push("Ollama");
-        if (suggestions.length > 0) {
-          console.log(
-            `  Detected local inference option${suggestions.length > 1 ? "s" : ""}: ${suggestions.join(", ")}`,
-          );
-          console.log("");
-        }
-
-        console.log("");
-        console.log("  Select your inference provider:");
-        options.forEach((o, i) => {
-          console.log(`    ${i + 1}) ${o.label}`);
+        selected = await promptForInferenceProviderSelection({
+          options,
+          vllmRunning,
+          ollamaRunning,
+          prompt,
+          log: console.log,
+          selectFromNumberedMenu: selectFromNumberedMenuOrExit,
         });
-        console.log("");
-
-        const envProviderHint = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-        const envProviderIdx = envProviderHint
-          ? options.findIndex((o) => o.key.toLowerCase() === envProviderHint)
-          : -1;
-        const defaultIdx =
-          (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
-        const choice = await prompt(`  Choose [${defaultIdx}]: `);
-        selected = selectFromNumberedMenuOrExit(choice, defaultIdx, options);
       }
 
       if (!selected) {
