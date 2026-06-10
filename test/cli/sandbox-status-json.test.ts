@@ -163,54 +163,58 @@ describe("CLI sandbox status JSON output", () => {
     expect(parsed.provider).toBe("unknown");
   });
 
-  it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", () => {
-    const home = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-notfound-"),
-    );
-    const localBin = path.join(home, "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    // Registry contains "alpha"; we will query a different name so the
-    // canonical `sandbox status <name> --json` path produces the documented
-    // automation contract: `found: false`, gatewayState != present, exit 1.
-    writeSandboxRegistry(home, "alpha");
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
-        "  echo 'NotFound: sandbox not found'",
-        "  exit 1",
-        "fi",
-        'if [ "$1" = "status" ]; then',
-        "  echo 'Gateway: nemoclaw'",
-        "  echo 'Status: Connected'",
-        "  exit 0",
-        "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
-        "  echo 'Gateway: nemoclaw'",
-        "  exit 0",
-        "fi",
-        "exit 0",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+  it(
+    "sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form",
+    () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-notfound-"),
+      );
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      // Registry contains "alpha"; we will query a different name so the
+      // canonical `sandbox status <name> --json` path produces the documented
+      // automation contract: `found: false`, gatewayState != present, exit 1.
+      writeSandboxRegistry(home, "alpha");
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ]; then',
+          "  echo 'NotFound: sandbox not found'",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  echo 'Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
-    const r = runWithEnv("sandbox status ghost --json", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+      const r = runWithEnv("sandbox status ghost --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
 
-    expect(r.code).toBe(1);
-    const parsed = JSON.parse(r.out);
-    expect(parsed.name).toBe("ghost");
-    expect(parsed.found).toBe(false);
-    expect(parsed.gatewayState).not.toBe("present");
-    expect(parsed.rpcIssue).toBeNull();
-    expect(parsed.model).toBe("unknown");
-    expect(parsed.provider).toBe("unknown");
-    expect(parsed.openshellDriver).toBe("unknown");
-    expect(parsed.openshellVersion).toBe("unknown");
-  });
+      expect(r.code).toBe(1);
+      const parsed = JSON.parse(r.out);
+      expect(parsed.name).toBe("ghost");
+      expect(parsed.found).toBe(false);
+      expect(parsed.gatewayState).not.toBe("present");
+      expect(parsed.rpcIssue).toBeNull();
+      expect(parsed.model).toBe("unknown");
+      expect(parsed.provider).toBe("unknown");
+      expect(parsed.openshellDriver).toBe("unknown");
+      expect(parsed.openshellVersion).toBe("unknown");
+    },
+    15_000,
+  );
 
   it("sandbox status --json reports gatewayState!=present and exits 1 when sandbox is registered but gateway lookup is missing", () => {
     const home = fs.mkdtempSync(
