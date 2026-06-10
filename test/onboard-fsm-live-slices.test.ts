@@ -6,7 +6,7 @@ import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "vitest";
+import { beforeAll, describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const probeTimeoutMs = 10_000;
@@ -93,6 +93,14 @@ function distArtifactStatus(): { ok: true } | { ok: false; reason: string } {
     }
   }
   return { ok: true };
+}
+
+function assertFreshDistArtifacts(): void {
+  const status = distArtifactStatus();
+  if (status.ok) return;
+  throw new Error(
+    `Live onboard FSM slice boundary tests require fresh compiled CLI artifacts: ${status.reason}. Run npm run build:cli before this test.`,
+  );
 }
 
 function probeEnvironment(tmpDir: string): NodeJS.ProcessEnv {
@@ -306,45 +314,41 @@ const { onboard } = require(${onboardPath});
   }
 }
 
-const artifactStatus = distArtifactStatus();
-const describeWithDist = artifactStatus.ok ? describe : describe.skip;
+describe("live onboard FSM slice boundaries", () => {
+  /*
+   * The live dispatcher is still loaded from compiled CommonJS:
+   * src/lib/onboard.ts captures these helpers through require-time bindings,
+   * and a source-level Vitest import cannot replace them without adding a
+   * production-only injection seam. Keep the monkeypatch in a short-lived
+   * child process, with a minimal environment and a timeout, until onboard's
+   * dispatcher exposes an explicit test hook or moves to source-testable ESM.
+   */
+  beforeAll(() => {
+    assertFreshDistArtifacts();
+  });
 
-describeWithDist(
-  artifactStatus.ok
-    ? "live onboard FSM slice boundaries"
-    : `live onboard FSM slice boundaries (requires fresh dist: ${artifactStatus.reason})`,
-  () => {
-    /*
-     * The live dispatcher is still loaded from compiled CommonJS:
-     * src/lib/onboard.ts captures these helpers through require-time bindings,
-     * and a source-level Vitest import cannot replace them without adding a
-     * production-only injection seam. Keep the monkeypatch in a short-lived
-     * child process, with a minimal environment and a timeout, until onboard's
-     * dispatcher exposes an explicit test hook or moves to source-testable ESM.
-     */
-    it("enters the initial slice on fresh onboard runs", () => {
-      assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial"]);
-    });
+  it("enters the initial slice on fresh onboard runs", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial"]);
+  });
 
-    it("enters the core slice after the initial slice reaches provider selection", () => {
-      assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial", "core"]);
-    });
+  it("enters the core slice after the initial slice reaches provider selection", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core" }), ["initial", "core"]);
+  });
 
-    it("enters the final slice after the core slice reaches the branch state", () => {
-      assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial", "core", "final"]);
-    });
+  it("enters the final slice after the core slice reaches the branch state", () => {
+    assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial", "core", "final"]);
+  });
 
-    it("bypasses the strict initial runner on resume and reaches compatibility phases", () => {
-      assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [
-        "preflight-compat",
-      ]);
-    });
+  it("bypasses the strict initial runner on resume and reaches compatibility phases", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [
+      "preflight-compat",
+    ]);
+  });
 
-    it("bypasses the strict core runner when fresh state is already past the core entry", () => {
-      assert.deepEqual(runSliceProbe({ slice: "core", mode: "ahead-core" }), [
-        "initial",
-        "provider-compat",
-      ]);
-    });
-  },
-);
+  it("bypasses the strict core runner when fresh state is already past the core entry", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core", mode: "ahead-core" }), [
+      "initial",
+      "provider-compat",
+    ]);
+  });
+});
