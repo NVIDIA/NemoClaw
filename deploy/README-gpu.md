@@ -36,7 +36,6 @@ This document is the **GPU deployment guide** — install, operate, load-test, a
 
 This guide is written and load-tested on **4× NVIDIA L40S**. Default install and HPA bounds assume **one agent pod per GPU** (`MAX_REPLICAS=4`).
 
-![4× NVIDIA L40S — `nvidia-smi`]
 
 <img width="1334" height="920" alt="Screenshot 2026-06-09 at 7 01 28 PM" src="https://github.com/user-attachments/assets/a8380890-4074-43a6-968c-916b523199d2" />
 
