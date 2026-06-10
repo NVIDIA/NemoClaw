@@ -17,6 +17,8 @@ export type ModelRouterProcessOwnershipDeps = {
 type ModelRouterCommandLineReaderDeps = {
   readProcCommandLine?: (pid: number) => string[] | null;
   readPsCommandLine?: (pid: number) => string[] | null;
+  /** Override the /proc PID enumeration (injectable for tests). */
+  listProcPids?: () => number[];
 };
 
 export async function isRouterHealthy(
@@ -131,6 +133,39 @@ export async function stopModelRouterProcess(pid: number, port: number): Promise
     await new Promise((resolve) => setTimeout(resolve, 500));
     if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
   }
+}
+
+/**
+ * Scan /proc for a model-router process bound to `port`.
+ *
+ * Used by reconcileModelRouter to auto-recover orphaned routers whose PID
+ * was not recorded in the current session (e.g. after a failed install left a
+ * running router and the next session starts fresh). Returns null when /proc
+ * is unavailable (macOS) or no matching process is found.
+ */
+export function findModelRouterPidForPort(
+  port: number,
+  deps: ModelRouterCommandLineReaderDeps = {},
+): number | null {
+  let pids: number[];
+  if (deps.listProcPids) {
+    pids = deps.listProcPids();
+  } else {
+    try {
+      pids = fs
+        .readdirSync("/proc")
+        .map(Number)
+        .filter((n) => Number.isFinite(n) && n > 0);
+    } catch {
+      return null;
+    }
+  }
+  const readCmdLine = deps.readProcCommandLine ?? readProcCommandLine;
+  for (const pid of pids) {
+    const args = readCmdLine(pid);
+    if (args && isModelRouterCommandLineForPort(args, port)) return pid;
+  }
+  return null;
 }
 
 export async function stopTrackedModelRouterForAgentChange(
