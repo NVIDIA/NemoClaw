@@ -43,7 +43,6 @@ describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
@@ -294,7 +293,6 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
   it("preserves Hermes Slack policy when Slack is active at sandbox create time", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-slack-"));
     try {
       const fakeBin = path.join(tmpDir, "bin");
@@ -495,7 +493,6 @@ const { createSandbox } = require(${onboardPath});
   it("reuses existing messaging providers during non-interactive recreate when tokens are not in the host env", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-messaging-reuse-provider-"),
     );
@@ -663,7 +660,6 @@ const { createSandbox } = require(${onboardPath});
   it("preserves disabled channels in the registry after a recreate so `channels start` can re-enable them (#3381)", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-disabled-channels-preserve-"),
     );
@@ -824,7 +820,6 @@ const { createSandbox } = require(${onboardPath});
   it("bakes WhatsApp into the sandbox image without bridge providers when no messaging tokens are set", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-tokenless-whatsapp-"));
     try {
       const fakeBin = path.join(tmpDir, "bin");
@@ -977,7 +972,6 @@ const { createSandbox } = require(${onboardPath});
   it("drops WhatsApp from the rebuilt image when the registry marks it disabled", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-disabled-whatsapp-"));
     try {
       const fakeBin = path.join(tmpDir, "bin");
@@ -1136,7 +1130,6 @@ const { createSandbox } = require(${onboardPath});
   });
 
   it("aborts onboard when a messaging provider upsert fails", { timeout: 60_000 }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
@@ -1219,7 +1212,6 @@ const { createSandbox } = require(${onboardPath});
   it("reuses sandbox when messaging providers already exist in gateway", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
@@ -1319,7 +1311,6 @@ const { createSandbox } = require(${onboardPath});
   it("filters messaging providers to only enabledChannels when provided", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-filter-"),
     );
@@ -1460,7 +1451,6 @@ const { createSandbox } = require(${onboardPath});
   it("creates no messaging providers when enabledChannels is empty", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-enabled-channels-empty-"),
     );
@@ -1589,7 +1579,6 @@ const { createSandbox } = require(${onboardPath});
   it("non-interactive setupMessagingChannels returns channels with tokens", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-messaging-noninteractive-"),
     );
@@ -1659,7 +1648,6 @@ const { setupMessagingChannels } = require(${onboardPath});
   it("non-interactive setupMessagingChannels drops Slack when live Slack API validation rejects the token", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-messaging-slack-live-reject-"),
     );
@@ -1744,7 +1732,6 @@ const { setupMessagingChannels } = require(${onboardPath});
   it("non-interactive setupMessagingChannels returns empty array when no tokens set", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-no-tokens.js");
@@ -1804,7 +1791,6 @@ const { setupMessagingChannels } = require(${onboardPath});
   it("interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "slack-format-reject.js");
@@ -1913,7 +1899,6 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
   it("interactive setupMessagingChannels drops slack when app token fails appTokenFormat check (#1912)", {
     timeout: 60_000,
   }, async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-slack-app-format-reject-"),
     );
@@ -2021,7 +2006,6 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
   });
 
   it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
     const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
     // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
     const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
