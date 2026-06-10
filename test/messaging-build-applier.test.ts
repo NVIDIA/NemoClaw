@@ -317,6 +317,96 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("reapplies OpenClaw messaging render after doctor rewrites config", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-doctor-rewrite-"));
+    const tracePath = path.join(tmp, "openclaw.trace");
+    const fakeOpenclaw = path.join(tmp, "openclaw");
+    const channels = channelsB64(["discord", "slack", "wechat"]);
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("fs");',
+        'const path = require("path");',
+        "const args = process.argv.slice(2);",
+        'fs.appendFileSync(process.env.OPENCLAW_TRACE, args.join("|") + String.fromCharCode(10));',
+        'if (args[0] !== "doctor" || args[1] !== "--fix" || args[2] !== "--non-interactive") process.exit(46);',
+        'const configPath = path.join(process.env.HOME, ".openclaw", "openclaw.json");',
+        'const config = JSON.parse(fs.readFileSync(configPath, "utf8"));',
+        "if (config.channels?.discord?.enabled !== true) process.exit(40);",
+        "if (config.plugins?.entries?.discord?.enabled !== true) process.exit(41);",
+        "if (config.plugins?.entries?.slack?.enabled !== true) process.exit(42);",
+        'if (config.channels?.["openclaw-weixin"]?.accounts?.primary?.enabled !== true) process.exit(43);',
+        "fs.writeFileSync(configPath, JSON.stringify({ channels: { defaults: {} }, plugins: { entries: {} } }, null, 2) + String.fromCharCode(10));",
+        "process.exit(0);",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const generatorEnv = withLegacyMessagingPlanEnv(
+        {
+          PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+          HOME: tmp,
+          ...BASE_GENERATOR_ENV,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+          NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+          NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+        },
+        "openclaw",
+      );
+      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: generatorEnv,
+        timeout: 10_000,
+      });
+      expect(generatorResult.status, generatorResult.stderr).toBe(0);
+
+      const postInstallResult = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+            HOME: tmp,
+            OPENCLAW_TRACE: tracePath,
+            NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+          },
+          timeout: 10_000,
+        },
+      );
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe("doctor|--fix|--non-interactive");
+
+      const config = JSON.parse(
+        fs.readFileSync(path.join(tmp, ".openclaw", "openclaw.json"), "utf-8"),
+      );
+      expect(config.channels?.discord?.enabled).toBe(true);
+      expect(config.plugins?.entries?.discord).toEqual({ enabled: true });
+      expect(config.channels?.slack?.enabled).toBe(true);
+      expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
+      expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
+      expect(config.channels?.wechat).toBeUndefined();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("applies post-agent-install WeChat build files from the compiled messaging plan", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-post-agent-install-"));
     const channels = channelsB64(["wechat"]);

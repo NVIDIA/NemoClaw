@@ -930,14 +930,16 @@ export function applyMessagingBuildPhase(
     installMessagingPackages(plan, env);
     return [];
   }
-  const appliedTargets = uniqueStrings([
+  const applyPostAgentInstallOutputs = (): readonly string[] => [
     ...applyMessagingAgentRenderToLocalFiles(plan),
     ...applyPostAgentInstallBuildFilesToLocalFiles(plan),
-  ]);
+  ];
+  const appliedTargets = applyPostAgentInstallOutputs();
   if (plan?.agent === "openclaw") {
     runOpenClawMessagingDoctor(plan, env);
+    return uniqueStrings([...appliedTargets, ...applyPostAgentInstallOutputs()]);
   }
-  return appliedTargets;
+  return uniqueStrings(appliedTargets);
 }
 
 export function installMessagingPackages(plan: MessagingBuildPlan | null, env: Env): void {
