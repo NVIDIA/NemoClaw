@@ -77,10 +77,14 @@ describe("live Vitest scenario matrix", () => {
 
   it("builds the default live Vitest matrix from fixture-supported scenarios only", () => {
     expect(buildLiveScenarioMatrix().map((entry) => entry.id)).toEqual([
+      "ubuntu-gateway-port-conflict-negative",
+      "ubuntu-invalid-nvidia-key-negative",
       "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-cloud-openclaw-custom-policies",
       "ubuntu-repo-docker-post-reboot-recovery",
     ]);
-    expect(buildLiveScenarioMatrix()[0]).toMatchObject({
+    const matrix = buildLiveScenarioMatrix();
+    expect(matrix.find((entry) => entry.id === "ubuntu-repo-cloud-openclaw")).toMatchObject({
       id: "ubuntu-repo-cloud-openclaw",
       runner: "ubuntu-latest",
       platform: "ubuntu-local",
@@ -97,7 +101,9 @@ describe("live Vitest scenario matrix", () => {
     // confirm the lifecycle whitelist + post-reboot-recovery scenario
     // are wired together; the actual RED/GREEN behavior is exercised
     // by the live runner (gates on the fix landing in src/lib/).
-    expect(buildLiveScenarioMatrix()[1]).toMatchObject({
+    expect(
+      matrix.find((entry) => entry.id === "ubuntu-repo-docker-post-reboot-recovery"),
+    ).toMatchObject({
       id: "ubuntu-repo-docker-post-reboot-recovery",
       runner: "ubuntu-latest",
       platform: "ubuntu-local",
@@ -128,7 +134,10 @@ describe("live Vitest scenario matrix", () => {
     expect(lines.length, "live matrix output must be a single line").toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
+      "ubuntu-gateway-port-conflict-negative",
+      "ubuntu-invalid-nvidia-key-negative",
       "ubuntu-repo-cloud-openclaw",
+      "ubuntu-repo-cloud-openclaw-custom-policies",
       "ubuntu-repo-docker-post-reboot-recovery",
     ]);
   });
