@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  getGatewayReuseState,
-  shouldSelectNamedGatewayForReuse,
-} from "../state/gateway";
+import { getGatewayReuseState, shouldSelectNamedGatewayForReuse } from "../state/gateway";
 
 export type GatewayReuseSnapshot = {
   gatewayStatus: string;
@@ -36,16 +33,24 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
       gatewayStatus,
       gwInfo,
       activeGatewayInfo,
-      gatewayReuseState: getGatewayReuseState(gatewayStatus, gwInfo, activeGatewayInfo),
+      gatewayReuseState: getGatewayReuseState(
+        gatewayStatus,
+        gwInfo,
+        activeGatewayInfo,
+        deps.gatewayName,
+      ),
     };
   }
 
-  function selectNamedGatewayForReuseIfNeeded(snapshot: GatewayReuseSnapshot): GatewayReuseSnapshot {
+  function selectNamedGatewayForReuseIfNeeded(
+    snapshot: GatewayReuseSnapshot,
+  ): GatewayReuseSnapshot {
     if (
       !shouldSelectNamedGatewayForReuse(
         snapshot.gatewayStatus,
         snapshot.gwInfo,
         snapshot.activeGatewayInfo,
+        deps.gatewayName,
       )
     ) {
       return snapshot;

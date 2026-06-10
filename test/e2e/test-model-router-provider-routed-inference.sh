@@ -76,7 +76,7 @@ open(path, "w").write(text)
 PY
 }
 
-# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
   local rc=$?
   redact_file "$ONBOARD_LOG"

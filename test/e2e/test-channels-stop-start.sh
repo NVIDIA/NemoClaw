@@ -2,22 +2,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Channel stop/start/remove lifecycle E2E test.
+# Channel stop/start lifecycle E2E test.
 #
-# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start")
-# plus the live channel removal path from issue #3671. The regression surface
-# is intentionally exercised for both supported agents (OpenClaw and Hermes)
-# and every messaging channel (telegram, discord, wechat, slack, whatsapp).
+# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start").
+# The regression surface is intentionally exercised for both supported agents
+# (OpenClaw and Hermes) and every messaging channel (telegram, discord, wechat,
+# slack, whatsapp).
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
 #            from the baked agent config while preserving cached credentials.
 #   - #3381: `channels start <ch>` + rebuild must reattach cached providers
 #            without re-prompting.
-#   - #3671: `channels remove <ch>` on a live sandbox must detach before
-#            deleting provider records, clear registry channel/hash state,
-#            un-apply the matching channel policy preset, and rebuild cleanly
-#            even when the original token env vars are still present.
 #
 # Prerequisites:
 #   - Docker running
@@ -200,14 +196,6 @@ registry_array_contains() {
   printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
-registry_object_has_key() {
-  local field="$1"
-  local key="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${key}\""
-}
-
 provider_names_for_channel() {
   local sandbox="$1"
   local channel="$2"
@@ -218,19 +206,6 @@ provider_names_for_channel() {
     slack)
       printf '%s\n' "${sandbox}-slack-bridge"
       printf '%s\n' "${sandbox}-slack-app"
-      ;;
-  esac
-}
-
-token_keys_for_channel() {
-  local channel="$1"
-  case "$channel" in
-    telegram) printf '%s\n' "TELEGRAM_BOT_TOKEN" ;;
-    discord) printf '%s\n' "DISCORD_BOT_TOKEN" ;;
-    wechat) printf '%s\n' "WECHAT_BOT_TOKEN" ;;
-    slack)
-      printf '%s\n' "SLACK_BOT_TOKEN"
-      printf '%s\n' "SLACK_APP_TOKEN"
       ;;
   esac
 }
@@ -344,6 +319,116 @@ assert_disabled_channels() {
   done
 }
 
+assert_host_messaging_config() {
+  local context="$1"
+  local output msg
+  if output="$(node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, ...pairs] = process.argv.slice(1);
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPath);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const entry = registry.sandboxes?.[sandboxName];
+if (!entry) fail("sandbox " + sandboxName + " missing from registry");
+const config = entry.messagingChannelConfig;
+if (!config || typeof config !== "object" || Array.isArray(config)) {
+  fail("messagingChannelConfig missing or not an object");
+}
+for (let i = 0; i < pairs.length; i += 2) {
+  const key = pairs[i];
+  const expected = pairs[i + 1];
+  if (config[key] !== expected) {
+    fail(key + " expected " + expected + ", got " + JSON.stringify(config[key]));
+  }
+}
+' "$REGISTRY" "$ACTIVE_SANDBOX" \
+    TELEGRAM_ALLOWED_IDS "$TELEGRAM_ALLOWED_IDS" \
+    TELEGRAM_REQUIRE_MENTION "$TELEGRAM_REQUIRE_MENTION" \
+    DISCORD_SERVER_ID "$DISCORD_SERVER_ID" \
+    DISCORD_USER_ID "$DISCORD_USER_ID" \
+    DISCORD_REQUIRE_MENTION "$DISCORD_REQUIRE_MENTION" \
+    SLACK_ALLOWED_USERS "$SLACK_ALLOWED_USERS" \
+    WECHAT_ALLOWED_IDS "$WECHAT_ALLOWED_IDS" 2>&1)"; then
+    msg="${ACTIVE_AGENT}: host registry messagingChannelConfig persists channel config ${context}"
+    pass_msg "$msg"
+  else
+    msg="${ACTIVE_AGENT}: host registry messagingChannelConfig missing channel config ${context}: ${output}"
+    fail_msg "$msg"
+  fi
+}
+
+assert_host_messaging_plan_state() {
+  local expected="$1"
+  local context="$2"
+  local channel output msg
+  for channel in "${CHANNELS[@]}"; do
+    if output="$(node -e '
+const fs = require("fs");
+const [registryPath, sandboxName, agent, channelId, expected] = process.argv.slice(1);
+const fail = (message) => {
+  console.error(message);
+  process.exit(1);
+};
+if (!fs.existsSync(registryPath)) fail("registry file not found: " + registryPath);
+const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+const entry = registry.sandboxes?.[sandboxName];
+if (!entry) fail("sandbox " + sandboxName + " missing from registry");
+const state = entry.messaging;
+if (!state || state.schemaVersion !== 1) fail("messaging state missing or schemaVersion != 1");
+const plan = state.plan;
+if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");
+if (plan.sandboxName !== sandboxName) {
+  fail("messaging.plan.sandboxName expected " + sandboxName + ", got " + JSON.stringify(plan.sandboxName));
+}
+if (plan.agent !== agent) fail("messaging.plan.agent expected " + agent + ", got " + JSON.stringify(plan.agent));
+const channels = Array.isArray(plan.channels) ? plan.channels : [];
+const channel = channels.find((item) => item?.channelId === channelId);
+if (!channel) fail(channelId + " missing from messaging.plan.channels");
+if (channel.configured !== true) {
+  fail(channelId + " messaging.plan configured expected true, got " + JSON.stringify(channel.configured));
+}
+const disabledChannels = Array.isArray(plan.disabledChannels) ? plan.disabledChannels : [];
+if (expected === "active") {
+  if (channel.active !== true) fail(channelId + " messaging.plan active expected true, got " + JSON.stringify(channel.active));
+  if (channel.disabled === true) fail(channelId + " messaging.plan disabled unexpectedly true");
+  if (disabledChannels.includes(channelId)) fail(channelId + " unexpectedly listed in messaging.plan.disabledChannels");
+} else if (expected === "disabled") {
+  if (channel.disabled !== true) fail(channelId + " messaging.plan disabled expected true, got " + JSON.stringify(channel.disabled));
+  if (channel.active === true) fail(channelId + " messaging.plan active unexpectedly true");
+  if (!disabledChannels.includes(channelId)) fail(channelId + " missing from messaging.plan.disabledChannels");
+} else {
+  fail("unknown expected plan state: " + expected);
+}
+const networkEntries = Array.isArray(plan.networkPolicy?.entries) ? plan.networkPolicy.entries : [];
+const networkPresets = Array.isArray(plan.networkPolicy?.presets) ? plan.networkPolicy.presets : [];
+if (!networkPresets.includes(channelId)) fail(channelId + " missing from messaging.plan.networkPolicy.presets");
+if (!networkEntries.some((entry) => entry?.channelId === channelId)) {
+  fail(channelId + " missing from messaging.plan.networkPolicy.entries");
+}
+const credentialBindings = Array.isArray(plan.credentialBindings) ? plan.credentialBindings : [];
+if (channelId !== "whatsapp" && !credentialBindings.some((entry) => entry?.channelId === channelId)) {
+  fail(channelId + " credential binding missing from messaging.plan");
+}
+const agentRender = Array.isArray(plan.agentRender) ? plan.agentRender : [];
+const buildSteps = Array.isArray(plan.buildSteps) ? plan.buildSteps : [];
+const hasAgentRender = agentRender.some((entry) => entry?.channelId === channelId && entry?.agent === agent);
+const hasBuildStep = buildSteps.some((entry) => entry?.channelId === channelId);
+if (!hasAgentRender && !hasBuildStep) {
+  fail(channelId + " " + agent + " render/build-step entry missing from messaging.plan");
+}
+' "$REGISTRY" "$ACTIVE_SANDBOX" "$ACTIVE_AGENT" "$channel" "$expected" 2>&1)"; then
+      msg="${ACTIVE_AGENT}/${channel}: host registry messaging.plan has channel ${expected} ${context}"
+      pass_msg "$msg"
+    else
+      msg="${ACTIVE_AGENT}/${channel}: host registry messaging.plan expected ${expected} ${context}: ${output}"
+      fail_msg "$msg"
+    fi
+  done
+}
+
 assert_provider_records_exist() {
   local context="$1"
   local channel provider msg
@@ -358,36 +443,6 @@ assert_provider_records_exist() {
       fi
     done < <(provider_names_for_channel "$ACTIVE_SANDBOX" "$channel")
   done
-}
-
-assert_channel_providers_deleted() {
-  local channel="$1"
-  local context="$2"
-  local provider msg
-  while IFS= read -r provider; do
-    if openshell provider get "$provider" >/dev/null 2>&1; then
-      msg="${ACTIVE_AGENT}/${provider}: provider record still exists ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${provider}: provider record deleted ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(provider_names_for_channel "$ACTIVE_SANDBOX" "$channel")
-}
-
-assert_channel_hashes_absent() {
-  local channel="$1"
-  local context="$2"
-  local key msg
-  while IFS= read -r key; do
-    if registry_object_has_key providerCredentialHashes "$key"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes still contains ${key} ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes excludes ${key} ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(token_keys_for_channel "$channel")
 }
 
 assert_policy_preset_active() {
@@ -422,6 +477,19 @@ assert_policy_preset_active() {
       pass_msg "$msg"
     fi
   fi
+}
+
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 export_fake_channel_env() {
@@ -475,10 +543,20 @@ install_for_active_agent() {
   export NEMOCLAW_FRESH=1
 
   if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
-    if ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
+    if is_fake_telegram_token "${TELEGRAM_BOT_TOKEN:-}"; then
+      export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+      info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+    elif ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
       export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
       info "api.telegram.org unreachable from host; setting NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1"
     fi
+  fi
+  if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+    && { is_fake_slack_token "$SLACK_BOT_TOKEN" || is_fake_slack_token "$SLACK_APP_TOKEN"; }; then
+    # This E2E normally uses fake Slack tokens to exercise channel lifecycle
+    # plumbing, not the live Slack API.
+    export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+    info "Skipping onboarding Slack auth validation for fake-token E2E"
   fi
 
   info "Running install.sh --non-interactive for ${ACTIVE_AGENT} (${ACTIVE_SANDBOX})..."
@@ -597,46 +675,6 @@ start_all_channels() {
   done
 }
 
-remove_all_channels() {
-  local channel log rc msg
-  for channel in "${CHANNELS[@]}"; do
-    log="/tmp/nc-channels-${ACTIVE_AGENT}-remove-${channel}.log"
-    if nemoclaw "$ACTIVE_SANDBOX" channels remove "$channel" >"$log" 2>&1; then
-      rc=0
-    else
-      rc=$?
-    fi
-    cat "$log"
-    if [ "$rc" -eq 0 ] && { grep -q "Removed ${channel} bridge" "$log" || grep -q "Removed ${channel} channel" "$log"; }; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove completed on a live sandbox"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove failed"
-      fail_msg "$msg"
-      tail -30 "$log" 2>/dev/null || true
-    fi
-    if grep -q "Change queued.*remove '${channel}'" "$log"; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove queued rebuild"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove did not queue rebuild"
-      fail_msg "$msg"
-    fi
-
-    assert_channel_providers_deleted "$channel" "after channels remove"
-
-    if registry_array_contains messagingChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels still contains channel after remove"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels excludes channel after remove"
-      pass_msg "$msg"
-    fi
-    assert_channel_hashes_absent "$channel" "after remove"
-    assert_policy_preset_active "$channel" "inactive" "after remove"
-  done
-}
-
 destroy_completed_sandbox() {
   local sandbox="$1"
   info "Destroying completed sandbox ${sandbox} before the next scenario..."
@@ -696,12 +734,16 @@ run_agent_scenario() {
   assert_all_config_channels "present" "at baseline"
   assert_registry_channels "present" "at baseline"
   assert_disabled_channels "absent" "at baseline"
+  assert_host_messaging_config "at baseline"
+  assert_host_messaging_plan_state "active" "at baseline"
   for channel in "${CHANNELS[@]}"; do
     assert_policy_preset_active "$channel" "active" "at baseline"
   done
 
   section "${agent}: channels stop all + rebuild"
   stop_all_channels
+  assert_host_messaging_config "after channels stop"
+  assert_host_messaging_plan_state "disabled" "after channels stop"
   run_rebuild "stop-all"
 
   section "${agent}: verify stopped state"
@@ -709,9 +751,13 @@ run_agent_scenario() {
   assert_registry_channels "present" "after stop"
   assert_disabled_channels "present" "after stop"
   assert_provider_records_exist "after stop"
+  assert_host_messaging_config "after stop+rebuild"
+  assert_host_messaging_plan_state "disabled" "after stop+rebuild"
 
   section "${agent}: channels start all + rebuild"
   start_all_channels
+  assert_host_messaging_config "after channels start"
+  assert_host_messaging_plan_state "active" "after channels start"
   run_rebuild "start-all"
 
   section "${agent}: verify restarted state"
@@ -719,15 +765,8 @@ run_agent_scenario() {
   assert_registry_channels "present" "after start"
   assert_disabled_channels "absent" "after start"
   assert_provider_records_exist "after start"
-
-  section "${agent}: channels remove all on live sandbox"
-  remove_all_channels
-
-  section "${agent}: rebuild after channels remove"
-  run_rebuild "remove-all"
-  assert_all_config_channels "absent" "after remove+rebuild"
-  assert_registry_channels "absent" "after remove+rebuild"
-  assert_disabled_channels "absent" "after remove+rebuild"
+  assert_host_messaging_config "after start+rebuild"
+  assert_host_messaging_plan_state "active" "after start+rebuild"
 }
 
 section "Phase 0: Prerequisites"

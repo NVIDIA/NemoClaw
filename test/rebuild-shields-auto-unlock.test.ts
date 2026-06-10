@@ -89,6 +89,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           gpuEnabled: false,
           policies: [],
           agent: null,
+          openshellDriver: "vm",
           messagingChannels: null,
         },
       },
@@ -197,12 +198,30 @@ function writeLockState(state) {
 if (a[0]==="build")  { process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
-if (a[0]==="ps")     { process.exit(0); }
-// kubectl exec proxy via "docker exec <k3s> kubectl exec -n openshell <sb> -c agent -- <cmd...>"
+if (a[0]==="ps")     { process.stdout.write("openshell-${sandboxName}-abc123\\n"); process.exit(0); }
+// Supports both direct exec ("docker exec --user root <container> <cmd...>")
+// and legacy kubectl proxying ("docker exec <k3s> kubectl exec ... -- <cmd...>").
 if (a[0]==="exec") {
-  // Find the kubectl '--' delimiter; everything after is the actual command.
   const dashDash = a.indexOf("--");
-  const cmd = dashDash >= 0 ? a.slice(dashDash + 1) : [];
+  let cmd = [];
+  if (dashDash >= 0) {
+    cmd = a.slice(dashDash + 1);
+  } else {
+    let index = 1;
+    while (index < a.length) {
+      if (a[index] === "-i") {
+        index++;
+        continue;
+      }
+      if (a[index] === "--user") {
+        index += 2;
+        continue;
+      }
+      break;
+    }
+    index++; // container name
+    cmd = a.slice(index);
+  }
   // Verification reads:
   //   stat -c '%a %U:%G' <path>      → expect "660 sandbox:sandbox" or "2770 sandbox:sandbox"
   //   lsattr -d <path>               → "----i------" (locked) or no immutable bit (unlocked)
@@ -211,8 +230,10 @@ if (a[0]==="exec") {
   //   lsattr → "----i------"
   // We are testing the auto-unlock path: shields-down is called on a locked sandbox,
   // verification should look like 660 sandbox:sandbox / 2770 sandbox:sandbox.
+  if (cmd[0]==="python3" && cmd[1]==="-c") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="-i") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="+i") { writeLockState("locked"); process.exit(0); }
+  if (cmd[0]==="test" && cmd[1]==="-L") { process.exit(1); }
   if (cmd[0]==="chown" && cmd[1]==="sandbox:sandbox") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chown" && cmd[1]==="root:root") { writeLockState("locked"); process.exit(0); }
   if (cmd[0]==="chmod" && (cmd[1]==="660" || cmd[1]==="2770")) { writeLockState("unlocked"); process.exit(0); }
@@ -289,39 +310,31 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
 }
 
 describe("Issue #3113: rebuild auto-unlocks when shields are UP", () => {
-  it(
-    "detects locked shields and prints auto-unlock notice",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({ shieldsLocked: true });
-      const r = runRebuild(f);
-      const output = (r.stdout || "") + (r.stderr || "");
+  it("detects locked shields and prints auto-unlock notice", { timeout: 60_000 }, () => {
+    const f = createFixture({ shieldsLocked: true });
+    const r = runRebuild(f);
+    const output = (r.stdout || "") + (r.stderr || "");
 
-      // Without the fix this would be:
-      //   "Failed to back up sandbox state. Aborting rebuild to prevent data loss."
-      expect(output).not.toContain("Aborting rebuild to prevent data loss");
-      // With the fix, rebuild detects shields-up and unlocks before backup.
-      expect(output).toContain("Shields are UP");
-      expect(output).toContain("temporarily unlocking for rebuild backup");
-      // Shields-down was invoked programmatically (no permissive policy printout
-      // is required to assert; we just verify the snapshot capture step ran).
-      expect(output).toContain("Capturing current policy snapshot");
-      // Backup proceeds.
-      expect(output).toContain("Backing up sandbox state");
-    },
-  );
+    // Without the fix this would be:
+    //   "Failed to back up sandbox state. Aborting rebuild to prevent data loss."
+    expect(output).not.toContain("Aborting rebuild to prevent data loss");
+    // With the fix, rebuild detects shields-up and unlocks before backup.
+    expect(output).toContain("Shields are UP");
+    expect(output).toContain("temporarily unlocking for rebuild backup");
+    // Shields-down was invoked programmatically (no permissive policy printout
+    // is required to assert; we just verify the snapshot capture step ran).
+    expect(output).toContain("Capturing current policy snapshot");
+    // Backup proceeds.
+    expect(output).toContain("Backing up sandbox state");
+  });
 
-  it(
-    "skips auto-unlock when shields are not configured",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({ shieldsLocked: false });
-      const r = runRebuild(f);
-      const output = (r.stdout || "") + (r.stderr || "");
+  it("skips auto-unlock when shields are not configured", { timeout: 60_000 }, () => {
+    const f = createFixture({ shieldsLocked: false });
+    const r = runRebuild(f);
+    const output = (r.stdout || "") + (r.stderr || "");
 
-      expect(output).not.toContain("Shields are UP");
-      expect(output).not.toContain("temporarily unlocking for rebuild backup");
-      expect(output).toContain("Backing up sandbox state");
-    },
-  );
+    expect(output).not.toContain("Shields are UP");
+    expect(output).not.toContain("temporarily unlocking for rebuild backup");
+    expect(output).toContain("Backing up sandbox state");
+  });
 });

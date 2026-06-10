@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import { withPreflightTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export type PreflightSandboxGpuFlag = "enable" | "disable" | null;
 
@@ -47,13 +49,31 @@ export interface PreflightStateOptions<
       optedOutGpuPassthrough: boolean,
       hostGpuPlatform?: string | null,
     ): void;
+    /**
+     * Resume backstop for #3508/#3630. Runs the same bridge+DNS fatal
+     * gate that `preflight()` does, so a cached preflight step cannot
+     * skip the new fatal checks for hosts where Docker bridge networking
+     * or container DNS is broken. Optional for back-compat with callers
+     * that haven't been updated yet.
+     */
+    assertDockerBridgeAndContainerDnsHealthy?(host: Host): void;
+    /**
+     * Resume backstop for unsupported container runtimes (e.g. Podman
+     * with the Linux Docker-driver gateway). Must run before the bridge/
+     * DNS backstop above so Podman hosts see the unsupported-runtime
+     * message instead of Docker-specific diagnostics.
+     */
+    rejectUnsupportedContainerRuntime?(host: Host): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: { flag: PreflightSandboxGpuFlag; device: string | null | undefined },
     ): Config;
     validateSandboxGpuPreflight(config: Config): void;
     skippedStepMessage(stepName: string, detail?: string | null): void;
-    recordStateSkipped(state: "preflight", metadata?: Record<string, unknown> | null): Promise<Session>;
+    recordStateSkipped(
+      state: "preflight",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
     startRecordedStep(stepName: string): Promise<void>;
     recordStepComplete(stepName: string): Promise<Session>;
     updateSession(mutator: (session: Session) => Session | void): Session;
@@ -70,6 +90,7 @@ export interface PreflightStateResult<Gpu, Config extends PreflightSandboxGpuCon
   effectiveSandboxGpuFlag: PreflightSandboxGpuFlag;
   effectiveSandboxGpuDevice: string | null | undefined;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 function envHasSandboxGpuOverride(env: NodeJS.ProcessEnv): boolean {
@@ -92,7 +113,9 @@ export async function handlePreflightState<
   noGpu,
   env,
   deps,
-}: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<PreflightStateResult<Gpu, Config>> {
+}: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
+  PreflightStateResult<Gpu, Config>
+> {
   const resumeSandboxNameForGpu = recordedSandboxName || requestedSandboxName || null;
   const resumePreflight = resume && session?.steps?.preflight?.status === "complete";
   const resumeHasResolvedGpuIntent =
@@ -120,15 +143,27 @@ export async function handlePreflightState<
     });
     deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     const resumeOptedOutGpuPassthrough =
-      noGpu || (!gpuRequested && session?.gpuPassthrough === false) || !resumeSandboxGpuConfig.sandboxGpuEnabled;
+      noGpu ||
+      (!gpuRequested && session?.gpuPassthrough === false) ||
+      !resumeSandboxGpuConfig.sandboxGpuEnabled;
+    const resumeHost = deps.assessHost();
+    // Reject unsupported runtimes (Podman) BEFORE the CDI GPU-spec
+    // backstop and the Docker-specific bridge/DNS probes so Podman
+    // hosts always hit the unsupported-runtime message (#3630
+    // CodeRabbit).
+    deps.rejectUnsupportedContainerRuntime?.(resumeHost);
     deps.assertCdiNvidiaGpuSpecPresent(
-      deps.assessHost(),
+      resumeHost,
       resumeOptedOutGpuPassthrough,
       resumeSandboxGpuConfig.hostGpuPlatform,
     );
+    // Resume backstop for #3508/#3630. Cached preflight does not capture
+    // host Docker/DNS state, and a session written by an older NemoClaw
+    // may have skipped the new bridge/DNS fatal checks.
+    deps.assertDockerBridgeAndContainerDnsHealthy?.(resumeHost);
   } else {
     await deps.startRecordedStep("preflight");
-    gpu = await deps.runPreflight({ optedOutGpuPassthrough: noGpu });
+    gpu = await withPreflightTrace(() => deps.runPreflight({ optedOutGpuPassthrough: noGpu }));
     session = await deps.recordStepComplete("preflight");
   }
 
@@ -154,5 +189,8 @@ export async function handlePreflightState<
     effectiveSandboxGpuFlag,
     effectiveSandboxGpuDevice,
     session,
+    stateResult: advanceTo("gateway", {
+      metadata: { state: "preflight", gpuPassthrough },
+    }),
   };
 }

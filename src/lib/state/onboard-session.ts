@@ -15,9 +15,11 @@ import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
 import {
-  sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
+  sanitizeMessagingChannelConfig,
 } from "../messaging-channel-config";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { parseSandboxMessagingPlan } from "../onboard/messaging-plan-session";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -26,6 +28,8 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
+import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -102,6 +106,7 @@ export interface Session {
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
   messagingChannelConfig: MessagingChannelConfig | null;
+  messagingPlan: SandboxMessagingPlan | null;
   // Channels the operator paused via `nemoclaw <sb> channels stop <ch>`.
   // Mirrors `SandboxEntry.disabledChannels` so that `rebuild` — which
   // destroys the registry entry before calling `onboard --resume` —
@@ -180,6 +185,7 @@ export interface SessionUpdates {
   policyPresets?: string[] | null;
   messagingChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
+  messagingPlan?: SandboxMessagingPlan | null;
   disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
@@ -262,9 +268,7 @@ function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readStringRecord(
-  value: SessionJsonValue | undefined,
-): Record<string, string> | null {
+function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
   if (!isObject(value)) return null;
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(value)) {
@@ -376,31 +380,6 @@ function createMachineSnapshot(
   };
 }
 
-function nextMachineStateAfterCompletedStep(
-  stepName: string | null | undefined,
-  session: Pick<Session, "agent">,
-): OnboardMachineState | null {
-  switch (stepName) {
-    case "preflight":
-      return "gateway";
-    case "gateway":
-      return "provider_selection";
-    case "provider_selection":
-      return "inference";
-    case "inference":
-      return "sandbox";
-    case "sandbox":
-      return session.agent ? "agent_setup" : "openclaw";
-    case "openclaw":
-    case "agent_setup":
-      return "policies";
-    case "policies":
-      return "finalizing";
-    default:
-      return null;
-  }
-}
-
 function inferMachineState(session: Session): OnboardMachineState {
   if (session.status === "complete") return "complete";
   if (session.status === "failed") return "failed";
@@ -423,7 +402,9 @@ function inferMachineStateEnteredAt(session: Session, state: OnboardMachineState
   }
 
   if (nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) === state) {
-    const completedStep = session.lastCompletedStep ? session.steps[session.lastCompletedStep] : null;
+    const completedStep = session.lastCompletedStep
+      ? session.steps[session.lastCompletedStep]
+      : null;
     return completedStep?.completedAt ?? session.updatedAt;
   }
 
@@ -435,7 +416,11 @@ function inferMachineSnapshot(session: Session): OnboardMachineSnapshot {
   return createMachineSnapshot(state, inferMachineStateEnteredAt(session, state));
 }
 
-function transitionMachineSnapshot(session: Session, state: OnboardMachineState, now: string): void {
+function transitionMachineSnapshot(
+  session: Session,
+  state: OnboardMachineState,
+  now: string,
+): void {
   const current = session.machine ?? createMachineSnapshot("init", session.startedAt);
   if (current.state === state) {
     session.machine = {
@@ -482,6 +467,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
+    messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
     disabledChannels: readStringArray(overrides.disabledChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
@@ -493,7 +479,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
-    machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+    machine:
+      parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
       createMachineSnapshot("init", startedAt),
     steps,
   };
@@ -524,6 +511,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
+    messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
     disabledChannels: readStringArray(data.disabledChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
@@ -593,6 +581,29 @@ function parseLockFile(contents: string): LockInfo | null {
     return parseLockInfo(JSON.parse(contents));
   } catch {
     return null;
+  }
+}
+
+interface LockFileSnapshot {
+  info: LockInfo | null;
+  inode: bigint;
+  mtimeMs: number;
+}
+
+function readLockFileSnapshot(): LockFileSnapshot {
+  const fd = fs.openSync(LOCK_FILE, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try {
+    const stat = fs.fstatSync(fd, { bigint: true });
+    if (!stat.isFile()) {
+      return { info: null, inode: stat.ino, mtimeMs: Number(stat.mtimeMs) };
+    }
+    return {
+      info: parseLockFile(String(fs.readFileSync(fd, "utf8"))),
+      inode: stat.ino,
+      mtimeMs: Number(stat.mtimeMs),
+    };
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
@@ -697,34 +708,25 @@ export function acquireOnboardLock(command: string | null = null): LockResult {
       // the same stale lock, and the slower one will unlink the fresh
       // lock the faster one just claimed, breaking mutual exclusion.
       // See issue #1281.
-      let existing: LockInfo | null;
-      let staleInode: bigint | null;
+      let snapshot: LockFileSnapshot;
       try {
-        const stat = fs.statSync(LOCK_FILE, { bigint: true });
-        staleInode = stat.ino;
-        existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+        snapshot = readLockFileSnapshot();
       } catch (readError) {
         if (isErrnoException(readError) && readError.code === "ENOENT") {
           continue;
         }
         throw readError;
       }
+      const { info: existing, inode: staleInode } = snapshot;
       if (!existing) {
         // Malformed lock file. If the file is very recent (<30 s), a
         // concurrent process may be mid-write — leave it and retry.
         // Otherwise the file is stale debris from a crash between
         // openSync("wx") and writeSync() — remove it so subsequent
         // onboard runs are not permanently blocked (#2765).
-        try {
-          const lockStat = fs.statSync(LOCK_FILE);
-          const ageMs = Date.now() - lockStat.mtimeMs;
-          if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
-            unlinkIfInodeMatches(LOCK_FILE, staleInode);
-          }
-        } catch (statErr) {
-          if (!(isErrnoException(statErr) && statErr.code === "ENOENT")) {
-            throw statErr;
-          }
+        const ageMs = Date.now() - snapshot.mtimeMs;
+        if (ageMs > MALFORMED_STALE_SECONDS * 1000) {
+          unlinkIfInodeMatches(LOCK_FILE, staleInode);
         }
         continue;
       }
@@ -855,17 +857,16 @@ export function releaseOnboardLock(): void {
   // behavior so we never unlink a malformed lock and never unlink a
   // lock owned by another pid.
   try {
-    if (!fs.existsSync(LOCK_FILE)) return;
-    let existing: LockInfo | null = null;
+    let snapshot: LockFileSnapshot;
     try {
-      existing = parseLockFile(fs.readFileSync(LOCK_FILE, "utf8"));
+      snapshot = readLockFileSnapshot();
     } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") return;
       throw error;
     }
-    if (!existing) return;
-    if (existing.pid !== process.pid) return;
-    fs.unlinkSync(LOCK_FILE);
+    if (!snapshot.info) return;
+    if (snapshot.info.pid !== process.pid) return;
+    unlinkIfInodeMatches(LOCK_FILE, snapshot.inode);
   } catch {
     return;
   }
@@ -925,7 +926,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
-  if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
+  if (
+    typeof updates.routerPid === "number" &&
+    Number.isInteger(updates.routerPid) &&
+    updates.routerPid > 0
+  ) {
     safe.routerPid = updates.routerPid;
   }
   if (typeof updates.routerCredentialHash === "string") {
@@ -959,12 +964,16 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
     if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
   }
+  if (updates.messagingPlan === null) {
+    safe.messagingPlan = null;
+  } else {
+    const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
+    if (messagingPlan) safe.messagingPlan = messagingPlan;
+  }
   if (updates.disabledChannels === null) {
     safe.disabledChannels = null;
   } else if (Array.isArray(updates.disabledChannels)) {
-    safe.disabledChannels = updates.disabledChannels.filter(
-      (value) => typeof value === "string",
-    );
+    safe.disabledChannels = updates.disabledChannels.filter((value) => typeof value === "string");
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};
@@ -976,7 +985,10 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;
   }
-  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+  if (
+    isObject(updates.telegramConfig) &&
+    typeof updates.telegramConfig.requireMention === "boolean"
+  ) {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
     safe.telegramConfig = null;
@@ -1005,7 +1017,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-export function markStepStarted(stepName: string): Session {
+function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1019,8 +1031,8 @@ export function markStepStarted(stepName: string): Session {
     session.failure = null;
     session.status = "in_progress";
     const state = machineStateFromOnboardSessionStep(stepName);
-    if (state) transitionMachineSnapshot(session, state, now);
-    shouldEmit = true;
+    shouldEmit = Boolean(state && shouldUpdateMachine(options));
+    if (state && shouldEmit) transitionMachineSnapshot(session, state, now);
     return session;
   });
   if (shouldEmit) {
@@ -1031,8 +1043,13 @@ export function markStepStarted(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
+function markStepCompleteWithOptions(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
+  const hasUpdates = Object.keys(safeUpdates).length > 0;
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1045,26 +1062,53 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.failure = null;
     Object.assign(session, safeUpdates);
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    if (nextState) transitionMachineSnapshot(session, nextState, now);
-    shouldEmit = true;
+    shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
+    if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
     return session;
   });
-  if (shouldEmit) {
-    if (Object.keys(safeUpdates).length > 0) {
-      emitOnboardMachineEvent(
-        createOnboardMachineEvent({
-          type: "context.updated",
-          session: updatedSession,
-          step: stepName,
-          metadata: { fields: Object.keys(safeUpdates) },
-        }),
-      );
-    }
+  if (hasUpdates) {
     emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+      createOnboardMachineEvent({
+        type: "context.updated",
+        session: updatedSession,
+        step: stepName,
+        metadata: { fields: Object.keys(safeUpdates) },
+      }),
+    );
+  }
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.completed",
+        session: updatedSession,
+        step: stepName,
+      }),
     );
   }
   return updatedSession;
+}
+
+export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+  return markStepStartedWithOptions(stepName, options);
+}
+
+export function markStepStartedRecordOnly(stepName: string): Session {
+  return markStepStartedWithOptions(stepName, { updateMachine: false });
+}
+
+export function markStepComplete(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
+  return markStepCompleteWithOptions(stepName, updates, options);
+}
+
+export function markStepCompleteRecordOnly(
+  stepName: string,
+  updates: SessionUpdates = {},
+): Session {
+  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1072,7 +1116,8 @@ export function markStepSkipped(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+      return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
@@ -1088,7 +1133,11 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepFailed(stepName: string, message: string | null = null): Session {
+function markStepFailedWithOptions(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1097,14 +1146,12 @@ export function markStepFailed(stepName: string, message: string | null = null):
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    session.failure = sanitizeFailure({
-      step: stepName,
-      message,
-      recordedAt: now,
-    });
-    session.status = "failed";
-    transitionMachineSnapshot(session, "failed", now);
-    shouldEmit = true;
+    shouldEmit = shouldUpdateMachine(options);
+    if (shouldEmit) {
+      session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+      session.status = "failed";
+      transitionMachineSnapshot(session, "failed", now);
+    }
     return session;
   });
   if (shouldEmit) {
@@ -1127,6 +1174,18 @@ export function markStepFailed(stepName: string, message: string | null = null):
     );
   }
   return updatedSession;
+}
+
+export function markStepFailed(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
+  return markStepFailedWithOptions(stepName, message, options);
+}
+
+export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
+  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {

@@ -3,14 +3,25 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { GpuDetection } from "../../../inference/nim";
+import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
-type Gpu = { type: string } | null;
+type Gpu = GpuDetection | null;
 type SandboxEntry = { sandboxGpuEnabled?: boolean };
 type Host = { cdiNvidiaGpuSpecMissing?: boolean };
 
-function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, Host, { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }>["deps"]> = {}) {
+function createDeps(
+  overrides: Partial<
+    PreflightStateOptions<
+      Gpu,
+      SandboxEntry,
+      Host,
+      { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }
+    >["deps"]
+  > = {},
+) {
   let session = createSession();
   return {
     calls: {
@@ -27,7 +38,7 @@ function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, 
     },
     deps: {
       getSandbox: (name: string) => {
-        const value = ({ sandboxGpuEnabled: true } satisfies SandboxEntry);
+        const value = { sandboxGpuEnabled: true } satisfies SandboxEntry;
         return overrides.getSandbox ? overrides.getSandbox(name) : value;
       },
       getResumeSandboxGpuOverrides: (
@@ -43,7 +54,10 @@ function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, 
       runPreflight: async () => ({ type: "nvidia" }) as Gpu,
       assessHost: () => ({ cdiNvidiaGpuSpecMissing: false }),
       assertCdiNvidiaGpuSpecPresent: vi.fn(),
-      resolveSandboxGpuConfig: (_gpu: Gpu, opts: { flag: "enable" | "disable" | null; device: string | null | undefined }) => ({
+      resolveSandboxGpuConfig: (
+        _gpu: Gpu,
+        opts: { flag: "enable" | "disable" | null; device: string | null | undefined },
+      ) => ({
         sandboxGpuEnabled: opts.flag === "enable",
         mode: opts.flag === "enable" ? "1" : "0",
         sandboxGpuDevice: opts.device,
@@ -64,9 +78,19 @@ function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, 
 }
 
 function baseOptions(
-  deps: PreflightStateOptions<Gpu, SandboxEntry, Host, { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }>["deps"],
+  deps: PreflightStateOptions<
+    Gpu,
+    SandboxEntry,
+    Host,
+    { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }
+  >["deps"],
   session: Session | null = createSession(),
-): PreflightStateOptions<Gpu, SandboxEntry, Host, { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }> {
+): PreflightStateOptions<
+  Gpu,
+  SandboxEntry,
+  Host,
+  { sandboxGpuEnabled: boolean; mode: string; sandboxGpuDevice?: string | null }
+> {
   return {
     resume: false,
     session,
@@ -104,6 +128,33 @@ describe("handlePreflightState", () => {
       sandboxGpuDevice: "GPU-0",
     });
     expect(result.gpuPassthrough).toBe(true);
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "gateway",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "preflight", gpuPassthrough: true },
+    });
+  });
+
+  it("keeps sandbox GPU disabled when N1X spoof detection yields no NVIDIA GPU", async () => {
+    const harness = createDeps({
+      runPreflight: vi.fn(async () => null),
+      resolveSandboxGpuConfig,
+    });
+
+    const result = await handlePreflightState({
+      ...baseOptions(harness.deps),
+    });
+
+    expect(harness.deps.runPreflight).toHaveBeenCalledWith({ optedOutGpuPassthrough: false });
+    expect(result.gpu).toBeNull();
+    expect(result.sandboxGpuConfig).toMatchObject({
+      mode: "auto",
+      hostGpuDetected: false,
+      sandboxGpuEnabled: false,
+    });
+    expect(result.gpuPassthrough).toBe(false);
   });
 
   it("skips full preflight on resume but re-detects GPU and revalidates CDI/sandbox GPU", async () => {
@@ -149,7 +200,10 @@ describe("handlePreflightState", () => {
     const harness = createDeps({
       assertCdiNvidiaGpuSpecPresent,
       resolveSandboxGpuConfig: vi.fn(
-        (_gpu: Gpu, opts: { flag: "enable" | "disable" | null; device: string | null | undefined }) => ({
+        (
+          _gpu: Gpu,
+          opts: { flag: "enable" | "disable" | null; device: string | null | undefined },
+        ) => ({
           sandboxGpuEnabled: opts.flag === "enable",
           mode: opts.flag === "enable" ? "1" : "0",
           sandboxGpuDevice: opts.device,
@@ -186,10 +240,7 @@ describe("handlePreflightState", () => {
     });
 
     expect(getSandbox).toHaveBeenCalledWith("saved");
-    expect(getResumeSandboxGpuOverrides).toHaveBeenCalledWith(
-      { sandboxGpuEnabled: true },
-      true,
-    );
+    expect(getResumeSandboxGpuOverrides).toHaveBeenCalledWith({ sandboxGpuEnabled: true }, true);
     expect(result.resumeHasResolvedGpuIntent).toBe(true);
     expect(result.effectiveSandboxGpuFlag).toBe("enable");
     expect(result.effectiveSandboxGpuDevice).toBe("1");

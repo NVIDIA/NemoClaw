@@ -11,11 +11,11 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.5.18",
-      "minGatewayVersion": "2026.5.18"
+      "pluginApi": ">=2026.5.22",
+      "minGatewayVersion": "2026.5.22"
     },
     "build": {
-      "openclawVersion": "2026.5.18"
+      "openclawVersion": "2026.5.27"
     }
   },
   "scripts": {

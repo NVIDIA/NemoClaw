@@ -8,7 +8,7 @@ import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -36,6 +36,7 @@ export type OnboardFlags = {
   agent?: string;
   "control-ui-port"?: number;
   yes?: boolean;
+  "no-ollama-autostart"?: boolean;
   [acceptFlagName]?: boolean;
 };
 
@@ -68,7 +69,8 @@ export function buildOnboardFlags(): Record<string, any> {
       description: "Force CPU sandbox behavior",
     }),
     "sandbox-gpu-device": Flags.string({
-      description: "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
+      description:
+        "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
     }),
     agent: Flags.string({ description: "Agent runtime to onboard" }),
     "control-ui-port": Flags.integer({
@@ -79,6 +81,10 @@ export function buildOnboardFlags(): Record<string, any> {
     yes: Flags.boolean({
       char: "y",
       description: "Auto-confirm prompts that are safe for unattended onboarding",
+    }),
+    "no-ollama-autostart": Flags.boolean({
+      description:
+        "Skip the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux/systemd hosts the loopback-override path may still restart the daemon",
     }),
     [acceptFlagName]: Flags.boolean({ description: "Accept the third-party software notice" }),
   } as Record<string, any>;
@@ -104,6 +110,7 @@ export function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
     args.push("--control-ui-port", String(flags["control-ui-port"]));
   }
   if (flags.yes) args.push("--yes");
+  if (flags["no-ollama-autostart"]) args.push("--no-ollama-autostart");
   if (flags[acceptFlagName]) args.push(NOTICE_ACCEPT_FLAG);
   return args;
 }

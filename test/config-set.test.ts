@@ -18,8 +18,8 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
-  selectDockerDriverSandboxContainer,
 } = require("../dist/lib/sandbox/config");
+const { selectDirectSandboxContainer } = require("../dist/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
@@ -72,17 +72,13 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
       sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
     });
 
-    expect(script).toContain(
-      "strict_hash='/etc/nemoclaw/hermes.config-hash'",
-    );
+    expect(script).toContain("strict_hash='/etc/nemoclaw/hermes.config-hash'");
     expect(script).toContain('strict_tmp="${strict_hash}.tmp.$$"');
-    expect(script).toContain(
-      "compat_hash='/sandbox/.hermes/.config-hash'",
-    );
+    expect(script).toContain("compat_hash='/sandbox/.hermes/.config-hash'");
     expect(script).toContain('compat_tmp="${compat_hash}.tmp.$$"');
     expect(script).toContain('trap \'rm -f "$strict_tmp" "$compat_tmp"\' EXIT HUP INT TERM');
     expect(script).toContain(
-      'sha256sum \'/sandbox/.hermes/config.yaml\' \'/sandbox/.hermes/.env\' > "$strict_tmp"',
+      "sha256sum '/sandbox/.hermes/config.yaml' '/sandbox/.hermes/.env' > \"$strict_tmp\"",
     );
     expect(script).toContain('chown root:root "$strict_tmp"');
     expect(script).toContain('chmod 444 "$strict_tmp"');
@@ -94,30 +90,30 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
   });
 });
 
-describe("selectDockerDriverSandboxContainer", () => {
-  it("returns the exact Docker-driver sandbox container when present", () => {
-    const selected = selectDockerDriverSandboxContainer(
+describe("selectDirectSandboxContainer", () => {
+  it("returns the exact direct sandbox container when present", () => {
+    const selected = selectDirectSandboxContainer(
       "demo",
-      "docker",
       "openshell-demo\nopenshell-demo-helper\n",
+      ["demo"],
     );
 
     expect(selected).toBe("openshell-demo");
   });
 
-  it("falls back to the generated Docker-driver sandbox container prefix", () => {
-    const selected = selectDockerDriverSandboxContainer(
+  it("falls back to the generated direct sandbox container prefix", () => {
+    const selected = selectDirectSandboxContainer(
       "demo",
-      "docker",
       "openshell-other\nopenshell-demo-abc123\n",
+      ["demo"],
     );
 
     expect(selected).toBe("openshell-demo-abc123");
   });
 
-  it("does not select a container for legacy gateway sandboxes", () => {
+  it("does not select a prefix-collision container owned by a longer sandbox name", () => {
     expect(
-      selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
+      selectDirectSandboxContainer("demo", "openshell-demo-child\n", ["demo", "demo-child"]),
     ).toBeNull();
   });
 });
@@ -319,9 +315,9 @@ describe("config set helpers", () => {
       expect(
         classifyNewKeyGate({ acceptNewPath: true, isTTY: true, nonInteractiveEnv: "1" }),
       ).toEqual({ mode: "accept" });
-      expect(
-        classifyNewKeyGate({ acceptEnv: "1", isTTY: false, nonInteractiveEnv: "1" }),
-      ).toEqual({ mode: "accept" });
+      expect(classifyNewKeyGate({ acceptEnv: "1", isTTY: false, nonInteractiveEnv: "1" })).toEqual({
+        mode: "accept",
+      });
     });
   });
 

@@ -10,10 +10,21 @@ import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
+import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+import {
+  applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+  probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
+  resetOllamaRuntimeContextWindowAutoState,
+  resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
+} from "./ollama-runtime-context";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
+export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
@@ -29,11 +40,10 @@ import {
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
 
-const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
-const { dockerInfo } = require("../adapters/docker/info");
+const { containerCanReachHostLoopback, isWsl } = require("../platform");
+const { detectContainerRuntimeFromDockerInfo } =
+  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
 const { detectNvidiaPlatform } = require("./nim");
-
-const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -44,9 +54,7 @@ const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(
-    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
-  ) as ContainerRuntime;
+  const runtime = detectContainerRuntimeFromDockerInfo();
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
@@ -65,9 +73,7 @@ export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 // name, so the two stay in sync.
 function assertRegistryTag(tag: string): string {
   if (!OLLAMA_MODEL_REGISTRY.some((entry) => entry.tag === tag)) {
-    throw new Error(
-      `Tag '${tag}' is not in OLLAMA_MODEL_REGISTRY. Update the registry first.`,
-    );
+    throw new Error(`Tag '${tag}' is not in OLLAMA_MODEL_REGISTRY. Update the registry first.`);
   }
   return tag;
 }
@@ -163,12 +169,38 @@ export interface GpuInfo {
   // Absent => the selector falls back to `totalMemoryMB`, preserving the
   // previous behaviour.
   availableMemoryMB?: number;
+  /**
+   * `true` for integrated/iGPU class devices whose token-generation throughput
+   * is too low to clear agent-loop timeouts on 30B-class models, even when
+   * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
+   * platforms. Drives the `computeIntensive` exclusion in the bootstrap-model
+   * selector so compute-constrained hosts are not steered onto 30B+ tags.
+   */
+  computeConstrained?: boolean;
 }
 
 export interface ValidationResult {
   ok: boolean;
   message?: string;
   diagnostic?: string;
+  /**
+   * Set when the failure points at the Ollama daemon / model runner itself,
+   * not the chosen model. Callers escape the Ollama-model loop instead of
+   * asking for another tag that would hit the same failure. (#4365)
+   */
+  daemonFailure?: boolean;
+}
+
+/**
+ * Recognises Ollama probe errors that mean the daemon's model runner crashed,
+ * stopped, or otherwise died (rather than the chosen model being unsuitable).
+ * Picking a different model would loop on the same failure, so the wizard
+ * escapes back to provider selection. (#4365)
+ */
+export function isOllamaRunnerCrash(errText: string | null | undefined): boolean {
+  const text = String(errText || "");
+  if (!text) return false;
+  return /\brunner\b[\s\S]{0,80}\b(?:stopped|terminated|crashed|exited|died|killed)\b/i.test(text);
 }
 
 export interface LocalProviderHealthStatus {
@@ -229,6 +261,23 @@ function runLocalCurlProbe(argv: string[]): CurlProbeResult {
   return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
 }
 
+// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
+// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
+// all answer with arbitrary 2xx bodies that look healthy at the curl-status
+// level. The authoritative signal is the Ollama wire format itself:
+// `{ "models": [...] }`. An empty array is fine — that just means no models
+// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
+// not come from Ollama and the probe should not call it healthy. (#4275)
+function isValidOllamaTagsResponseBody(body: string): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body);
+    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+  } catch {
+    return false;
+  }
+}
+
 export function validateOllamaPortConfiguration(): ValidationResult {
   if (!isWsl() && OLLAMA_PORT === OLLAMA_PROXY_PORT) {
     return {
@@ -244,7 +293,9 @@ export function validateOllamaPortConfiguration(): ValidationResult {
 }
 
 function normalizeLocalInferenceHostUrl(raw: string | null | undefined): string | null {
-  const value = String(raw || "").trim().replace(/\/+$/, "");
+  const value = String(raw || "")
+    .trim()
+    .replace(/\/+$/, "");
   if (!value) return null;
   if (/^[A-Za-z0-9_.-]+$/.test(value)) return `http://${value}`;
   try {
@@ -257,14 +308,18 @@ function normalizeLocalInferenceHostUrl(raw: string | null | undefined): string 
 }
 
 function getLocalInferenceSandboxHostUrl(): string {
-  return normalizeLocalInferenceHostUrl(process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) || HOST_GATEWAY_URL;
+  return (
+    normalizeLocalInferenceHostUrl(process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) ||
+    HOST_GATEWAY_URL
+  );
 }
 
 export function getLocalProviderBaseUrl(
   provider: string,
   options: { hostUrl?: string | null } = {},
 ): string | null {
-  const hostUrl = normalizeLocalInferenceHostUrl(options.hostUrl) || getLocalInferenceSandboxHostUrl();
+  const hostUrl =
+    normalizeLocalInferenceHostUrl(options.hostUrl) || getLocalInferenceSandboxHostUrl();
   switch (provider) {
     case "vllm-local":
       return `${hostUrl}:${VLLM_PORT}/v1`;
@@ -300,7 +355,7 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderHealthEndpoint(provider);
-  return endpoint ? ["curl", "-sf", endpoint] : null;
+  return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
 }
 
 export function getLocalProviderLabel(provider: string): string | null {
@@ -376,6 +431,21 @@ export function probeOllamaAuthProxyHealth(
     probeLabel: "auth proxy",
   };
   if (result.ok) {
+    // A 200 from the proxy alone is not a healthy signal — the proxy may be
+    // serving a captive HTTP_PROXY page, or its upstream Ollama backend may
+    // be down but the proxy returned a stub. Confirm with the wire format. (#4275)
+    if (!isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ...base,
+        ok: false,
+        failureLabel: "unhealthy",
+        detail:
+          `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint} but the body ` +
+          `is not a valid /api/tags response. The proxy is reachable but its upstream Ollama ` +
+          `backend is not, or an HTTP proxy is intercepting the loopback. ` +
+          `Restart \`ollama serve\` and check HTTP_PROXY/NO_PROXY.`,
+      };
+    }
     return { ...base, ok: true, detail: `Ollama auth proxy is reachable on ${endpoint}.` };
   }
   if (result.httpStatus === 401) {
@@ -402,8 +472,7 @@ export function probeOllamaAuthProxyHealth(
     ...base,
     ok: false,
     failureLabel: "unhealthy",
-    detail:
-      `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint}. (${result.message})`,
+    detail: `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint}. (${result.message})`,
   };
 }
 
@@ -424,8 +493,11 @@ export function probeLocalProviderHealth(
   // providers so the upcoming `Inference (auth proxy):` subprobe lines render
   // in parallel and the user can see which hop is broken.
   const probeLabel =
-    provider === "ollama-local" ? "ollama backend" :
-    provider === "vllm-local" ? "vllm backend" : undefined;
+    provider === "ollama-local"
+      ? "ollama backend"
+      : provider === "vllm-local"
+        ? "vllm backend"
+        : undefined;
 
   const subprobes: LocalProviderHealthStatus[] = [];
   if (provider === "ollama-local" && !options.skipOllamaAuthProxySubprobe) {
@@ -436,6 +508,25 @@ export function probeLocalProviderHealth(
   const attachProbeLabel = probeLabel ? { probeLabel } : {};
 
   if (result.ok) {
+    // For ollama-local, a 200 is necessary but not sufficient: a captive
+    // HTTP_PROXY, a stale listener on 11434, or any other HTTP responder
+    // can return 200 with an arbitrary body. Treat the probe as healthy
+    // only when the response is the Ollama /api/tags JSON shape. (#4275)
+    if (provider === "ollama-local" && !isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ok: false,
+        providerLabel,
+        endpoint,
+        failureLabel: "unhealthy",
+        detail:
+          `${providerLabel} responded on ${endpoint} with HTTP ${result.httpStatus} but the ` +
+          `body is not a valid /api/tags response. The listener may not be Ollama (e.g. a ` +
+          `stale process or an HTTP proxy intercepting the loopback). Restart \`ollama serve\` ` +
+          `and verify HTTP_PROXY/NO_PROXY.`,
+        ...attachProbeLabel,
+        ...attachSubprobes,
+      };
+    }
     return {
       ok: true,
       providerLabel,
@@ -602,11 +693,21 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
     // Get HTTP status code
     const httpStatus = capture(
       [
-        "docker", "run", "--rm",
-        "--add-host", "host.openshell.internal:host-gateway",
+        "docker",
+        "run",
+        "--rm",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "-s", "-o", "/dev/null", "-w", "%{http_code}",
-        "--connect-timeout", "5", "--max-time", "10",
+        "-s",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--connect-timeout",
+        "5",
+        "--max-time",
+        "10",
         url,
       ],
       { ignoreError: true },
@@ -615,10 +716,14 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
     // Get /etc/hosts to see host-gateway resolution
     const hostsOutput = capture(
       [
-        "docker", "run", "--rm",
-        "--add-host", "host.openshell.internal:host-gateway",
+        "docker",
+        "run",
+        "--rm",
+        "--add-host",
+        "host.openshell.internal:host-gateway",
         CONTAINER_REACHABILITY_IMAGE,
-        "cat", "/etc/hosts",
+        "cat",
+        "/etc/hosts",
       ],
       { ignoreError: true },
     );
@@ -632,13 +737,16 @@ function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): st
       parts.push(`Container curl returned HTTP ${httpStatus.trim()}`);
     }
     if (hostsOutput) {
-      const gwLine = hostsOutput.split(/\r?\n/).find((l: string) => l.includes("host.openshell.internal"));
+      const gwLine = hostsOutput
+        .split(/\r?\n/)
+        .find((l: string) => l.includes("host.openshell.internal"));
       if (gwLine) {
-        const ip = gwLine.trim().split(/\s+/)[0];
-        parts.push(`host-gateway resolved to: ${ip}`);
+        parts.push(`host-gateway resolved to: ${gwLine.trim().split(/\s+/)[0]}`);
       }
     }
-    parts.push(`Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times over ~${(CONTAINER_CHECK_MAX_ATTEMPTS - 1) * CONTAINER_CHECK_RETRY_DELAY_SECS}s`);
+    parts.push(
+      `Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times over ~${(CONTAINER_CHECK_MAX_ATTEMPTS - 1) * CONTAINER_CHECK_RETRY_DELAY_SECS}s`,
+    );
     return parts.join(". ") + ".";
   } catch {
     return `Docker command failed (image pull error or runtime failure). Retried ${CONTAINER_CHECK_MAX_ATTEMPTS} times.`;
@@ -666,67 +774,39 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
   }
 }
 
-export interface OllamaRuntimeModelStatus {
-  probed: boolean;
-  loaded: boolean;
-  cpuOnly: boolean;
-  processor?: string;
-  sizeVram?: number;
-}
-
-function normalizeOllamaModelName(value: unknown): string {
-  return String(value || "").trim();
-}
+export { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW, parsePositiveInteger };
 
 export function probeOllamaRuntimeModelStatus(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaRuntimeModelStatus {
-  const capture = runCaptureImpl ?? runCapture;
-  const host = getResolvedOllamaHost();
-  const output = capture(
-    [
-      "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/ps`,
-    ],
-    { ignoreError: true },
+  return probeOllamaRuntimeModelStatusWithHost(model, getResolvedOllamaHost, runCaptureImpl);
+}
+
+export function resolveOllamaRuntimeContextWindow(
+  model: string,
+  currentContextWindow: string | null | undefined = null,
+  runCaptureImpl?: RunCaptureFn,
+): number | null {
+  return resolveOllamaRuntimeContextWindowWithHost(
+    model,
+    currentContextWindow,
+    getResolvedOllamaHost,
+    runCaptureImpl,
   );
-  if (!output) return { probed: false, loaded: false, cpuOnly: false };
+}
 
-  try {
-    const parsed = JSON.parse(String(output || ""));
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
-    const target = normalizeOllamaModelName(model);
-    const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
-      return (
-        normalizeOllamaModelName(entry?.name) === target ||
-        normalizeOllamaModelName(entry?.model) === target
-      );
-    });
-    if (!loaded) return { probed: true, loaded: false, cpuOnly: false };
+export { resetOllamaRuntimeContextWindowAutoState };
 
-    const rawSizeVram = Number((loaded as { size_vram?: unknown }).size_vram);
-    const hasSizeVram = Number.isFinite(rawSizeVram);
-    const processor = normalizeOllamaModelName((loaded as { processor?: unknown }).processor);
-    const mentionsGpu = /\bGPU\b/i.test(processor);
-    const processorCpuOnly = /\bCPU\b/i.test(processor) && !mentionsGpu;
-    const sizeVramCpuOnly = hasSizeVram && rawSizeVram === 0 && !mentionsGpu;
+export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
+  applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
+}
 
-    return {
-      probed: true,
-      loaded: true,
-      cpuOnly: processorCpuOnly || sizeVramCpuOnly,
-      ...(processor ? { processor } : {}),
-      ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
-    };
-  } catch {
-    return { probed: true, loaded: false, cpuOnly: false };
-  }
+export function applyVllmRuntimeContextWindow(
+  modelsResponse: unknown,
+  modelId: string | null | undefined,
+): void {
+  applyVllmRuntimeContextWindowFromModels(modelsResponse, modelId);
 }
 
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
@@ -737,7 +817,7 @@ function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModel
   return (
     `Selected Ollama model '${model}' answered the local probe, but Ollama reports it is loaded on CPU only${observedText}. ` +
     "DGX Spark should use the CUDA v13 backend; check `ollama ps`, `sudo systemctl cat ollama`, " +
-    "and `journalctl -u ollama.service --since \"10 min ago\" | grep -iE \"gpu|cuda|vram|compute|library\"`, then retry onboarding."
+    'and `journalctl -u ollama.service --since "10 min ago" | grep -iE "gpu|cuda|vram|compute|library"`, then retry onboarding.'
   );
 }
 
@@ -747,12 +827,14 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const tagsOutput = capture(
     [
       "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ...buildValidatedCurlCommandArgs([
+        "-sf",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "5",
+        `http://${host}:${OLLAMA_PORT}/api/tags`,
+      ]),
     ],
     { ignoreError: true },
   );
@@ -796,6 +878,7 @@ export function resolveNonInteractiveOllamaModel(
   recoveredModel: string | null,
   gpu: GpuInfo | null,
   log: (message: string) => void = (m) => console.warn(m),
+  runCaptureImpl?: RunCaptureFn,
 ): string {
   const explicit = requestedModel || recoveredModel;
   if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
@@ -812,13 +895,10 @@ export function resolveNonInteractiveOllamaModel(
   if (!explicit && !anyRegistryModelFits(gpu)) {
     warnNoBootstrapModelFits(gpu, log);
   }
-  return explicit || getDefaultOllamaModel(gpu);
+  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
 }
 
-function warnNoBootstrapModelFits(
-  gpu: GpuInfo | null,
-  log: (message: string) => void,
-): void {
+function warnNoBootstrapModelFits(gpu: GpuInfo | null, log: (message: string) => void): void {
   const memory = effectiveGpuMemoryMB(gpu);
   log(
     `  ! No known Ollama bootstrap model fits the host's currently available GPU memory` +
@@ -885,12 +965,23 @@ export function getOllamaProbeCommand(
     options: { num_predict: 16 },
   });
   const host = getResolvedOllamaHost();
+  const endpoint = `http://${host}:${OLLAMA_PORT}/api/generate`;
+  buildValidatedCurlCommandArgs([
+    "-sS",
+    "--max-time",
+    String(timeoutSeconds),
+    "-H",
+    "Content-Type: application/json",
+    "-d",
+    payload,
+    endpoint,
+  ]);
   return [
     "curl",
     "-sS",
     "--max-time",
     String(timeoutSeconds),
-    `http://${host}:${OLLAMA_PORT}/api/generate`,
+    endpoint,
     "-H",
     "Content-Type: application/json",
     "-d",
@@ -903,6 +994,7 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
@@ -911,10 +1003,13 @@ export function validateOllamaModel(
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
-  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
-  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
-  // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (sparkHost && probeResult.timedOut) {
+  // Cold-loading a large model from disk can routinely exceed the default 120 s
+  // probe window — on DGX Spark unified-memory hosts (#3251) and also on
+  // tight-VRAM dGPU hosts (e.g. NVIDIA L4 23 GB) where the runner spills GPU→CPU
+  // during warm-up. Retry once with a 300 s budget whenever the initial probe
+  // genuinely timed out. Fast failures (connection refused, Ollama not running)
+  // keep `timedOut === false` and surface immediately.
+  if (probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
   }
@@ -932,37 +1027,47 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
-        return {
-          ok: false,
-          message:
-            `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
-            `model's capabilities and pick one whose list includes 'tools'.`,
-        };
-      }
-      // Ollama checks available RAM instead of total; false positive on DGX Spark
-      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
-      const memMatch = errText.match(
-        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
-      );
-      if (memMatch && sparkHost) {
-        const requiresGiB = parseFloat(memMatch[1]);
-        const freeOut = capture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
-            const totalGiB = totalMB / 1024;
-            if (totalGiB >= requiresGiB) {
-              return { ok: true };
+        if (options.allowToolsIncompatible !== true) {
+          return {
+            ok: false,
+            message:
+              `Selected Ollama model '${model}' does not support tool calling, which ` +
+              `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+              `model's capabilities and pick one whose list includes 'tools'.`,
+          };
+        }
+        // Override accepted — log and fall through to the Spark CPU-only
+        // runtime check below so it still enforces. (#4241)
+        console.warn(
+          `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+            `continuing because the no-tools override was accepted.`,
+        );
+      } else {
+        // Ollama checks available RAM instead of total; false positive on DGX Spark
+        // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+        const memMatch = errText.match(
+          /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+        );
+        if (memMatch && sparkHost) {
+          const requiresGiB = parseFloat(memMatch[1]);
+          const freeOut = capture(["free", "-m"], { ignoreError: true });
+          if (freeOut) {
+            const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+            if (memLine) {
+              const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+              const totalGiB = totalMB / 1024;
+              if (totalGiB >= requiresGiB) {
+                return { ok: true };
+              }
             }
           }
         }
+        return {
+          ok: false,
+          message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+          ...(isOllamaRunnerCrash(errText) ? { daemonFailure: true } : {}),
+        };
       }
-      return {
-        ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
-      };
     }
   } catch {
     /* ignored */
@@ -979,6 +1084,29 @@ export function validateOllamaModel(
   }
 
   return { ok: true };
+}
+
+// Helpers for threading the user's "use this no-tools Ollama model anyway"
+// override (see #4241) through onboard validators so they don't loop the
+// wizard back to model selection after the user already accepted.
+
+export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
+  skipResponsesProbe: true;
+  requireChatCompletionsToolCalling: boolean;
+  allowHostDockerInternal: boolean;
+} {
+  return {
+    skipResponsesProbe: true,
+    requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+  };
+}
+
+export function validateOllamaModelWithToolsOverride(
+  model: string,
+  allowToolsIncompatible: boolean,
+): ValidationResult {
+  return validateOllamaModel(model, undefined, undefined, undefined, { allowToolsIncompatible });
 }
 
 // ─── Tools-capability probe (issue #2667) ─────────────────────────

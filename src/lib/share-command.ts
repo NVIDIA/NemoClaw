@@ -119,13 +119,32 @@ export function resolveLinuxUnmount(): string | null {
  * throwing keeps the helper unit-testable; the caller decides how to surface
  * the error to the user.
  */
-export function checkLocalMountWritable(localMount: string): { writable: boolean; reason?: string } {
+export function checkLocalMountWritable(localMount: string): {
+  writable: boolean;
+  reason?: string;
+} {
   try {
-    fs.mkdirSync(localMount, { recursive: true });
+    // Node's fs.mkdirSync(path, { recursive: true }) masks EROFS as ENOENT when
+    // the leaf is missing on a read-only parent (#4311). Use non-recursive mkdir
+    // when the parent already exists so EROFS propagates with its true errno;
+    // fall back to recursive only when the parent is genuinely missing.
+    if (fs.existsSync(path.dirname(localMount))) {
+      try {
+        fs.mkdirSync(localMount);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException | undefined)?.code !== "EEXIST") throw err;
+        if (!fs.statSync(localMount).isDirectory()) {
+          return { writable: false, reason: "mount target exists and is not a directory" };
+        }
+      }
+    } else {
+      fs.mkdirSync(localMount, { recursive: true });
+    }
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };
-    if (code === "EACCES") return { writable: false, reason: "permission denied creating the directory" };
+    if (code === "EACCES")
+      return { writable: false, reason: "permission denied creating the directory" };
     return { writable: false, reason: err instanceof Error ? err.message : String(err) };
   }
   try {
@@ -336,10 +355,13 @@ export function runShareStatus(
 
 export function printShareUsageAndExit(exitCode = 1): never {
   const { cliName } = buildShareCommandDeps();
-  shareFail([
-    `  Usage: ${cliName} <name> share <mount|unmount|status>`,
-    "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
-    "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
-    "    status  [local-mount-point]                 Check current mount status",
-  ], exitCode);
+  shareFail(
+    [
+      `  Usage: ${cliName} <name> share <mount|unmount|status>`,
+      "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
+      "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
+      "    status  [local-mount-point]                 Check current mount status",
+    ],
+    exitCode,
+  );
 }

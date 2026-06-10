@@ -21,14 +21,16 @@ const { isIP } = require("node:net");
 const { validateName } = require("../runner");
 const { shellQuote } = require("../core/shell-quote");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
-const { dockerCapture } = require("../adapters/docker/run");
 const credentialFilter: typeof import("../security/credential-filter") = require("../security/credential-filter");
 const { stripCredentials, isConfigObject, isConfigValue, isCredentialField } = credentialFilter;
 const { appendAuditEntry } = require("../shields/audit");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
-const registry = require("../state/registry") as {
-  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
-};
+const {
+  privilegedSandboxExecArgv,
+}: typeof import("./privileged-exec") = require("./privileged-exec");
+const {
+  buildHermesUpstreamHeader,
+}: typeof import("./hermes-upstream-header") = require("./hermes-upstream-header");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -37,8 +39,6 @@ const { runOpenshellCommand, captureOpenshellCommand } = require("../adapters/op
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
 }
-
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
 
 // ---------------------------------------------------------------------------
 // Agent-aware config resolution
@@ -115,64 +115,6 @@ const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
 };
 
 const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
-
-// Privileged sandbox exec bypasses the sandbox process's Landlock domain for
-// host-initiated config writes. Legacy OpenShell gateways expose the pod via
-// K3s/kubectl; Docker-driver gateways expose a sandbox container directly.
-function selectDockerDriverSandboxContainer(
-  sandboxName: string,
-  openshellDriver: string | null | undefined,
-  containerNames: string,
-): string | null {
-  if (openshellDriver !== "docker") return null;
-  const prefix = `openshell-${sandboxName}-`;
-  const exact = `openshell-${sandboxName}`;
-  return (
-    containerNames
-      .split("\n")
-      .map((line: string) => line.trim())
-      .find((name: string) => name === exact || name.startsWith(prefix)) || null
-  );
-}
-
-function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
-  let openshellDriver: string | null | undefined;
-  try {
-    openshellDriver = registry.getSandbox?.(sandboxName)?.openshellDriver;
-  } catch {
-    return null;
-  }
-
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
-  return selectDockerDriverSandboxContainer(sandboxName, openshellDriver, output);
-}
-
-function kubectlExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
-  const args = [
-    "exec",
-    ...(stdin ? ["-i"] : []),
-    K3S_CONTAINER,
-    "kubectl",
-    "exec",
-    "-n",
-    "openshell",
-    sandboxName,
-    "-c",
-    "agent",
-    ...(stdin ? ["-i"] : []),
-    "--",
-    ...cmd,
-  ];
-  return args;
-}
-
-function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
-  const dockerDriverContainer = resolveDockerDriverSandboxContainer(sandboxName);
-  if (dockerDriverContainer) {
-    return ["exec", ...(stdin ? ["-i"] : []), "--user", "root", dockerDriverContainer, ...cmd];
-  }
-  return kubectlExecArgv(sandboxName, cmd, stdin);
-}
 
 function privilegedSandboxExec(
   sandboxName: string,
@@ -409,6 +351,20 @@ function serializeConfig(config: ConfigObject, format: string): string {
 }
 
 /**
+ * Pure body composition for {@link writeSandboxConfig}: serialize the config
+ * and prepend agent-specific headers. Extracted so unit tests can assert the
+ * exact byte sequence that lands in the sandbox without driving the
+ * privileged docker exec path.
+ */
+function composeSandboxConfigBody(config: ConfigObject, target: AgentConfigTarget): string {
+  const body = serializeConfig(config, target.format);
+  if (target.agentName === "hermes" && target.format === "yaml") {
+    return `${buildHermesUpstreamHeader(config as Record<string, unknown>)}${body}`;
+  }
+  return body;
+}
+
+/**
  * Parse a CLI-provided config value as JSON when possible, otherwise keep it
  * as a string literal.
  */
@@ -462,14 +418,12 @@ function writeSandboxConfig(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-"));
   const tmpFile = path.join(tmpDir, target.configFile);
   try {
-    fs.writeFileSync(tmpFile, serializeConfig(config, target.format), { mode: 0o600 });
+    fs.writeFileSync(tmpFile, composeSandboxConfigBody(config, target), { mode: 0o600 });
 
     const content = fs.readFileSync(tmpFile, "utf-8");
-    privilegedSandboxExec(
-      sandboxName,
-      ["sh", "-c", `cat > ${shellQuote(target.configPath)}`],
-      { input: content },
-    );
+    privilegedSandboxExec(sandboxName, ["sh", "-c", `cat > ${shellQuote(target.configPath)}`], {
+      input: content,
+    });
 
     try {
       privilegedSandboxExec(sandboxName, ["chown", "sandbox:sandbox", target.configPath]);
@@ -613,7 +567,11 @@ async function validateUrlValueWithDnsResult(
   const family = first.family ?? isIP(first.address);
   pinned.hostname = family === 6 ? `[${first.address}]` : first.address;
 
-  return { protocol: parsed.protocol as "http:" | "https:", originalUrl, pinnedUrl: pinned.toString() };
+  return {
+    protocol: parsed.protocol as "http:" | "https:",
+    originalUrl,
+    pinnedUrl: pinned.toString(),
+  };
 }
 
 async function validateUrlValueWithDns(
@@ -873,9 +831,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     safeValue = await rewriteConfigUrlsWithDnsPinning(parsedValue);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    const suffix = err instanceof ConfigUrlValidationError
-      ? ` for ${redactUrlForLogs(err.urlValue)}`
-      : "";
+    const suffix =
+      err instanceof ConfigUrlValidationError ? ` for ${redactUrlForLogs(err.urlValue)}` : "";
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
@@ -888,7 +845,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "config_set",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `config set ${target.agentName}:${opts.key}`,
@@ -1031,7 +988,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
 
   // 6. Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "rotate_token",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `rotate-token ${target.agentName}:${credentialEnv}`,
@@ -1083,27 +1040,27 @@ function confirmYesNo(prompt: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export {
-  DEFAULT_AGENT_CONFIG,
-  configGet,
-  configSet,
-  configRotateToken,
-  parseConfigGetArgs,
-  resolveAgentConfig,
-  readSandboxConfig,
-  writeSandboxConfig,
-  recomputeSandboxConfigHash,
   buildRecomputeSandboxConfigHashScript,
-  selectDockerDriverSandboxContainer,
-  privilegedSandboxExecArgv,
-  extractDotpath,
-  setDotpath,
-  validateConfigDotpath,
-  findClobberingAncestor,
   classifyNewKeyGate,
-  validateUrlValue,
-  validateUrlValueWithDns,
-  rewriteConfigUrlsWithDnsPinning,
+  composeSandboxConfigBody,
+  configGet,
+  configRotateToken,
+  configSet,
+  DEFAULT_AGENT_CONFIG,
+  extractDotpath,
+  findClobberingAncestor,
   formatConfigValueForLogs,
   parseConfig,
+  parseConfigGetArgs,
+  privilegedSandboxExecArgv,
+  readSandboxConfig,
   readStdin,
+  recomputeSandboxConfigHash,
+  resolveAgentConfig,
+  rewriteConfigUrlsWithDnsPinning,
+  setDotpath,
+  validateConfigDotpath,
+  validateUrlValue,
+  validateUrlValueWithDns,
+  writeSandboxConfig,
 };

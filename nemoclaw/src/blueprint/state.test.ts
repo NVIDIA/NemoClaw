@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
 import { homedir } from "node:os";
-import { loadState, saveState, clearState, type NemoClawState } from "./state.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearState, loadState, type NemoClawState, saveState } from "./state.js";
 
 const store = new Map<string, string>();
+const writes: Array<{ path: string; options: unknown }> = [];
+const renames: Array<{ from: string; to: string }> = [];
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
@@ -19,8 +21,16 @@ vi.mock("node:fs", async (importOriginal) => {
       if (content === undefined) throw new Error(`ENOENT: ${p}`);
       return content;
     },
-    writeFileSync: (p: string, data: string) => {
+    writeFileSync: (p: string, data: string, options?: unknown) => {
+      writes.push({ path: p, options });
       store.set(p, data);
+    },
+    renameSync: (from: string, to: string) => {
+      renames.push({ from, to });
+      const content = store.get(from);
+      if (content === undefined) throw new Error(`ENOENT: ${from}`);
+      store.set(to, content);
+      store.delete(from);
     },
   };
 });
@@ -30,6 +40,8 @@ const STATE_PATH = `${homedir()}/.nemoclaw/state/nemoclaw.json`;
 describe("blueprint/state", () => {
   beforeEach(() => {
     store.clear();
+    writes.length = 0;
+    renames.length = 0;
   });
 
   describe("loadState", () => {
@@ -170,10 +182,19 @@ describe("blueprint/state", () => {
       expect(loaded.lastRunId).toBeNull();
     });
 
-    it("does nothing when no file exists", () => {
+    it("creates blank state when no file exists", () => {
       expect(() => {
         clearState();
       }).not.toThrow();
+      expect(store.has(STATE_PATH)).toBe(true);
+      const write = writes.at(-1);
+      const rename = renames.at(-1);
+      expect(write?.path.startsWith(`${STATE_PATH}.${process.pid}.`)).toBe(true);
+      expect(write?.path.endsWith(".tmp")).toBe(true);
+      expect(write?.options).toMatchObject({ mode: 0o600 });
+      expect(rename).toEqual({ from: write?.path, to: STATE_PATH });
+      expect(store.has(write?.path || "")).toBe(false);
+      expect(JSON.parse(store.get(STATE_PATH) || "{}").lastAction).toBeNull();
     });
   });
 });

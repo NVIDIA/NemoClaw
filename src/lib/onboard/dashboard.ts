@@ -4,26 +4,32 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
+import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
+import {
+  createSandboxForwardStopper,
+  type DashboardForwardOptions,
+  normalizeDashboardForwardOptions,
+} from "./dashboard-forward-control";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { bestEffortForwardStop } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -38,6 +44,9 @@ export interface OnboardDashboardDeps {
   cliName(): string;
   agentProductName(): string;
   getProviderLabel(provider: string): string;
+  nimStatus?: typeof nim.nimStatus;
+  nimStatusByName?: typeof nim.nimStatusByName;
+  shouldShowNimLine?: typeof nim.shouldShowNimLine;
   note(message: string): void;
   isWsl(): boolean;
   redact(value: unknown): string;
@@ -64,12 +73,13 @@ export interface OnboardDashboardHelpers {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl?: string,
-    options?: { rollbackSandboxOnFailure?: boolean },
+    options?: DashboardForwardOptions,
   ): number;
   ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number;
+  ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
@@ -171,7 +181,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function getWslHostAddress(
     options: Parameters<typeof dashboardAccess.getWslHostAddress>[0] = {},
   ): string | null {
-    return dashboardAccess.getWslHostAddress({ ...options, runCapture: options.runCapture || runCapture });
+    return dashboardAccess.getWslHostAddress({
+      ...options,
+      runCapture: options.runCapture || runCapture,
+    });
   }
 
   function stopAllDashboardForwards(): void {
@@ -215,17 +228,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    options: { rollbackSandboxOnFailure?: boolean } = {},
+    options: DashboardForwardOptions = {},
   ): number {
-    const { rollbackSandboxOnFailure = false } = options;
+    const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
+      normalizeDashboardForwardOptions(options);
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = (port: string | number) =>
-      bestEffortForwardStopForSandbox(
-        deps.runOpenshell,
-        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
-        port,
-        sandboxName,
-      );
+    const stopForwardForSandbox = createSandboxForwardStopper({
+      runOpenshell: deps.runOpenshell,
+      runCaptureOpenshell: deps.runCaptureOpenshell,
+      sandboxName,
+    });
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -244,6 +256,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
 
     if (actualPort !== preferredPort) {
+      if (!allowPortReallocation) {
+        throw new Error(
+          `Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`,
+        );
+      }
       if (rollbackSandboxOnFailure) {
         const err = new Error(
           `Dashboard port ${preferredPort} became host-bound during sandbox build; ` +
@@ -258,7 +275,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     const occupied = getOccupiedPorts(existingForwards);
     for (const [port, owner] of occupied.entries()) {
-      if (owner === sandboxName && Number(port) !== actualPort) {
+      if (owner === sandboxName && Number(port) !== actualPort && !preservedPorts.has(port)) {
         stopForwardForSandbox(port);
       }
     }
@@ -272,7 +289,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
       ),
       () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
+        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
+          "") as string,
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
@@ -302,7 +320,9 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         console.warn(`  Free the port, then reconnect: ${deps.cliName()} ${sandboxName} connect`);
       } else {
         console.warn(`! Port ${actualPort} forward did not start: ${fwdDiagnostic.slice(0, 240)}`);
-        console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
+        console.warn(
+          `  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`,
+        );
       }
     }
     return actualPort;
@@ -310,13 +330,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   function ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    const agentDashboardPort = agent.forwardPort ?? CONTROL_UI_PORT;
-    const agentDashboardUrl = `http://127.0.0.1:${agentDashboardPort}`;
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
-    process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
-    return actualAgentDashboardPort;
+    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
+  }
+
+  function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
+    return ensureFixedAgentForward(deps, sandboxName, port, label);
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
@@ -351,86 +371,87 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     nimContainer: string | null = null,
     agent: AgentDefinition | null = null,
   ): void {
-    const nimStat = nimContainer ? nim.nimStatusByName(nimContainer) : nim.nimStatus(sandboxName);
-    const showNim = nim.shouldShowNimLine(nimContainer, nimStat.running);
+    const nimStatus = deps.nimStatus ?? nim.nimStatus;
+    const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
+    const shouldShowNimLine = deps.shouldShowNimLine ?? nim.shouldShowNimLine;
+    const nimStat = nimContainer ? nimStatusByName(nimContainer) : nimStatus(sandboxName);
+    const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+    const token =
+      !agent || agent.dashboard.auth === "url_token"
+        ? fetchGatewayAuthTokenFromSandbox(sandboxName)
+        : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-    const wslAddr = getWslHostAddress();
-    const chain = buildChain({ chatUiUrl, isWsl: deps.isWsl(), wslHostAddress: wslAddr });
-
-    const dashboardAccessEntries = buildControlUiUrls(token, chain.port, chain.accessUrl).map((url, index) => ({
-      label: index === 0 ? "Dashboard" : `Alt ${index}`,
-      url,
-    }));
-    if (wslAddr) {
-      const wslUrl = `http://${wslAddr}:${chain.port}/${token ? `#token=${encodeURIComponent(token)}` : ""}`;
-      const existing = dashboardAccessEntries.find((entry) => entry.url === wslUrl);
-      if (existing) existing.label = "VS Code/WSL";
-      else dashboardAccessEntries.push({ label: "VS Code/WSL", url: wslUrl });
-    }
-    const guidanceLines = [`Port ${chain.port} must be forwarded before opening these URLs.`];
-    if (deps.isWsl()) {
-      guidanceLines.push(
-        "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-      );
-    }
-    if (dashboardAccessEntries.length === 0) guidanceLines.push("No dashboard URLs were generated.");
+    const chain = buildChain({
+      chatUiUrl,
+      isWsl: deps.isWsl(),
+      wslHostAddress: getWslHostAddress(),
+    });
+    const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
+    const dashboardUrl = dashboardUrlForDisplay(
+      dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
+      deps,
+    );
 
     console.log("");
     console.log(`  ${"─".repeat(50)}`);
-    console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
-    console.log(`  Model        ${model} (${providerLabel})`);
+    console.log(`  ${deps.agentProductName()} is ready`);
+    console.log("");
+    console.log(`  Sandbox:  ${sandboxName}`);
+    console.log(`  Model:    ${model} (${providerLabel})`);
     if (showNim) {
-      console.log(`  NIM          ${nimLabel}`);
+      console.log(`  NIM:      ${nimLabel}`);
     }
-    console.log(`  ${"─".repeat(50)}`);
-    console.log(`  Run:         ${deps.cliName()} ${sandboxName} connect`);
-    console.log(`  Status:      ${deps.cliName()} ${sandboxName} status`);
-    console.log(`  Logs:        ${deps.cliName()} ${sandboxName} logs --follow`);
     console.log("");
     if (agent) {
+      console.log("  Access");
+      console.log("");
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
           return buildControlUiUrls(tokenValue, port, chain.accessUrl);
         },
       });
+      console.log("");
+      console.log("  Terminal:");
+      console.log(`    ${deps.cliName()} ${sandboxName} connect`);
     } else if (token) {
-      console.log(
-        `  ${deps.agentProductName()} UI (auth token redacted from displayed URLs)`,
-      );
-      for (const line of guidanceLines) {
-        console.log(`  ${line}`);
-      }
-      for (const entry of dashboardAccessEntries) {
-        console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url, deps)}`);
-      }
-      console.log(`  Token:       ${deps.cliName()} ${sandboxName} gateway-token --quiet`);
-      console.log("               append  #token=<token> locally if the browser asks for auth.");
+      console.log("  Start chatting");
+      console.log("");
+      console.log("    Browser:");
+      console.log(`      ${dashboardUrl}`);
+      console.log("");
+      console.log("    Terminal:");
+      console.log(`      ${deps.cliName()} ${sandboxName} connect`);
+      console.log("      then run: openclaw tui");
+      console.log("");
+      console.log("  Authenticated dashboard URL, if needed:");
+      console.log(`    ${deps.cliName()} ${sandboxName} dashboard-url --quiet`);
     } else {
       deps.note("  Could not read gateway token from the sandbox (download failed).");
-      console.log(`  ${deps.agentProductName()} UI`);
-      for (const line of guidanceLines) {
-        console.log(`  ${line}`);
-      }
-      for (const entry of dashboardAccessEntries) {
-        console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url, deps)}`);
-      }
-      console.log(
-        `  Token:       ${deps.cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
-      );
-      console.log("               append  #token=<token>  to the URL locally if needed.");
+      console.log("  Start chatting");
+      console.log("");
+      console.log("    Browser:");
+      console.log(`      ${dashboardUrl}`);
+      console.log("");
+      console.log("    Terminal:");
+      console.log(`      ${deps.cliName()} ${sandboxName} connect`);
+      console.log("      then run: openclaw tui");
     }
-    console.log(`  ${"─".repeat(50)}`);
     console.log("");
-    console.log("  To change settings later:");
+    console.log("  Manage later");
+    console.log("");
+    console.log(`    Status:      ${deps.cliName()} ${sandboxName} status`);
+    console.log(`    Logs:        ${deps.cliName()} ${sandboxName} logs --follow`);
     console.log(
-      `    Model:       ${deps.cliName()} inference get\n                 ${deps.cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+      `    Model:       ${deps.cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
     );
     console.log(`    Policies:    ${deps.cliName()} ${sandboxName} policy-add`);
-    console.log(`    Credentials: ${deps.cliName()} credentials reset <KEY>  then  ${deps.cliName()} onboard`);
+    console.log(
+      `    Credentials: ${deps.cliName()} credentials reset <KEY> && ${deps.cliName()} onboard`,
+    );
+    console.log(`  ${"─".repeat(50)}`);
     console.log("");
   }
 
@@ -440,6 +461,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,

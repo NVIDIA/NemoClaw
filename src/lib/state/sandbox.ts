@@ -34,6 +34,7 @@ import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
+import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -158,8 +159,7 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
     typeof value.agentType === "string" &&
     (value.agentVersion === null || typeof value.agentVersion === "string") &&
     (value.expectedVersion === null || typeof value.expectedVersion === "string") &&
-    (value.backedUpDirs === undefined ||
-      isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
+    (value.backedUpDirs === undefined || isBackedUpDirArray(value.backedUpDirs, value.stateDirs)) &&
     (typeof value.dir === "string" || typeof value.writableDir === "string") &&
     typeof value.backupPath === "string" &&
     (value.stateFiles === undefined ||
@@ -237,27 +237,18 @@ function rejectSymlinksOnPath(targetPath: string): void {
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
 export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
-  const result = spawnSync("tar", ["-tf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
+  const entries: string[] = [];
+  const listingFailure = runTarListing(tarBuffer, ["-tf", "-"], "tar listing", (line) => {
+    entries.push(line);
   });
-
-  if (result.status !== 0) {
+  if (listingFailure) {
     return {
       safe: false,
       entries: [],
-      violations: [
-        `tar listing failed (exit ${result.status}): ${(result.stderr || "").substring(0, 200)}`,
-      ],
+      violations: [listingFailure],
     };
   }
 
-  const entries = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((e) => e.length > 0);
   const violations: string[] = [];
 
   for (const entry of entries) {
@@ -371,30 +362,15 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * files outside the extraction root.
  */
 export function rejectHardLinks(tarBuffer: Buffer): string[] {
-  const result = spawnSync("tar", ["-tvf", "-"], {
-    input: tarBuffer,
-    encoding: "utf-8",
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-  });
-
-  if (result.status !== 0) {
-    return [`tar verbose listing failed (exit ${result.status})`];
-  }
-
   const violations: string[] = [];
-  const lines = (result.stdout || "")
-    .trim()
-    .split("\n")
-    .filter((l) => l.length > 0);
-
-  for (const line of lines) {
+  const listingFailure = runTarListing(tarBuffer, ["-tvf", "-"], "tar verbose listing", (line) => {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
     // and include " link to " in the line.
     if (line.startsWith("h") || / link to /.test(line)) {
       violations.push(`hard link: ${line.trim()}`);
     }
-  }
+  });
+  if (listingFailure) return [listingFailure];
 
   return violations;
 }
@@ -572,10 +548,7 @@ const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
     "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
     "../qrcode-terminal/bin/qrcode-terminal.js",
   ],
-  [
-    "extensions/openclaw-weixin/node_modules/openclaw",
-    "/usr/local/lib/node_modules/openclaw",
-  ],
+  ["extensions/openclaw-weixin/node_modules/openclaw", "/usr/local/lib/node_modules/openclaw"],
 ]);
 
 const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
@@ -640,7 +613,12 @@ function normalizeStateFilePath(filePath: string): string | null {
 function isSafeStateDirPath(dirPath: string): boolean {
   if (!dirPath || dirPath.includes("\0") || path.isAbsolute(dirPath)) return false;
   const normalized = path.posix.normalize(dirPath.replace(/\\/g, "/"));
-  return normalized === dirPath && normalized !== "." && normalized !== ".." && !normalized.startsWith("../");
+  return (
+    normalized === dirPath &&
+    normalized !== "." &&
+    normalized !== ".." &&
+    !normalized.startsWith("../")
+  );
 }
 
 function isStateDirArray(value: unknown): value is string[] {
@@ -649,7 +627,10 @@ function isStateDirArray(value: unknown): value is string[] {
 
 function isBackedUpDirArray(value: unknown, stateDirs: string[]): value is string[] {
   const stateDirSet = new Set(stateDirs);
-  return isStringArray(value) && value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName));
+  return (
+    isStringArray(value) &&
+    value.every((dirName) => isSafeStateDirPath(dirName) && stateDirSet.has(dirName))
+  );
 }
 
 function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
@@ -738,7 +719,9 @@ function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFile
   return { path: normalized, strategy: spec.strategy };
 }
 
-function normalizeStateFileSpecs(specs: readonly (AgentStateFile | StateFileSpec)[]): StateFileSpec[] {
+function normalizeStateFileSpecs(
+  specs: readonly (AgentStateFile | StateFileSpec)[],
+): StateFileSpec[] {
   const normalized: StateFileSpec[] = [];
   const seen = new Set<string>();
   for (const spec of specs) {
@@ -817,12 +800,12 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   if (spec.strategy === "sqlite_backup") {
     return [
       `src=${quotedRemotePath}`,
-      "[ ! -e \"$src\" ] && exit 2",
+      '[ ! -e "$src" ] && exit 2',
       '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe sqlite state file: $src" >&2; exit 10; }',
       'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
-      'trap \'rm -f "$tmp"\' EXIT',
+      "trap 'rm -f \"$tmp\"' EXIT",
       `python3 -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp"`,
       'cat -- "$tmp"',
     ].join("; ");
@@ -830,7 +813,7 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
 
   return [
     `src=${quotedRemotePath}`,
-    "[ ! -e \"$src\" ] && exit 2",
+    '[ ! -e "$src" ] && exit 2',
     '[ -f "$src" ] && [ ! -L "$src" ] || { echo "unsafe state file: $src" >&2; exit 10; }',
     'hardlink_count="$(find "$src" -maxdepth 0 -type f -links +1 -print 2>/dev/null | wc -l | tr -d " ")"',
     '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked state file rejected: $src" >&2; exit 11; }',
@@ -884,7 +867,7 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
       '[ ! -L "$dst" ] || { echo "refusing symlinked sqlite target: $dst" >&2; exit 11; }',
       'mkdir -p "$parent"',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
-      'trap \'rm -f "$tmp"\' EXIT',
+      "trap 'rm -f \"$tmp\"' EXIT",
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
       `umask 0007; python3 -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
@@ -898,7 +881,7 @@ function buildStateFileRestoreCommand(dir: string, spec: StateFileSpec): string 
     '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
     'mkdir -p "$parent"',
     'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    'trap \'rm -f "$tmp"\' EXIT',
+    "trap 'rm -f \"$tmp\"' EXIT",
     'cat > "$tmp"',
     'chmod 640 "$tmp"',
     'mv -f "$tmp" "$dst"',
@@ -1200,7 +1183,9 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // Accept exit 0, 1, or 2 when stdout has data — extract what tar produced
         // and determine per-dir success from tar's reported read errors.
         const tarExitedWithData =
-          result.stdout && result.stdout.length > 0 && (result.status === 0 || result.status === 1 || result.status === 2);
+          result.stdout &&
+          result.stdout.length > 0 &&
+          (result.status === 0 || result.status === 1 || result.status === 2);
 
         if (result.status !== 0 && result.stdout && result.stdout.length > 0) {
           _log(

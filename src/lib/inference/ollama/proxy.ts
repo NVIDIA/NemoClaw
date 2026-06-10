@@ -9,7 +9,6 @@ import type { GpuInfo } from "../local";
 
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const http = require("http");
 const { ROOT, SCRIPTS, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { waitForPort } = require("../../core/wait");
@@ -38,7 +37,6 @@ const {
   loadLocalAdapterPid,
   persistLocalAdapterPid,
   readLocalAdapterTextFile,
-  removeLocalAdapterFile,
   spawnDetachedNodeAdapter,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
@@ -80,7 +78,10 @@ function loadPersistedProxyToken(): string | null {
 }
 
 function curlAuthHeaderConfig(token: string): string {
-  const escaped = String(token).replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const escaped = String(token)
+    .replace(/[\r\n]/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
   return `header = "Authorization: Bearer ${escaped}"\n`;
 }
 
@@ -107,7 +108,11 @@ function runCurlWithAuthConfig(args: string[], endpoint: string, token: string |
   return spawnSync("curl", curlArgs, options);
 }
 
-function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: string | null = null): string {
+function runCurlCaptureWithAuthConfig(
+  args: string[],
+  endpoint: string,
+  token: string | null = null,
+): string {
   const result = runCurlWithAuthConfig(args, endpoint, token);
   return result.status === 0 ? String(result.stdout || "") : "";
 }
@@ -120,10 +125,6 @@ function persistProxyPid(pid: number | null | undefined): void {
 
 function loadPersistedProxyPid(): number | null {
   return loadLocalAdapterPid(PROXY_PID_PATH);
-}
-
-function clearPersistedProxyPid(): void {
-  removeLocalAdapterFile(PROXY_PID_PATH);
 }
 
 // ── Process management ───────────────────────────────────────────
@@ -208,15 +209,7 @@ function startOllamaAuthProxy(): boolean {
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--max-time",
-      "3",
-    ],
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "3"],
     `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
     token,
   );
@@ -313,17 +306,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   }
 
   const result = runCurlWithAuthConfig(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-    ],
+    ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--connect-timeout", "3", "--max-time", "5"],
     endpoint,
     token,
   );
@@ -376,18 +359,31 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
-async function promptOllamaModel(gpu: GpuInfo | null = null) {
+async function promptOllamaModel(
+  gpu: GpuInfo | null = null,
+  promptOptions: { excludeModels?: ReadonlySet<string> } = {},
+) {
+  const excludeModels = promptOptions.excludeModels;
+  const isExcluded = (tag: string): boolean =>
+    excludeModels !== undefined && excludeModels.has(tag);
   const installed = getOllamaModelOptions();
   // Filter installed entries by registry-known memory fit so a host that
   // currently cannot load the only installed model still gets a usable
   // default — without the filter, pressing Enter would re-select the
   // oversized model the runner is about to crash on. Unknown tags (user-
   // pulled models the registry has never seen) pass the filter so the
-  // user's prior selection is respected.
-  const installedFitting = installed.filter((tag: string) => modelFitsAvailableMemory(tag, gpu));
+  // user's prior selection is respected. `excludeModels` additionally drops
+  // tags the caller knows the local probe has already rejected this round.
+  const installedFitting = installed.filter(
+    (tag: string) => modelFitsAvailableMemory(tag, gpu) && !isExcluded(tag),
+  );
   const usingInstalled = installedFitting.length > 0;
-  const options = usingInstalled ? installedFitting : getBootstrapOllamaModelOptions(gpu);
-  const defaultModel = getDefaultOllamaModel(gpu);
+  const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag) => !isExcluded(tag));
+  const options = usingInstalled ? installedFitting : bootstrap;
+  const defaultModelCandidate = getDefaultOllamaModel(gpu);
+  const defaultModel = isExcluded(defaultModelCandidate)
+    ? (options[0] ?? defaultModelCandidate)
+    : defaultModelCandidate;
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
@@ -450,6 +446,26 @@ function pullTimeoutErrorHint(timeoutMs: number): string {
   ].join("\n");
 }
 
+function normalizeOllamaPullModel(model): string {
+  const value = String(model || "").trim();
+  if (!value || /[\0\r\n]/.test(value)) {
+    throw new Error("Invalid Ollama model id for pull request");
+  }
+  return value;
+}
+
+function buildLocalOllamaPullUrl(): string {
+  const host = getResolvedOllamaHost();
+  const allowedHosts = new Set(["127.0.0.1", "localhost", "::1", OLLAMA_HOST_DOCKER_INTERNAL]);
+  if (!allowedHosts.has(host)) {
+    throw new Error(`Refusing to pull from unexpected Ollama host: ${host}`);
+  }
+  const url = new URL("http://127.0.0.1/api/pull");
+  url.hostname = host;
+  url.port = String(OLLAMA_PORT);
+  return url.toString();
+}
+
 function pullOllamaModelViaCli(model) {
   const timeoutMs = getOllamaPullTimeoutMs();
   const result = spawnSync("bash", ["-c", `ollama pull ${shellQuote(model)}`], {
@@ -472,13 +488,14 @@ function pullOllamaModelViaCli(model) {
 // keeps the CLI path so existing behavior is unchanged.
 function pullOllamaModelViaHttp(model) {
   return new Promise((resolve) => {
-    const host = getResolvedOllamaHost();
-    const url = `http://${host}:${OLLAMA_PORT}/api/pull`;
-    const body = JSON.stringify({ model, stream: true });
+    const url = buildLocalOllamaPullUrl();
+    const body = JSON.stringify({ model: normalizeOllamaPullModel(model), stream: true });
     const TIMEOUT_MS = getOllamaPullTimeoutMs();
     const isTTY = Boolean(process.stdout.isTTY);
     const BAR_WIDTH = 40;
 
+    // The endpoint is restricted to the local Ollama hosts NemoClaw probes and
+    // the model id is normalized before being serialized as JSON request data.
     const proc = spawn(
       "curl",
       [
@@ -492,6 +509,7 @@ function pullOllamaModelViaHttp(model) {
         "-H",
         "Content-Type: application/json",
         "-d",
+        // codeql[js/file-access-to-http]: local-only Ollama API with a normalized model id.
         body,
         url,
       ],
@@ -670,7 +688,9 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
     /* fall through */
   }
   const reply = await prompt(`${question} ${defaultIsYes ? "[Y/n]" : "[y/N]"}: `);
-  const v = String(reply ?? "").trim().toLowerCase();
+  const v = String(reply ?? "")
+    .trim()
+    .toLowerCase();
   if (v === "y" || v === "yes") return true;
   if (v === "n" || v === "no") return false;
   return defaultIsYes;
@@ -680,15 +700,15 @@ function printToolsIncompatibleWarning(model: string): void {
   console.log("");
   console.log(`  ⚠ Ollama model '${model}' does not advertise the 'tools' capability.`);
   console.log("    NemoClaw agents need tool-calling for file operations, web search, and");
-  console.log("    running commands. This model will likely fail with \"400 ... does not");
-  console.log("    support tools\" at first prompt.");
+  console.log('    running commands. This model will likely fail with "400 ... does not');
+  console.log('    support tools" at first prompt.');
   console.log("    Inspect a model's capabilities with `ollama show <model>` and pick");
   console.log("    one whose list includes 'tools'.");
 }
 
 async function checkOllamaModelToolSupport(
   model: string,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const caps = probeOllamaModelCapabilities(model);
 
   if (caps.supportsTools === true) {
@@ -705,11 +725,15 @@ async function checkOllamaModelToolSupport(
   }
 
   // supportsTools === false — model is on disk but advertises no tools support.
+  // Every code path below that returns ok:true must also set
+  // allowToolsIncompatible:true so downstream validators (validateOllamaModel,
+  // probeChatCompletionsToolCalling via setupOllama / setupInference) don't
+  // reject the same model on the same condition — see issue #4241.
   printToolsIncompatibleWarning(model);
 
   if (isProxyAutoYes()) {
     console.log("  Continuing because --yes was passed.");
-    return { ok: true };
+    return { ok: true, allowToolsIncompatible: true };
   }
 
   if (isProxyNonInteractive()) {
@@ -717,7 +741,7 @@ async function checkOllamaModelToolSupport(
       console.error(
         `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
       );
-      return { ok: true };
+      return { ok: true, allowToolsIncompatible: true };
     }
     console.error(
       "  Re-run with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 to override, or pick a tools-capable model.",
@@ -729,10 +753,18 @@ async function checkOllamaModelToolSupport(
   if (!proceed) {
     return { ok: false, message: "Choose a tools-capable model." };
   }
-  return { ok: true };
+  return { ok: true, allowToolsIncompatible: true };
 }
 
-async function prepareOllamaModel(model, installedModels = []) {
+async function prepareOllamaModel(
+  model,
+  installedModels: string[] = [],
+): Promise<{
+  ok: boolean;
+  message?: string;
+  allowToolsIncompatible?: boolean;
+  daemonFailure?: boolean;
+}> {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
@@ -753,7 +785,11 @@ async function prepareOllamaModel(model, installedModels = []) {
 
   console.log(`  Loading Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
-  return validateOllamaModel(model);
+  const allowToolsIncompatible = capCheck.allowToolsIncompatible === true;
+  const result = validateOllamaModel(model, undefined, undefined, undefined, {
+    allowToolsIncompatible,
+  });
+  return { ...result, allowToolsIncompatible };
 }
 
 /**

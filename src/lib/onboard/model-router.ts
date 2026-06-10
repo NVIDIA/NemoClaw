@@ -19,6 +19,10 @@ import * as onboardSession from "../state/onboard-session";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
 import {
+  formatHostServiceUnreachableMessage,
+  probeHostServiceSandboxReachability,
+} from "./host-service-reachability";
+import {
   doesModelRouterProcessOwnPort,
   isRouterHealthy,
   stopModelRouterProcess,
@@ -121,8 +125,10 @@ function isExecutableFile(filePath: string): boolean {
 }
 
 function isModelRouterPackageReady(routerDir = modelRouterPackageDir()): boolean {
-  return fs.existsSync(path.join(routerDir, "pyproject.toml")) ||
-    fs.existsSync(path.join(routerDir, "setup.py"));
+  return (
+    fs.existsSync(path.join(routerDir, "pyproject.toml")) ||
+    fs.existsSync(path.join(routerDir, "setup.py"))
+  );
 }
 
 function shouldSkipModelRouterFingerprintEntry(name: string): boolean {
@@ -182,9 +188,12 @@ function getModelRouterSourceFingerprint(routerDir = modelRouterPackageDir()): s
   }).trim();
   if (/^[0-9a-f]{40}$/i.test(gitHead)) return `git:${gitHead}`;
 
-  const gitLink = runCapture(["git", "-C", ROOT, "rev-parse", `HEAD:${MODEL_ROUTER_RELATIVE_DIR}`], {
-    ignoreError: true,
-  }).trim();
+  const gitLink = runCapture(
+    ["git", "-C", ROOT, "rev-parse", `HEAD:${MODEL_ROUTER_RELATIVE_DIR}`],
+    {
+      ignoreError: true,
+    },
+  ).trim();
   if (/^[0-9a-f]{40}$/i.test(gitLink)) return `gitlink:${gitLink}`;
 
   return hashModelRouterSourceTree(routerDir);
@@ -207,15 +216,19 @@ function writeModelRouterInstalledFingerprint(
   fs.writeFileSync(modelRouterFingerprintPath(venvDir), `${fingerprint}\n`, { mode: 0o600 });
 }
 
-function isManagedModelRouterCurrent(
+export function isManagedModelRouterCurrent(
   routerDir = modelRouterPackageDir(),
   venvDir = modelRouterVenvDir(),
 ): boolean {
   if (!isExecutableFile(modelRouterCommandPath(venvDir))) return false;
   const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  return Boolean(
-    sourceFingerprint && readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint,
-  );
+  if (sourceFingerprint) {
+    return readModelRouterInstalledFingerprint(venvDir) === sourceFingerprint;
+  }
+  // When source fingerprint is unavailable (no git), accept an existing
+  // install-prefixed fingerprint to avoid reinstalling on every onboard.
+  const installed = readModelRouterInstalledFingerprint(venvDir);
+  return installed !== null && installed.startsWith("install:");
 }
 
 function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): void {
@@ -224,9 +237,12 @@ function initializeModelRouterSubmodule(routerDir = modelRouterPackageDir()): vo
     return;
   }
   console.log("  Initializing Model Router source...");
-  run(["git", "-C", ROOT, "submodule", "update", "--init", "--depth", "1", MODEL_ROUTER_RELATIVE_DIR], {
-    ignoreError: true,
-  });
+  run(
+    ["git", "-C", ROOT, "submodule", "update", "--init", "--depth", "1", MODEL_ROUTER_RELATIVE_DIR],
+    {
+      ignoreError: true,
+    },
+  );
 }
 
 function installModelRouterCommand(routerDir = modelRouterPackageDir()): string {
@@ -262,7 +278,10 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
   if (!isExecutableFile(routerCommand)) {
     throw new Error("Model Router install did not produce the model-router command.");
   }
-  writeModelRouterInstalledFingerprint(sourceFingerprint, venvDir);
+  const version =
+    JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version ?? "unknown";
+  const effectiveFingerprint = sourceFingerprint ?? `install:${version}`;
+  writeModelRouterInstalledFingerprint(effectiveFingerprint, venvDir);
   return routerCommand;
 }
 
@@ -342,10 +361,14 @@ async function startModelRouter(routerCfg: BlueprintRouterConfig): Promise<numbe
     routerCommand,
     [
       "proxy",
-      "--litellm-config", litellmConfigPath,
-      "--router-config", poolConfigPath,
-      "--host", "0.0.0.0",
-      "--port", String(port),
+      "--litellm-config",
+      litellmConfigPath,
+      "--router-config",
+      poolConfigPath,
+      "--host",
+      "0.0.0.0",
+      "--port",
+      String(port),
     ],
     {
       detached: true,
@@ -419,6 +442,35 @@ export function isRoutedInferenceProvider(provider: string | null | undefined): 
   return Boolean(bp?.provider_name && provider === bp.provider_name);
 }
 
+const MODEL_ROUTER_SERVICE_LABEL = "Model Router";
+
+/**
+ * Verify the host Model Router is reachable from the OpenShell Docker network.
+ *
+ * `isRouterHealthy()` only proves the router answers on the host loopback. On
+ * Linux Docker-driver hosts with UFW default-deny, a sandbox container can
+ * still fail to reach `host.openshell.internal:<routerPort>` even though the
+ * host curl succeeds (#4564). This mirrors the Ollama auth-proxy probe: on a
+ * `tcp_failed` result print the concrete `ufw allow` remediation and fail so
+ * onboarding does not declare an unreachable router healthy. A
+ * `probe_unavailable` result (Docker Desktop, missing network during fresh
+ * setup before the sandbox network exists, DNS) is non-fatal.
+ */
+async function verifyModelRouterSandboxReachability(routerPort: number): Promise<void> {
+  const reachability = await probeHostServiceSandboxReachability({ port: routerPort });
+  if (!reachability.ok && reachability.reason === "tcp_failed") {
+    console.error(
+      formatHostServiceUnreachableMessage(reachability, {
+        serviceLabel: MODEL_ROUTER_SERVICE_LABEL,
+        port: routerPort,
+      }),
+    );
+    throw new Error(
+      `Sandbox containers cannot reach the Model Router at host.openshell.internal:${routerPort}.`,
+    );
+  }
+}
+
 export async function reconcileModelRouter(): Promise<void> {
   const bp = getRoutedProfile();
   const routerPort = bp.router.port || 4000;
@@ -444,11 +496,15 @@ export async function reconcileModelRouter(): Promise<void> {
       recordedProcessOwnsRouter
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
+      await verifyModelRouterSandboxReachability(routerPort);
       return;
     }
     if (recordedProcessOwnsRouter) {
       console.log("  Restarting model router with updated credentials...");
-      await stopModelRouterProcess(requireValue(recordedPid, "Expected recorded router PID"), routerPort);
+      await stopModelRouterProcess(
+        requireValue(recordedPid, "Expected recorded router PID"),
+        routerPort,
+      );
     } else {
       throw new Error(
         `Port ${routerPort} already has a healthy router endpoint, but its credential state is unknown. Stop the existing model-router process and rerun onboarding.`,
@@ -464,4 +520,5 @@ export async function reconcileModelRouter(): Promise<void> {
     current.routerCredentialHash = routerCredentialHash;
     return current;
   });
+  await verifyModelRouterSandboxReachability(routerPort);
 }

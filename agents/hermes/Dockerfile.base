@@ -26,7 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Calver tag v2026.5.16 = Hermes Agent v0.14.0.
 ARG HERMES_VERSION=v2026.5.16
 ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
-ARG HERMES_UV_EXTRAS="messaging web"
+ARG HERMES_UV_EXTRAS="anthropic messaging web pty"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -75,19 +75,24 @@ RUN groupadd -r sandbox \
     && chown -R sandbox:sandbox /sandbox
 
 # Create .hermes with mutable integration dirs plus a scoped runtime dir.
-# Top-level gateway state names redirect into runtime so the config root can
-# remain non-group-writable without reintroducing the old .hermes-data bridge.
+# Hermes v0.14 writes some top-level state with O_EXCL, so the gateway group can
+# create new entries in .hermes while sticky-bit protection keeps config files
+# from being removed by the gateway user.
 RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/sessions \
         /sandbox/.hermes/skills \
         /sandbox/.hermes/plugins \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/skins \
         /sandbox/.hermes/plans \
         /sandbox/.hermes/workspace \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
@@ -95,7 +100,7 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/runtime \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox /sandbox/.hermes/runtime \
-    && chmod 750 /sandbox/.hermes \
+    && chmod 3770 /sandbox/.hermes \
     && chmod 770 \
         /sandbox/.hermes/memories \
         /sandbox/.hermes/sessions \
@@ -103,11 +108,15 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/plugins \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/skins \
         /sandbox/.hermes/plans \
         /sandbox/.hermes/workspace \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
@@ -118,10 +127,13 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
-    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+    && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
-    done
+    done \
+    && : > /sandbox/.hermes/.hermes_history \
+    && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
+    && chmod 660 /sandbox/.hermes/.hermes_history
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and
@@ -145,10 +157,13 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp) and
-# web (API health/UI runtime). New Hermes integrations should be installed
-# by the agent workflow when they are enabled rather than shipped in the
-# base image by default.
+# integrations: anthropic (native Anthropic Messages routing), messaging
+# (Telegram, Discord, Slack, WeChat, WhatsApp), web (API health/UI runtime),
+# and pty (optional browser TUI bridge). These extras are resolved from the
+# selected Hermes release's uv.lock via `uv sync --frozen`, so dependency
+# changes remain tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review.
+# New Hermes integrations should be installed by the agent workflow when they
+# are enabled rather than shipped in the base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \
@@ -158,6 +173,9 @@ RUN mkdir -p /opt/hermes \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
 WORKDIR /opt/hermes
+# ui-tui and web are part of the checksum-pinned Hermes release tarball.
+# npm ci uses the lockfiles from that pinned tree; re-review on every
+# HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -166,10 +184,20 @@ RUN set -eu; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && npm ci --prefer-offline --no-audit --no-fund \
-    && rm -rf /tmp/camoufox-* \
+    && for ui_dir in ui-tui web; do \
+        if [ -f "${ui_dir}/package-lock.json" ]; then \
+            npm ci --prefix "${ui_dir}" --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix "${ui_dir}"; \
+        else \
+            echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
+        fi; \
+    done \
+    && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
-ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
+    HERMES_TUI_DIR="/opt/hermes/ui-tui" \
+    HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version

@@ -68,6 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
+        tmux=3.5a-3 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
 
@@ -178,7 +179,12 @@ RUN printf '%s\n' \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.5.18
+ARG OPENCLAW_VERSION=2026.5.27
+ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
+# names do not persist in runtime snapshots or leak-scan inputs.
+ENV JITI_FS_CACHE=false
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -198,6 +204,16 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if ! npm view openclaw@${OPENCLAW_VERSION} version > /dev/null 2>&1; then \
         echo "Error: OpenClaw version ${OPENCLAW_VERSION} not found on npm registry"; \
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
+    fi; \
+    EXPECTED_INTEGRITY=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.27" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_27_INTEGRITY"; fi; \
+    if [ -n "$EXPECTED_INTEGRITY" ]; then \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
+            echo "Expected: ${EXPECTED_INTEGRITY}"; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
+        fi; \
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
@@ -229,11 +245,17 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # /home/linuxbrew/.linuxbrew/bin/* is then dead code.
 #
 # Image-build runs as root, so we create the prefix, chown it to the
-# sandbox user, clone Homebrew core under it as the sandbox user, and
-# symlink the brew entry point into the Homebrew prefix and /usr/local/bin.
-# /usr/local/bin is already on the locked sandbox PATH, so users can run
-# `brew` without adding the sandbox-writable Homebrew prefix to privileged
-# startup PATH.
+# sandbox user, clone Homebrew core under it as the sandbox user, and expose a
+# /usr/local/bin wrapper. /usr/local/bin is already on the locked sandbox PATH,
+# but a plain symlink there makes Homebrew infer /usr/local as its prefix. The
+# wrapper must execute the Linuxbrew prefix shim, not the repository script
+# directly, so Homebrew keeps /home/linuxbrew/.linuxbrew as its writable prefix.
+# The wrapper also pins Homebrew's temp extraction to /tmp, because the sandbox
+# policy permits /tmp writes while /var/tmp stays outside the write set.
+# Installed formulae are added to the sandbox user's login-shell PATH via
+# /etc/profile.d instead of Docker ENV, because /home/linuxbrew is
+# sandbox-writable and must not be inherited by privileged startup code before
+# nemoclaw-start locks PATH down.
 #
 # Companion change: /home/linuxbrew is added to filesystem_policy.read_write
 # in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
@@ -253,6 +275,32 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
         /home/linuxbrew/.linuxbrew/Homebrew \
     && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
         /home/linuxbrew/.linuxbrew/bin/brew \
-    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
-        /usr/local/bin/brew \
-    && gosu sandbox brew --version
+    && { \
+        printf '%s\n' '#!/bin/sh'; \
+        printf '%s\n' 'export HOMEBREW_TEMP=/tmp'; \
+        printf '%s\n' 'export TMPDIR=/tmp'; \
+        printf '%s\n' 'exec /home/linuxbrew/.linuxbrew/bin/brew "$@"'; \
+    } > /usr/local/bin/brew \
+    && chmod 755 /usr/local/bin/brew \
+    && grep -qx 'export HOMEBREW_TEMP=/tmp' /usr/local/bin/brew \
+    && grep -qx 'export TMPDIR=/tmp' /usr/local/bin/brew \
+    && gosu sandbox env HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
+        | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox /usr/local/bin/brew --version
+RUN { \
+        printf '%s\n' "if [ \"\$(/usr/bin/id -un 2>/dev/null || true)\" = sandbox ]; then"; \
+        printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
+        printf '%s\n' "fi"; \
+    } > /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && chmod 644 /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && mkdir -p /tmp/nemoclaw-hostile-bin \
+    && { printf '%s\n' '#!/bin/sh'; printf '%s\n' 'echo sandbox'; } > /tmp/nemoclaw-hostile-bin/id \
+    && chmod 755 /tmp/nemoclaw-hostile-bin/id \
+    && PATH="/tmp/nemoclaw-hostile-bin:${PATH}" bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && rm -rf /tmp/nemoclaw-hostile-bin \
+    && gosu sandbox bash -lc 'command -v brew >/dev/null' \
+    && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
+    && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"

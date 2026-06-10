@@ -28,10 +28,15 @@ export type WechatConfig = {
   userId?: string;
 };
 
+export type SlackConfig = {
+  allowedChannels?: string[];
+};
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
   providerKey: string;
+  upstreamProvider: string;
   inferenceApi: string;
   managedToolGateways: {
     brokerEnabled: boolean;
@@ -43,6 +48,7 @@ export type HermesBuildSettings = {
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
     wechatConfig: WechatConfig;
+    slackConfig: SlackConfig;
   };
 };
 
@@ -54,14 +60,11 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     model,
     baseUrl,
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
+    upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
-      presets: readBase64Json<string[]>(
-        env,
-        "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64",
-        "W10=",
-      ),
+      presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
     messaging: {
       enabledChannels: new Set(
@@ -73,12 +76,9 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         "e30=",
       ),
       discordGuilds: readBase64Json<DiscordGuilds>(env, "NEMOCLAW_DISCORD_GUILDS_B64", "e30="),
-      telegramConfig: readBase64Json<TelegramConfig>(
-        env,
-        "NEMOCLAW_TELEGRAM_CONFIG_B64",
-        "e30=",
-      ),
+      telegramConfig: readBase64Json<TelegramConfig>(env, "NEMOCLAW_TELEGRAM_CONFIG_B64", "e30="),
       wechatConfig: readBase64Json<WechatConfig>(env, "NEMOCLAW_WECHAT_CONFIG_B64", "e30="),
+      slackConfig: readBase64Json<SlackConfig>(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30="),
     },
   };
 }

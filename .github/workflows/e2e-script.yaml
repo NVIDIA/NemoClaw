@@ -1,0 +1,216 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Script Runner
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref or SHA to test.
+        required: true
+        type: string
+      script:
+        description: Repository-relative E2E script path.
+        required: true
+        type: string
+      runner:
+        description: GitHub Actions runner label.
+        required: false
+        type: string
+        default: ubuntu-latest
+      timeout_minutes:
+        description: Job timeout in minutes.
+        required: false
+        type: number
+        default: 45
+      artifact_name:
+        description: Failure artifact name.
+        required: true
+        type: string
+      artifact_path:
+        description: Newline-capable failure artifact path glob list.
+        required: true
+        type: string
+      env_json:
+        description: JSON object of non-secret environment variables for the script.
+        required: false
+        type: string
+        default: "{}"
+      checked_out_ref_env:
+        description: Optional environment variable name to set to the checked-out commit SHA.
+        required: false
+        type: string
+        default: ""
+      nvidia_api_key:
+        description: Pass the NVIDIA_API_KEY secret to the script.
+        required: false
+        type: boolean
+        default: false
+      brave_api_key:
+        description: Pass the BRAVE_API_KEY secret to the script.
+        required: false
+        type: boolean
+        default: false
+      github_token:
+        description: Pass github.token to the script as GITHUB_TOKEN.
+        required: false
+        type: boolean
+        default: false
+      messaging_live_secrets:
+        description: Pass optional live messaging provider secrets to the script.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      NVIDIA_API_KEY:
+        required: false
+      BRAVE_API_KEY:
+        required: false
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+      TELEGRAM_BOT_TOKEN_REAL:
+        required: false
+      TELEGRAM_CHAT_ID_E2E:
+        required: false
+      DISCORD_BOT_TOKEN_REAL:
+        required: false
+      DISCORD_CHANNEL_ID_E2E:
+        required: false
+      SLACK_BOT_TOKEN_REAL:
+        required: false
+      SLACK_APP_TOKEN_REAL:
+        required: false
+      SLACK_CHANNEL_ID_E2E:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.ref }}
+          path: repo
+          persist-credentials: false
+
+      - name: Export checked-out ref environment
+        if: ${{ inputs.checked_out_ref_env != '' }}
+        env:
+          E2E_CHECKED_OUT_REF_ENV: ${{ inputs.checked_out_ref_env }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+            echo "::error::Invalid checked_out_ref_env variable name: $E2E_CHECKED_OUT_REF_ENV" >&2
+            exit 1
+          fi
+
+          case "$E2E_CHECKED_OUT_REF_ENV" in
+            ACTIONS_*|GITHUB_*|INPUT_*|RUNNER_*|CI|HOME|PATH|PWD|SHELL)
+              echo "::error::Reserved checked_out_ref_env variable name: $E2E_CHECKED_OUT_REF_ENV" >&2
+              exit 1
+              ;;
+          esac
+
+          printf '%s=%s\n' "$E2E_CHECKED_OUT_REF_ENV" "$(git -C repo rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Checkout workflow action
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.ref }}
+          sparse-checkout: .github/actions/run-e2e-script
+          path: workflow-actions
+          persist-credentials: false
+
+      - name: Export script environment
+        env:
+          E2E_ENV_JSON: ${{ inputs.env_json }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import secrets
+          import sys
+
+          values = json.loads(os.environ.get("E2E_ENV_JSON") or "{}")
+          if not isinstance(values, dict):
+            print("::error::env_json must be a JSON object", file=sys.stderr)
+            sys.exit(1)
+
+          name_pattern = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+          reserved_prefixes = ("ACTIONS_", "GITHUB_", "INPUT_", "RUNNER_")
+          reserved_names = {"CI", "HOME", "PATH", "PWD", "SHELL"}
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+            for name, value in values.items():
+              if not isinstance(name, str) or not name_pattern.fullmatch(name):
+                print(f"::error::Invalid env_json variable name: {name!r}", file=sys.stderr)
+                sys.exit(1)
+              if name in reserved_names or name.startswith(reserved_prefixes):
+                print(f"::error::Reserved env_json variable name: {name}", file=sys.stderr)
+                sys.exit(1)
+
+              rendered = str(value)
+              if "\n" in rendered:
+                delimiter = f"EOF_{secrets.token_hex(16)}"
+                out.write(f"{name}<<{delimiter}\n{rendered}\n{delimiter}\n")
+              else:
+                out.write(f"{name}={rendered}\n")
+          PY
+
+      - name: Authenticate to Docker Hub
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.target_ref == '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Run E2E script
+        uses: ./workflow-actions/.github/actions/run-e2e-script
+        with:
+          working-directory: repo
+          script: ${{ inputs.script }}
+          artifact-name: ${{ inputs.artifact_name }}
+          artifact-path: ${{ inputs.artifact_path }}
+        env:
+          BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
+          GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
+          NVIDIA_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_API_KEY || '' }}
+          TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
+          TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
+          DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}
+          DISCORD_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.DISCORD_CHANNEL_ID_E2E || '' }}
+          SLACK_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_BOT_TOKEN_REAL || '' }}
+          SLACK_APP_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.SLACK_APP_TOKEN_REAL || '' }}
+          SLACK_CHANNEL_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.SLACK_CHANNEL_ID_E2E || '' }}
