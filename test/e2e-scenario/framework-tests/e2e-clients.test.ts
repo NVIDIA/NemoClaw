@@ -207,7 +207,7 @@ describe("E2E fixture clients", () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.execShell("assistant", "TOKEN=$(read-token); node /tmp/repro.cjs \"$TOKEN\"");
+    await sandbox.execShell("assistant", 'TOKEN=$(read-token); node /tmp/repro.cjs "$TOKEN"');
 
     expect(runner.calls[0]).toEqual({
       command: "openshell",
@@ -219,7 +219,7 @@ describe("E2E fixture clients", () => {
         "--",
         "sh",
         "-lc",
-        "TOKEN=$(read-token); node /tmp/repro.cjs \"$TOKEN\"",
+        'TOKEN=$(read-token); node /tmp/repro.cjs "$TOKEN"',
       ],
       options: { artifactName: "sandbox-exec-shell-assistant" },
     });
