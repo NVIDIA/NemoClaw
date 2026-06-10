@@ -163,6 +163,7 @@ type DeterministicReviewContext = {
   testDepth: ReviewAdvisorResult["testDepth"];
   workflowSignals: string[];
   localizedPatchSignals: LocalizedPatchSignal[];
+  e2eVitestSimplicitySignals: E2eVitestSimplicitySignal[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
   previousAdvisorReview: PreviousAdvisorReview | null;
@@ -175,6 +176,15 @@ type LocalizedPatchSignal = {
   kind: string;
   evidence: string;
   reviewRule: string;
+};
+
+type E2eVitestSimplicitySignal = {
+  severity: "blocker" | "warning";
+  file: string | null;
+  line: number | null;
+  kind: string;
+  evidence: string;
+  recommendation: string;
 };
 
 type MonolithSeverity = "none" | "warning" | "blocker";
@@ -357,6 +367,7 @@ async function collectDeterministicContext(options: {
     previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
+    e2eVitestSimplicitySignals: detectE2eVitestSimplicitySignals(options.changedFiles, options.diff),
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
     github,
@@ -441,6 +452,124 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
   if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff)) signals.push("Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.");
   if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff)) signals.push("PR-controlled text may be interpolated into workflow expressions; verify shell safety.");
   return signals;
+}
+
+export function detectE2eVitestSimplicitySignals(changedFiles: string[], diff: string): E2eVitestSimplicitySignal[] {
+  const touchesVitestE2e = changedFiles.some(
+    (file) =>
+      file.startsWith("test/e2e-scenario/") ||
+      file === ".github/workflows/e2e-vitest-scenarios.yaml" ||
+      file === "tools/e2e-scenarios/workflow-boundary.mts",
+  );
+  if (!touchesVitestE2e) return [];
+
+  const signals: E2eVitestSimplicitySignal[] = [];
+  const push = (signal: E2eVitestSimplicitySignal): void => {
+    const duplicate = signals.some(
+      (existing) => existing.kind === signal.kind && existing.file === signal.file && existing.evidence === signal.evidence,
+    );
+    if (!duplicate) signals.push(signal);
+  };
+
+  for (const file of changedFiles) {
+    if (file.startsWith("test/e2e-scenario/migration/") || file === "test/e2e/docs/parity-inventory.generated.json") {
+      push({
+        severity: "blocker",
+        file,
+        line: null,
+        kind: "repo-local E2E migration ledger",
+        evidence: `${file} is repo-local migration bookkeeping, not replacement Vitest coverage.`,
+        recommendation: "Do not add or modify migration ledgers; keep migration state in GitHub issues and PRs.",
+      });
+      continue;
+    }
+    if (/^test\/e2e-scenario\/(framework|fixtures)\//.test(file)) {
+      push({
+        severity: "warning",
+        file,
+        line: null,
+        kind: "shared Vitest E2E fixture/support change",
+        evidence: `${file} changes shared E2E support while migrating tests.`,
+        recommendation: "Prefer local helpers in the new Vitest test; only keep shared helper changes when they are tiny, reused, unit-tested, and justified.",
+      });
+      continue;
+    }
+    if (/^test\/e2e-scenario\/(scenarios|manifests)\//.test(file)) {
+      push({
+        severity: "warning",
+        file,
+        line: null,
+        kind: "Vitest E2E registry or manifest expansion",
+        evidence: `${file} changes scenario registry, matrix, expected-state, or manifest support.`,
+        recommendation: "Prefer direct focused Vitest tests unless a stable scenario ID or product setup manifest is truly required.",
+      });
+      continue;
+    }
+    if (file === ".github/workflows/e2e-vitest-scenarios.yaml") {
+      push({
+        severity: "warning",
+        file,
+        line: null,
+        kind: "Vitest E2E workflow expansion",
+        evidence: `${file} changes the live E2E workflow surface.`,
+        recommendation: "Use the existing workflow shape where possible; avoid one-off runner/framework expansion for a single migrated script.",
+      });
+      continue;
+    }
+    if (file === "tools/e2e-scenarios/workflow-boundary.mts") {
+      push({
+        severity: "warning",
+        file,
+        line: null,
+        kind: "one-off E2E workflow validator expansion",
+        evidence: `${file} changes workflow-boundary validation for E2E scenarios.`,
+        recommendation: "Do not add job-specific validator framework unless a concrete trusted-code or secret boundary is not already covered.",
+      });
+    }
+  }
+
+  let file: string | null = null;
+  let nextLine: number | null = null;
+  for (const rawLine of diff.split("\n")) {
+    const fileMatch = rawLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (fileMatch) {
+      file = fileMatch[2] || fileMatch[1] || null;
+      nextLine = null;
+      continue;
+    }
+    const hunkMatch = rawLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunkMatch) {
+      nextLine = Number.parseInt(hunkMatch[1] || "", 10);
+      if (!Number.isFinite(nextLine)) nextLine = null;
+      continue;
+    }
+    if (!rawLine.startsWith("+") || rawLine.startsWith("+++")) continue;
+    const content = rawLine.slice(1).trim();
+    if (/\bscenario framework\b/i.test(content)) {
+      push({
+        severity: "blocker",
+        file,
+        line: nextLine,
+        kind: "second-framework wording",
+        evidence: content.slice(0, 220),
+        recommendation: "Use 'Vitest test', 'live Vitest test', or 'fixtures/support code'; do not reintroduce scenario-framework framing.",
+      });
+    }
+    if (/legacy-inventory\.json|parity-inventory\.generated\.json/i.test(content)) {
+      push({
+        severity: "blocker",
+        file,
+        line: nextLine,
+        kind: "repo-local E2E migration ledger reference",
+        evidence: content.slice(0, 220),
+        recommendation: "Remove ledger references from new migration PRs; use PR discussion and source tree evidence instead.",
+      });
+    }
+    if (nextLine !== null) nextLine += 1;
+    if (signals.length >= 20) break;
+  }
+
+  return signals.slice(0, 20);
 }
 
 export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[] {
@@ -699,8 +828,9 @@ export function buildSystemPrompt(): string {
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. When more tests would improve confidence, make testDepth.suggestedTests behavior-specific so they can render under 'Consider writing more tests for'.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
-    "7. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
-    "8. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
+    "7. Vitest E2E simplicity: when a PR touches `test/e2e-scenario/` or `e2e-vitest-scenarios.yaml`, apply a simple-first lens. Prefer focused Vitest tests with local helpers. Do not add new framework, durable migration ledgers, generated assertion inventories, registry/matrix expansion, workflow validators, or shared fixture APIs unless the PR proves they are tiny, reused, unit-tested, and unavoidable. Preserve shell/system boundaries by spawning real commands from Vitest rather than building another harness.",
+    "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
+    "9. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
@@ -806,6 +936,7 @@ function buildValidationTurnContext(context: DeterministicReviewContext): Record
   return {
     testDepth: context.testDepth,
     localizedPatchSignals: context.localizedPatchSignals,
+    e2eVitestSimplicitySignals: context.e2eVitestSimplicitySignals,
     previousAdvisorReview: context.previousAdvisorReview,
     pullRequest: context.github?.pullRequest ?? null,
     linkedIssues: context.github?.linkedIssues ?? [],
@@ -860,7 +991,10 @@ export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata)
     headSha: metadata.headSha,
     changedFiles: metadata.changedFiles,
     summary: sanitizeSummary(object.summary),
-    findings: addSourceOfTruthFindings(sanitizeFindings(object.findings), sourceOfTruthReview),
+    findings: addDeterministicE2eSimplicityFindings(
+      addSourceOfTruthFindings(sanitizeFindings(object.findings), sourceOfTruthReview),
+      metadata.deterministic.e2eVitestSimplicitySignals,
+    ),
     acceptanceCoverage: sanitizeAcceptanceCoverage(object.acceptanceCoverage),
     securityCategories: sanitizeSecurityCategories(object.securityCategories),
     sourceOfTruthReview,
@@ -940,6 +1074,32 @@ function sanitizeSourceOfTruthReview(value: unknown): SourceOfTruthReview[] {
     removalCondition: stringOrDefault(item.removalCondition, "Not specified."),
     evidence: stringOrDefault(item.evidence, "No evidence provided."),
   })).slice(0, 50);
+}
+
+function addDeterministicE2eSimplicityFindings(
+  findings: Finding[],
+  signals: E2eVitestSimplicitySignal[],
+): Finding[] {
+  if (signals.length === 0) return findings;
+  const alreadyCovered = findings.some((finding) =>
+    `${finding.title}\n${finding.description}\n${finding.evidence}`.toLowerCase().includes("vitest e2e simplicity"),
+  );
+  if (alreadyCovered) return findings;
+  const severity = signals.some((signal) => signal.severity === "blocker") ? "blocker" : "warning";
+  const first = signals[0];
+  const finding: Finding = {
+    severity,
+    category: "architecture",
+    file: first?.file ?? null,
+    line: first?.line ?? null,
+    title: severity === "blocker" ? "Keep Vitest E2E migrations simple and ledger-free" : "Apply simple-first Vitest E2E migration review",
+    description:
+      "This PR touches the Vitest E2E suite and also changes framework-like support, registry/workflow surfaces, ledger state, or second-framework wording.",
+    recommendation:
+      "Prefer a focused Vitest test with local helpers. Remove repo-local migration ledgers and scenario-framework framing; split any unavoidable shared helper or registry/workflow expansion into a tiny, justified support PR.",
+    evidence: signals.map((signal) => `${signal.kind}: ${signal.evidence}`).join("\n"),
+  };
+  return [finding, ...findings].slice(0, 50);
 }
 
 function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: SourceOfTruthReview[]): Finding[] {
