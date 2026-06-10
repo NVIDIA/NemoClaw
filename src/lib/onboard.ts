@@ -6521,7 +6521,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
     session = initialFlowResult.session;
     const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const { resumeHasResolvedGpuIntent, requestedGpuPassthrough, gpuPassthrough } = initialContext;
+    const { gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu ?? null;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
