@@ -161,13 +161,11 @@ export function streamSandboxCreate(
   let resolvePromise: (result: StreamSandboxCreateResult) => void;
   let buildStartedAtMs: number | null = null;
   let buildTimingFinished = false;
-  let activeBuildStep:
-    | {
-        label: string;
-        instruction: string;
-        startedAtMs: number;
-      }
-    | null = null;
+  let activeBuildStep: {
+    label: string;
+    instruction: string;
+    startedAtMs: number;
+  } | null = null;
 
   function getDisplayWidth() {
     return Math.max(60, Number(process.stdout.columns || 100));
@@ -234,9 +232,7 @@ export function streamSandboxCreate(
     if (buildStartedAtMs !== null) {
       const elapsedMs = nowMs - buildStartedAtMs;
       const phrase = status === "completed" ? "completed in" : "stopped after";
-      appendTimingLine(
-        `  Sandbox image build ${phrase} ${formatDuration(elapsedMs)}`,
-      );
+      appendTimingLine(`  Sandbox image build ${phrase} ${formatDuration(elapsedMs)}`);
       emitTraceEvent("docker_build_end", {
         status,
         duration_ms: elapsedMs,

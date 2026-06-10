@@ -25,7 +25,12 @@ function freshCtx(): RunContext {
   return { contextDir: fs.mkdtempSync(path.join(os.tmpdir(), "e2e-phase-")) };
 }
 
-function shellStep(id: string, phase: PhaseName, ref: string, reliability?: AssertionStep["reliability"]): AssertionStep {
+function shellStep(
+  id: string,
+  phase: PhaseName,
+  ref: string,
+  reliability?: AssertionStep["reliability"],
+): AssertionStep {
   return {
     id,
     phase,
@@ -56,7 +61,9 @@ function makePhase(steps: AssertionStep[]): RunPlanPhase {
   return {
     name: steps[0].phase,
     actions: [],
-    assertionGroups: [{ id: `group.${steps[0].id}`, phase: steps[0].phase, migrationStatus: "complete", steps }],
+    assertionGroups: [
+      { id: `group.${steps[0].id}`, phase: steps[0].phase, migrationStatus: "complete", steps },
+    ],
   };
 }
 
@@ -104,7 +111,11 @@ describe("phase orchestrators - top-level delegation", () => {
       const [plan] = compileRunPlans(["ubuntu-repo-cloud-openclaw"]);
       const calls: string[] = [];
       const fakeOrchestrator = (phase: PhaseName) => ({
-        run: async (_ctx: RunContext, runPhase: RunPlanPhase, _prior?: PhaseResult[]): Promise<PhaseResult> => {
+        run: async (
+          _ctx: RunContext,
+          runPhase: RunPlanPhase,
+          _prior?: PhaseResult[],
+        ): Promise<PhaseResult> => {
           calls.push(runPhase.name);
           return { phase, status: "passed", actions: [], assertions: [] };
         },
@@ -164,7 +175,11 @@ describe("phase orchestrators - real shell execution", () => {
   it("shell step fails when the script exits nonzero and records the stderr tail", async () => {
     const ctx = freshCtx();
     try {
-      const script = writeTempScript(ctx.contextDir, "fail.sh", 'echo "boom: real failure" >&2; exit 7');
+      const script = writeTempScript(
+        ctx.contextDir,
+        "fail.sh",
+        'echo "boom: real failure" >&2; exit 7',
+      );
       const ref = path.relative(REPO_ROOT, script);
       const step = shellStep("runtime.real-fail", "runtime", ref);
       const orchestrator = new PhaseOrchestrator("runtime");
@@ -276,13 +291,28 @@ describe("phase orchestrators - actions execute before assertions", () => {
   it("phase action runs before assertions and records evidence", async () => {
     const ctx = freshCtx();
     try {
-      const actionScript = writeTempScript(ctx.contextDir, "setup.sh", "echo phase-action-evidence");
-      const action = shellAction("environment.setup-ok", "environment", path.relative(REPO_ROOT, actionScript));
+      const actionScript = writeTempScript(
+        ctx.contextDir,
+        "setup.sh",
+        "echo phase-action-evidence",
+      );
+      const action = shellAction(
+        "environment.setup-ok",
+        "environment",
+        path.relative(REPO_ROOT, actionScript),
+      );
       const stepScript = writeTempScript(ctx.contextDir, "after.sh", "echo after-action");
-      const step = shellStep("environment.assert-ok", "environment", path.relative(REPO_ROOT, stepScript));
+      const step = shellStep(
+        "environment.assert-ok",
+        "environment",
+        path.relative(REPO_ROOT, stepScript),
+      );
       const orchestrator = new PhaseOrchestrator("environment");
 
-      const result = await orchestrator.run(ctx, makePhaseWithActions("environment", [action], [step]));
+      const result = await orchestrator.run(
+        ctx,
+        makePhaseWithActions("environment", [action], [step]),
+      );
 
       expect(result.status).toBe("passed");
       expect(result.actions).toHaveLength(1);
@@ -302,13 +332,28 @@ describe("phase orchestrators - actions execute before assertions", () => {
   it("phase action failure short-circuits assertions", async () => {
     const ctx = freshCtx();
     try {
-      const failScript = writeTempScript(ctx.contextDir, "fail.sh", 'echo "setup boom" >&2; exit 5');
-      const action = shellAction("environment.setup-fail", "environment", path.relative(REPO_ROOT, failScript));
+      const failScript = writeTempScript(
+        ctx.contextDir,
+        "fail.sh",
+        'echo "setup boom" >&2; exit 5',
+      );
+      const action = shellAction(
+        "environment.setup-fail",
+        "environment",
+        path.relative(REPO_ROOT, failScript),
+      );
       const stepScript = writeTempScript(ctx.contextDir, "after.sh", "echo should-not-run");
-      const step = shellStep("environment.never-runs", "environment", path.relative(REPO_ROOT, stepScript));
+      const step = shellStep(
+        "environment.never-runs",
+        "environment",
+        path.relative(REPO_ROOT, stepScript),
+      );
       const orchestrator = new PhaseOrchestrator("environment");
 
-      const result = await orchestrator.run(ctx, makePhaseWithActions("environment", [action], [step]));
+      const result = await orchestrator.run(
+        ctx,
+        makePhaseWithActions("environment", [action], [step]),
+      );
 
       expect(result.status).toBe("failed");
       expect(result.actions).toHaveLength(1);
@@ -326,9 +371,14 @@ describe("phase orchestrators - actions execute before assertions", () => {
     const ctx = freshCtx();
     try {
       const slow = writeTempScript(ctx.contextDir, "slow.sh", "sleep 30");
-      const action = shellAction("environment.setup-slow", "environment", path.relative(REPO_ROOT, slow), {
-        timeoutSeconds: 1,
-      });
+      const action = shellAction(
+        "environment.setup-slow",
+        "environment",
+        path.relative(REPO_ROOT, slow),
+        {
+          timeoutSeconds: 1,
+        },
+      );
       const orchestrator = new PhaseOrchestrator("environment");
 
       const started = Date.now();
@@ -372,8 +422,16 @@ describe("phase orchestrators - actions execute before assertions", () => {
   it("phase action evidence log is flushed before resolve", async () => {
     const ctx = freshCtx();
     try {
-      const actionScript = writeTempScript(ctx.contextDir, "flush.sh", "echo flushed-phase-action-output");
-      const action = shellAction("environment.flush", "environment", path.relative(REPO_ROOT, actionScript));
+      const actionScript = writeTempScript(
+        ctx.contextDir,
+        "flush.sh",
+        "echo flushed-phase-action-output",
+      );
+      const action = shellAction(
+        "environment.flush",
+        "environment",
+        path.relative(REPO_ROOT, actionScript),
+      );
       const orchestrator = new PhaseOrchestrator("environment");
 
       const result = await orchestrator.run(ctx, makePhaseWithActions("environment", [action], []));
@@ -420,7 +478,10 @@ describe("plan compiler emits phase actions for canonical scenarios", () => {
       // Every install/onboard action must be a typed shell-fn referencing
       // the canonical dispatcher script - no free-form strings.
       for (const action of [...env.actions, ...onb.actions]) {
-        if (action.id.startsWith("environment.install.") || action.id.startsWith("onboarding.profile.")) {
+        if (
+          action.id.startsWith("environment.install.") ||
+          action.id.startsWith("onboarding.profile.")
+        ) {
           expect(action.kind).toBe("shell-fn");
           expect(action.scriptRef).toMatch(/dispatch\.sh$/);
           expect(action.fn).toMatch(/^e2e_(install|onboard)$/);
@@ -473,9 +534,7 @@ describe("plan compiler emits phase actions for canonical scenarios", () => {
     expect(action.arg).toBe("rebuild-current-version");
     expect(action.scriptRef).toMatch(/lifecycle\/dispatch\.sh$/);
     expect(action.fn).toBe("e2e_lifecycle");
-    expect(action.evidencePath).toBe(
-      ".e2e/actions/lifecycle.profile.rebuild-current-version.log",
-    );
+    expect(action.evidencePath).toBe(".e2e/actions/lifecycle.profile.rebuild-current-version.log");
     // Secret env: nemoclaw rebuild re-reads NVIDIA_API_KEY when the
     // post-rebuild sandbox is brought back up.
     expect(action.secretEnv).toContain("NVIDIA_API_KEY");
@@ -587,13 +646,23 @@ describe("ScenarioRunner seeds context.env and short-circuits across phases", ()
       const onboarding = {
         run: async () => {
           onboardingCalled = true;
-          return { phase: "onboarding" as const, status: "passed" as const, actions: [], assertions: [] };
+          return {
+            phase: "onboarding" as const,
+            status: "passed" as const,
+            actions: [],
+            assertions: [],
+          };
         },
       };
       const runtime = {
         run: async () => {
           runtimeCalled = true;
-          return { phase: "runtime" as const, status: "passed" as const, actions: [], assertions: [] };
+          return {
+            phase: "runtime" as const,
+            status: "passed" as const,
+            actions: [],
+            assertions: [],
+          };
         },
       };
       let stateValidationCalled = false;
@@ -665,14 +734,24 @@ describe("ScenarioRunner seeds context.env and short-circuits across phases", ()
       const onboarding = {
         run: async () => {
           onboardingCalled = true;
-          return { phase: "onboarding" as const, status: "passed" as const, actions: [], assertions: [] };
+          return {
+            phase: "onboarding" as const,
+            status: "passed" as const,
+            actions: [],
+            assertions: [],
+          };
         },
       };
       const runner = new ScenarioRunner({
         environment: env,
         onboarding,
         runtime: {
-          run: async () => ({ phase: "runtime" as const, status: "passed" as const, actions: [], assertions: [] }),
+          run: async () => ({
+            phase: "runtime" as const,
+            status: "passed" as const,
+            actions: [],
+            assertions: [],
+          }),
         },
       });
 
@@ -796,7 +875,7 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
         'echo "and sk-abcdefghijklmnopqrstuvwxyz0123456789"',
         'echo "and xoxb-9876543210-fake-bot-token-abc"',
         'echo "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature" 1>&2',
-        'exit 7',
+        "exit 7",
       ].join("\n");
       const script = writeTempScript(ctx.contextDir, "leak.sh", body);
       const ref = path.relative(REPO_ROOT, script);
@@ -805,7 +884,10 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
 
       const result = await orchestrator.run(ctx, makePhase([step]));
       const assertion = result.assertions[0];
-      const logBody = fs.readFileSync(path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`), "utf8");
+      const logBody = fs.readFileSync(
+        path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`),
+        "utf8",
+      );
       const phaseResultJson = fs.readFileSync(
         path.join(ctx.contextDir, ".e2e", "runtime.result.json"),
         "utf8",
@@ -839,11 +921,7 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
     const previous = process.env[sentinelKey];
     process.env[sentinelKey] = "sentinel-value-that-must-not-leak";
     try {
-      const script = writeTempScript(
-        ctx.contextDir,
-        "env-leak.sh",
-        `printenv | sort\n`,
-      );
+      const script = writeTempScript(ctx.contextDir, "env-leak.sh", `printenv | sort\n`);
       const ref = path.relative(REPO_ROOT, script);
       // Step does NOT declare SECRET_LEAK_PROBE_TOKEN in secretEnv,
       // so the framework must drop it before spawn.
@@ -851,10 +929,15 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
       const orchestrator = new PhaseOrchestrator("runtime");
 
       const result = await orchestrator.run(ctx, makePhase([step]));
-      const logBody = fs.readFileSync(path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`), "utf8");
+      const logBody = fs.readFileSync(
+        path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`),
+        "utf8",
+      );
 
       expect(result.assertions[0].status).toBe("passed");
-      expect(logBody, "non-allowlisted parent env must not reach the child").not.toContain(sentinelKey);
+      expect(logBody, "non-allowlisted parent env must not reach the child").not.toContain(
+        sentinelKey,
+      );
       expect(logBody).not.toContain("sentinel-value-that-must-not-leak");
       // Framework allowlist + overlay still arrive: PATH and E2E_PHASE.
       expect(logBody).toMatch(/^PATH=/m);
@@ -885,7 +968,10 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
       const orchestrator = new PhaseOrchestrator("runtime");
 
       const result = await orchestrator.run(ctx, makePhase([step]));
-      const logBody = fs.readFileSync(path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`), "utf8");
+      const logBody = fs.readFileSync(
+        path.join(ctx.contextDir, ".e2e", "logs", `${step.id}.log`),
+        "utf8",
+      );
 
       expect(result.assertions[0].status).toBe("passed");
       // Declared secret reaches the child verbatim.
@@ -911,10 +997,7 @@ describe("framework-owned secret hygiene at the spawn boundary", () => {
 
   it("should declare NVIDIA API key only for cloud onboarding actions", async () => {
     const { compileRunPlans } = await import("../scenarios/compiler.ts");
-    const plans = compileRunPlans([
-      "ubuntu-repo-cloud-openclaw",
-      "gpu-repo-local-ollama-openclaw",
-    ]);
+    const plans = compileRunPlans(["ubuntu-repo-cloud-openclaw", "gpu-repo-local-ollama-openclaw"]);
     const cloudOnboard = plans[0].phases
       .find((p) => p.name === "onboarding")
       ?.actions.find((a) => a.id.startsWith("onboarding.profile."));

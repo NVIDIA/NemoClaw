@@ -6,11 +6,14 @@ import path from "node:path";
 
 import { ROOT } from "../state/paths";
 
-export type WebSearchAgent = {
-  name?: string | null;
-  displayName?: string | null;
-  dockerfilePath?: string | null;
-} | null | undefined;
+export type WebSearchAgent =
+  | {
+      name?: string | null;
+      displayName?: string | null;
+      dockerfilePath?: string | null;
+    }
+  | null
+  | undefined;
 
 /**
  * Check whether the agent's Dockerfile declares ARG NEMOCLAW_WEB_SEARCH_ENABLED.

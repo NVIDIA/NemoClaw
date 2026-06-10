@@ -37,46 +37,91 @@ function main(): void {
 
   // Create target label if needed
   run("gh", [
-    "label", "create", to, "--repo", repo,
-    "--description", "Release target", "--color", "1d76db",
+    "label",
+    "create",
+    to,
+    "--repo",
+    repo,
+    "--description",
+    "Release target",
+    "--color",
+    "1d76db",
   ]);
 
   const bumped: BumpedItem[] = [];
 
   // Bump open PRs
   const prOut = run("gh", [
-    "pr", "list", "--repo", repo, "--label", from,
-    "--state", "open", "--json", "number,title", "--limit", "100",
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--label",
+    from,
+    "--state",
+    "open",
+    "--json",
+    "number,title",
+    "--limit",
+    "100",
   ]);
   if (prOut) {
     try {
       const prs = JSON.parse(prOut) as Array<{ number: number; title: string }>;
       for (const pr of prs) {
         run("gh", [
-          "pr", "edit", String(pr.number), "--repo", repo,
-          "--remove-label", from, "--add-label", to,
+          "pr",
+          "edit",
+          String(pr.number),
+          "--repo",
+          repo,
+          "--remove-label",
+          from,
+          "--add-label",
+          to,
         ]);
         bumped.push({ number: pr.number, title: pr.title, type: "pr" });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // Bump open issues
   const issueOut = run("gh", [
-    "issue", "list", "--repo", repo, "--label", from,
-    "--state", "open", "--json", "number,title", "--limit", "100",
+    "issue",
+    "list",
+    "--repo",
+    repo,
+    "--label",
+    from,
+    "--state",
+    "open",
+    "--json",
+    "number,title",
+    "--limit",
+    "100",
   ]);
   if (issueOut) {
     try {
       const issues = JSON.parse(issueOut) as Array<{ number: number; title: string }>;
       for (const issue of issues) {
         run("gh", [
-          "issue", "edit", String(issue.number), "--repo", repo,
-          "--remove-label", from, "--add-label", to,
+          "issue",
+          "edit",
+          String(issue.number),
+          "--repo",
+          repo,
+          "--remove-label",
+          from,
+          "--add-label",
+          to,
         ]);
         bumped.push({ number: issue.number, title: issue.title, type: "issue" });
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   const output: BumpOutput = { from, to, bumped };

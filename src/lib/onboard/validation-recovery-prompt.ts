@@ -78,9 +78,12 @@ export function createValidationRecoveryPromptHelpers(
       );
       console.log("  ⚠️  Do NOT paste your API key here — use the options below:");
       const choice = (
-        await deps.prompt("  Options: retry (re-enter key), back (change provider), exit [retry]: ", {
-          secret: true,
-        })
+        await deps.prompt(
+          "  Options: retry (re-enter key), back (change provider), exit [retry]: ",
+          {
+            secret: true,
+          },
+        )
       )
         .trim()
         .toLowerCase();
@@ -121,7 +124,9 @@ export function createValidationRecoveryPromptHelpers(
     }
 
     if (recovery.kind === "transport") {
-      console.log(deps.getTransportRecoveryMessage("failure" in recovery ? recovery.failure || {} : {}));
+      console.log(
+        deps.getTransportRecoveryMessage("failure" in recovery ? recovery.failure || {} : {}),
+      );
       const choice = (await deps.prompt("  Type 'retry', 'back', or 'exit' [retry]: "))
         .trim()
         .toLowerCase();

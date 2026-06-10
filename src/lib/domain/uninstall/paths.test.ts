@@ -17,7 +17,11 @@ describe("uninstall paths", () => {
   });
 
   it("builds host state, shim, OpenShell, and temp cleanup paths", () => {
-    const paths = defaultUninstallPaths({ home: "/home/test", tmpDir: "/tmp/nemo", xdgBinHome: "/xdg/bin" });
+    const paths = defaultUninstallPaths({
+      home: "/home/test",
+      tmpDir: "/tmp/nemo",
+      xdgBinHome: "/xdg/bin",
+    });
 
     expect(paths.nemoclawStateDir).toBe(path.join("/home/test", ".nemoclaw"));
     expect(paths.openshellConfigDir).toBe(path.join("/home/test", ".config", "openshell"));
@@ -56,6 +60,8 @@ describe("uninstall paths", () => {
     // Before this fix, uninstall left it behind (#3456 hulynn comment).
     const paths = defaultUninstallPaths({ home: "/home/test" });
     expect(paths.gatewayLocalStateDir).toBe(path.join("/home/test", ".local", "state", "nemoclaw"));
-    expect(uninstallStatePaths(paths)).toContain(path.join("/home/test", ".local", "state", "nemoclaw"));
+    expect(uninstallStatePaths(paths)).toContain(
+      path.join("/home/test", ".local", "state", "nemoclaw"),
+    );
   });
 });

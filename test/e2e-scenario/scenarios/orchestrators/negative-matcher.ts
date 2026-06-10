@@ -97,7 +97,9 @@ function isOwnPhaseResult(phase: PhaseResult["phase"]): phase is PhaseName {
   );
 }
 
-function findFirstObservedFailure(results: readonly PhaseResult[]): NegativeContractObservation | undefined {
+function findFirstObservedFailure(
+  results: readonly PhaseResult[],
+): NegativeContractObservation | undefined {
   for (const result of results) {
     if (!isOwnPhaseResult(result.phase)) {
       continue;
@@ -197,7 +199,10 @@ function findHandledExpectedFailure(
 
   const passedAction = phaseResult.actions.find((action) => {
     if (action.status !== "passed") return false;
-    return errorClassMatches([action.id, action.message].filter(Boolean).join(" "), expected.errorClass);
+    return errorClassMatches(
+      [action.id, action.message].filter(Boolean).join(" "),
+      expected.errorClass,
+    );
   });
   if (passedAction) {
     return {
@@ -226,14 +231,20 @@ function describeObservation(observation: NegativeContractObservation): string {
   if (observation.handledAssertionId) {
     parts.push(`handledAssertion=${observation.handledAssertionId}`);
   }
-  const message = observation.failedActionMessage ?? observation.failedAssertionMessage ?? observation.handledMessage;
+  const message =
+    observation.failedActionMessage ??
+    observation.failedAssertionMessage ??
+    observation.handledMessage;
   if (message) {
     parts.push(`message="${message.slice(0, 240)}"`);
   }
   return parts.length > 0 ? parts.join(" ") : "no failure observed";
 }
 
-export function evaluateNegativeContract(plan: RunPlan, results: readonly PhaseResult[]): NegativeContractResult {
+export function evaluateNegativeContract(
+  plan: RunPlan,
+  results: readonly PhaseResult[],
+): NegativeContractResult {
   const expected = plan.expectedFailure;
   if (!expected) {
     throw new Error(
@@ -241,7 +252,9 @@ export function evaluateNegativeContract(plan: RunPlan, results: readonly PhaseR
     );
   }
   const expectedPhase = resolveExpectedPhase(expected.phase);
-  const observation = findFirstObservedFailure(results) ?? findHandledExpectedFailure(expected, expectedPhase, results);
+  const observation =
+    findFirstObservedFailure(results) ??
+    findHandledExpectedFailure(expected, expectedPhase, results);
 
   if (!observation) {
     return {

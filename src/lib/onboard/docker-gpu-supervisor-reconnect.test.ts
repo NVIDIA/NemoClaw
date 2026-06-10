@@ -24,9 +24,7 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       { status: 0, stdout: "" },
     ];
     let execIdx = 0;
-    const runOpenshell = vi.fn(
-      () => execOutputs[Math.min(execIdx++, execOutputs.length - 1)],
-    );
+    const runOpenshell = vi.fn(() => execOutputs[Math.min(execIdx++, execOutputs.length - 1)]);
     const listOutputs = [
       "alpha   Error         1s ago",
       "alpha   Error         3s ago",
@@ -98,8 +96,34 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(6);
   });
 
-  it("defaults the debounce to 15 polls and honors the env override", () => {
-    expect(getDockerGpuSupervisorReconnectErrorDebouncePolls({})).toBe(15);
+  it("absorbs a Docker-CDI Error phase longer than the old 30s window", () => {
+    // #4948 runtime validation on the Docker-CDI GPU runner showed the
+    // sandbox-list row can remain Error for roughly a minute after the CDI
+    // recreate (`--device nvidia.com/gpu=all`) while the supervisor is still
+    // reconnecting. The default debounce must therefore outlive the old
+    // 15-poll / ~30s fast-fail window.
+    let polls = 0;
+    const runOpenshell = vi.fn(() => {
+      polls += 1;
+      return polls <= 30 ? { status: 1, stderr: "sandbox not ready" } : { status: 0 };
+    });
+    const runCaptureOpenshell = vi.fn(() =>
+      polls <= 30 ? "alpha   Error   1s ago" : "alpha   Ready   65s ago",
+    );
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+    });
+
+    expect(ok).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledTimes(31);
+  });
+
+  it("defaults the debounce to 60 polls and honors the env override", () => {
+    expect(getDockerGpuSupervisorReconnectErrorDebouncePolls({})).toBe(60);
     expect(
       getDockerGpuSupervisorReconnectErrorDebouncePolls({
         NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE: "2",
@@ -151,9 +175,9 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
       });
 
       expect(ok).toBe(false);
-      // Default K=15 from the env-backed helper: 15 polls + 14 sleeps before fast-fail.
-      expect(runOpenshell).toHaveBeenCalledTimes(15);
-      expect(sleep).toHaveBeenCalledTimes(14);
+      // Default K=60 from the env-backed helper: 60 polls + 59 sleeps before fast-fail.
+      expect(runOpenshell).toHaveBeenCalledTimes(60);
+      expect(sleep).toHaveBeenCalledTimes(59);
     }
   });
 });

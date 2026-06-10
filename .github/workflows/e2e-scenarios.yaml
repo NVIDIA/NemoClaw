@@ -78,6 +78,7 @@ jobs:
             [ubuntu-repo-cloud-openclaw-slack]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-telegram]=ubuntu-latest
             [ubuntu-repo-cloud-openclaw-token-rotation]=ubuntu-latest
+            [ubuntu-repo-docker-post-reboot-recovery]=ubuntu-latest
             [ubuntu-repo-openai-compatible-openclaw]=ubuntu-latest
           )
           selected=""

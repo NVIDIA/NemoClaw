@@ -105,9 +105,7 @@ function readProcessCommandLine(pid: number): string | null {
   }
 }
 
-function verifyTimerMarkerIdentity(
-  marker: TimerMarker,
-): { verified: boolean; warning?: string } {
+function verifyTimerMarkerIdentity(marker: TimerMarker): { verified: boolean; warning?: string } {
   const commandLine = readProcessCommandLine(marker.pid);
   if (!commandLine) {
     return {
@@ -198,8 +196,4 @@ export {
   killTimer,
 };
 
-export type {
-  TimerMarker,
-  ClearTimerMarkerResult,
-  KillTimerResult,
-};
+export type { TimerMarker, ClearTimerMarkerResult, KillTimerResult };

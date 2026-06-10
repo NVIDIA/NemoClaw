@@ -103,9 +103,7 @@ export function printDockerBridgeContainerStartFailure(
   }
   console.error("");
   if (result.reason === "veth_unsupported") {
-    console.error(
-      "  Docker reported that creating the container veth pair is not supported.",
-    );
+    console.error("  Docker reported that creating the container veth pair is not supported.");
     console.error(
       "  This matches the Jetson kernel/Docker bridge failure seen before long sandbox builds.",
     );
@@ -115,7 +113,9 @@ export function printDockerBridgeContainerStartFailure(
     console.error("  a host whose Docker bridge networking can create veth interfaces.");
   } else if (result.reason === "timeout" || result.reason === "killed") {
     console.error("  Docker did not complete a minimal bridge container start probe in time.");
-    console.error("  Restart Docker and check for stuck container/network operations before retrying.");
+    console.error(
+      "  Restart Docker and check for stuck container/network operations before retrying.",
+    );
   } else if (result.reason === "docker_daemon_unreachable") {
     console.error("  The Docker CLI cannot reach the Docker daemon (dockerd is down or wedged).");
     if (host?.isWsl) {
@@ -486,8 +486,7 @@ export function printContainerDnsRemediation(host: Host): void {
   // hosts configure DNS through Docker Desktop's GUI or a
   // platform-specific daemon.json path, so we avoid printing shell
   // commands that would mislead those users.
-  const isLinuxWithSystemd =
-    host.platform === "linux" && !host.isWsl && host.systemctlAvailable;
+  const isLinuxWithSystemd = host.platform === "linux" && !host.isWsl && host.systemctlAvailable;
 
   const printLinuxFix = (bridgeIp: string, note: string | null) => {
     if (note) console.error(note);
@@ -545,9 +544,7 @@ export function printContainerDnsRemediation(host: Host): void {
         indent: "       ",
       });
       console.error("       osascript -e 'quit app \"Docker\"' && sleep 3 && open -a Docker");
-      console.error(
-        "     (or do the same via the Docker Desktop UI: Settings → Docker Engine)",
-      );
+      console.error("     (or do the same via the Docker Desktop UI: Settings → Docker Engine)");
     } else {
       console.error("  Configure your container runtime's DNS (macOS):");
       console.error("     - Docker Desktop (jq required for safe daemon.json merge):");
@@ -597,7 +594,9 @@ export function printContainerDnsRemediation(host: Host): void {
       // print steps that depend on it. Show the daemon.json safe-merge
       // and a non-systemctl restart hint instead.
       if (wslBridgeNote) console.error(wslBridgeNote);
-      console.error("     Merge the dns key into /etc/docker/daemon.json (jq required for safe merge):");
+      console.error(
+        "     Merge the dns key into /etc/docker/daemon.json (jq required for safe merge):",
+      );
       printDaemonJsonDnsPatch({
         daemonJsonPath: "/etc/docker/daemon.json",
         configDir: "/etc/docker",
@@ -607,7 +606,9 @@ export function printContainerDnsRemediation(host: Host): void {
         indent: "       ",
       });
       console.error("     Restart the Docker daemon however your WSL distro launches it");
-      console.error("     (e.g. `sudo service docker restart`, or stop the dockerd process and rerun it).");
+      console.error(
+        "     (e.g. `sudo service docker restart`, or stop the dockerd process and rerun it).",
+      );
     }
   } else {
     console.error("  Configure your docker daemon to use a DNS server that accepts UDP:53.");

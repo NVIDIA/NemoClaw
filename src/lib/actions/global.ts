@@ -29,9 +29,7 @@ type GlobalCliActionRuntimeHooks = {
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
 
-export function setGlobalCliActionRuntimeHooksForTest(
-  hooks: GlobalCliActionRuntimeHooks,
-): void {
+export function setGlobalCliActionRuntimeHooksForTest(hooks: GlobalCliActionRuntimeHooks): void {
   runtimeHooks = hooks;
 }
 

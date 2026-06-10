@@ -16,7 +16,12 @@ describe("Ollama probe timeout retry", () => {
       return { stdout: JSON.stringify({ response: "Hi" }), exitCode: 0, timedOut: false };
     };
 
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
+      () => "",
+      () => false,
+      captureEx,
+    );
 
     expect(result.ok).toBe(true);
     expect(captureExCallCount).toBe(2);

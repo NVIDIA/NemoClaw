@@ -156,9 +156,7 @@ function partitionPresets(
   for (const info of customInfo) {
     const isApplied = applied.has(info.name);
     const verification = resolveVerification(info.name, isApplied, gatewayPresets);
-    active.push(
-      presetEntry(info, "custom", customByName.get(info.name) ?? null, verification),
-    );
+    active.push(presetEntry(info, "custom", customByName.get(info.name) ?? null, verification));
   }
   return { active, unapplied };
 }
@@ -172,9 +170,7 @@ function buildApprovalPath(sandboxName: string): PolicyContextApprovalPath {
   };
 }
 
-function buildSupportBoundaries(
-  tier: PolicyContextTier | null,
-): PolicyContextSupportBoundary[] {
+function buildSupportBoundaries(tier: PolicyContextTier | null): PolicyContextSupportBoundary[] {
   return [
     {
       capability: "preset selection",

@@ -12,14 +12,18 @@ import { testTimeout } from "./helpers/timeouts";
 
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 
-describe("onboard provider selection vLLM UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
+describe("onboard provider selection vLLM UX", {
+  timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+}, () => {
   it("offers detected running vLLM without requiring a rerun", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-running-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -124,9 +128,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.contextWindow, "65536");
     assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
     assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Detected local inference option: vLLM"),
-      ),
+      payload.lines.some((line: string) => line.includes("Detected local inference option: vLLM")),
     );
     assert.ok(
       payload.lines.some((line: string) => line.includes("Using vLLM max_model_len: 65536")),
@@ -146,9 +148,13 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
     const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const validationPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "inference-selection-validation.js"));
+    const validationPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "inference-selection-validation.js"),
+    );
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -260,7 +266,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
     const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
 
@@ -490,10 +498,14 @@ async function runScenario(scenario) {
 
   it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"),
+    );
     const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
 
@@ -560,7 +572,9 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
     const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
 
     const script = String.raw`

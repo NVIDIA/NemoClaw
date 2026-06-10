@@ -29,10 +29,8 @@ describe("Ollama runtime context helpers", () => {
     expect(parseOllamaRuntimeContextLength(null)).toEqual({});
     expect(parseOllamaRuntimeContextLength("   ")).toEqual({});
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", processor: "100% GPU" }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", processor: "100% GPU" }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -52,10 +50,8 @@ describe("Ollama runtime context helpers", () => {
       expect(parsed.warning).toContain("non-positive or malformed context_length");
     }
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: "bogus" }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: "bogus" }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -68,10 +64,8 @@ describe("Ollama runtime context helpers", () => {
     expect(parsed.contextLength).toBeUndefined();
     expect(parsed.warning).toContain("above NemoClaw's auto-detect ceiling");
 
-    const status = probeOllamaRuntimeModelStatus(
-      "qwen3.6:35b",
-      getOllamaHost,
-      () => JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: 10_000_000 }] }),
+    const status = probeOllamaRuntimeModelStatus("qwen3.6:35b", getOllamaHost, () =>
+      JSON.stringify({ models: [{ name: "qwen3.6:35b", context_length: 10_000_000 }] }),
     );
 
     expect(status.loaded).toBe(true);
@@ -90,18 +84,18 @@ describe("Ollama runtime context helpers", () => {
         models: [{ name: "qwen3.6:35b", context_length: "262144", processor: "100% GPU" }],
       });
 
-    expect(
-      resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, getOllamaHost, capture),
-    ).toBe(262144);
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", null, getOllamaHost, capture)).toBe(
+      262144,
+    );
     expect(
       resolveOllamaRuntimeContextWindow("qwen3.6:35b", "131072", getOllamaHost, capture),
     ).toBeNull();
     expect(
       resolveOllamaRuntimeContextWindow("qwen3.6:35b", "bogus", getOllamaHost, capture),
     ).toBeNull();
-    expect(
-      resolveOllamaRuntimeContextWindow("qwen3.6:35b", "   ", getOllamaHost, capture),
-    ).toBe(262144);
+    expect(resolveOllamaRuntimeContextWindow("qwen3.6:35b", "   ", getOllamaHost, capture)).toBe(
+      262144,
+    );
     expect(
       resolveOllamaRuntimeContextWindow("other:model", null, getOllamaHost, capture),
     ).toBeNull();

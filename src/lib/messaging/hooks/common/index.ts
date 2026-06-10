@@ -1,14 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createConfigPromptHookRegistration,
-  type ConfigPromptHookOptions,
-} from "./config-prompt";
-import {
-  createTokenPasteHookRegistration,
-  type TokenPasteHookOptions,
-} from "./token-paste";
+import { createConfigPromptHookRegistration, type ConfigPromptHookOptions } from "./config-prompt";
+import { createTokenPasteHookRegistration, type TokenPasteHookOptions } from "./token-paste";
 import { getCredential, prompt, saveCredential } from "../../../credentials/store";
 import type { MessagingHookRegistration } from "../types";
 

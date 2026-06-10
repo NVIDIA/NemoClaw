@@ -160,9 +160,7 @@ export function probeOllamaRuntimeModelStatus(
       ...(contextLengthResult.contextLength
         ? { contextLength: contextLengthResult.contextLength }
         : {}),
-      ...(contextLengthResult.warning
-        ? { contextLengthWarning: contextLengthResult.warning }
-        : {}),
+      ...(contextLengthResult.warning ? { contextLengthWarning: contextLengthResult.warning } : {}),
       ...(processor ? { processor } : {}),
       ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
     };

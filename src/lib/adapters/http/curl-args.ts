@@ -70,9 +70,7 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
 
 function splitCurlOptionArg(arg: string): { option: string; inlineValue?: string } {
   if (arg.startsWith("--")) {
-    const [option, inlineValue] = arg.includes("=")
-      ? arg.split(/=(.*)/s, 2)
-      : [arg, undefined];
+    const [option, inlineValue] = arg.includes("=") ? arg.split(/=(.*)/s, 2) : [arg, undefined];
     return { option, inlineValue };
   }
   for (const option of CURL_SHORT_OPTIONS_WITH_VALUES) {
@@ -130,7 +128,9 @@ export function validateCurlProbeArgs(
     const arg = args[index];
     const { option, inlineValue } = splitCurlOptionArg(arg);
     if (CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS.has(option)) {
-      throw new Error(`curl probe option is not allowed because it creates multiple transfers: ${option}`);
+      throw new Error(
+        `curl probe option is not allowed because it creates multiple transfers: ${option}`,
+      );
     }
     if (CURL_OPTIONS_THAT_READ_IMPLICIT_FILES.has(option)) {
       throw new Error(`curl probe option is not allowed because it reads local files: ${option}`);

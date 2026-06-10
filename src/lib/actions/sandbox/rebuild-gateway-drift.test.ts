@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 
-type RebuildSandbox = typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox =
+  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
 

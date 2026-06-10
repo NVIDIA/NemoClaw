@@ -1,8 +1,30 @@
 name: Bug Report
-description: Report a bug you encountered and can reproduce.
+description: Report a bug. Your agent should investigate first - see CONTRIBUTING.md.
 type: Bug
 labels: ["needs: triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Agent-First Troubleshooting
+
+        NemoClaw is an agent-first project. Before filing this bug, point your coding agent at the repo and have it investigate using the available skills (`nemoclaw-skills-guide`, `nemoclaw-user-monitor-sandbox`, `nemoclaw-user-manage-sandboxes`, etc.). See [CONTRIBUTING.md](https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md) for issue expectations.
+
+  - type: textarea
+    id: agent-diagnostic
+    attributes:
+      label: Agent Diagnostic
+      description: |
+        Paste the output from your agent's investigation of this bug. What skills did it load? What did it find? What did it try?
+      placeholder: |
+        Example:
+        - Loaded `nemoclaw-user-monitor-sandbox`
+        - Ran `nemoclaw status`, `nemoclaw list`, and `nemoclaw debug --quick`
+        - Found the sandbox is registered but not ready after onboarding
+        - Tried `nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz`; the attached bundle still shows the failure
+    validations:
+      required: false
+
   - type: textarea
     id: description
     attributes:
@@ -46,7 +68,7 @@ body:
         tarball, or paste the output of `nemoclaw debug --quick` below.
       render: shell
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: logs
@@ -55,7 +77,7 @@ body:
       description: Any additional log output, error messages, or stack traces not covered by the debug output above.
       render: shell
     validations:
-      required: false
+      required: true
 
   - type: checkboxes
     id: checklist
